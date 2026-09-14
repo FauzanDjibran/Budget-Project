@@ -181,6 +181,29 @@ export async function computedValues(
   return out;
 }
 
+export type CompanyStructure = {
+  /** Exactly one parent and exactly one child. */
+  ok: boolean;
+  total: number;
+  parents: number;
+  children: number;
+};
+
+/**
+ * Asserts the foundational two-company invariant: one induk, one anak. Nothing
+ * in the application can create or edit a Company, so a violation means the
+ * seed or the database was changed out of band — which the dashboard surfaces
+ * rather than silently building on.
+ */
+export async function companyStructure(): Promise<CompanyStructure> {
+  const [total, parents] = await Promise.all([
+    prisma.sysCompany.count(),
+    prisma.sysCompany.count({ where: { is_parent: true } }),
+  ]);
+  const children = total - parents;
+  return { ok: total === 2 && parents === 1 && children === 1, total, parents, children };
+}
+
 /** Next system code, e.g. `part.0011`. */
 export async function nextCode(entity: Entity): Promise<string> {
   const rows = await delegate(entity.key).findMany({

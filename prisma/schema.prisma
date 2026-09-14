@@ -17,10 +17,12 @@
 //
 // Additions the mockup requires but the DBML lacks:
 //   * SysUser                      — nothing in the DBML backs created_by/updated_by
-//   * SysCompany.is_parent         — treasury-provider modelling
+//   * SysCompany.is_parent         — marks the single induk of the fixed
+//                             two-company structure (one induk, one anak)
 //   * AccAccount.partner_category_id       — one account holds one partner category
 //   * AccBudgetCategoryAccount.partner_category_id — category x partner-category -> account
-//   * MCashBank.balance            — mock-only running balance; v2 replaces it with cash_bank_book
+//   * MCashBank.balance            — mock-only running balance; V2 replaces it with
+//                             cash_bank_ledger / cash_bank_balance
 //   * AuditLog                     — the mockup's in-memory `_audit` array
 //
 // Dropped vs the DBML:
@@ -29,8 +31,9 @@
 //
 // Deferred to V2 (present in the DBML and/or concept doc, no UI in the mockup):
 //   acc_opening_balance(_line), acc_journal(_line), fin_funding_request,
-//   and the operational books: cash_bank_book, prive/titipan/hutang/piutang
-//   ledgers, general_ledger, intercompany_event.
+//   and the operational books: cash_bank_ledger / cash_bank_balance (the
+//   concept doc calls this book the "Cash Bank Book"), prive/titipan/hutang/
+//   piutang ledgers, general_ledger, intercompany_event.
 
 generator client {
   provider = "prisma-client"
@@ -113,8 +116,11 @@ model SysCompany {
   company_code  String  @unique
   company_label String
   company_name  String
-  /// Treasury provider flag. Exactly one company may be the parent; every other
-  /// company is treated as its child. Not in the DBML — added for concept v3.
+  /// Marks the induk of the fixed two-company structure. There are exactly two
+  /// companies, permanently: one induk (is_parent = true) and one anak. This is
+  /// foundational, not configuration — see CLAUDE.md §12. Company therefore has
+  /// no write path in the application; identity changes go through the seed.
+  /// Not in the DBML — added for concept v3.
   is_parent     Boolean @default(false)
   note          String?
 
@@ -264,8 +270,9 @@ model MCashBank {
   cash_bank_type  CashBankType
   currency_id     Int
   account_id      Int
-  /// Mock-only running balance, carried over so V1 matches the mockup. In V2
-  /// the balance is derived from cash_bank_book and this column goes away.
+  /// Mock-only running balance, carried over so V1 matches the mockup. Nothing
+  /// in the app reads it. In V2 the balance is derived from cash_bank_ledger /
+  /// cash_bank_balance and this column goes away.
   balance         Decimal      @default(0) @db.Decimal(18, 2)
   note            String?
   status          ActiveStatus @default(Active)
@@ -481,9 +488,9 @@ model FinCashBankTransaction {
   posting_date     DateTime?     @db.Timestamptz(6)
   transaction_type FlowDirection
   company_id       Int
-  /// Purpose key (e.g. `PRV_SH_OUT`). Resolved against the PURPOSE table in
-  /// `src/lib/siba/purpose.ts`, mirroring the mockup. The mockup's own note
-  /// suggests promoting this to a `fin_purpose` config table — a V2 candidate.
+  /// Purpose key (e.g. `PRV_SH_OUT`). Resolved in `src/lib/siba/rules.ts`,
+  /// mirroring the mockup. Purposes stay application logic: the mockup's own
+  /// note suggests a `fin_purpose` config table, which CLAUDE.md §12 rejects.
   purpose          String
   cash_bank_id     Int?
   currency_id      Int

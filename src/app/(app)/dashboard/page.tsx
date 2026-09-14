@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Icon, type IconName } from "@/components/icon";
 import { prisma } from "@/lib/prisma";
+import { companyStructure } from "@/lib/siba/records";
 import { formatTimestamp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ export default async function DashboardPage() {
     budgets,
     budgetCategories,
     recentAudit,
+    structure,
   ] = await Promise.all([
     prisma.sysCompany.findMany({ orderBy: { id: "asc" } }),
     prisma.mPartner.findMany({ select: { id: true, company_id: true } }),
@@ -36,6 +38,7 @@ export default async function DashboardPage() {
     prisma.budBudget.count(),
     prisma.sysBudgetCategory.findMany({ select: { id: true, category_label: true } }),
     prisma.auditLog.findMany({ orderBy: { at: "desc" }, take: 6 }),
+    companyStructure(),
   ]);
 
   const countIn = <T extends { company_id: number }>(rows: T[], companyId: number) =>
@@ -54,6 +57,19 @@ export default async function DashboardPage() {
   // account at all. Both are now impossible — Postgres enforces them — so only
   // the checks that survive real constraints are kept.
   const attention: Attention[] = [];
+
+  // The two-company structure is foundational: exactly one induk and one anak.
+  // Nothing in the app can create or edit a Company, so a mismatch here means
+  // the database was changed outside the seed.
+  if (!structure.ok) {
+    attention.push({
+      href: "/master/company",
+      title: "Struktur Company tidak sesuai",
+      detail:
+        `Ditemukan ${structure.total} Company (${structure.parents} induk, ${structure.children} anak). ` +
+        "Sistem mengharuskan tepat satu induk dan satu anak — perbaiki melalui seed data.",
+    });
+  }
 
   const crossCompany = cashBanks.filter(
     (cb) => cb.account && cb.account.company_id !== cb.company_id
@@ -94,7 +110,7 @@ export default async function DashboardPage() {
       href: "/master/cash-bank",
       title: `${withoutCashBank.map((c) => c.company_name).join(", ")} belum memiliki Cash & Bank`,
       detail:
-        "Company tanpa resource kas akan bergantung pada treasury provider untuk setiap realisasi.",
+        "Company tanpa resource kas akan bergantung pada Company induk untuk setiap realisasi.",
     });
   }
 

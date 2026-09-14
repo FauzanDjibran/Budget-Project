@@ -49,7 +49,7 @@ source material lives in `Initialization/` (committed, treated as read-only refe
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
-| Company master | List + detail done. **Create/edit must be locked and are not — see §17.** |
+| Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, fiscal period) | Not started |
 | Budget module | Not started |
 | Finance module | Not started |
@@ -474,7 +474,8 @@ Specified in the concept doc, **not yet implemented** (V2 — see §13):
   modules against this invariant rather than abstracting over it.
 - **Do not change unless:** an explicit new requirement changes the architecture.
   **Do not assume this becomes configurable in V2 or later.**
-- **Status:** Frozen, foundational. *Lock not yet implemented — see §17.*
+- **Status:** Frozen, foundational. Lock implemented in `src/lib/siba/company.ts`,
+  enforced by the Server Actions and the `/master/[entity]` routes.
 
 **Three consequences of that decision:**
 
@@ -640,10 +641,8 @@ for a finalised design and do not build a rate master.
 
 | Issue | Detail |
 | --- | --- |
-| **Company create/edit not locked** | §12 makes the two-company structure foundational and requires the lock at both layers. The code does not enforce it: `/master/company/new` and `/master/company/[id]/edit` resolve, and `createRecord` / `updateRecord` in `src/app/actions/master.ts` accept the `company` slug, so a third company can still be created. The single-parent rule is enforced, but it does not cap the company count. Fix directly in application logic — guard the actions and the routes; no config table, no generic permission framework. **Highest-priority gap.** |
 | No authentication | Every route is open; writes hardcode `CURRENT_USER = 2`. `next-auth` installed but unwired. |
 | `m_cash_bank.balance` still present | Mock-only column, read by nothing in the app. Dropped in V2 (§13). |
-| Schema comments predate two frozen decisions | In `prisma/schema.prisma`: the `MCashBank.balance` comment names `cash_bank_book` (confirmed target is `cash_bank_ledger` / `cash_bank_balance`), and the `is_parent` comment says "every other company is treated as its child", implying more than one child. Comments only — no behaviour affected. Correct both when next editing that file. |
 | Company context selector is inert | The topbar dropdown is local state and filters nothing. `Entity.scope` exists in the registry but is unused. |
 | Audit log shows raw table keys | Dashboard renders `m_partner` rather than the mockup's `Partner / Cabang Medan`; needs entity display names + record lookup. |
 | Audit log author hardcoded in dashboard | The activity list prints a fixed email instead of resolving `by`. |

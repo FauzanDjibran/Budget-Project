@@ -8,6 +8,11 @@ import { Combobox } from "@/components/ui/combobox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { createRecord, updateRecord, toggleStatus, type FormValues } from "@/app/actions/master";
+import {
+  COMPANY_LOCK_BADGE,
+  COMPANY_LOCK_BODY,
+  isCompanyEntity,
+} from "@/lib/siba/company";
 import { STATUS_CLASS, STATUS_TEXT, TAG_CLASS, type Entity, type Field } from "@/lib/siba/entities";
 import type { RefOption, Row } from "@/lib/siba/records";
 import { formatTimestamp } from "@/lib/format";
@@ -33,6 +38,8 @@ export function EntityForm({
   const toast = useToast();
   const editing = mode === "new" || mode === "edit";
   const basePath = `/${entity.module}/${entity.slug}`;
+  /** Company has no write path at all — see `lib/siba/company.ts`. */
+  const locked = isCompanyEntity(entity.slug);
 
   const [values, setValues] = useState<FormValues>(() => initialValues(entity, row));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -77,9 +84,11 @@ export function EntityForm({
 
     if (!result.ok) {
       setErrors(result.errors);
+      // `_form` is a whole-form refusal (a locked entity), not a field error.
+      const refusal = result.errors._form;
       toast(
-        "Belum bisa disimpan",
-        `${Object.keys(result.errors).length} field perlu diperbaiki.`,
+        refusal ? "Tidak diizinkan" : "Belum bisa disimpan",
+        refusal ?? `${Object.keys(result.errors).length} field perlu diperbaiki.`,
         "err"
       );
       return;
@@ -174,6 +183,10 @@ export function EntityForm({
                   <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
                 </button>
               </>
+            ) : locked ? (
+              <span className="bdg s-mute" title={COMPANY_LOCK_BODY}>
+                <Icon name="lock" size={11} /> {COMPANY_LOCK_BADGE}
+              </span>
             ) : (
               <Link className="btn primary" href={`${basePath}/${row!.id}/edit`}>
                 <Icon name="pen" size={15} /> Ubah
@@ -182,6 +195,7 @@ export function EntityForm({
           </div>
         </div>
         <p className="ph-sub">{entity.desc}</p>
+        {locked && <p className="ph-sub">{COMPANY_LOCK_BODY}</p>}
       </div>
 
       <div className="fgrid">

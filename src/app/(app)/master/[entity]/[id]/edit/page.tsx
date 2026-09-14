@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { EntityForm } from "@/components/master/entity-form";
+import { EntityLocked } from "@/components/master/entity-locked";
+import { isCompanyEntity } from "@/lib/siba/company";
 import { entityBySlug } from "@/lib/siba/entities";
 import { getRow, refOptions } from "@/lib/siba/records";
 
@@ -16,6 +18,20 @@ export default async function EntityEditPage({
 
   const row = await getRow(entity, Number(id));
   if (!row) notFound();
+
+  // Company is edit-locked — the route renders an explanation, never a form.
+  if (isCompanyEntity(entity.slug)) {
+    const label = entity.labelField ? String(row[entity.labelField] ?? "") : "";
+    const name = String(row[entity.nameField] ?? "");
+    return (
+      <EntityLocked
+        entity={entity}
+        mode="edit"
+        subject={label ? `${label} – ${name}` : name}
+        backHref={`/${entity.module}/${entity.slug}/${row.id}`}
+      />
+    );
+  }
 
   const refs = await refOptions(entity);
 

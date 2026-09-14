@@ -2,6 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import {
+  COMPANY_CREATE_BLOCKED,
+  COMPANY_UPDATE_BLOCKED,
+  isCompanyEntity,
+} from "@/lib/siba/company";
 import { type Entity, type Field } from "@/lib/siba/entities";
 import { delegate, nextCode, requireEntity } from "@/lib/siba/records";
 
@@ -10,6 +15,10 @@ const CURRENT_USER = 2;
 
 export type FormValues = Record<string, string | boolean | null>;
 
+/**
+ * `errors` is keyed by field name, except for `_form` — a whole-form refusal
+ * that no single field can carry, such as a locked entity.
+ */
 export type SaveResult =
   | { ok: true; id: number; code?: string }
   | { ok: false; errors: Record<string, string> };
@@ -63,33 +72,9 @@ async function validate(
     }
   }
 
-  // Exactly one company may be the treasury parent.
-  if (entity.key === "sys_company") {
-    const wantsParent = coerce({ name: "is_parent", label: "", type: "bool" }, values.is_parent);
-    if (wantsParent) {
-      const other = await prisma.sysCompany.findFirst({
-        where: { is_parent: true, ...(currentId ? { id: { not: currentId } } : {}) },
-        select: { id: true },
-      });
-      if (other) {
-        errors.is_parent =
-          "Sudah ada Company induk. Hanya boleh satu induk dalam satu sistem.";
-      }
-    } else if (currentId) {
-      const current = await prisma.sysCompany.findUnique({
-        where: { id: currentId },
-        select: { is_parent: true },
-      });
-      const anyOther = await prisma.sysCompany.findFirst({
-        where: { is_parent: true, id: { not: currentId } },
-        select: { id: true },
-      });
-      if (current?.is_parent && !anyOther) {
-        errors.is_parent =
-          "Harus ada satu Company yang ditetapkan sebagai induk.";
-      }
-    }
-  }
+  // Company has no write path, so there is no single-parent rule to validate
+  // here — the invariant is asserted against the seeded data instead, by
+  // `companyStructure()` in records.ts.
 
   // A cash/bank resource must post to an account owned by the same company.
   if (entity.key === "m_cash_bank") {
@@ -122,6 +107,13 @@ export async function createRecord(
   slug: string,
   values: FormValues
 ): Promise<SaveResult> {
+  // Company is create-locked: the two-company structure is foundational, so the
+  // count can never change from the application. Checked here rather than only
+  // in the UI, because a Server Action is reachable directly.
+  if (isCompanyEntity(slug)) {
+    return { ok: false, errors: { _form: COMPANY_CREATE_BLOCKED } };
+  }
+
   const entity = requireEntity(slug);
 
   const errors = await validate(entity, values, null);
@@ -151,6 +143,12 @@ export async function updateRecord(
   id: number,
   values: FormValues
 ): Promise<SaveResult> {
+  // Company is edit-locked for the same reason it is create-locked. Identity
+  // changes go through seed data, not through this path.
+  if (isCompanyEntity(slug)) {
+    return { ok: false, errors: { _form: COMPANY_UPDATE_BLOCKED } };
+  }
+
   const entity = requireEntity(slug);
 
   const errors = await validate(entity, values, id);
@@ -181,6 +179,11 @@ export async function toggleStatus(
   slug: string,
   id: number
 ): Promise<{ ok: boolean; status?: string; message?: string }> {
+  // Deactivating is an edit, so the company lock covers it too.
+  if (isCompanyEntity(slug)) {
+    return { ok: false, message: COMPANY_UPDATE_BLOCKED };
+  }
+
   const entity = requireEntity(slug);
   if (!entity.statusField) {
     return { ok: false, message: `${entity.name} tidak memiliki status.` };

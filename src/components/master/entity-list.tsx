@@ -8,6 +8,11 @@ import { useToast } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toggleStatus } from "@/app/actions/master";
 import {
+  COMPANY_LOCK_BADGE,
+  COMPANY_LOCK_BODY,
+  isCompanyEntity,
+} from "@/lib/siba/company";
+import {
   STATUS_CLASS,
   STATUS_TEXT,
   TAG_CLASS,
@@ -32,6 +37,8 @@ export function EntityList({
 }) {
   const router = useRouter();
   const toast = useToast();
+  /** Company has no write path at all — see `lib/siba/company.ts`. */
+  const locked = isCompanyEntity(entity.slug);
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ field: string; dir: "asc" | "desc" } | null>(null);
@@ -236,12 +243,19 @@ export function EntityList({
             {entity.name}
           </h1>
           <div className="ph-act">
-            <Link className="btn primary" href={`${basePath}/new`}>
-              <Icon name="plus" size={15} /> {createLabel(entity)}
-            </Link>
+            {locked ? (
+              <span className="bdg s-mute" title={COMPANY_LOCK_BODY}>
+                <Icon name="lock" size={11} /> {COMPANY_LOCK_BADGE}
+              </span>
+            ) : (
+              <Link className="btn primary" href={`${basePath}/new`}>
+                <Icon name="plus" size={15} /> {createLabel(entity)}
+              </Link>
+            )}
           </div>
         </div>
         <p className="ph-sub">{entity.desc}</p>
+        {locked && <p className="ph-sub">{COMPANY_LOCK_BODY}</p>}
       </div>
 
       <div className="card">
@@ -324,16 +338,18 @@ export function EntityList({
                           >
                             <Icon name="eye" size={15} />
                           </button>
-                          <button
-                            className="iact"
-                            title="Ubah"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              router.push(`${basePath}/${row.id}/edit`);
-                            }}
-                          >
-                            <Icon name="pen" size={15} />
-                          </button>
+                          {!locked && (
+                            <button
+                              className="iact"
+                              title="Ubah"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`${basePath}/${row.id}/edit`);
+                              }}
+                            >
+                              <Icon name="pen" size={15} />
+                            </button>
+                          )}
                           {entity.statusField && (
                             <button
                               className="iact"
@@ -418,19 +434,24 @@ export function EntityList({
               <p>
                 {rows.length
                   ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
-                  : `Data akan muncul di sini setelah ${entity.single ?? entity.name} pertama dibuat.`}
+                  : locked
+                    ? COMPANY_LOCK_BODY
+                    : `Data akan muncul di sini setelah ${entity.single ?? entity.name} pertama dibuat.`}
               </p>
-              <div className="cta">
-                {rows.length ? (
-                  <button className="btn" onClick={clearAll}>
-                    Bersihkan filter
-                  </button>
-                ) : (
-                  <Link className="btn primary" href={`${basePath}/new`}>
-                    <Icon name="plus" size={15} /> {createLabel(entity)}
-                  </Link>
-                )}
-              </div>
+              {/* A CTA only when the user can actually act on it. */}
+              {(rows.length > 0 || !locked) && (
+                <div className="cta">
+                  {rows.length ? (
+                    <button className="btn" onClick={clearAll}>
+                      Bersihkan filter
+                    </button>
+                  ) : (
+                    <Link className="btn primary" href={`${basePath}/new`}>
+                      <Icon name="plus" size={15} /> {createLabel(entity)}
+                    </Link>
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}
