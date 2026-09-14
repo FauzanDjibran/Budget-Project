@@ -1,17 +1,16 @@
 ---
 name: run-siba
-description: Run the SIBA app locally so it is reachable at http://localhost:3000 in a browser. Use when the user says "Run SIBA", "start SIBA", "run the app", "start the dev server", or otherwise asks to have the application up on their own machine. Brings up the local PostgreSQL, prepares the database (migrate, and seed only when empty), and starts `npm run dev`.
+description: Run the SIBA app so it serves at http://localhost:3000. Use whenever the user says "Run SIBA", "start SIBA", "run the app", "restart SIBA", or otherwise asks to have the application up. Starts PostgreSQL, prepares the database (migrate, and seed only when empty), and leaves `npm run dev` serving.
 ---
 
-# Run SIBA locally
+# Run SIBA
 
-Bring the app up on **this machine** at <http://localhost:3000>.
+Bring the app up at <http://localhost:3000> and leave it running.
 
-> **Refuse if you are not on the user's machine.** This skill is only meaningful
-> in a local Claude Code session. If you are running in a remote/cloud container
-> (Claude Code on the web, a CI runner, a sandbox), say so plainly and stop —
-> `localhost` there is not the user's `localhost`, and starting a server would
-> produce a URL they cannot open. Do not pretend otherwise.
+Run it wherever this session is — a local machine or a remote/cloud container.
+In a container, note once that `localhost:3000` is the container's own and may
+not be reachable from the user's browser, then start it anyway; the user asked
+for it running and may be reaching it another way.
 
 Work through the steps in order. Stop at the first one that fails and report the
 actual error rather than guessing past it.
