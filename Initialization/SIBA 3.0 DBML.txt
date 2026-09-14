@@ -1,0 +1,548 @@
+//----------------------------------
+// Sys Table
+//----------------------------------
+
+table sys_company {
+  id                          bigint [pk, increment, not null]
+ 
+  company_code               varchar(255) [not null, unique]
+
+  company_label               varchar(255) [not null]
+  company_name                varchar(255) [not null]
+
+  note                        text
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+table sys_account_type {
+  id                          bigint [pk, increment, not null]
+
+  type_code                   varchar(255) [not null, unique]
+
+  type_label                  varchar(255) [not null, unique]
+  type_name                   varchar(255) [not null]
+
+  note                        text
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+table sys_doc_type {
+  id                          bigint [pk, increment, not null]
+
+  doc_code                    varchar(255) [not null, unique]
+
+  doc_label                   varchar(255) [not null]
+  doc_name                    varchar(255) [not null]
+
+  doc_table                   varchar(255) [not null]
+
+  note                        text
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`] 
+}
+
+
+// Titipan, Hutang, Piutang, Prive, Asset, Biaya, Investasi, Hasil Investasi
+table sys_budget_category {
+  id                          bigint [pk, increment, not null]
+
+  category_code               varchar(255) [not null, unique]
+
+  category_label              varchar(255) [not null]
+  category_name               varchar(255) [not null]
+
+  note                        text
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`] 
+}
+
+//('Titipan', 'Prive', 'Cabang', 'Karyawan')
+
+table sys_partner_category {
+  id                          bigint [pk, increment, not null]
+
+  category_code               varchar(255) [not null, unique]
+
+  category_label              varchar(255) [not null]
+  category_name               varchar(255) [not null]
+
+  note                        text
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`] 
+}
+
+
+//----------------------------------
+// Ref Table
+//----------------------------------
+
+table ref_currency {
+  id                          bigint [pk, increment, not null]
+
+  currency_code               varchar(255) [not null, unique]
+
+  currency_label              varchar(255) [not null]
+  currency_name               varchar(255) [not null]
+
+  note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+//----------------------------------
+// Master Table
+//----------------------------------
+
+table m_partner {
+  id                          bigint [pk, increment, not null]
+
+  partner_code                varchar(255) [not null, unique]
+
+  partner_label               varchar(255) [not null]
+  partner_name                varchar(255) [not null]
+
+  company_id                  bigint [not null, ref : > sys_company.id]
+
+  category_id                 bigint [not null, ref : > sys_partner_category.id]
+
+  note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+table m_cash_bank {
+  id                          bigint [pk, increment, not null]
+
+  cash_bank_code              varchar(255) [not null, unique]
+
+  cash_bank_label             varchar(255) [not null]
+  cash_bank_name              varchar(255) [not null]
+
+  company_id                  bigint [not null, ref : > sys_company.id]
+
+  cash_bank_type              enum('Cash', 'Bank') [not null]
+  currency_id                 bigint [not null, ref : > ref_currency.id]
+  
+  account_id                  bigint [not null, ref : > acc_account.id] // account group = cash bank
+
+  note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]  
+}
+
+//----------------------------------
+// Accounting Table
+//----------------------------------
+
+table acc_account_category {
+  id                          bigint [pk, increment, not null]
+
+  account_type_id             bigint [not null, ref : > sys_account_type.id]
+
+  category_code               varchar(255) [not null, unique]
+
+  category_label              varchar(255) [not null]
+  category_name               varchar(255) [not null]
+
+  note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+table acc_account_subcategory {
+  id                          bigint [pk, increment, not null]
+
+  account_category_id         bigint [not null, ref : > acc_account_category.id]
+
+  subcategory_code            varchar(255) [not null, unique]
+
+  subcategory_label           varchar(255) [not null]
+  subcategory_name            varchar(255) [not null]
+
+  note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+table acc_account {
+  id                          bigint [pk, increment, not null]
+
+  account_subcategory_id      bigint [not null, ref : > acc_account_subcategory.id]
+
+  account_code                varchar(255) [not null, unique]
+
+  account_label               varchar(255) [not null]
+  account_name                varchar(255) [not null]
+
+  company_id                  bigint [not null, ref : > sys_company.id]
+
+  parent_account              bigint [ref : >? acc_account.id]
+  is_postable                 boolean [not null, default: true]
+
+  normal_balance              enum('Debit', 'Kredit') [not null]
+
+  require_partner             boolean [not null, default: false]
+  partner_type                enum('Supplier', 'Customer') // diganti nanti
+
+  is_control_account          boolean [not null, default: false]
+
+  note                        text
+
+  is_active                   boolean [not null, default: true]
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]               
+}
+
+table acc_budget_category_account {
+  id                          bigint [pk, increment, not null]
+
+  budget_category_id          bigint [not null, ref : > sys_budget_category.id]
+  company_id                  bigint [not null, ref : > sys_company.id]
+
+  account_id                  bigint [not null, ref : > acc_account.id]
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+table acc_fiscal_year {
+  id                          bigint [pk, increment, not null]
+
+  year_code                   varchar(255) [not null, unique]
+
+  year_label                  varchar(255) [not null]
+  year_name                   varchar(255) [not null]
+
+  start_date                  date [not null]
+  end_date                    date [not null]
+
+  note                        text
+
+  status                      enum('Draft', 'Open', 'Closed') [not null]
+  
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]               
+}
+
+table acc_fiscal_period {
+  id                          bigint [pk, increment, not null]
+
+  fiscal_year_id              bigint [not null, ref : > acc_fiscal_year.id]
+  sequence_no                 int [not null]
+
+  period_code                 varchar(255) [not null, unique]
+
+  period_label                varchar(255) [not null]
+  period_name                 varchar(255) [not null]
+
+  start_date                  date [not null]
+  end_date                    date [not null]
+
+  note                        text
+
+  status                      enum('Draft', 'Open', 'Closed') [not null]
+  
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]               
+}
+
+table acc_opening_balance {
+  id                          bigint [pk, increment, not null]
+
+  opening_no                  varchar(255) [not null, unique]
+  posting_date                date [not null]
+
+  fiscal_year_id              bigint [not null, ref : > acc_fiscal_year.id]
+  source_fiscal_year_id       bigint [ref : >? acc_fiscal_year.id]
+
+  company_id                  bigint [not null, ref : > sys_company.id]
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]               
+}
+
+table acc_opening_balance_line {
+  id                          bigint [pk, increment, not null]
+
+  opening_id                  bigint [not null, ref : > acc_opening_balance.id]
+  sequence_no                 int [not null]
+
+  account_id                  bigint [not null, ref : > acc_account.id]
+  partner_id                  bigint [ref : >? m_partner.id]
+
+  debit_amount                decimal(18,2) [not null, default: 0]
+  kredit_amount               decimal(18,2) [not null, default: 0]
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]               
+}
+
+table acc_journal {
+  id                          bigint [pk, increment, not null]
+
+  journal_no                  varchar(255) [not null, unique]
+  posting_date                date [not null]
+
+  source_doc_type_id          bigint [ref : >? sys_doc_type.id]
+  source_doc_id               bigint 
+
+  company_id                  bigint [not null, ref : > sys_company.id]
+
+  description                 text [not null]
+
+  status                      enum('Draft', 'Posted') [not null]
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]               
+}
+
+table acc_journal_line {
+  id                          bigint [pk, increment, not null]
+
+  journal_id                  bigint [not null, ref : > acc_journal.id]
+  sequence_no                 int [not null]
+
+  account_id                  bigint [not null, ref : > acc_account.id]
+  partner_id                  bigint [ref : >? m_partner.id]
+
+  currency_id                 bigint [not null, ref : > ref_currency.id]
+  exchange_rate               decimal(18,6) [not null, default: 1]
+
+  debit_amount                decimal(18,2) [not null, default: 0]
+  kredit_amount               decimal(18,2) [not null, default: 0]
+
+  trx_amount                  decimal(18,2) [not null] // nilai 
+
+  description                 text [not null]
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]               
+}
+
+//----------------------------------
+// Budget Table
+//----------------------------------
+
+table bud_budget {
+  id                          bigint [pk, increment, not null]
+
+  budget_no                   varchar(255) [not null, unique]
+
+  budget_date                 date [not null]
+                   
+  company_id                  bigint [not null, ref : > sys_company.id]
+
+  currency_id                 bigint [not null, ref : > ref_currency.id]
+
+  budget_type                 enum('In', 'Out') [not null]
+
+  // nullable sampai nanti saat approve di berikan
+  category_id                 bigint [ref : >? sys_budget_category.id]
+  partner_id                  bigint [ref : >? m_partner.id]
+
+  description                 text [not null]
+
+  budget_amount               decimal(18,6) [not null]
+  realized_amount             decimal(18,6) [not null, default: 0]
+
+  status                      enum('Draft', 'Cancelled','Submitted','Rejected','Open','Closed') [not null]
+
+  created_by                  bigint [not null]
+  updated_by                  bigint
+
+  created_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  datetime [not null, default: `CURRENT_TIMESTAMP`]               
+}
+
+//----------------------------------
+// Finance Table
+//----------------------------------
+
+table fin_cash_bank_transaction {
+  id                            bigint [pk, increment, not null]
+
+  transaction_no                varchar(255) [not null, unique]
+  document_date                 date [not null]
+  posting_date                  datetime
+
+  transaction_type              enum('In', 'Out') [not null] // sesuai dengan menu UI IN, OUT, Transfer
+
+  company_id                    bigint [not null, ref : > sys_company.id]
+
+  purpose                       varchar(255) [not null] // nanti akan berkembang sesuai kebutuhan
+  //OUT :
+  // 
+
+  //IN : 
+  // 
+
+  cash_bank_id                  bigint [ref : >? m_cash_bank.id]
+
+  currency_id                   bigint [not null, ref : > ref_currency.id] // currency dari bank
+  exchange_rate                 decimal(18,6) [not null, default: 1]
+
+  partner_id                    bigint [ref : >? m_partner.id] // tidak semua purpose punya partner
+
+  transaction_amount            decimal(18,2) [not null]
+  transaction_base_amount       decimal(18,2) [not null] // akumulasi base dari line 
+
+  note                          text
+
+  status                        enum('Draft', 'Posted', 'Cancelled') [not null, default: 'Draft']
+
+  created_by                    bigint [not null]
+  updated_by                    bigint
+
+  created_at                    datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                    datetime [not null, default: `CURRENT_TIMESTAMP`]                
+}
+
+table fin_cash_bank_transaction_line {
+  id                            bigint [pk, increment, not null]
+
+  transaction_id                bigint [not null, ref : > fin_cash_bank_transaction.id]
+  sequence_no                   int [not null]
+
+  // reference bebas agar bisa menampung berbagai macam dokumen
+  source_doc_type_id            bigint [not null, ref : > sys_doc_type.id]
+  source_doc_id                 bigint [not null]
+
+  outstanding_amount            decimal(18,2) [not null] // snapshot brp yang bisa dibayar pada saat itu, selalu dalam mata uang asli
+  // cukup nilai asli, base outstanding kurang bermanfaat
+
+  settlement_amount             decimal(18,2) [not null] // nominal source dokumen yang diselesaikan dalam mata uang asli
+  settlement_base_amount        decimal(18,2) [not null] // nominal source dokumen yang diselesaikan dalam mata uang base
+  
+  settlement_exchange_rate      decimal(18,6)
+  // conversion rate dari source document currency
+  // ke cash/bank transaction currency
+  // hanya digunakan jika conversion diperlukan
+
+  transaction_amount            decimal(18,2) [not null] // // nominal cash/bank yang bergerak dalam currency header
+  transaction_base_amount       decimal(18,2) [not null] // nominal cash / bank yang bergerak dalam base (menggunakan catatan)
+
+  created_by                    bigint [not null]
+  updated_by                    bigint
+
+  created_at                    datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                    datetime [not null, default: `CURRENT_TIMESTAMP`]                
+}
+
+table fin_funding_request {
+  id                            bigint [pk, increment, not null]
+
+  funding_request_no            varchar(255) [not null, unique]
+
+  request_date                  date [not null]
+
+  // Realization / Cash Bank Transaction yang membutuhkan treasury
+  transaction_id                bigint [not null, ref: > fin_cash_bank_transaction.id]
+
+  // Company yang meminta / membutuhkan treasury
+  requesting_company_id         bigint [not null, ref: > sys_company.id]
+
+  // Company yang menjadi Treasury Provider
+  treasury_provider_company_id  bigint [not null, ref: > sys_company.id]
+
+  // IN  = Provider menerima dari Requesting Company
+  // OUT = Provider memberi kepada Requesting Company
+  direction                     enum('In', 'Out') [not null]
+
+  // Currency kebutuhan / settlement
+  currency_id                   bigint [not null, ref: > ref_currency.id]
+
+  // Nominal kebutuhan dalam currency di atas.
+  // Tidak memiliki exchange rate dan base amount.
+  request_amount                decimal(18,6) [not null]
+
+  // Bank yang dipilih oleh Treasury Provider.
+  // NULL ketika Request masih Open.
+  provider_cash_bank_id         bigint [ref: >? m_cash_bank.id]
+
+  status                        enum('Open', 'Closed') [not null, default: 'Open']
+
+  note                          text
+
+  created_by                    bigint [not null]
+  updated_by                    bigint
+
+  created_at                    datetime [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                    datetime [not null, default: `CURRENT_TIMESTAMP`]
+}

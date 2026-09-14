@@ -1,0 +1,563 @@
+// SIBA 3.0 — Prisma schema
+//
+// Translated from `Initialization/SIBA 3.0 DBML.txt` (MySQL-flavoured DBML).
+// Scope: V1 = parity with `SIBA Mockup 2.0.html`.
+//
+// Deliberate deviations from the source DBML, each flagged in the analysis:
+//   * `datetime`            -> DateTime @db.Timestamptz(6)
+//   * inline `enum(...)`    -> native Postgres enums
+//   * `bigint` ids          -> Int (avoids BigInt serialization pain across the
+//                             server/client boundary; ample for this domain)
+//   * money `decimal(18,6)` -> Decimal(18,2). The DBML used (18,6) only on
+//                             budget_amount / realized_amount; every other money
+//                             column was (18,2). Treated as a typo. Exchange
+//                             rates keep (18,6).
+//   * created_by/updated_by stay plain Int with no FK, exactly as the DBML
+//                             declares them (it defines no ref for these).
+//
+// Additions the mockup requires but the DBML lacks:
+//   * SysUser                      — nothing in the DBML backs created_by/updated_by
+//   * SysCompany.is_parent         — treasury-provider modelling
+//   * AccAccount.partner_category_id       — one account holds one partner category
+//   * AccBudgetCategoryAccount.partner_category_id — category x partner-category -> account
+//   * MCashBank.balance            — mock-only running balance; v2 replaces it with cash_bank_book
+//   * AuditLog                     — the mockup's in-memory `_audit` array
+//
+// Dropped vs the DBML:
+//   * AccAccount.partner_type — flagged `// diganti nanti` in the source and
+//     superseded by partner_category_id.
+//
+// Deferred to V2 (present in the DBML and/or concept doc, no UI in the mockup):
+//   acc_opening_balance(_line), acc_journal(_line), fin_funding_request,
+//   and the operational books: cash_bank_book, prive/titipan/hutang/piutang
+//   ledgers, general_ledger, intercompany_event.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- enums
+
+enum ActiveStatus {
+  Active
+  Inactive
+}
+
+enum CashBankType {
+  Cash
+  Bank
+}
+
+enum NormalBalance {
+  Debit
+  Kredit
+}
+
+enum FiscalStatus {
+  Draft
+  Open
+  Closed
+}
+
+enum FlowDirection {
+  In
+  Out
+}
+
+enum BudgetStatus {
+  Draft
+  Cancelled
+  Submitted
+  Rejected
+  Open
+  Closed
+}
+
+enum TransactionStatus {
+  Draft
+  Posted
+  Cancelled
+}
+
+enum AuditAction {
+  TAMBAH
+  UPDATE
+  HAPUS
+}
+
+// ---------------------------------------------------------------- auth
+
+model SysUser {
+  id            Int          @id @default(autoincrement())
+  email         String       @unique
+  name          String
+  initials      String
+  password_hash String
+  status        ActiveStatus @default(Active)
+
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("sys_user")
+}
+
+// ---------------------------------------------------------------- sys
+
+model SysCompany {
+  id            Int     @id @default(autoincrement())
+  company_code  String  @unique
+  company_label String
+  company_name  String
+  /// Treasury provider flag. Exactly one company may be the parent; every other
+  /// company is treated as its child. Not in the DBML — added for concept v3.
+  is_parent     Boolean @default(false)
+  note          String?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  partners     MPartner[]
+  cash_banks   MCashBank[]
+  accounts     AccAccount[]
+  mappings     AccBudgetCategoryAccount[]
+  budgets      BudBudget[]
+  transactions FinCashBankTransaction[]
+
+  @@map("sys_company")
+}
+
+model SysAccountType {
+  id         Int     @id @default(autoincrement())
+  type_code  String  @unique
+  type_label String  @unique
+  type_name  String
+  note       String?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  account_categories AccAccountCategory[]
+
+  @@map("sys_account_type")
+}
+
+model SysDocType {
+  id        Int     @id @default(autoincrement())
+  doc_code  String  @unique
+  doc_label String
+  doc_name  String
+  doc_table String
+  note      String?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  transaction_lines FinCashBankTransactionLine[]
+
+  @@map("sys_doc_type")
+}
+
+model SysBudgetCategory {
+  id             Int     @id @default(autoincrement())
+  category_code  String  @unique
+  category_label String
+  category_name  String
+  note           String?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  budgets  BudBudget[]
+  mappings AccBudgetCategoryAccount[]
+
+  @@map("sys_budget_category")
+}
+
+model SysPartnerCategory {
+  id             Int     @id @default(autoincrement())
+  category_code  String  @unique
+  category_label String
+  category_name  String
+  note           String?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  partners MPartner[]
+  accounts AccAccount[]
+  mappings AccBudgetCategoryAccount[]
+
+  @@map("sys_partner_category")
+}
+
+// ---------------------------------------------------------------- ref
+
+model RefCurrency {
+  id             Int          @id @default(autoincrement())
+  currency_code  String       @unique
+  currency_label String
+  currency_name  String
+  note           String?
+  status         ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  cash_banks   MCashBank[]
+  budgets      BudBudget[]
+  transactions FinCashBankTransaction[]
+
+  @@map("ref_currency")
+}
+
+// ---------------------------------------------------------------- master
+
+model MPartner {
+  id            Int          @id @default(autoincrement())
+  partner_code  String       @unique
+  partner_label String
+  partner_name  String
+  company_id    Int
+  category_id   Int
+  note          String?
+  status        ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company  SysCompany         @relation(fields: [company_id], references: [id])
+  category SysPartnerCategory @relation(fields: [category_id], references: [id])
+
+  budgets      BudBudget[]
+  transactions FinCashBankTransaction[]
+
+  @@index([company_id])
+  @@index([category_id])
+  @@map("m_partner")
+}
+
+model MCashBank {
+  id              Int          @id @default(autoincrement())
+  cash_bank_code  String       @unique
+  cash_bank_label String
+  cash_bank_name  String
+  company_id      Int
+  cash_bank_type  CashBankType
+  currency_id     Int
+  account_id      Int
+  /// Mock-only running balance, carried over so V1 matches the mockup. In V2
+  /// the balance is derived from cash_bank_book and this column goes away.
+  balance         Decimal      @default(0) @db.Decimal(18, 2)
+  note            String?
+  status          ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company  SysCompany  @relation(fields: [company_id], references: [id])
+  currency RefCurrency @relation(fields: [currency_id], references: [id])
+  account  AccAccount  @relation(fields: [account_id], references: [id])
+
+  transactions FinCashBankTransaction[]
+
+  @@index([company_id])
+  @@map("m_cash_bank")
+}
+
+// ---------------------------------------------------------------- accounting
+
+model AccAccountCategory {
+  id              Int          @id @default(autoincrement())
+  account_type_id Int
+  category_code   String       @unique
+  category_label  String
+  category_name   String
+  note            String?
+  status          ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  account_type   SysAccountType          @relation(fields: [account_type_id], references: [id])
+  subcategories  AccAccountSubcategory[]
+
+  @@index([account_type_id])
+  @@map("acc_account_category")
+}
+
+model AccAccountSubcategory {
+  id                  Int          @id @default(autoincrement())
+  account_category_id Int
+  subcategory_code    String       @unique
+  subcategory_label   String
+  subcategory_name    String
+  note                String?
+  status              ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  account_category AccAccountCategory @relation(fields: [account_category_id], references: [id])
+  accounts         AccAccount[]
+
+  @@index([account_category_id])
+  @@map("acc_account_subcategory")
+}
+
+model AccAccount {
+  id                     Int           @id @default(autoincrement())
+  account_subcategory_id Int
+  account_code           String        @unique
+  /// The account number (1101, 110201). Unique within a company — see @@unique
+  /// below. The DBML only constrained the generated account_code globally.
+  account_label          String
+  account_name           String
+  company_id             Int
+  parent_account         Int?
+  is_postable            Boolean       @default(true)
+  normal_balance         NormalBalance
+  require_partner        Boolean       @default(false)
+  /// Not in the DBML. Locks a subledger account to a single partner category so
+  /// subject histories never mix. Replaces the DBML's `partner_type`.
+  partner_category_id    Int?
+  is_control_account     Boolean       @default(false)
+  note                   String?
+  is_active              Boolean       @default(true)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  account_subcategory AccAccountSubcategory @relation(fields: [account_subcategory_id], references: [id])
+  company             SysCompany            @relation(fields: [company_id], references: [id])
+  partner_category    SysPartnerCategory?   @relation(fields: [partner_category_id], references: [id])
+  parent              AccAccount?           @relation("AccountTree", fields: [parent_account], references: [id])
+  children            AccAccount[]          @relation("AccountTree")
+
+  cash_banks MCashBank[]
+  mappings   AccBudgetCategoryAccount[]
+
+  @@unique([company_id, account_label])
+  @@index([company_id])
+  @@index([account_subcategory_id])
+  @@map("acc_account")
+}
+
+model AccBudgetCategoryAccount {
+  id                 Int  @id @default(autoincrement())
+  bca_code           String @unique
+  budget_category_id Int
+  company_id         Int
+  /// Not in the DBML. Without it a single budget category cannot resolve to a
+  /// different account per partner category.
+  partner_category_id Int?
+  account_id         Int
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  budget_category  SysBudgetCategory   @relation(fields: [budget_category_id], references: [id])
+  company          SysCompany          @relation(fields: [company_id], references: [id])
+  partner_category SysPartnerCategory? @relation(fields: [partner_category_id], references: [id])
+  account          AccAccount          @relation(fields: [account_id], references: [id])
+
+  @@unique([company_id, budget_category_id, partner_category_id])
+  @@index([company_id])
+  @@map("acc_budget_category_account")
+}
+
+model AccFiscalYear {
+  id         Int          @id @default(autoincrement())
+  year_code  String       @unique
+  year_label String
+  year_name  String
+  start_date DateTime     @db.Date
+  end_date   DateTime     @db.Date
+  note       String?
+  status     FiscalStatus @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  periods AccFiscalPeriod[]
+
+  @@map("acc_fiscal_year")
+}
+
+model AccFiscalPeriod {
+  id             Int          @id @default(autoincrement())
+  fiscal_year_id Int
+  sequence_no    Int
+  period_code    String       @unique
+  period_label   String
+  period_name    String
+  start_date     DateTime     @db.Date
+  end_date       DateTime     @db.Date
+  note           String?
+  status         FiscalStatus @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  fiscal_year AccFiscalYear @relation(fields: [fiscal_year_id], references: [id])
+
+  @@index([fiscal_year_id])
+  @@map("acc_fiscal_period")
+}
+
+// ---------------------------------------------------------------- budget
+
+model BudBudget {
+  id              Int           @id @default(autoincrement())
+  budget_no       String        @unique
+  budget_date     DateTime      @db.Date
+  company_id      Int
+  currency_id     Int
+  budget_type     FlowDirection
+  /// Both stay null until an approver classifies the budget.
+  category_id     Int?
+  partner_id      Int?
+  description     String
+  budget_amount   Decimal       @db.Decimal(18, 2)
+  realized_amount Decimal       @default(0) @db.Decimal(18, 2)
+  status          BudgetStatus  @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company  SysCompany         @relation(fields: [company_id], references: [id])
+  currency RefCurrency        @relation(fields: [currency_id], references: [id])
+  category SysBudgetCategory? @relation(fields: [category_id], references: [id])
+  partner  MPartner?          @relation(fields: [partner_id], references: [id])
+
+  @@index([company_id])
+  @@index([status])
+  @@index([budget_date])
+  @@map("bud_budget")
+}
+
+// ---------------------------------------------------------------- finance
+
+model FinCashBankTransaction {
+  id               Int           @id @default(autoincrement())
+  transaction_no   String        @unique
+  /// Null until the document is posted. The DBML declared this NOT NULL, but the
+  /// mockup only records it at post time — the point the money actually moves.
+  document_date    DateTime?     @db.Date
+  posting_date     DateTime?     @db.Timestamptz(6)
+  transaction_type FlowDirection
+  company_id       Int
+  /// Purpose key (e.g. `PRV_SH_OUT`). Resolved against the PURPOSE table in
+  /// `src/lib/siba/purpose.ts`, mirroring the mockup. The mockup's own note
+  /// suggests promoting this to a `fin_purpose` config table — a V2 candidate.
+  purpose          String
+  cash_bank_id     Int?
+  currency_id      Int
+  exchange_rate    Decimal       @default(1) @db.Decimal(18, 6)
+  partner_id       Int?
+
+  transaction_amount      Decimal @db.Decimal(18, 2)
+  transaction_base_amount Decimal @db.Decimal(18, 2)
+
+  note   String?
+  status TransactionStatus @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company   SysCompany  @relation(fields: [company_id], references: [id])
+  currency  RefCurrency @relation(fields: [currency_id], references: [id])
+  cash_bank MCashBank?  @relation(fields: [cash_bank_id], references: [id])
+  partner   MPartner?   @relation(fields: [partner_id], references: [id])
+
+  lines FinCashBankTransactionLine[]
+
+  @@index([company_id])
+  @@index([status])
+  @@map("fin_cash_bank_transaction")
+}
+
+model FinCashBankTransactionLine {
+  id             Int @id @default(autoincrement())
+  transaction_id Int
+  sequence_no    Int
+
+  /// Deliberately generic so a line can settle any document type. V1 only ever
+  /// uses doc type = Budget.
+  source_doc_type_id Int
+  source_doc_id      Int
+
+  /// Snapshot of what was settleable at the time, in the source currency.
+  outstanding_amount Decimal @db.Decimal(18, 2)
+
+  settlement_amount        Decimal  @db.Decimal(18, 2)
+  settlement_base_amount   Decimal  @db.Decimal(18, 2)
+  settlement_exchange_rate Decimal? @db.Decimal(18, 6)
+
+  transaction_amount      Decimal @db.Decimal(18, 2)
+  transaction_base_amount Decimal @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  transaction   FinCashBankTransaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  source_doc_type SysDocType           @relation(fields: [source_doc_type_id], references: [id])
+
+  @@unique([transaction_id, sequence_no])
+  @@index([source_doc_type_id, source_doc_id])
+  @@map("fin_cash_bank_transaction_line")
+}
+
+// ---------------------------------------------------------------- audit
+
+/// Backs the mockup's in-memory `_audit` array. Referenced loosely by entity key
+/// and row id rather than by FK, since it spans every table.
+model AuditLog {
+  id         Int         @id @default(autoincrement())
+  entity_key String
+  row_id     Int
+  action     AuditAction
+  at         DateTime    @default(now()) @db.Timestamptz(6)
+  by         Int
+
+  @@index([entity_key, row_id])
+  @@map("audit_log")
+}
