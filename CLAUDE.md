@@ -842,7 +842,17 @@ for a finalised design and do not build a rate master.
 
 ## 16. Git / Version Control Conventions
 
-- Single branch `main`; remote `origin` on GitHub.
+- **`main` is the only branch — frozen workflow.** All development happens directly on
+  `main`. Do not create feature branches or session branches, and do not use pull
+  requests as the route to landing work. Commit to `main` and push.
+- **Why:** work once accumulated on a separate cloud-session branch behind a PR. Because
+  cloud sessions run remotely, that work reached GitHub but never the user's local
+  checkout, which sat on `main` — so the running app silently lagged the repository.
+  One branch keeps GitHub, the working tree, and `localhost` in agreement.
+- A session that somehow starts off `main` must merge back and delete the branch promptly.
+  Work done remotely should land on `main` with a note to `git pull`, not be left on a
+  branch to discover.
+- Remote `origin` on GitHub.
 - Commits are small and per-feature.
 - Message style (established over the existing history): a short imperative subject line,
   then a body explaining **why** and calling out deliberate deviations.
