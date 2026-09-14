@@ -809,3 +809,10 @@ table.pkt2 tbody tr.on:hover td{background:#F7F0D4}
   --f:var(--font-jakarta), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --f-mono:var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+
+/* ============================================================ link reset
+   The mockup navigated with <button> and a hash router, so it never styled
+   anchors. Real routing uses <Link>, which renders <a> — strip the browser
+   defaults so the shared button/crumb/leaf classes look the same either way. */
+a{color:inherit;text-decoration:none}
+.crumb a:hover{color:var(--brand)}

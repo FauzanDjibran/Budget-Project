@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/shell/app-shell";
+import { ToastProvider } from "@/components/ui/toast";
 import { prisma } from "@/lib/prisma";
 
 export default async function AppLayout({
@@ -18,15 +19,17 @@ export default async function AppLayout({
   });
 
   return (
-    <AppShell
-      companies={companies.map((c) => ({
-        id: c.id,
-        label: c.company_label,
-        name: c.company_name,
-      }))}
-      user={user ?? { name: "—", initials: "?" }}
-    >
-      {children}
-    </AppShell>
+    <ToastProvider>
+      <AppShell
+        companies={companies.map((c) => ({
+          id: c.id,
+          label: c.company_label,
+          name: c.company_name,
+        }))}
+        user={user ?? { name: "—", initials: "?" }}
+      >
+        {children}
+      </AppShell>
+    </ToastProvider>
   );
 }
