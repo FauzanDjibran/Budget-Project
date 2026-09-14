@@ -70,7 +70,9 @@ source material lives in `Initialization/` (committed, treated as read-only refe
    Locks and business rules must be *enforced*, not merely hidden in the UI.
 6. **Every write is audited.** Creates and updates append to `audit_log`.
 7. **Master data is never deleted.** Deactivate instead. History and references stay intact.
-8. **The company structure is fixed** — exactly one parent and one child, not configurable.
+8. **Two companies, permanently.** One parent (*induk*), one child (*anak*). This is a
+   foundational invariant, not configuration — build on it directly rather than
+   abstracting it into a generic multi-company design.
 9. **Indonesian UI, English code.** User-facing strings are Indonesian; identifiers,
    comments and commit messages are English.
 
@@ -329,10 +331,12 @@ first and resets sequences. Keep it the source of truth for baseline data.
 
 Frozen structural rules:
 
-1. **Fixed two-company structure.** The system supports exactly two companies: one
-   parent (*induk*) and one child (*anak*), both seeded. No third company, no second
-   parent, no second child. The child always requests funding from the parent, and that
-   relationship is baked into business logic rather than being configurable.
+1. **Two companies, permanently.** Exactly two seeded companies: one parent (*induk*,
+   `is_parent = true`) and one child (*anak*). There will never be a third, a second
+   parent, or a second child. This is a **foundation of the application**, not a
+   configurable setup — business logic throughout the system may rely on it.
+   The child **always** requests funding from the parent; resolve the parent from the
+   company master at runtime. No relationship table, no configurable provider.
    Consequently **Company is create-locked and edit-locked** — see §12.
 2. **Master data is never physically deleted.** Deactivate via the status field. Records
    remain for history, traceability and audit; existing references stay intact. No hard
@@ -458,19 +462,46 @@ Specified in the concept doc, **not yet implemented** (V2 — see §13):
 - **Reason:** No external consumer exists; an API layer for ~15 CRUD entities is overhead.
 - **Do not change unless:** an external consumer appears.
 
-### Company structure is fixed — create and edit are locked
-- **Decision:** Exactly two companies exist (one parent, one child), both seeded. The
-  Company UI may remain visible for listing and detail, but **create and edit are locked**.
-  The lock must be **enforced server-side in the Server Action**, not merely hidden in the
-  UI. The child-requests-funding-from-parent relationship is baked into business logic.
-- **Reason:** The company structure is a fixed configuration of this system, not
-  user-configurable data. Hiding buttons alone leaves the action directly reachable.
-- **Impact:** Reverses an earlier decision that enabled Company create. Company is
-  effectively read-only master data. `sys_company.is_parent` stays as a seeded marker but
-  is not user-editable.
-- **Do not change unless:** the user explicitly asks for a configurable company structure.
-  **Do not assume this becomes configurable in V2.**
-- **Status:** Frozen. *Not yet implemented — see §17.*
+### Two-company structure is foundational (FROZEN — architectural bedrock)
+- **Decision:** The application is built around exactly **two permanent companies**: one
+  parent (*induk*, `is_parent = true`) and one child (*anak*). There will never be a
+  third company, a second parent, or a second child. This is a foundation of the
+  application, **not** a configurable multi-company architecture — modules and business
+  logic may assume it directly.
+- **Reason:** This is the real shape of the business. Generalising it into a configurable
+  multi-company ERP adds cost and abstraction for a case that will never occur.
+- **Impact:** Reverses the earlier decision that enabled Company create. Design future
+  modules against this invariant rather than abstracting over it.
+- **Do not change unless:** an explicit new requirement changes the architecture.
+  **Do not assume this becomes configurable in V2 or later.**
+- **Status:** Frozen, foundational. *Lock not yet implemented — see §17.*
+
+**Three consequences of that decision:**
+
+**a. Company create and edit are locked.** The Company UI may stay visible for list and
+detail. Creation and editing must be blocked at **both** layers — routes *and* Server
+Actions. Hiding or disabling the button is not sufficient: `createRecord` and
+`updateRecord` must themselves reject the `company` slug, and any future API entry point
+must too. Implement this directly in application logic; **do not add a configuration
+table to express the restriction**, and do not build a generic per-entity permission
+framework for it.
+
+**b. No treasury-provider relationship model.** With one parent and one child, a
+company-to-company provider mapping is redundant. **Do not add
+`treasury_provider_company_id`, a treasury-provider table, or any other
+company-to-company relationship table.** The `is_parent` flag on the existing company
+master is the entire model: the `is_parent = true` record is the Induk, the other is the
+Anak.
+
+**c. Child funding always goes to the parent.** Resolve the parent from the company
+master at runtime (query `is_parent = true`) rather than hard-coding an id or duplicating
+the relationship anywhere. Do not build a configurable funding-provider mechanism.
+
+**Why the company table is still retained.** It remains a master/reference table so
+company identity — `company_name`, `company_label`, `company_code`, notes — can be
+changed later through the **seeder / seed data**, without touching application code or
+exposing a GUI. It is *not* a mechanism for configuring how many companies exist or how
+they relate. Keep the table; keep it out of the UI's write path.
 
 ### Transaction purposes stay application logic
 - **Decision:** The 22 purposes live in `src/lib/siba/rules.ts` as typed constants plus
@@ -554,7 +585,11 @@ for a finalised design and do not build a rate master.
 - Do **not** edit, move or remove `Initialization/` — it is permanent source material (§12).
 - Do **not** hard-delete master data, or add delete actions / cascading deletes to master
   tables. Deactivate instead.
-- Do **not** allow Company create or edit, or add a third company.
+- Do **not** allow Company create or edit, or add a third company — at any entry point.
+- Do **not** add `treasury_provider_company_id`, a treasury-provider table, or any
+  company-to-company relationship table. `is_parent` is the whole model.
+- Do **not** generalise the two-company structure into a configurable multi-company
+  architecture, or build a configurable funding-provider mechanism.
 - Do **not** create a `fin_purpose` table, an exchange-rate master, or a Budget Month table.
 - Do **not** store a running balance on `m_cash_bank` or any other master table.
 - Do **not** edit `src/generated/prisma/` — regenerate it.
@@ -605,10 +640,10 @@ for a finalised design and do not build a rate master.
 
 | Issue | Detail |
 | --- | --- |
-| **Company create/edit not locked** | §12 freezes the two-company structure and requires the lock to be enforced server-side. The code does not yet enforce it: the registry has no entity-level create/edit flag, `/master/company/new` and `/master/company/[id]/edit` resolve, and `createRecord` / `updateRecord` in `src/app/actions/master.ts` accept the `company` slug. The single-parent rule is enforced, but a third company can still be created. **Highest-priority gap.** |
+| **Company create/edit not locked** | §12 makes the two-company structure foundational and requires the lock at both layers. The code does not enforce it: `/master/company/new` and `/master/company/[id]/edit` resolve, and `createRecord` / `updateRecord` in `src/app/actions/master.ts` accept the `company` slug, so a third company can still be created. The single-parent rule is enforced, but it does not cap the company count. Fix directly in application logic — guard the actions and the routes; no config table, no generic permission framework. **Highest-priority gap.** |
 | No authentication | Every route is open; writes hardcode `CURRENT_USER = 2`. `next-auth` installed but unwired. |
 | `m_cash_bank.balance` still present | Mock-only column, read by nothing in the app. Dropped in V2 (§13). |
-| Schema comment names `cash_bank_book` | `prisma/schema.prisma` says the balance will come from `cash_bank_book`; the confirmed V2 target is `cash_bank_ledger` / `cash_bank_balance`. Comment only — correct it when V2 work begins. |
+| Schema comments predate two frozen decisions | In `prisma/schema.prisma`: the `MCashBank.balance` comment names `cash_bank_book` (confirmed target is `cash_bank_ledger` / `cash_bank_balance`), and the `is_parent` comment says "every other company is treated as its child", implying more than one child. Comments only — no behaviour affected. Correct both when next editing that file. |
 | Company context selector is inert | The topbar dropdown is local state and filters nothing. `Entity.scope` exists in the registry but is unused. |
 | Audit log shows raw table keys | Dashboard renders `m_partner` rather than the mockup's `Partner / Cabang Medan`; needs entity display names + record lookup. |
 | Audit log author hardcoded in dashboard | The activity list prints a fixed email instead of resolving `by`. |
@@ -620,21 +655,14 @@ for a finalised design and do not build a rate master.
 
 ## 18. Needs Confirmation
 
-Do not assume answers to these; ask.
+**Nothing is currently open.** Every previously recorded question has been answered and
+moved into §12 as a frozen decision: the two-company structure and its three consequences
+(company lock, no treasury-provider model, child-funds-from-parent), transaction purposes
+as application logic, cash/bank balance, delete policy, exchange-rate placeholder,
+`Transfer`, Budget Month, and keeping `Initialization/`.
 
-1. **Where the Company lock belongs.** The decision is frozen (§12); the mechanism is not
-   chosen. Options: an entity-level flag in the registry (`noCreate` / `noEdit`), a slug
-   guard in the Server Actions, or both. Both the routes and the actions need covering.
-2. **Treasury provider modelling.** Implemented as a single `sys_company.is_parent` flag.
-   With the structure now fixed at one parent and one child, a per-company
-   `treasury_provider_company_id` FK may be unnecessary — confirm before V2 funding work.
-3. **Child-company funding hard-coding.** The confirmed rule is that the child always
-   requests funding from the parent and this may be baked into business logic. How far to
-   bake it — resolve the parent dynamically at runtime, or treat it as a constant?
-
-Previously open, now settled (see §12): Company create lock, purpose storage,
-`m_cash_bank.balance`, delete policy, exchange rates, `Transfer`, Budget Month, and
-keeping `Initialization/`.
+When something genuinely ambiguous appears, record it here rather than guessing — and
+move it into §12 or §10 once the user confirms it.
 
 ---
 
