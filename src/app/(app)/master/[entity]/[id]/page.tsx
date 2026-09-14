@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { EntityForm } from "@/components/master/entity-form";
+import { requirePermission } from "@/lib/siba/auth";
+import { abilitiesFor, entityPermissions } from "@/lib/siba/entity-access";
 import { entityBySlug } from "@/lib/siba/entities";
 import { getRow, refOptions } from "@/lib/siba/records";
 import { userEmails } from "@/lib/siba/users";
@@ -15,6 +17,11 @@ export default async function EntityDetailPage({
   const entity = entityBySlug(slug);
   if (!entity) notFound();
 
+  const actor = await requirePermission(
+    entityPermissions(entity.key).view,
+    `/${entity.module}/${entity.slug}/${id}`
+  );
+
   const row = await getRow(entity, Number(id));
   if (!row) notFound();
 
@@ -29,6 +36,7 @@ export default async function EntityDetailPage({
       refs={refs}
       createdByEmail={emails[row.created_by as number]}
       updatedByEmail={emails[row.updated_by as number]}
+      can={abilitiesFor(entity.key, actor.permissions)}
     />
   );
 }

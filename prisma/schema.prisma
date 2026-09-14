@@ -24,6 +24,9 @@
 //   * MCashBank.balance            — mock-only running balance; V2 replaces it with
 //                             cash_bank_ledger / cash_bank_balance
 //   * AuditLog                     — the mockup's in-memory `_audit` array
+//   * SysRole / SysPermission / SysUserRole / SysRolePermission / SysSession
+//                                  — authentication and RBAC; the DBML has no
+//                             authentication model at all
 //
 // Dropped vs the DBML:
 //   * AccAccount.partner_type — flagged `// diganti nanti` in the source and
@@ -93,20 +96,138 @@ enum AuditAction {
   HAPUS
 }
 
-// ---------------------------------------------------------------- auth
+// ---------------------------------------------------------------- auth & access
+//
+// RBAC: USER -> ROLE -> PERMISSION. A permission is one atomic capability; a
+// role bundles permissions; a user holds roles. Roles are the only path to a
+// permission — there is deliberately no direct user->permission grant, so the
+// authorization model has exactly one source of truth.
+//
+// None of this is in the source DBML, which has no authentication model at all.
 
 model SysUser {
   id            Int          @id @default(autoincrement())
+  user_code     String       @unique
+  /// The login identifier.
   email         String       @unique
   name          String
   initials      String
+  /// bcrypt. Never selected into anything that crosses to a client component.
   password_hash String
   status        ActiveStatus @default(Active)
+
+  /// Nullable, unlike the other masters: the bootstrap admin has no creator.
+  created_by Int?
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  roles    SysUserRole[]
+  sessions SysSession[]
+
+  @@map("sys_user")
+}
+
+model SysRole {
+  id         Int          @id @default(autoincrement())
+  role_code  String       @unique
+  /// Stable key referenced from application code (ADMIN, STAFF). Immutable on
+  /// system roles, so `src/lib/siba/roles.ts` can rely on it.
+  role_label String       @unique
+  role_name  String
+  /// Seeded roles. ADMIN is frozen: it always carries the whole catalogue and
+  /// cannot be deactivated, which is what guarantees the application always has
+  /// a way to administer users.
+  is_system  Boolean      @default(false)
+  note       String?
+  status     ActiveStatus @default(Active)
+
+  created_by Int?
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  users       SysUserRole[]
+  permissions SysRolePermission[]
+
+  @@map("sys_role")
+}
+
+/// Catalogue rows, owned by `src/lib/siba/permissions.ts` and synced by the
+/// seed. Users never create or edit permissions, so this table carries no
+/// status and no authorship — it is code, materialised for referential
+/// integrity and for the role matrix to read names from.
+model SysPermission {
+  id              Int     @id @default(autoincrement())
+  /// The stable code business logic asks for, e.g. `USER_CREATE`. Deliberately
+  /// not a `<prefix>.<4 digits>` system code: nothing generates these.
+  permission_code String  @unique
+  permission_name String
+  /// Grouping key, matching a nav module where one exists.
+  module          String
+  description     String?
 
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  @@map("sys_user")
+  roles SysRolePermission[]
+
+  @@index([module])
+  @@map("sys_permission")
+}
+
+/// A grant, not master data: revoking removes the row and writes an audit entry.
+model SysUserRole {
+  id      Int @id @default(autoincrement())
+  user_id Int
+  role_id Int
+
+  created_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  user SysUser @relation(fields: [user_id], references: [id])
+  role SysRole @relation(fields: [role_id], references: [id])
+
+  @@unique([user_id, role_id])
+  @@index([user_id])
+  @@map("sys_user_role")
+}
+
+/// A grant, not master data — same reasoning as SysUserRole.
+model SysRolePermission {
+  id            Int @id @default(autoincrement())
+  role_id       Int
+  permission_id Int
+
+  created_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  role       SysRole       @relation(fields: [role_id], references: [id])
+  permission SysPermission @relation(fields: [permission_id], references: [id])
+
+  @@unique([role_id, permission_id])
+  @@index([role_id])
+  @@map("sys_role_permission")
+}
+
+/// Server-side sessions. The cookie carries an opaque random token; only its
+/// SHA-256 is stored, so a database leak does not hand out live sessions.
+/// Revocation is immediate because every request re-reads this row.
+model SysSession {
+  id           Int       @id @default(autoincrement())
+  token_hash   String    @unique
+  user_id      Int
+  expires_at   DateTime  @db.Timestamptz(6)
+  last_seen_at DateTime  @default(now()) @db.Timestamptz(6)
+  /// Set on logout, on password change, and when the user is deactivated.
+  revoked_at   DateTime? @db.Timestamptz(6)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+
+  user SysUser @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@index([expires_at])
+  @@map("sys_session")
 }
 
 // ---------------------------------------------------------------- sys

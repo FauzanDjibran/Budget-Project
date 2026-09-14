@@ -20,6 +20,7 @@ export function ConfirmDialog({
   busy,
   onConfirm,
   onCancel,
+  children,
 }: {
   open: boolean;
   icon: IconName;
@@ -32,6 +33,8 @@ export function ConfirmDialog({
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Extra input the confirmation itself needs, e.g. a replacement password. */
+  children?: React.ReactNode;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -64,6 +67,7 @@ export function ConfirmDialog({
         <h3>{title}</h3>
         {subject && <div className="subj">{subject}</div>}
         <p>{body}</p>
+        {children && <div className="mbody">{children}</div>}
         <div className="mf">
           <button className="btn" onClick={onCancel} disabled={busy}>
             Batal

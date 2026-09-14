@@ -12,6 +12,7 @@ import {
   COMPANY_LOCK_BODY,
   isCompanyEntity,
 } from "@/lib/siba/company";
+import type { EntityAbilities } from "@/lib/siba/entity-access";
 import {
   STATUS_CLASS,
   STATUS_TEXT,
@@ -24,21 +25,33 @@ import type { RefOption, Row } from "@/lib/siba/records";
 
 type Computed = Record<number, Record<string, string | number>>;
 
+/**
+ * `can` mirrors the caller's permissions so the toolbar and row actions only
+ * offer what they may use. It is presentation, not protection: every action
+ * behind these controls re-checks on the server.
+ */
 export function EntityList({
   entity,
   rows,
   refs,
   computed,
+  can,
 }: {
   entity: Entity;
   rows: Row[];
   refs: Record<string, RefOption[]>;
   computed: Computed;
+  can: EntityAbilities;
 }) {
   const router = useRouter();
   const toast = useToast();
   /** Company has no write path at all — see `lib/siba/company.ts`. */
   const locked = isCompanyEntity(entity.slug);
+  const canCreate = can.create && !locked;
+  const canEdit = can.edit && !locked;
+  /** Whether the toggle is offered depends on which way it would go. */
+  const canToggle = (row: Row) =>
+    row.status === "Active" ? can.deactivate : can.activate;
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ field: string; dir: "asc" | "desc" } | null>(null);
@@ -247,11 +260,11 @@ export function EntityList({
               <span className="bdg s-mute" title={COMPANY_LOCK_BODY}>
                 <Icon name="lock" size={11} /> {COMPANY_LOCK_BADGE}
               </span>
-            ) : (
+            ) : canCreate ? (
               <Link className="btn primary" href={`${basePath}/new`}>
                 <Icon name="plus" size={15} /> {createLabel(entity)}
               </Link>
-            )}
+            ) : null}
           </div>
         </div>
         <p className="ph-sub">{entity.desc}</p>
@@ -338,7 +351,7 @@ export function EntityList({
                           >
                             <Icon name="eye" size={15} />
                           </button>
-                          {!locked && (
+                          {canEdit && (
                             <button
                               className="iact"
                               title="Ubah"
@@ -350,7 +363,7 @@ export function EntityList({
                               <Icon name="pen" size={15} />
                             </button>
                           )}
-                          {entity.statusField && (
+                          {entity.statusField && canToggle(row) && (
                             <button
                               className="iact"
                               title={row.status === "Active" ? "Nonaktifkan" : "Aktifkan"}
@@ -439,7 +452,7 @@ export function EntityList({
                     : `Data akan muncul di sini setelah ${entity.single ?? entity.name} pertama dibuat.`}
               </p>
               {/* A CTA only when the user can actually act on it. */}
-              {(rows.length > 0 || !locked) && (
+              {(rows.length > 0 || canCreate) && (
                 <div className="cta">
                   {rows.length ? (
                     <button className="btn" onClick={clearAll}>

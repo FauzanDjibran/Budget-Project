@@ -53,8 +53,10 @@ source material lives in `Initialization/` (committed, treated as read-only refe
 | Accounting module (COA tree, mapping, fiscal period) | Not started |
 | Budget module | Not started |
 | Finance module | Not started |
-| Authentication | **Not started** — `next-auth` installed but unused |
-| Tests | None — no test framework installed |
+| Authentication | Done — email/password, database-backed sessions, login/logout |
+| Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
+| User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
+| Tests | Security suite via `node:test` (`npm test`). No other tests. |
 
 ---
 
@@ -75,6 +77,9 @@ source material lives in `Initialization/` (committed, treated as read-only refe
    abstracting it into a generic multi-company design.
 9. **Indonesian UI, English code.** User-facing strings are Indonesian; identifiers,
    comments and commit messages are English.
+10. **Authorization is server-side and permission-based.** Hiding a button is
+   presentation. Every route and every Server Action asks for a named permission
+   itself. Never branch on a role name in business logic — ask for the permission.
 
 ---
 
@@ -95,6 +100,12 @@ Browser
 writes go through Server Actions. Do not add an API route unless an external consumer
 genuinely requires one.
 
+**Everything passes the same gate.** `src/lib/siba/auth.ts` resolves the session from
+the cookie and answers every authorization question. Pages call `requireAuth` /
+`requirePermission`; Server Actions call `actorOrDeny` / `authorizeAction`. Nothing
+reads the session cookie directly, and no page or action carries an authorization rule
+of its own.
+
 ### Major components
 
 | Layer | Location | Responsibility |
@@ -102,6 +113,15 @@ genuinely requires one.
 | Entity registry | `src/lib/siba/entities.ts` | Field + column config driving list, detail and form |
 | Navigation model | `src/lib/siba/nav.ts` | Modules → groups → entities; rail and submenu |
 | Business rules | `src/lib/siba/rules.ts` | Budget categories, 22 transaction purposes, FX rates |
+| Permission catalogue | `src/lib/siba/permissions.ts` | Every capability in the system; client-safe |
+| Seeded roles | `src/lib/siba/roles.ts` | ADMIN / STAFF and their grants |
+| Authorization gate | `src/lib/siba/auth.ts` | `requireAuth`, `requirePermission`, `authorizeAction` |
+| Access resolution | `src/lib/siba/access.ts` | User -> active roles -> permissions, read per request |
+| Sessions | `src/lib/siba/session.ts` | Issue, validate, revoke; opaque token, SHA-256 at rest |
+| Credentials | `src/lib/siba/login.ts` | bcrypt verification, password rules |
+| User/role admin | `src/lib/siba/user-admin.ts` | Guarded service; all admin-protection rules |
+| Own account | `src/lib/siba/profile.ts` | Profile read/edit, own password change |
+| Entity permissions | `src/lib/siba/entity-access.ts` | Registry entity -> permission per operation |
 | Data access | `src/lib/siba/records.ts` | Generic list/get/options/computed; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
@@ -137,12 +157,12 @@ server→client boundary. Everything passed into a client component must go thro
 | Database | PostgreSQL 18 (local dev) | |
 | Styling | Plain CSS, one global stylesheet | **No utility framework — deliberate** |
 | Fonts | `next/font` — Plus Jakarta Sans + JetBrains Mono | |
-| Auth | `next-auth` v5 beta — **installed, not wired** | |
+| Auth | Built on Next.js + `bcryptjs` + `node:crypto`. **No auth library** — see §12 | |
 | Validation | Hand-written in Server Actions; `zod` installed but **unused** | |
 | Hashing | `bcryptjs` (seed only so far) | |
 | Lint | ESLint 9 + `eslint-config-next` | |
 | Seed runner | `tsx` | |
-| Tests | **None configured** | |
+| Tests | `node:test` via `tsx` — zero extra dependencies (`npm test`) | |
 
 Path alias: `@/*` → `./src/*`.
 
@@ -157,26 +177,43 @@ prisma/
   migrations/            Applied migrations
   seed.ts                Mockup fixtures — the canonical "first initialization" data
 src/
+  proxy.ts               Optimistic redirect to /login (NOT a security boundary)
   app/
     layout.tsx           Root layout: fonts, metadata
-    page.tsx             Redirects to /dashboard
+    page.tsx             Sends a signed-in user to their first permitted page
+    forbidden.tsx        403 outside the shell
     globals.css          Design system, lifted from the mockup (see §12)
+    (auth)/login/        The only page reachable without a session
     (app)/               Route group carrying the shell
-      layout.tsx         Shell + ToastProvider; fetches companies and user
+      layout.tsx         requireAuth + shell; nav filtered by permission
+      forbidden.tsx      403 inside the shell — the refusal screen
+      error.tsx          Generic failure screen (authz never lands here)
       dashboard/
       master/[entity]/   Dynamic: list, /new, /[id], /[id]/edit
-    actions/master.ts    Server Actions for the Master module
+      settings/user/     Admin-only user management (bespoke, not registry)
+      settings/role/     Admin-only roles + permission matrix
+      settings/profile/  Own account — authentication only, no permission
+    actions/
+      master.ts          Master module writes
+      auth.ts            login / logout
+      users.ts           User and role administration
+      profile.ts         Own profile and password
   components/
     icon.tsx             <Icon name size /> renderer
     icon-paths.ts        SVG path map lifted from the mockup
     shell/               App shell
     master/              EntityList, EntityForm
+    settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
+    auth/                LoginForm, AccessDenied
     ui/                  Combobox, ConfirmDialog, ToastProvider
   lib/
     prisma.ts            Client singleton with adapter + dev hot-reload guard
     format.ts            Date/number/money formatting (UTC-based)
-    siba/                entities, nav, rules, records, users
+    siba/                entities, nav, rules, records, users,
+                         permissions, roles, access, auth, auth-errors,
+                         session, login, user-admin, profile, entity-access
   generated/prisma/      Prisma client output — gitignored, never edit
+tests/                   Security suite (node:test); helpers.ts holds fixtures
 ```
 
 **`src/generated/prisma/` is gitignored.** After cloning, run `npx prisma generate`.
@@ -193,6 +230,7 @@ npm run dev                  # dev server → http://localhost:3000
 npm run build                # production build (also typechecks)
 npm start                    # run the production build
 npm run lint                 # ESLint
+npm test                     # security suite — needs a seeded database
 npm run db:seed              # wipe + reseed to the mockup baseline
 npx prisma generate          # regenerate client after schema changes
 npx prisma migrate dev       # create + apply a migration
@@ -203,8 +241,15 @@ npx prisma studio            # browse the database
 create the database (`createdb -U postgres siba30`), then `npx prisma migrate dev` and
 `npm run db:seed`. Full instructions are in `README.md`.
 
-**There is no test suite.** "Validate" currently means: `npm run build`, `npm run lint`,
+**Tests cover the security paths only.** `npm test` runs `tests/*.test.ts` against a
+real, seeded database — authentication, sessions, RBAC, the admin protections, and a
+structural audit that every Server Action resolves its caller before acting. Nothing
+else has tests, so "validate" still means `npm run build`, `npm run lint`, `npm test`,
 and exercising the feature in a browser. State plainly when something is unverified.
+
+The runner is `node:test` through `tsx`, with no extra dependency:
+`node --env-file-if-exists=.env --conditions=react-server --import tsx --test`.
+`--conditions=react-server` is what lets a test import a `server-only` module.
 
 ### Windows / PowerShell gotchas
 
@@ -304,6 +349,9 @@ so `globals.css` ends with an anchor reset. Keep shared classes working for both
 | System codes | `<prefix>.<4 digits>` — `comp.0001`, `part.0011`. Generated by `nextCode()`, never user-entered. |
 | Document numbers | `BGT-0001`, `CBT-0001` |
 | Audit | Every create/update appends to `audit_log` (`entity_key`, `row_id`, `action`, `by`, `at`) |
+| Passwords | bcrypt, cost 10. `password_hash` is read in exactly two functions and selected into nothing else |
+| Session tokens | 256-bit random, stored only as SHA-256. Revoked, never deleted |
+| Grants | `sys_user_role` and `sys_role_permission` rows are grants, not master data: revoking deletes the row and writes an audit entry. The no-delete rule covers records, not assignments |
 
 **Identity triple.** Master records carry three identifiers, and the distinction matters:
 
@@ -355,26 +403,38 @@ Implemented and enforced:
 7. **Inactive records** disappear from new-transaction pickers but remain visible when
    already selected, and all history stays intact.
 8. **Account numbers** are unique per company, not globally (`@@unique([company_id, account_label])`).
+9. **Access comes only from roles.** A user's permissions are the union of their
+   *active* roles' permissions, recomputed from the database on every request. There is
+   no direct user-to-permission grant, and deactivating a role withdraws it from
+   everyone holding it without touching a single assignment.
+10. **Nobody edits their own access.** Roles, status and an administrative password
+   reset are all refused when the target is the caller — for administrators too. Own
+   password changes go through the profile, which verifies the current password.
+11. **The application always keeps an administrator.** Any change leaving no active user
+   holding the administration permissions is refused, and the `ADMIN` role's permission
+   set is frozen so the guard cannot be sidestepped by emptying the role instead.
+12. **A deactivated user loses their sessions immediately.** Deactivation revokes them,
+   and validation re-reads the account's status on every request.
 
 Defined in `rules.ts`, not yet exercised by UI:
 
-9. **Budget category → partner category → account.** Each budget category declares
+13. **Budget category → partner category → account.** Each budget category declares
    which partner categories are valid and which directions (In/Out) make sense.
    Direction follows balance-sheet logic, not cash direction.
-10. **22 transaction purposes.** A purpose is exactly one budget category × one partner
+14. **22 transaction purposes.** A purpose is exactly one budget category × one partner
     category × one direction, which is what lets it resolve to a single account.
     Purposes are **application logic, never a master table** — see §12.
-11. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
+15. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
     and has no independent lifecycle or table.
 
 Specified in the concept doc, **not yet implemented** (V2 — see §13):
 
-12. Post fans out into the cash/bank ledger, subject ledgers, and Journal → General Ledger.
-13. Operational books are independent append-only stores — **never** views over
+16. Post fans out into the cash/bank ledger, subject ledgers, and Journal → General Ledger.
+17. Operational books are independent append-only stores — **never** views over
     journal lines. Only the General Ledger derives from journals.
-14. The child company's realization emits a Funding Request; the parent confirms it and
+18. The child company's realization emits a Funding Request; the parent confirms it and
     one atomic event produces two journals linked by an Intercompany Event.
-15. No partial funding: realization = request = funding amount.
+19. No partial funding: realization = request = funding amount.
 
 ---
 
@@ -382,18 +442,34 @@ Specified in the concept doc, **not yet implemented** (V2 — see §13):
 
 - **Never commit secrets.** `.env` is gitignored; `.env.example` holds placeholders only.
   Never write real credentials into this file, the README, or commit messages.
-- **Authentication is not implemented yet.** Every route is currently open and writes are
-  attributed to a hardcoded `CURRENT_USER = 2`. This is a known gap, not a design choice —
-  see §17. Do not ship this beyond local development.
-- When auth lands: replace `CURRENT_USER` in `src/app/actions/master.ts` and the `TODO`
-  in `src/app/(app)/layout.tsx`; both are marked.
-- **Validate in Server Actions**, not only in the browser — actions are reachable directly.
-- Passwords are bcrypt-hashed. The seed's development password is intentionally weak and
-  must not survive into any deployed environment.
+- **Authentication is required everywhere.** `/login` is the only route reachable without
+  a session. `src/proxy.ts` redirects a visitor with no session cookie, but it is a
+  convenience, not the boundary — it does not touch the database and a forged cookie
+  gets past it. The real check is `requireAuth` in `(app)/layout.tsx` and in every page,
+  and `actorOrDeny` in every Server Action.
+- **Authorize in the Server Action, not in the component.** Actions are reachable
+  directly with a valid action id and any cookie. Hiding a control changes nothing.
+- **Ask for a permission, never for a role.** `if (role === "ADMIN")` in business logic
+  is a bug; `requirePermission("USER_CREATE")` is the rule.
+- **Own-profile access is inherent to authentication**, deliberately not a permission —
+  so no permission change can lock a user out of their own account details. Nothing
+  reachable from the profile can change access.
+- Passwords are bcrypt-hashed and `password_hash` never leaves the two functions that
+  read it. Never select it into anything that crosses to a client component.
+- Sessions are server-side rows; the cookie is an opaque random token, `HttpOnly`,
+  `SameSite=Lax`, and `Secure` in production. Revocation is immediate because every
+  request re-reads the row and the account's status.
+- A password change — the user's own or an administrator's reset — revokes every session
+  the account holds.
+- **Login failures are indistinguishable.** Wrong password, unknown address and
+  deactivated account all return the same message, and the no-such-user path still pays
+  for a bcrypt comparison so timing does not reveal which accounts exist.
+- **Denials say nothing about internals** — no permission codes, no record existence, no
+  stack traces. `UNAUTHENTICATED` redirects to login; `UNAUTHORIZED` renders a 403.
+- The seed's development password is intentionally weak and must not survive into any
+  deployed environment. `SIBA_ADMIN_PASSWORD` is required when `NODE_ENV=production`.
 - Prisma parameterises queries; the one raw call (`$executeRawUnsafe` for sequence resets
   in the seed) takes no user input. Do not introduce raw SQL with interpolated user input.
-
----
 
 ## 12. Important Decisions / Frozen Decisions
 
@@ -550,6 +626,94 @@ they relate. Keep the table; keep it out of the UI's write path.
 - **Do not change unless:** the user explicitly asks for its removal.
 - **Status:** Frozen, current.
 
+### Authentication is built on the framework, not on an auth library (FROZEN)
+- **Decision:** Email/password authentication with **database-backed sessions**, written
+  against Next.js's own `cookies()` API, `bcryptjs`, and `node:crypto`. `next-auth` was
+  removed from the dependencies unused.
+- **Reason:** Three things the library could not give this application. Auth.js v5's
+  Credentials provider supports only JWT sessions, so a deactivated user would keep a
+  valid token until it expired — this system must cut them off on the next request.
+  A `sys_session` table makes revocation immediate and auditable. And leaving a
+  half-wired auth library in the tree invites a second, competing authorization path,
+  which §12's "one authoritative model" forbids. Nothing here is hand-rolled
+  cryptography: bcrypt for passwords, `randomBytes` for tokens, SHA-256 at rest.
+- **Impact:** No `AUTH_SECRET` and no shared signing key to distribute. Reverses the
+  earlier intent recorded in §4 that Auth.js would be wired up.
+- **Do not change unless:** a requirement arrives that genuinely needs a provider
+  ecosystem (SSO, OAuth, MFA). Adding one then means replacing this path, not running
+  alongside it.
+- **Status:** Frozen, current.
+
+### RBAC is role-based only — one authorization path (FROZEN)
+- **Decision:** `USER -> ROLE -> PERMISSION`, and nothing else. No direct
+  user-to-permission grant, no permission inheritance, no ABAC, no per-record ACLs, no
+  policy engine.
+- **Reason:** Two ways to hold a permission means two answers to "may this user do
+  this?", and the safe one is whichever the code happened to check. One path is
+  auditable by reading a single query.
+- **Impact:** Giving one person an exception means giving them a role. That is the
+  intended cost.
+- **Do not change unless:** explicitly instructed. **Do not add a
+  `sys_user_permission` table**, however convenient a one-off exception looks.
+- **Status:** Frozen, current.
+
+### The permission catalogue lives in code
+- **Decision:** `src/lib/siba/permissions.ts` is the source of truth; `sys_permission`
+  is its materialisation, synced by the seed. Permissions carry a stable semantic code
+  (`USER_CREATE`), deliberately **not** the `<prefix>.<4 digits>` convention of §9 —
+  nothing generates them.
+- **Reason:** A permission is a branch in the code. Letting it be created at runtime
+  produces rows no code reads and codes no one can rely on.
+- **Impact:** Adding a capability means adding a catalogue entry and reseeding. The
+  table carries no status and no authorship because users never author it.
+- **Do not change unless:** explicitly instructed. **Do not add a UI for creating or
+  editing permissions.**
+- **Status:** Frozen, current.
+
+### Menu access and actions are separate permissions
+- **Decision:** `MENU_<MODULE>_ACCESS` is distinct from every action inside it, and
+  view / create / edit / activate / deactivate / approve / reject / post are each their
+  own permission.
+- **Reason:** Real roles need exactly this: a user who sees Budget but cannot approve,
+  or edits a document but cannot post it.
+- **Impact:** More catalogue entries, and no shortcuts — never treat a menu permission
+  as implying anything inside the module.
+- **Status:** Frozen, current.
+
+### The application can never be left without an administrator
+- **Decision:** Three protections, enforced in `user-admin.ts`: nobody changes their own
+  roles, status or password from user administration; any change that would leave no
+  active user holding `ADMIN_CRITICAL_PERMISSIONS` is refused; and the `ADMIN` role's
+  permission matrix is frozen at the whole catalogue.
+- **Reason:** A permission check alone does not make privilege changes safe. Without the
+  first, an administrator is one careless click from escalation or self-lockout; without
+  the second and third, the last way into the system can be removed by accident.
+- **Impact:** `ADMIN`'s grants are re-synced by the seed as the catalogue grows. Custom
+  roles and `STAFF` stay fully editable.
+- **Do not change unless:** explicitly instructed. **Do not add a super-admin tier** —
+  these rules exist so a hierarchy is unnecessary.
+- **Status:** Frozen, current.
+
+### User and Role get bespoke routes, not registry entries
+- **Decision:** `/settings/user` and `/settings/role` are hand-written, outside
+  `entities.ts`.
+- **Reason:** The registry expresses fields and columns. It cannot express a password
+  that is write-only, a role assignment gated by a different permission from the rest of
+  the form, or a permission matrix — exactly the escape hatch §12's registry decision
+  anticipated.
+- **Impact:** The registry stays untouched and keeps driving Master.
+- **Status:** Frozen, current.
+
+### `proxy.ts` is a convenience, not a security boundary
+- **Decision:** `src/proxy.ts` checks only that a session cookie is *present* and
+  redirects to `/login`. No database access, no permission evaluation.
+- **Reason:** Proxy runs on every request including prefetches, so a query there is a
+  per-navigation cost; more importantly, request-layer checks are the wrong place to
+  rely on. A forged cookie passes this file and is rejected by the real check.
+- **Impact:** Deleting the file would cost a tidy redirect and nothing else. **Never
+  move an authorization decision into it.**
+- **Status:** Frozen, current.
+
 ### Language convention
 - **Decision:** UI strings Indonesian; code, comments, commit messages English. Technical
   accounting terms stay English inside Indonesian copy (Budget, Cash Bank, Journal).
@@ -592,6 +756,18 @@ for a finalised design and do not build a rate master.
 - Do **not** generalise the two-company structure into a configurable multi-company
   architecture, or build a configurable funding-provider mechanism.
 - Do **not** create a `fin_purpose` table, an exchange-rate master, or a Budget Month table.
+- Do **not** add a `sys_user_permission` table or any second path to a permission —
+  roles are the only one.
+- Do **not** add permission inheritance, ABAC, per-record ACLs, a policy engine, or a
+  super-admin tier.
+- Do **not** create a UI for authoring permissions; the catalogue is code.
+- Do **not** branch on a role name in business logic — ask for the permission.
+- Do **not** rely on a hidden or disabled control as the protection; the Server Action
+  must refuse the same request on its own.
+- Do **not** move an authorization decision into `src/proxy.ts`.
+- Do **not** let any user change their own roles, status, or permissions.
+- Do **not** select `password_hash` into anything that crosses to a client component.
+- Do **not** reintroduce an auth library alongside this one (see §12).
 - Do **not** store a running balance on `m_cash_bank` or any other master table.
 - Do **not** edit `src/generated/prisma/` — regenerate it.
 - Do **not** rewrite `globals.css` or introduce a utility CSS framework.
@@ -617,8 +793,10 @@ for a finalised design and do not build a rate master.
 2. **Smallest change that works.** No speculative abstraction.
 3. **Reuse existing patterns** — registry config, Server Action shape, CSS classes.
 4. **Keep commits small and per-feature**, with the established message style.
-5. **Validate before reporting done:** `npm run build` (typechecks) and `npm run lint`.
-   For UI work, exercise it in a browser; for write paths, verify the row in Postgres.
+5. **Validate before reporting done:** `npm run build` (typechecks), `npm run lint`, and
+   `npm test`. For UI work, exercise it in a browser; for write paths, verify the row in
+   Postgres. Anything touching authentication or authorization needs a test in
+   `tests/` — that is the one area with a suite, and it should stay that way.
 6. **Report** files changed, what was verified, what was not, and anything unresolved.
 7. **Surface conflicts** between the concept doc, the DBML and the mockup — do not
    resolve them silently.
@@ -641,29 +819,36 @@ for a finalised design and do not build a rate master.
 
 | Issue | Detail |
 | --- | --- |
-| No authentication | Every route is open; writes hardcode `CURRENT_USER = 2`. `next-auth` installed but unwired. |
-| `m_cash_bank.balance` still present | Mock-only column, read by nothing in the app. Dropped in V2 (§13). |
 | Company context selector is inert | The topbar dropdown is local state and filters nothing. `Entity.scope` exists in the registry but is unused. |
-| Audit log shows raw table keys | Dashboard renders `m_partner` rather than the mockup's `Partner / Cabang Medan`; needs entity display names + record lookup. |
-| Audit log author hardcoded in dashboard | The activity list prints a fixed email instead of resolving `by`. |
-| `zod` unused | Installed; validation is currently hand-written in the action. |
-| No tests | No framework, no test script. |
+| Audit log shows raw table keys | Dashboard renders `m_partner` rather than the mockup's `Partner / Cabang Medan`; needs entity display names + record lookup. (The author column now resolves correctly.) |
+| Expired sessions are never pruned | `sys_session` rows accumulate: expiry and revocation are honoured on read, but nothing deletes old rows. Harmless until the table is large; a periodic cleanup is the eventual fix. |
+| `m_cash_bank.balance` still present | Mock-only column, read by nothing in the app. Dropped in V2 (§13). |
+| `zod` unused | Installed; validation is hand-written in the services. |
+| Tests cover security only | No tests for the Master module or anything else. |
+| `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Two of the mockup's checks (missing account, dangling FKs) were dropped — Postgres now makes them unrepresentable. This is intentional, recorded so it is not "restored" by mistake. |
-
----
 
 ## 18. Needs Confirmation
 
-**Nothing is currently open.** Every previously recorded question has been answered and
-moved into §12 as a frozen decision: the two-company structure and its three consequences
-(company lock, no treasury-provider model, child-funds-from-parent), transaction purposes
-as application logic, cash/bank balance, delete policy, exchange-rate placeholder,
-`Transfer`, Budget Month, and keeping `Initialization/`.
+Two choices were made to keep the work moving. Both are reversible and neither is
+frozen — say so if you want them changed:
+
+1. **`next-auth` was removed from the dependencies.** It was installed but never wired,
+   and its Credentials provider cannot give database-backed sessions, which this
+   system's immediate-revocation requirement needs. §4 previously recorded it as the
+   intended library. Reasoning in §12.
+2. **`STAFF` starts read-only** — dashboard, the Master menu, and view access to
+   Company, Partner, Cash & Bank and Currency, plus the Pengaturan menu, which for
+   them contains only their own profile. It grants nothing else. Widen it in
+   `src/lib/siba/roles.ts` and reseed if that is too narrow.
+
+Everything else previously recorded here has moved into §12 as a frozen decision: the
+two-company structure and its three consequences, transaction purposes as application
+logic, cash/bank balance, delete policy, exchange-rate placeholder, `Transfer`, Budget
+Month, and keeping `Initialization/`.
 
 When something genuinely ambiguous appears, record it here rather than guessing — and
 move it into §12 or §10 once the user confirms it.
-
----
 
 ## 19. Context Maintenance Rules
 

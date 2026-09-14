@@ -6,6 +6,7 @@
  * `/module/entity/[id]` here, so URLs stay recognisable.
  */
 import type { IconName } from "@/components/icon";
+import type { PermissionCode } from "./permissions";
 
 export type NavEntity = {
   key: string;
@@ -16,6 +17,12 @@ export type NavEntity = {
   single?: string;
   icon: IconName;
   desc: string;
+  /**
+   * Permission required to see this leaf. Omitted only where the destination is
+   * open to every signed-in user — the profile, which is about who you are
+   * rather than what you may do.
+   */
+  permission?: PermissionCode;
 };
 
 export type NavGroup = {
@@ -29,6 +36,8 @@ export type NavModule = {
   name: string;
   icon: IconName;
   desc: string;
+  /** Menu access is its own permission, separate from any action inside. */
+  permission?: PermissionCode;
   /** A module with no groups is a single page (the dashboard). */
   groups?: NavGroup[];
 };
@@ -39,12 +48,14 @@ export const MODULES: NavModule[] = [
     name: "Dashboard",
     icon: "grid",
     desc: "Ringkasan data master dan hal yang perlu ditindaklanjuti.",
+    permission: "MENU_DASHBOARD_ACCESS",
   },
   {
     key: "master",
     name: "Master",
     icon: "book",
     desc: "Sumber referensi untuk seluruh modul.",
+    permission: "MENU_MASTER_ACCESS",
     groups: [
       {
         key: "entity",
@@ -56,6 +67,7 @@ export const MODULES: NavModule[] = [
             name: "Company",
             icon: "build",
             desc: "Entity dan ownership context. Seluruh Budget, Finance, book, dan Journal berdiri di atas Company.",
+            permission: "COMPANY_VIEW",
           },
           {
             key: "m_partner",
@@ -63,6 +75,7 @@ export const MODULES: NavModule[] = [
             name: "Partner",
             icon: "users",
             desc: "Business subject milik sebuah Company, menjadi subjek utama Hutang, Piutang, Titipan, dan Prive Ledger.",
+            permission: "PARTNER_VIEW",
           },
           {
             key: "m_cash_bank",
@@ -70,6 +83,7 @@ export const MODULES: NavModule[] = [
             name: "Cash & Bank",
             icon: "wallet",
             desc: "Resource tempat uang berada. Setiap Cash Bank memiliki Cash Bank Book sendiri.",
+            permission: "CASH_BANK_VIEW",
           },
         ],
       },
@@ -83,6 +97,7 @@ export const MODULES: NavModule[] = [
             name: "Currency",
             icon: "coin",
             desc: "Referensi mata uang. Base currency pelaporan adalah IDR; transaction currency dan base currency tetap dipisah.",
+            permission: "CURRENCY_VIEW",
           },
         ],
       },
@@ -93,6 +108,7 @@ export const MODULES: NavModule[] = [
     name: "Budget",
     icon: "clip",
     desc: "Perencanaan kebutuhan dana per periode.",
+    permission: "MENU_BUDGET_ACCESS",
     groups: [
       {
         key: "plan",
@@ -105,6 +121,7 @@ export const MODULES: NavModule[] = [
             single: "Budget Month",
             icon: "clip",
             desc: "Perencanaan kebutuhan dana. Pilih bulan untuk membuka daftar Budget di dalamnya.",
+            permission: "BUDGET_VIEW",
           },
         ],
       },
@@ -115,6 +132,7 @@ export const MODULES: NavModule[] = [
     name: "Finance",
     icon: "wallet2",
     desc: "Eksekusi aktual atas Budget yang sudah disetujui.",
+    permission: "MENU_FINANCE_ACCESS",
     groups: [
       {
         key: "exec",
@@ -126,6 +144,7 @@ export const MODULES: NavModule[] = [
             name: "Cash Bank Transaction",
             icon: "wallet2",
             desc: "Layer eksekusi. Satu dokumen kas/bank dapat merealisasikan beberapa Budget yang sudah disetujui.",
+            permission: "CASH_BANK_TRANSACTION_VIEW",
           },
         ],
       },
@@ -136,6 +155,7 @@ export const MODULES: NavModule[] = [
     name: "Accounting",
     icon: "calc",
     desc: "Bagan akun, mapping, dan kendali periode.",
+    permission: "MENU_ACCOUNTING_ACCESS",
     groups: [
       {
         key: "coa",
@@ -148,6 +168,7 @@ export const MODULES: NavModule[] = [
             single: "Account",
             icon: "book",
             desc: "Account accounting per Company. Account adalah subjek utama General Ledger.",
+            permission: "ACCOUNT_VIEW",
           },
         ],
       },
@@ -162,6 +183,7 @@ export const MODULES: NavModule[] = [
             single: "Mapping",
             icon: "link",
             desc: "Menghubungkan Budget Category, Company, dan Account tujuan — jembatan antara klasifikasi planning dan account accounting.",
+            permission: "MAPPING_VIEW",
           },
         ],
       },
@@ -175,6 +197,7 @@ export const MODULES: NavModule[] = [
             name: "Fiscal Year",
             icon: "cal",
             desc: "Tahun buku, menjadi payung Fiscal Period dan Opening Balance.",
+            permission: "FISCAL_YEAR_VIEW",
           },
           {
             key: "acc_fiscal_period",
@@ -182,6 +205,51 @@ export const MODULES: NavModule[] = [
             name: "Fiscal Period",
             icon: "clock",
             desc: "Period control untuk Budget Month dan posting accounting.",
+            permission: "FISCAL_PERIOD_VIEW",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    key: "settings",
+    name: "Pengaturan",
+    icon: "gear",
+    desc: "Pengguna, hak akses, dan akun Anda sendiri.",
+    permission: "MENU_SETTINGS_ACCESS",
+    groups: [
+      {
+        key: "access",
+        name: "Kontrol Akses",
+        entities: [
+          {
+            key: "sys_user",
+            slug: "user",
+            name: "User",
+            icon: "user",
+            desc: "Akun yang dapat masuk ke aplikasi. Akses setiap user ditentukan oleh Role yang diberikan kepadanya.",
+            permission: "MENU_USER_ACCESS",
+          },
+          {
+            key: "sys_role",
+            slug: "role",
+            name: "Role",
+            icon: "tags",
+            desc: "Kumpulan permission. Role adalah satu-satunya jalur pemberian akses kepada user.",
+            permission: "MENU_ROLE_ACCESS",
+          },
+        ],
+      },
+      {
+        key: "account",
+        name: "Akun Saya",
+        entities: [
+          {
+            key: "profile",
+            slug: "profile",
+            name: "Profil Saya",
+            icon: "user",
+            desc: "Data akun Anda sendiri dan ringkasan akses yang Anda miliki.",
           },
         ],
       },
@@ -191,6 +259,42 @@ export const MODULES: NavModule[] = [
 
 export function moduleByKey(key: string): NavModule | undefined {
   return MODULES.find((m) => m.key === key);
+}
+
+/**
+ * The navigation a given set of permissions can see.
+ *
+ * Menu visibility mirrors authorization but never substitutes for it: every
+ * page and every Server Action behind these links checks for itself. A module
+ * whose leaves are all hidden disappears rather than leading to a refusal.
+ */
+export function visibleModules(permissions: Iterable<string>): NavModule[] {
+  const held = permissions instanceof Set ? permissions : new Set(permissions);
+  const allowed = (code?: string) => !code || held.has(code);
+
+  const out: NavModule[] = [];
+  for (const mod of MODULES) {
+    if (!allowed(mod.permission)) continue;
+    if (!mod.groups) {
+      out.push(mod);
+      continue;
+    }
+    const groups = mod.groups
+      .map((g) => ({ ...g, entities: g.entities.filter((e) => allowed(e.permission)) }))
+      .filter((g) => g.entities.length > 0);
+    if (groups.length) out.push({ ...mod, groups });
+  }
+  return out;
+}
+
+/** Where a signed-in user should land, given what they can see. */
+export function landingHref(permissions: Iterable<string>): string {
+  const visible = visibleModules(permissions);
+  const first = visible[0];
+  if (!first) return "/settings/profile";
+  if (!first.groups) return `/${first.key}`;
+  const leaf = first.groups[0]?.entities[0];
+  return leaf ? entityHref(first.key, leaf.slug) : `/${first.key}`;
 }
 
 export function entityHref(moduleKey: string, slug: string): string {

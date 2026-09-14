@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { Icon, type IconName } from "@/components/icon";
 import { prisma } from "@/lib/prisma";
+import { actorCan } from "@/lib/siba/access";
+import { requirePermission } from "@/lib/siba/auth";
 import { companyStructure } from "@/lib/siba/records";
+import { userEmails } from "@/lib/siba/users";
 import { formatTimestamp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +17,33 @@ const ACTION_CLASS: Record<string, string> = {
 
 type Attention = { href: string; title: string; detail: string };
 
+type Kpi = {
+  href: string;
+  label: string;
+  value: number;
+  detail: string;
+  bg: string;
+  fg: string;
+  icon: IconName;
+  /** The permission that governs the page this tile links to. */
+  permission: string;
+};
+
+type SpreadColumn = {
+  label: string;
+  permission: string;
+  count: (companyId: number) => number;
+};
+
 export default async function DashboardPage() {
+  const actor = await requirePermission("MENU_DASHBOARD_ACCESS", "/dashboard");
+
+  // Reaching the dashboard is not permission to read what it summarises. Every
+  // tile, follow-up and column below is filtered by the permission that governs
+  // the page it points at, so the dashboard never becomes a way to see totals
+  // for data the user cannot open.
+  const can = (code: string) => actorCan(actor, code);
+
   const [
     companies,
     partners,
@@ -41,17 +70,22 @@ export default async function DashboardPage() {
     companyStructure(),
   ]);
 
+  // The activity list used to print a fixed address; it now resolves the actual
+  // author of each entry.
+  const authors = await userEmails(recentAudit.map((l) => l.by));
+
   const countIn = <T extends { company_id: number }>(rows: T[], companyId: number) =>
     rows.filter((r) => r.company_id === companyId).length;
 
-  const kpis: { href: string; label: string; value: number; detail: string; bg: string; fg: string; icon: IconName }[] = [
-    { href: "/master/company", label: "Company", value: companies.length, detail: "Entitas akuntansi", bg: "var(--brand-50)", fg: "var(--brand)", icon: "build" },
-    { href: "/master/partner", label: "Partner", value: partners.length, detail: "Subjek bisnis", bg: "var(--vio-bg)", fg: "var(--vio)", icon: "users" },
-    { href: "/master/cash-bank", label: "Cash & Bank", value: cashBanks.length, detail: "Resource kas dan bank", bg: "var(--ok-bg)", fg: "var(--ok)", icon: "wallet" },
-    { href: "/accounting/account", label: "Account", value: accounts.length, detail: "Seluruh Company", bg: "var(--info-bg)", fg: "var(--info)", icon: "book" },
-    { href: "/accounting/budget-category-account", label: "Mapping", value: mappings.length, detail: "Budget Category ke Account", bg: "var(--accent-50)", fg: "#8A6D08", icon: "link" },
-    { href: "/budget/budget", label: "Budget", value: budgets, detail: "Seluruh periode", bg: "var(--accent-50)", fg: "#8A6D08", icon: "clip" },
+  const allKpis: Kpi[] = [
+    { href: "/master/company", label: "Company", value: companies.length, detail: "Entitas akuntansi", bg: "var(--brand-50)", fg: "var(--brand)", icon: "build", permission: "COMPANY_VIEW" },
+    { href: "/master/partner", label: "Partner", value: partners.length, detail: "Subjek bisnis", bg: "var(--vio-bg)", fg: "var(--vio)", icon: "users", permission: "PARTNER_VIEW" },
+    { href: "/master/cash-bank", label: "Cash & Bank", value: cashBanks.length, detail: "Resource kas dan bank", bg: "var(--ok-bg)", fg: "var(--ok)", icon: "wallet", permission: "CASH_BANK_VIEW" },
+    { href: "/accounting/account", label: "Account", value: accounts.length, detail: "Seluruh Company", bg: "var(--info-bg)", fg: "var(--info)", icon: "book", permission: "ACCOUNT_VIEW" },
+    { href: "/accounting/budget-category-account", label: "Mapping", value: mappings.length, detail: "Budget Category ke Account", bg: "var(--accent-50)", fg: "#8A6D08", icon: "link", permission: "MAPPING_VIEW" },
+    { href: "/budget/budget", label: "Budget", value: budgets, detail: "Seluruh periode", bg: "var(--accent-50)", fg: "#8A6D08", icon: "clip", permission: "BUDGET_VIEW" },
   ];
+  const kpis = allKpis.filter((k) => can(k.permission));
 
   // The mockup also checked for dangling foreign keys and cash banks with no
   // account at all. Both are now impossible — Postgres enforces them — so only
@@ -61,7 +95,7 @@ export default async function DashboardPage() {
   // The two-company structure is foundational: exactly one induk and one anak.
   // Nothing in the app can create or edit a Company, so a mismatch here means
   // the database was changed outside the seed.
-  if (!structure.ok) {
+  if (!structure.ok && can("COMPANY_VIEW")) {
     attention.push({
       href: "/master/company",
       title: "Struktur Company tidak sesuai",
@@ -74,7 +108,7 @@ export default async function DashboardPage() {
   const crossCompany = cashBanks.filter(
     (cb) => cb.account && cb.account.company_id !== cb.company_id
   );
-  if (crossCompany.length) {
+  if (crossCompany.length && can("CASH_BANK_VIEW")) {
     attention.push({
       href: "/master/cash-bank",
       title: `${crossCompany.length} Cash & Bank memakai Account milik Company lain`,
@@ -91,7 +125,7 @@ export default async function DashboardPage() {
       if (!has) unmapped.push(`${c.company_label} · ${bc.category_label}`);
     }
   }
-  if (unmapped.length) {
+  if (unmapped.length && can("MAPPING_VIEW")) {
     attention.push({
       href: "/accounting/budget-category-account",
       title: `${unmapped.length} Budget Category belum dipetakan ke Account`,
@@ -105,7 +139,7 @@ export default async function DashboardPage() {
   const withoutCashBank = companies.filter(
     (c) => !cashBanks.some((cb) => cb.company_id === c.id)
   );
-  if (withoutCashBank.length) {
+  if (withoutCashBank.length && can("CASH_BANK_VIEW")) {
     attention.push({
       href: "/master/cash-bank",
       title: `${withoutCashBank.map((c) => c.company_name).join(", ")} belum memiliki Cash & Bank`,
@@ -113,6 +147,15 @@ export default async function DashboardPage() {
         "Company tanpa resource kas akan bergantung pada Company induk untuk setiap realisasi.",
     });
   }
+
+  // Same rule for the per-company spread: a column appears only if its page does.
+  const allSpread: SpreadColumn[] = [
+    { label: "Partner", permission: "PARTNER_VIEW", count: (id) => countIn(partners, id) },
+    { label: "Cash & Bank", permission: "CASH_BANK_VIEW", count: (id) => countIn(cashBanks, id) },
+    { label: "Account", permission: "ACCOUNT_VIEW", count: (id) => countIn(accounts, id) },
+    { label: "Mapping", permission: "MAPPING_VIEW", count: (id) => countIn(mappings, id) },
+  ];
+  const spread = allSpread.filter((c) => can(c.permission));
 
   return (
     <>
@@ -194,46 +237,50 @@ export default async function DashboardPage() {
           )}
         </div>
 
-        <div className="card">
-          <div className="card-h">
-            <span className="ci">
-              <Icon name="build" size={15} />
-            </span>
-            <div className="ct">
-              <h3>Sebaran per Company</h3>
-              <p>Master yang company-scoped</p>
+        {spread.length > 0 && (
+          <div className="card">
+            <div className="card-h">
+              <span className="ci">
+                <Icon name="build" size={15} />
+              </span>
+              <div className="ct">
+                <h3>Sebaran per Company</h3>
+                <p>Master yang company-scoped</p>
+              </div>
+            </div>
+            <div className="tw">
+              <table className="grid">
+                <thead>
+                  <tr>
+                    <th>Company</th>
+                    {spread.map((col) => (
+                      <th className="num" key={col.label}>
+                        {col.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {companies.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        <span className="idc">
+                          <span className="lab">{c.company_label}</span>
+                          <span className="nm">{c.company_name}</span>
+                        </span>
+                      </td>
+                      {spread.map((col) => (
+                        <td className="num" key={col.label}>
+                          {col.count(c.id)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-          <div className="tw">
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th>Company</th>
-                  <th className="num">Partner</th>
-                  <th className="num">Cash &amp; Bank</th>
-                  <th className="num">Account</th>
-                  <th className="num">Mapping</th>
-                </tr>
-              </thead>
-              <tbody>
-                {companies.map((c) => (
-                  <tr key={c.id}>
-                    <td>
-                      <span className="idc">
-                        <span className="lab">{c.company_label}</span>
-                        <span className="nm">{c.company_name}</span>
-                      </span>
-                    </td>
-                    <td className="num">{countIn(partners, c.id)}</td>
-                    <td className="num">{countIn(cashBanks, c.id)}</td>
-                    <td className="num">{countIn(accounts, c.id)}</td>
-                    <td className="num">{countIn(mappings, c.id)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="card" style={{ marginTop: 14 }}>
@@ -255,7 +302,7 @@ export default async function DashboardPage() {
                   <Icon name="user" size={14} />
                 </span>
                 <div className="ab">
-                  <div className="amail">meehun@siba.app</div>
+                  <div className="amail">{authors[l.by] ?? "—"}</div>
                   <div className="atime">{formatTimestamp(l.at)}</div>
                   <div className="aact">
                     <span className="adot" />

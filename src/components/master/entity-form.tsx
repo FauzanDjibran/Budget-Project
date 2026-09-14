@@ -13,6 +13,7 @@ import {
   COMPANY_LOCK_BODY,
   isCompanyEntity,
 } from "@/lib/siba/company";
+import type { EntityAbilities } from "@/lib/siba/entity-access";
 import { STATUS_CLASS, STATUS_TEXT, TAG_CLASS, type Entity, type Field } from "@/lib/siba/entities";
 import type { RefOption, Row } from "@/lib/siba/records";
 import { formatTimestamp } from "@/lib/format";
@@ -26,6 +27,7 @@ export function EntityForm({
   refs,
   createdByEmail,
   updatedByEmail,
+  can,
 }: {
   entity: Entity;
   mode: FormMode;
@@ -33,6 +35,8 @@ export function EntityForm({
   refs: Record<string, RefOption[]>;
   createdByEmail?: string;
   updatedByEmail?: string;
+  /** Presentation only — the Server Actions check the same permissions. */
+  can: EntityAbilities;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -40,6 +44,9 @@ export function EntityForm({
   const basePath = `/${entity.module}/${entity.slug}`;
   /** Company has no write path at all — see `lib/siba/company.ts`. */
   const locked = isCompanyEntity(entity.slug);
+  const canEdit = can.edit && !locked;
+  const canToggleStatus =
+    row?.status === "Active" ? can.deactivate : can.activate;
 
   const [values, setValues] = useState<FormValues>(() => initialValues(entity, row));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -159,13 +166,19 @@ export function EntityForm({
             {title}
             {mode !== "new" && label && <span className="lab lg">{label}</span>}
             {mode === "view" && status && (
-              <button
-                className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}
-                title="Klik untuk mengubah status"
-                onClick={() => setConfirmToggle(true)}
-              >
-                {STATUS_TEXT[status] ?? status}
-              </button>
+              canToggleStatus ? (
+                <button
+                  className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}
+                  title="Klik untuk mengubah status"
+                  onClick={() => setConfirmToggle(true)}
+                >
+                  {STATUS_TEXT[status] ?? status}
+                </button>
+              ) : (
+                <span className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}>
+                  {STATUS_TEXT[status] ?? status}
+                </span>
+              )
             )}
             {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
           </h1>
@@ -187,11 +200,11 @@ export function EntityForm({
               <span className="bdg s-mute" title={COMPANY_LOCK_BODY}>
                 <Icon name="lock" size={11} /> {COMPANY_LOCK_BADGE}
               </span>
-            ) : (
+            ) : canEdit ? (
               <Link className="btn primary" href={`${basePath}/${row!.id}/edit`}>
                 <Icon name="pen" size={15} /> Ubah
               </Link>
-            )}
+            ) : null}
           </div>
         </div>
         <p className="ph-sub">{entity.desc}</p>

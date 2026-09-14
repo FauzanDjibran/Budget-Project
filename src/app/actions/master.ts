@@ -2,6 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
+import { type Actor } from "@/lib/siba/access";
+import { authorizeAction } from "@/lib/siba/auth";
+import { isAccessDenied } from "@/lib/siba/auth-errors";
+import { entityPermissions } from "@/lib/siba/entity-access";
 import {
   COMPANY_CREATE_BLOCKED,
   COMPANY_UPDATE_BLOCKED,
@@ -10,8 +14,12 @@ import {
 import { type Entity, type Field } from "@/lib/siba/entities";
 import { delegate, nextCode, requireEntity } from "@/lib/siba/records";
 
-/** Until Auth.js lands, writes are attributed to the seeded everyday user. */
-const CURRENT_USER = 2;
+/**
+ * Every action here is permission-gated before it touches anything, and every
+ * write is attributed to the signed-in user. A Server Action is reachable
+ * directly, so the check below — not the hidden button in the list — is what
+ * actually stops an unauthorized write.
+ */
 
 export type FormValues = Record<string, string | boolean | null>;
 
@@ -22,6 +30,35 @@ export type FormValues = Record<string, string | boolean | null>;
 export type SaveResult =
   | { ok: true; id: number; code?: string }
   | { ok: false; errors: Record<string, string> };
+
+type Guard =
+  | { ok: true; actor: Actor }
+  | { ok: false; denial: { ok: false; errors: Record<string, string> } };
+
+/**
+ * Resolves the caller and checks the one permission this operation needs.
+ *
+ * Refusals come back as a `_form` error rather than an exception, so the form
+ * shows them the same way it shows a validation failure. The message never
+ * names the permission code.
+ */
+async function authorize(
+  entityKey: string,
+  operation: "create" | "edit" | "activate" | "deactivate"
+): Promise<Guard> {
+  const code = entityPermissions(entityKey)[operation];
+  if (!code) {
+    return { ok: false, denial: { ok: false, errors: { _form: "Operasi tidak tersedia." } } };
+  }
+  try {
+    return { ok: true, actor: await authorizeAction(code) };
+  } catch (error) {
+    if (isAccessDenied(error)) {
+      return { ok: false, denial: { ok: false, errors: { _form: error.message } } };
+    }
+    throw error;
+  }
+}
 
 /**
  * Coerces a submitted value to what Prisma expects for the field's type.
@@ -108,13 +145,16 @@ export async function createRecord(
   values: FormValues
 ): Promise<SaveResult> {
   // Company is create-locked: the two-company structure is foundational, so the
-  // count can never change from the application. Checked here rather than only
-  // in the UI, because a Server Action is reachable directly.
+  // count can never change from the application. Checked before the permission
+  // check because it holds for everyone, whatever they are allowed to do.
   if (isCompanyEntity(slug)) {
     return { ok: false, errors: { _form: COMPANY_CREATE_BLOCKED } };
   }
 
   const entity = requireEntity(slug);
+  const guard = await authorize(entity.key, "create");
+  if (!guard.ok) return guard.denial;
+  const actor = guard.actor;
 
   const errors = await validate(entity, values, null);
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -124,13 +164,13 @@ export async function createRecord(
     data: {
       ...buildData(entity, values),
       [entity.codeField]: code,
-      created_by: CURRENT_USER,
+      created_by: actor.user.id,
       updated_by: null,
     },
   });
 
   await prisma.auditLog.create({
-    data: { entity_key: entity.key, row_id: created.id, action: "TAMBAH", by: CURRENT_USER },
+    data: { entity_key: entity.key, row_id: created.id, action: "TAMBAH", by: actor.user.id },
   });
 
   revalidatePath(`/${entity.module}/${entity.slug}`);
@@ -150,6 +190,9 @@ export async function updateRecord(
   }
 
   const entity = requireEntity(slug);
+  const guard = await authorize(entity.key, "edit");
+  if (!guard.ok) return guard.denial;
+  const actor = guard.actor;
 
   const errors = await validate(entity, values, id);
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -162,11 +205,11 @@ export async function updateRecord(
 
   await delegate(entity.key).update({
     where: { id },
-    data: { ...data, updated_by: CURRENT_USER },
+    data: { ...data, updated_by: actor.user.id },
   });
 
   await prisma.auditLog.create({
-    data: { entity_key: entity.key, row_id: id, action: "UPDATE", by: CURRENT_USER },
+    data: { entity_key: entity.key, row_id: id, action: "UPDATE", by: actor.user.id },
   });
 
   revalidatePath(`/${entity.module}/${entity.slug}`);
@@ -193,13 +236,19 @@ export async function toggleStatus(
   if (!row) return { ok: false, message: "Data tidak ditemukan." };
 
   const next = row.status === "Active" ? "Inactive" : "Active";
+
+  // Activating and deactivating are separate capabilities, so the direction of
+  // the toggle decides which permission is required.
+  const guard = await authorize(entity.key, next === "Active" ? "activate" : "deactivate");
+  if (!guard.ok) return { ok: false, message: guard.denial.errors._form };
+  const actor = guard.actor;
   await delegate(entity.key).update({
     where: { id },
-    data: { status: next, updated_by: CURRENT_USER },
+    data: { status: next, updated_by: actor.user.id },
   });
 
   await prisma.auditLog.create({
-    data: { entity_key: entity.key, row_id: id, action: "UPDATE", by: CURRENT_USER },
+    data: { entity_key: entity.key, row_id: id, action: "UPDATE", by: actor.user.id },
   });
 
   revalidatePath(`/${entity.module}/${entity.slug}`);

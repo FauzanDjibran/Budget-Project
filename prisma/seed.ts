@@ -13,16 +13,42 @@ import { hash } from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PURPOSES, rateFor } from "../src/lib/siba/rules";
+import { PERMISSIONS } from "../src/lib/siba/permissions";
+import { SEEDED_ROLES, ADMIN_ROLE, STAFF_ROLE, adminPermissionCodes } from "../src/lib/siba/roles";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
 const SEED_TS = new Date("2026-01-01T08:00:00Z");
-const SYS = 1; // "Sistem" user
-const ME = 2; // "MeeHun" user
+const SYS = 1; // "Sistem" — owns the seeded rows, never signs in
+const ME = 2; // "MeeHun" — the mockup's everyday user, seeded as Staff
+const ADMIN = 3; // bootstrap administrator, configured through the environment
 
-/** Dev-only password for both seeded accounts. */
+/**
+ * The bootstrap administrator.
+ *
+ * Credentials come from the environment so no real password is ever committed.
+ * Outside development the seed refuses to run without one — the fallback below
+ * exists purely so a local checkout works out of the box, and CLAUDE.md §11
+ * already records that it must not survive into a deployed environment.
+ */
+const ADMIN_EMAIL = process.env.SIBA_ADMIN_EMAIL?.trim().toLowerCase() || "admin@siba.app";
+const ADMIN_NAME = process.env.SIBA_ADMIN_NAME?.trim() || "Administrator";
+const ADMIN_INITIALS = process.env.SIBA_ADMIN_INITIALS?.trim().toUpperCase() || "AD";
+
+/** Dev-only password for the seeded mockup accounts. */
 const DEV_PASSWORD = "siba123";
+
+function resolveAdminPassword(): string {
+  const fromEnv = process.env.SIBA_ADMIN_PASSWORD;
+  if (fromEnv) return fromEnv;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "SIBA_ADMIN_PASSWORD is required outside development. Set it before seeding."
+    );
+  }
+  return DEV_PASSWORD;
+}
 
 const pad4 = (n: number) => String(n).padStart(4, "0");
 const code = (prefix: string, n: number) => `${prefix}.${pad4(n)}`;
@@ -216,13 +242,78 @@ async function main() {
   await prisma.sysDocType.deleteMany();
   await prisma.sysAccountType.deleteMany();
   await prisma.sysCompany.deleteMany();
+  await prisma.sysSession.deleteMany();
+  await prisma.sysUserRole.deleteMany();
+  await prisma.sysRolePermission.deleteMany();
+  await prisma.sysPermission.deleteMany();
+  await prisma.sysRole.deleteMany();
   await prisma.sysUser.deleteMany();
 
-  const passwordHash = await hash(DEV_PASSWORD, 10);
+  const devHash = await hash(DEV_PASSWORD, 10);
+  const adminPassword = resolveAdminPassword();
+  const adminHash = await hash(adminPassword, 10);
+
   await prisma.sysUser.createMany({
     data: [
-      { id: SYS, email: "sistem@siba.app", name: "Sistem", initials: "SY", password_hash: passwordHash, created_at: SEED_TS, updated_at: SEED_TS },
-      { id: ME, email: "meehun@siba.app", name: "MeeHun", initials: "MH", password_hash: passwordHash, created_at: SEED_TS, updated_at: SEED_TS },
+      // The system account owns every seeded row. It is seeded Inactive so it
+      // can never be signed in as — it exists to be referenced, not used.
+      { id: SYS, user_code: code("user", SYS), email: "sistem@siba.app", name: "Sistem", initials: "SY", password_hash: devHash, status: "Inactive", created_at: SEED_TS, updated_at: SEED_TS },
+      { id: ME, user_code: code("user", ME), email: "meehun@siba.app", name: "MeeHun", initials: "MH", password_hash: devHash, created_at: SEED_TS, updated_at: SEED_TS },
+      { id: ADMIN, user_code: code("user", ADMIN), email: ADMIN_EMAIL, name: ADMIN_NAME, initials: ADMIN_INITIALS, password_hash: adminHash, created_at: SEED_TS, updated_at: SEED_TS },
+    ],
+  });
+
+  // ---- RBAC ---------------------------------------------------------------
+  // The permission catalogue lives in `src/lib/siba/permissions.ts`; the table
+  // is its materialisation, so role_permission can reference it and the role
+  // matrix can read names from it.
+  await prisma.sysPermission.createMany({
+    data: PERMISSIONS.map((p, i) => ({
+      id: i + 1,
+      permission_code: p.code,
+      permission_name: p.name,
+      module: p.module,
+      description: "description" in p ? p.description : null,
+      created_at: SEED_TS,
+      updated_at: SEED_TS,
+    })),
+  });
+
+  const permissionId = new Map(PERMISSIONS.map((p, i) => [p.code, i + 1]));
+
+  await prisma.sysRole.createMany({
+    data: SEEDED_ROLES.map((r, i) => ({
+      id: i + 1,
+      role_code: code("role", i + 1),
+      role_label: r.label,
+      role_name: r.name,
+      note: r.note,
+      is_system: true,
+      created_by: SYS,
+      created_at: SEED_TS,
+      updated_at: SEED_TS,
+    })),
+  });
+
+  const roleId = new Map(SEEDED_ROLES.map((r, i) => [r.label, i + 1]));
+
+  // ADMIN's grant is the whole catalogue and is frozen in the application, so
+  // re-seeding is what keeps it in step as the catalogue grows.
+  const grants: { role_id: number; permission_id: number }[] = [];
+  for (const role of SEEDED_ROLES) {
+    const codes = role.permissions ?? adminPermissionCodes();
+    for (const c of codes) {
+      grants.push({ role_id: roleId.get(role.label)!, permission_id: permissionId.get(c)! });
+    }
+  }
+  await prisma.sysRolePermission.createMany({
+    data: grants.map((g, i) => ({ id: i + 1, ...g, created_by: SYS, created_at: SEED_TS })),
+  });
+
+  await prisma.sysUserRole.createMany({
+    data: [
+      { id: 1, user_id: ADMIN, role_id: roleId.get(ADMIN_ROLE)!, created_by: SYS, created_at: SEED_TS },
+      { id: 2, user_id: ME, role_id: roleId.get(STAFF_ROLE)!, created_by: SYS, created_at: SEED_TS },
     ],
   });
 
@@ -523,7 +614,9 @@ async function main() {
   // Explicit ids leave the sequences at 1, which would collide on the next
   // insert. Fast-forward each to its table's current max.
   const sequences: [string, string][] = [
-    ["sys_user", "id"], ["sys_company", "id"], ["sys_account_type", "id"],
+    ["sys_user", "id"], ["sys_role", "id"], ["sys_permission", "id"],
+    ["sys_role_permission", "id"], ["sys_user_role", "id"], ["sys_session", "id"],
+    ["sys_company", "id"], ["sys_account_type", "id"],
     ["sys_doc_type", "id"], ["sys_budget_category", "id"], ["sys_partner_category", "id"],
     ["ref_currency", "id"], ["m_partner", "id"], ["m_cash_bank", "id"],
     ["acc_account_category", "id"], ["acc_account_subcategory", "id"], ["acc_account", "id"],
@@ -539,6 +632,9 @@ async function main() {
 
   const counts = {
     users: await prisma.sysUser.count(),
+    roles: await prisma.sysRole.count(),
+    permissions: await prisma.sysPermission.count(),
+    rolePermissions: await prisma.sysRolePermission.count(),
     companies: await prisma.sysCompany.count(),
     partners: await prisma.mPartner.count(),
     cashBanks: await prisma.mCashBank.count(),
@@ -550,7 +646,16 @@ async function main() {
     transactionLines: await prisma.finCashBankTransactionLine.count(),
   };
   console.table(counts);
-  console.log(`\nSeeded. Sign in with meehun@siba.app / ${DEV_PASSWORD}`);
+
+  console.log(`\nSeeded.`);
+  console.log(`  Administrator : ${ADMIN_EMAIL}`);
+  if (process.env.SIBA_ADMIN_PASSWORD) {
+    console.log("  Password      : as set in SIBA_ADMIN_PASSWORD");
+  } else {
+    console.log(`  Password      : ${DEV_PASSWORD}   <-- DEVELOPMENT ONLY`);
+    console.log("                  Set SIBA_ADMIN_PASSWORD before seeding anywhere real.");
+  }
+  console.log(`  Staff         : meehun@siba.app / ${DEV_PASSWORD}`);
 }
 
 main()
