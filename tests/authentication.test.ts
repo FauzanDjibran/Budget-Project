@@ -9,10 +9,12 @@ import {
 } from "../src/lib/siba/login";
 import {
   issueSession,
+  pruneDeadSessions,
   revokeSessionToken,
   revokeSessionsForUser,
   validateSessionToken,
   SESSION_MAX_AGE_MS,
+  hashToken,
 } from "../src/lib/siba/session";
 import { cleanup, disconnect, makeUser, prisma } from "./helpers";
 
@@ -161,5 +163,50 @@ describe("authentication", () => {
   test("short passwords are refused", () => {
     assert.ok(passwordProblem("short"));
     assert.equal(passwordProblem("long-enough-password"), null);
+  });
+
+  test("dead sessions are cleaned up; live ones are left alone", async () => {
+    const user = await makeUser({});
+
+    const live = await issueSession(user.id);
+    const revoked = await issueSession(user.id);
+    await revokeSessionToken(revoked.token);
+
+    // An already-expired row, aged directly so the test does not have to wait.
+    const stale = await issueSession(user.id);
+    await prisma.sysSession.update({
+      where: { token_hash: hashToken(stale.token) },
+      data: { expires_at: new Date(Date.now() - 1000) },
+    });
+
+    const removed = await pruneDeadSessions();
+    assert.ok(removed >= 2, "the revoked and the expired row should both go");
+
+    const remaining = await prisma.sysSession.findMany({ where: { user_id: user.id } });
+    assert.equal(remaining.length, 1, "only the live session survives");
+    assert.ok(
+      await validateSessionToken(live.token),
+      "pruning must not disturb a session that is still valid"
+    );
+  });
+
+  test("logging in prunes dead sessions", async () => {
+    const user = await makeUser({});
+
+    const old = await issueSession(user.id);
+    await revokeSessionToken(old.token);
+    assert.equal(
+      await prisma.sysSession.count({ where: { user_id: user.id, revoked_at: { not: null } } }),
+      1
+    );
+
+    const result = await authenticate(user.email, user.password);
+    assert.equal(result.ok, true);
+
+    // The revoked row is gone and the freshly issued one is untouched.
+    const rows = await prisma.sysSession.findMany({ where: { user_id: user.id } });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].revoked_at, null);
+    assert.ok(await validateSessionToken(result.ok ? result.token : ""));
   });
 });

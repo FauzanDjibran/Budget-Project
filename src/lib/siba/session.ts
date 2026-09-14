@@ -160,3 +160,25 @@ export async function revokeSessionsForUser(
   });
   return count;
 }
+
+/**
+ * Deletes sessions that can no longer be accepted — expired or revoked.
+ *
+ * Sessions are housekeeping, not business records: the application's no-delete
+ * rule protects master data and history, and a dead session row is neither.
+ * `validateSessionToken` already rejects these rows, so removing them changes
+ * no behaviour; it only stops the table growing without bound.
+ *
+ * Deliberately not a scheduler, a job runner, or a rotation policy. It is one
+ * DELETE, called after a successful login (see `login.ts`), which is frequent
+ * enough to keep the table small and requires no infrastructure at all. The
+ * audit trail lives in `audit_log`, which is untouched by this.
+ */
+export async function pruneDeadSessions(now = new Date()): Promise<number> {
+  const { count } = await prisma.sysSession.deleteMany({
+    where: {
+      OR: [{ expires_at: { lt: now } }, { revoked_at: { not: null } }],
+    },
+  });
+  return count;
+}

@@ -2,7 +2,7 @@ import "server-only";
 
 import { compare, hash } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { issueSession, revokeSessionsForUser } from "./session";
+import { issueSession, pruneDeadSessions, revokeSessionsForUser } from "./session";
 
 /**
  * Credential verification. Kept apart from the cookie plumbing in `auth.ts` so
@@ -66,6 +66,12 @@ export async function authenticate(
   }
 
   const { token, expiresAt } = await issueSession(user.id, now);
+
+  // Housekeeping: a login is the natural moment to clear out session rows that
+  // can no longer be accepted. Cheap, needs no scheduler, and cannot affect the
+  // session just issued.
+  await pruneDeadSessions(now);
+
   return { ok: true, token, expiresAt, userId: user.id };
 }
 

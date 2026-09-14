@@ -350,7 +350,8 @@ so `globals.css` ends with an anchor reset. Keep shared classes working for both
 | Document numbers | `BGT-0001`, `CBT-0001` |
 | Audit | Every create/update appends to `audit_log` (`entity_key`, `row_id`, `action`, `by`, `at`) |
 | Passwords | bcrypt, cost 10. `password_hash` is read in exactly two functions and selected into nothing else |
-| Session tokens | 256-bit random, stored only as SHA-256. Revoked, never deleted |
+| Session tokens | 256-bit random, stored only as SHA-256 |
+| Session rows | Housekeeping, not business records. Revoked on logout/deactivation/password change, then deleted once dead — the no-delete rule covers master data and history, not `sys_session` |
 | Grants | `sys_user_role` and `sys_role_permission` rows are grants, not master data: revoking deletes the row and writes an audit entry. The no-delete rule covers records, not assignments |
 
 **Identity triple.** Master records carry three identifiers, and the distinction matters:
@@ -649,6 +650,19 @@ they relate. Keep the table; keep it out of the UI's write path.
   alongside it.
 - **Status:** Frozen, current.
 
+### Session rows are housekeeping, and are pruned
+- **Decision:** `sys_session` rows that can no longer be accepted — expired or revoked
+  — are deleted. The prune is a single `deleteMany`, called after a successful login.
+- **Reason:** The no-delete rule exists to protect master data and history, neither of
+  which a dead session row is. `audit_log` is the audit trail and is untouched. Logins
+  are frequent enough to keep the table small and need no scheduler, cron, or job
+  runner, so the cleanup costs one query and no infrastructure.
+- **Impact:** Nothing observable — `validateSessionToken` already rejected those rows.
+- **Do not change unless:** explicitly instructed. **Do not add session rotation, a
+  cleanup scheduler, or a session-management framework**; this is an ERP login, not a
+  security product.
+- **Status:** Frozen, current.
+
 ### RBAC is role-based only — one authorization path (FROZEN)
 - **Decision:** `USER -> ROLE -> PERMISSION`, and nothing else. A user holds zero or
   more roles; a role holds zero or more permissions; effective access is exactly the
@@ -681,7 +695,9 @@ they relate. Keep the table; keep it out of the UI's write path.
 ### Menu access and actions are separate permissions
 - **Decision:** `MENU_<MODULE>_ACCESS` is distinct from every action inside it, and
   view / create / edit / activate / deactivate / approve / reject / post are each their
-  own permission.
+  own permission. The prefix order is **`MENU_USER_ACCESS`**, not `USER_MENU_ACCESS` —
+  confirmed by the user; do not rename the catalogue to match an example written the
+  other way round.
 - **Reason:** Real roles need exactly this: a user who sees Budget but cannot approve,
   or edits a document but cannot post it.
 - **Impact:** More catalogue entries, and no shortcuts — never treat a menu permission
@@ -776,6 +792,10 @@ for a finalised design and do not build a rate master.
 - Do **not** let any user change their own roles, status, or permissions.
 - Do **not** select `password_hash` into anything that crosses to a client component.
 - Do **not** reintroduce an auth library alongside this one (see §12).
+- Do **not** rename the permission catalogue to `<AREA>_MENU_ACCESS`; the order is
+  `MENU_<AREA>_ACCESS` and is settled (§12).
+- Do **not** add session rotation, a cleanup scheduler, or a session-management
+  framework. Dead rows are pruned on login and that is the whole mechanism (§12).
 - Do **not** store a running balance on `m_cash_bank` or any other master table.
 - Do **not** edit `src/generated/prisma/` — regenerate it.
 - Do **not** rewrite `globals.css` or introduce a utility CSS framework.
@@ -829,7 +849,6 @@ for a finalised design and do not build a rate master.
 | --- | --- |
 | Company context selector is inert | The topbar dropdown is local state and filters nothing. `Entity.scope` exists in the registry but is unused. |
 | Audit log shows raw table keys | Dashboard renders `m_partner` rather than the mockup's `Partner / Cabang Medan`; needs entity display names + record lookup. (The author column now resolves correctly.) |
-| Expired sessions are never pruned | `sys_session` rows accumulate: expiry and revocation are honoured on read, but nothing deletes old rows. Harmless until the table is large; a periodic cleanup is the eventual fix. |
 | `m_cash_bank.balance` still present | Mock-only column, read by nothing in the app. Dropped in V2 (§13). |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | Tests cover security only | No tests for the Master module or anything else. |
@@ -838,17 +857,16 @@ for a finalised design and do not build a rate master.
 
 ## 18. Needs Confirmation
 
-Two choices were made to keep the work moving. Both are reversible and neither is
-frozen — say so if you want them changed:
+**Nothing is currently open.**
 
-1. **`next-auth` was removed from the dependencies.** It was installed but never wired,
-   and its Credentials provider cannot give database-backed sessions, which this
-   system's immediate-revocation requirement needs. §4 previously recorded it as the
-   intended library. Reasoning in §12.
-2. **Permission codes read `MENU_<AREA>_ACCESS`** (`MENU_USER_ACCESS`), not
-   `<AREA>_MENU_ACCESS`. Both orderings have been suggested; the current one is what
-   the catalogue, seed, nav, tests and §12 all use. Renaming is mechanical but touches
-   63 codes, so it is worth deciding once — say if you want the other order.
+One decision was made by me rather than asked for, and has since been confirmed:
+`next-auth` was removed unused, because its Credentials provider cannot give the
+database-backed sessions this system's immediate-revocation requirement needs.
+Reasoning in §12.
+
+The permission-code ordering (`MENU_USER_ACCESS`, not `USER_MENU_ACCESS`) was raised
+here and is now settled — recorded in §12 under "Menu access and actions are separate
+permissions".
 
 Everything else previously recorded here has moved into §12 as a frozen decision: the
 two-company structure and its three consequences, transaction purposes as application
