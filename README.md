@@ -86,7 +86,7 @@ It also seeds the access model — the permission catalogue, the `ADMIN` and
 | Email | Role | Notes |
 | --- | --- | --- |
 | `admin@siba.app` | Administrator | Bootstrap account. Address and password come from `SIBA_ADMIN_*`. |
-| `meehun@siba.app` | Staff | The mockup's everyday user. Read-only Master access. |
+| `meehun@siba.app` | Staff | The mockup's everyday user. `STAFF` is seeded **empty**, so this account can sign in and reach only its own profile. |
 | `sistem@siba.app` | — | Owns seeded records. Seeded **inactive**, so it cannot sign in. |
 
 The two fixture accounts use the password `siba123`. These are development
@@ -125,6 +125,12 @@ A permission is one atomic capability (`PARTNER_CREATE`, `BUDGET_APPROVE`,
 `USER_ROLE_ASSIGN`). A role bundles permissions. A user's access is exactly the
 union of their active roles' permissions — there is no direct user-to-permission
 grant, so there is one authoritative answer to "may this user do this?".
+
+**There are no default permissions.** Every role but `ADMIN` is created empty,
+and nothing reads a role's name to decide access. A user with no roles — or with
+a role that holds nothing — signs in successfully and can reach their own profile
+and nothing else. Access is granted by an administrator putting permissions in a
+role, never by what the role is called.
 
 Menu access and actions are separate permissions: seeing the Budget menu is not
 permission to approve a budget. The catalogue lives in

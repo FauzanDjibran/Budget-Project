@@ -1,0 +1,74 @@
+name: CI
+
+# `npm test` runs against a real PostgreSQL database through the application's
+# own service layer — nothing is stubbed — so CI has to stand one up and take it
+# through the same path a developer does:
+#
+#   PostgreSQL -> database -> migrations -> seed -> npm test
+#
+# A failure before the `npm test` step is an environment failure; a failure in it
+# is a code failure. Keeping them as separate steps keeps that distinction
+# readable in the job log.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: siba30
+        ports:
+          - 5432:5432
+        # Without this the first migration can race the server's startup.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/siba30?schema=public
+      # The seed refuses to run without this outside development; setting it
+      # here also keeps CI off the weak development fallback.
+      SIBA_ADMIN_PASSWORD: ci-only-not-a-real-password
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # src/generated/prisma is gitignored, so the client has to be built before
+      # anything can typecheck or connect.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed the database
+        run: npm run db:seed
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test

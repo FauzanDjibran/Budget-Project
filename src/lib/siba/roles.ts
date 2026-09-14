@@ -5,6 +5,11 @@
  * roles. ADMIN's permission set is frozen — it always holds the whole catalogue
  * — so the application can never be left without a way to administer users.
  * STAFF, and any role an administrator creates, are freely editable.
+ *
+ * **There are no default permissions.** ADMIN is the single exception, and only
+ * because something has to be able to administer the system. Every other role
+ * starts empty, and nothing anywhere infers access from a role's name: a user's
+ * permissions are exactly the rows an administrator put in their roles.
  */
 import { PERMISSION_CODES, type PermissionCode } from "./permissions";
 
@@ -32,22 +37,14 @@ export const SEEDED_ROLES: SeededRole[] = [
     label: STAFF_ROLE,
     name: "Staff",
     note:
-      "Akses dasar. Tambahkan permission sesuai kebutuhan — staff tidak " +
-      "menerima akses apa pun secara otomatis.",
-    // Read-only starter set. Staff receive nothing beyond this until an
-    // administrator grants it.
-    permissions: [
-      "MENU_DASHBOARD_ACCESS",
-      "MENU_MASTER_ACCESS",
-      "COMPANY_VIEW",
-      "PARTNER_VIEW",
-      "CASH_BANK_VIEW",
-      "CURRENCY_VIEW",
-      // The Pengaturan menu itself grants nothing: for a user without
-      // MENU_USER_ACCESS or MENU_ROLE_ACCESS it contains only their own
-      // profile, which every signed-in user may reach anyway.
-      "MENU_SETTINGS_ACCESS",
-    ],
+      "Wadah akses untuk pengguna biasa. Role ini dibuat kosong: tidak ada " +
+      "permission yang melekat pada nama Role. Administrator menambahkan " +
+      "permission yang memang dibutuhkan.",
+    // Deliberately empty. There are no default permissions anywhere in this
+    // system: holding STAFF — or any other role — grants nothing until an
+    // administrator puts a permission in it. A user with only this role can
+    // sign in and reach their own profile, and nothing else.
+    permissions: [],
   },
 ];
 

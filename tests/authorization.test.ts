@@ -5,10 +5,8 @@ import { actorCan } from "../src/lib/siba/access";
 import { isAccessDenied } from "../src/lib/siba/auth-errors";
 import { abilitiesFor, entityPermissions } from "../src/lib/siba/entity-access";
 import {
-  ADMIN_CRITICAL_PERMISSIONS,
   PERMISSIONS,
   PERMISSION_CODES,
-  PRIVILEGE_PERMISSIONS,
   permissionsByModule,
 } from "../src/lib/siba/permissions";
 import { adminPermissionCodes, SEEDED_ROLES } from "../src/lib/siba/roles";
@@ -96,42 +94,37 @@ describe("seeded roles", () => {
     }
   });
 
-  test("STAFF cannot administer anything", async () => {
-    const roleId = await roleIdFor("STAFF");
-    const rows = await prisma.sysRolePermission.findMany({
-      where: { role_id: roleId },
-      select: { permission: { select: { permission_code: true } } },
+  test("STAFF is seeded with no permissions at all", async () => {
+    // There are no default permissions in this system. A role's name grants
+    // nothing — STAFF is an empty container until an administrator fills it.
+    const declared = SEEDED_ROLES.find((r) => r.label === "STAFF")!;
+    assert.deepEqual(declared.permissions, [], "STAFF must declare no grants");
+
+    const count = await prisma.sysRolePermission.count({
+      where: { role_id: await roleIdFor("STAFF") },
     });
-    const held = new Set(rows.map((r) => r.permission.permission_code));
-
-    // Nothing that grants access to anyone.
-    for (const code of PRIVILEGE_PERMISSIONS) {
-      assert.ok(!held.has(code), `STAFF must not hold ${code}`);
-    }
-
-    // No user or role administration at all. STAFF may hold
-    // MENU_SETTINGS_ACCESS — for them that menu contains only their own
-    // profile — so the check is on the capabilities, not the menu.
-    for (const code of PERMISSION_CODES) {
-      if (code.startsWith("USER_") || code.startsWith("ROLE_") || code === "MENU_USER_ACCESS" || code === "MENU_ROLE_ACCESS") {
-        assert.ok(!held.has(code), `STAFF must not hold ${code}`);
-      }
-    }
-
-    // And they must not add up to an administrator.
-    assert.ok(
-      !ADMIN_CRITICAL_PERMISSIONS.every((c) => held.has(c)),
-      "STAFF must not satisfy the administration set"
-    );
+    assert.equal(count, 0, "STAFF must hold no permission rows after seeding");
   });
 
-  test("STAFF's seeded set is read-only", () => {
-    const staff = SEEDED_ROLES.find((r) => r.label === "STAFF")!;
-    for (const code of staff.permissions ?? []) {
-      assert.ok(
-        code.startsWith("MENU_") || code.endsWith("_VIEW"),
-        `STAFF should start with read-only access, but holds ${code}`
-      );
+  test("ADMIN is the only seeded role carrying any permission", async () => {
+    const rows = await prisma.sysRole.findMany({
+      where: { is_system: true },
+      select: {
+        role_label: true,
+        _count: { select: { permissions: true } },
+      },
+    });
+
+    for (const role of rows) {
+      if (role.role_label === "ADMIN") {
+        assert.equal(role._count.permissions, PERMISSION_CODES.length);
+      } else {
+        assert.equal(
+          role._count.permissions,
+          0,
+          `${role.role_label} must start empty — no role but ADMIN gets default grants`
+        );
+      }
     }
   });
 });

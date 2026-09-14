@@ -407,34 +407,39 @@ Implemented and enforced:
    *active* roles' permissions, recomputed from the database on every request. There is
    no direct user-to-permission grant, and deactivating a role withdraws it from
    everyone holding it without touching a single assignment.
-10. **Nobody edits their own access.** Roles, status and an administrative password
+10. **There are no default permissions.** A role's name grants nothing — only the rows
+   in it do. `STAFF` is seeded **empty**; `ADMIN` is the single exception, and only
+   because something must be able to administer the system. A user with no roles, or
+   with a role that holds no permissions, signs in successfully and can reach their own
+   profile and nothing else. Never infer access from a role label.
+11. **Nobody edits their own access.** Roles, status and an administrative password
    reset are all refused when the target is the caller — for administrators too. Own
    password changes go through the profile, which verifies the current password.
-11. **The application always keeps an administrator.** Any change leaving no active user
+12. **The application always keeps an administrator.** Any change leaving no active user
    holding the administration permissions is refused, and the `ADMIN` role's permission
    set is frozen so the guard cannot be sidestepped by emptying the role instead.
-12. **A deactivated user loses their sessions immediately.** Deactivation revokes them,
+13. **A deactivated user loses their sessions immediately.** Deactivation revokes them,
    and validation re-reads the account's status on every request.
 
 Defined in `rules.ts`, not yet exercised by UI:
 
-13. **Budget category → partner category → account.** Each budget category declares
+14. **Budget category → partner category → account.** Each budget category declares
    which partner categories are valid and which directions (In/Out) make sense.
    Direction follows balance-sheet logic, not cash direction.
-14. **22 transaction purposes.** A purpose is exactly one budget category × one partner
+15. **22 transaction purposes.** A purpose is exactly one budget category × one partner
     category × one direction, which is what lets it resolve to a single account.
     Purposes are **application logic, never a master table** — see §12.
-15. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
+16. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
     and has no independent lifecycle or table.
 
 Specified in the concept doc, **not yet implemented** (V2 — see §13):
 
-16. Post fans out into the cash/bank ledger, subject ledgers, and Journal → General Ledger.
-17. Operational books are independent append-only stores — **never** views over
+17. Post fans out into the cash/bank ledger, subject ledgers, and Journal → General Ledger.
+18. Operational books are independent append-only stores — **never** views over
     journal lines. Only the General Ledger derives from journals.
-18. The child company's realization emits a Funding Request; the parent confirms it and
+19. The child company's realization emits a Funding Request; the parent confirms it and
     one atomic event produces two journals linked by an Intercompany Event.
-19. No partial funding: realization = request = funding amount.
+20. No partial funding: realization = request = funding amount.
 
 ---
 
@@ -645,9 +650,12 @@ they relate. Keep the table; keep it out of the UI's write path.
 - **Status:** Frozen, current.
 
 ### RBAC is role-based only — one authorization path (FROZEN)
-- **Decision:** `USER -> ROLE -> PERMISSION`, and nothing else. No direct
-  user-to-permission grant, no permission inheritance, no ABAC, no per-record ACLs, no
-  policy engine.
+- **Decision:** `USER -> ROLE -> PERMISSION`, and nothing else. A user holds zero or
+  more roles; a role holds zero or more permissions; effective access is exactly the
+  union of the active ones. No direct user-to-permission grant, no permission
+  inheritance, no hierarchical roles, no ABAC, no per-record ACLs, no policy engine.
+  **No defaults:** every role except `ADMIN` is created empty, and nothing anywhere
+  reads a role's name to decide access.
 - **Reason:** Two ways to hold a permission means two answers to "may this user do
   this?", and the safe one is whichever the code happened to check. One path is
   auditable by reading a single query.
@@ -837,10 +845,10 @@ frozen — say so if you want them changed:
    and its Credentials provider cannot give database-backed sessions, which this
    system's immediate-revocation requirement needs. §4 previously recorded it as the
    intended library. Reasoning in §12.
-2. **`STAFF` starts read-only** — dashboard, the Master menu, and view access to
-   Company, Partner, Cash & Bank and Currency, plus the Pengaturan menu, which for
-   them contains only their own profile. It grants nothing else. Widen it in
-   `src/lib/siba/roles.ts` and reseed if that is too narrow.
+2. **Permission codes read `MENU_<AREA>_ACCESS`** (`MENU_USER_ACCESS`), not
+   `<AREA>_MENU_ACCESS`. Both orderings have been suggested; the current one is what
+   the catalogue, seed, nav, tests and §12 all use. Renaming is mechanical but touches
+   63 codes, so it is worth deciding once — say if you want the other order.
 
 Everything else previously recorded here has moved into §12 as a frozen decision: the
 two-company structure and its three consequences, transaction purposes as application

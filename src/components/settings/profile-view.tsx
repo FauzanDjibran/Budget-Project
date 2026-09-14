@@ -290,8 +290,9 @@ export function ProfileView({ profile }: { profile: Profile }) {
                 </div>
                 <h4>Belum ada akses</h4>
                 <p>
-                  Akun Anda belum memegang Role apa pun. Hubungi administrator
-                  untuk mendapatkan akses.
+                  {profile.roles.length
+                    ? "Role yang Anda pegang belum berisi permission apa pun. Hubungi administrator untuk mendapatkan akses."
+                    : "Akun Anda belum memegang Role apa pun. Hubungi administrator untuk mendapatkan akses."}
                 </p>
               </div>
             )}
