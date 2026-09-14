@@ -214,6 +214,8 @@ src/
                          session, login, user-admin, profile, entity-access
   generated/prisma/      Prisma client output — gitignored, never edit
 tests/                   Security suite (node:test); helpers.ts holds fixtures
+.claude/skills/          Project skills — `run-siba` brings the app up locally (§6)
+.github/workflows/ci.yml PostgreSQL service -> migrate -> seed -> lint -> build -> test
 ```
 
 **`src/generated/prisma/` is gitignored.** After cloning, run `npx prisma generate`.
@@ -240,6 +242,12 @@ npx prisma studio            # browse the database
 **First-time setup:** install PostgreSQL, `cp .env.example .env`, set `DATABASE_URL`,
 create the database (`createdb -U postgres siba30`), then `npx prisma migrate dev` and
 `npm run db:seed`. Full instructions are in `README.md`.
+
+**"Run SIBA"** — the `run-siba` skill (`.claude/skills/run-siba/`) does the whole
+local bring-up: starts PostgreSQL, prepares `.env`, installs, generates the Prisma
+client, migrates, seeds *only* when the database is empty, and leaves `npm run dev`
+serving on port 3000. It refuses to run in a remote/cloud session, where `localhost`
+is not the user's machine.
 
 **Tests cover the security paths only.** `npm test` runs `tests/*.test.ts` against a
 real, seeded database — authentication, sessions, RBAC, the admin protections, and a
