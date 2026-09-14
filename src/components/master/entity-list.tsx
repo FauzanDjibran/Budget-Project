@@ -18,10 +18,14 @@ import {
   STATUS_TEXT,
   TAG_CLASS,
   createLabel,
+  isActiveStatus,
   type Column,
   type Entity,
 } from "@/lib/siba/entities";
+import { moduleByKey } from "@/lib/siba/nav";
+import { formatDate } from "@/lib/format";
 import type { RefOption, Row } from "@/lib/siba/records";
+import { recordTitle } from "./title";
 
 type Computed = Record<number, Record<string, string | number>>;
 
@@ -29,6 +33,9 @@ type Computed = Record<number, Record<string, string | number>>;
  * `can` mirrors the caller's permissions so the toolbar and row actions only
  * offer what they may use. It is presentation, not protection: every action
  * behind these controls re-checks on the server.
+ *
+ * `refs` is keyed by field name, not by target table — two fields can point at
+ * the same table and still carry different option sets.
  */
 export function EntityList({
   entity,
@@ -49,9 +56,12 @@ export function EntityList({
   const locked = isCompanyEntity(entity.slug);
   const canCreate = can.create && !locked;
   const canEdit = can.edit && !locked;
+  const status = entity.statusModel;
+  const rowIsActive = (row: Row) =>
+    status ? isActiveStatus(status, row[status.field]) : true;
   /** Whether the toggle is offered depends on which way it would go. */
   const canToggle = (row: Row) =>
-    row.status === "Active" ? can.deactivate : can.activate;
+    Boolean(status?.toggle) && (rowIsActive(row) ? can.deactivate : can.activate);
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ field: string; dir: "asc" | "desc" } | null>(null);
@@ -62,11 +72,8 @@ export function EntityList({
   const [busy, setBusy] = useState(false);
 
   const refFor = useCallback(
-    (column: Column): RefOption[] => {
-      const field = entity.fields.find((f) => f.name === column.field);
-      return (field?.ref && refs[field.ref]) || [];
-    },
-    [entity, refs]
+    (column: Column): RefOption[] => refs[column.field] ?? [],
+    [refs]
   );
 
   /** The text a column contributes to search, sorting and filtering. */
@@ -78,7 +85,10 @@ export function EntityList({
         const opt = refFor(column).find((o) => o.id === Number(raw));
         return opt ? `${opt.label} ${opt.name}` : "";
       }
-      if (column.isStatus) return STATUS_TEXT[String(raw)] ?? String(raw ?? "");
+      if (column.isDate) return formatDate(raw as string);
+      if (column.isStatus || column.isBool) {
+        return STATUS_TEXT[String(raw)] ?? String(raw ?? "");
+      }
       return raw == null ? "" : String(raw);
     },
     [computed, refFor]
@@ -114,6 +124,12 @@ export function EntityList({
           const av = column.numeric || column.computed ? computed[a.id]?.[column.field] : undefined;
           const bv = column.numeric || column.computed ? computed[b.id]?.[column.field] : undefined;
           if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+          if (column.numeric && !column.computed) {
+            return (Number(a[column.field] ?? 0) - Number(b[column.field] ?? 0)) * dir;
+          }
+          if (column.isDate) {
+            return String(a[column.field] ?? "").localeCompare(String(b[column.field] ?? "")) * dir;
+          }
           return textOf(column, a).localeCompare(textOf(column, b), "id", { numeric: true }) * dir;
         });
       }
@@ -143,11 +159,7 @@ export function EntityList({
     });
   };
 
-  const identityOf = (row: Row) => {
-    const label = entity.labelField ? String(row[entity.labelField] ?? "") : "";
-    const name = String(row[entity.nameField] ?? "");
-    return label ? `${label} – ${name}` : name;
-  };
+  const identityOf = (row: Row) => recordTitle(entity, row, refs);
 
   const onToggleConfirmed = async () => {
     if (!pendingToggle) return;
@@ -157,9 +169,7 @@ export function EntityList({
     if (result.ok) {
       toast(
         "Status diperbarui",
-        `${String(pendingToggle[entity.nameField])} sekarang ${
-          result.status === "Active" ? "aktif" : "nonaktif"
-        }.`,
+        `${identityOf(pendingToggle)} sekarang ${result.active ? "aktif" : "nonaktif"}.`,
         "ok"
       );
       setPendingToggle(null);
@@ -192,7 +202,7 @@ export function EntityList({
       );
     }
 
-    if (column.isStatus) {
+    if (column.isStatus || column.isBool) {
       const s = String(value);
       return <span className={`bdg ${STATUS_CLASS[s] ?? "s-mute"}`}>{STATUS_TEXT[s] ?? s}</span>;
     }
@@ -200,6 +210,10 @@ export function EntityList({
     if (column.isTag) {
       const s = String(value);
       return <span className={`bdg ${TAG_CLASS[s] ?? "t-slate"}`}>{s}</span>;
+    }
+
+    if (column.isDate) {
+      return value ? <>{formatDate(value as string)}</> : <span className="dash">—</span>;
     }
 
     if (column.isLabel) {
@@ -218,6 +232,8 @@ export function EntityList({
   };
 
   const basePath = `/${entity.module}/${entity.slug}`;
+  const moduleName = moduleByKey(entity.module)?.name ?? entity.module;
+  const pendingActive = pendingToggle ? rowIsActive(pendingToggle) : false;
 
   const head = (
     <tr>
@@ -244,7 +260,7 @@ export function EntityList({
     <>
       <div className="ph">
         <div className="crumb">
-          <Link href="/dashboard">Master</Link>
+          <Link href="/dashboard">{moduleName}</Link>
           <span>/</span>
           <span className="cur">{entity.name}</span>
         </div>
@@ -289,18 +305,21 @@ export function EntityList({
             </button>
           </div>
 
-          {entity.statusField && (
+          {status && (
             <select
               className="psel"
-              value={filters.status ?? ""}
+              value={filters[status.field] ?? ""}
               onChange={(e) => {
-                setFilters((f) => ({ ...f, status: e.target.value }));
+                setFilters((f) => ({ ...f, [status.field]: e.target.value }));
                 setPage(1);
               }}
             >
               <option value="">Semua status</option>
-              <option value="Active">Aktif</option>
-              <option value="Inactive">Non Aktif</option>
+              {status.options.map((o) => (
+                <option key={o} value={o}>
+                  {STATUS_TEXT[o] ?? o}
+                </option>
+              ))}
             </select>
           )}
 
@@ -363,10 +382,10 @@ export function EntityList({
                               <Icon name="pen" size={15} />
                             </button>
                           )}
-                          {entity.statusField && canToggle(row) && (
+                          {canToggle(row) && (
                             <button
                               className="iact"
-                              title={row.status === "Active" ? "Nonaktifkan" : "Aktifkan"}
+                              title={rowIsActive(row) ? "Nonaktifkan" : "Aktifkan"}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setPendingToggle(row);
@@ -472,17 +491,17 @@ export function EntityList({
 
       <ConfirmDialog
         open={Boolean(pendingToggle)}
-        icon={pendingToggle?.status === "Active" ? "warn" : "check"}
-        tone={pendingToggle?.status === "Active" ? "danger" : "ok"}
-        title={`Konfirmasi ${pendingToggle?.status === "Active" ? "Nonaktifkan" : "Aktifkan"} Data`}
+        icon={pendingActive ? "warn" : "check"}
+        tone={pendingActive ? "danger" : "ok"}
+        title={`Konfirmasi ${pendingActive ? "Nonaktifkan" : "Aktifkan"} Data`}
         subject={pendingToggle ? identityOf(pendingToggle) : undefined}
         body={
-          pendingToggle?.status === "Active"
+          pendingActive
             ? "Data yang nonaktif tidak akan muncul lagi sebagai pilihan pada transaksi baru. Seluruh history dan referensi yang sudah ada tetap utuh."
             : "Data akan kembali tersedia sebagai pilihan pada transaksi baru."
         }
-        confirmLabel={`Ya, ${pendingToggle?.status === "Active" ? "Nonaktifkan" : "Aktifkan"}`}
-        confirmTone={pendingToggle?.status === "Active" ? "solid-danger" : "primary"}
+        confirmLabel={`Ya, ${pendingActive ? "Nonaktifkan" : "Aktifkan"}`}
+        confirmTone={pendingActive ? "solid-danger" : "primary"}
         busy={busy}
         onConfirm={onToggleConfirmed}
         onCancel={() => setPendingToggle(null)}

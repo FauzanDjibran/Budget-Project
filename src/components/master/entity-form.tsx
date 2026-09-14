@@ -14,9 +14,20 @@ import {
   isCompanyEntity,
 } from "@/lib/siba/company";
 import type { EntityAbilities } from "@/lib/siba/entity-access";
-import { STATUS_CLASS, STATUS_TEXT, TAG_CLASS, type Entity, type Field } from "@/lib/siba/entities";
+import {
+  STATUS_CLASS,
+  STATUS_TEXT,
+  TAG_CLASS,
+  allowedPartnerCategories,
+  fieldApplies,
+  isActiveStatus,
+  type Entity,
+  type Field,
+} from "@/lib/siba/entities";
+import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
-import { formatTimestamp } from "@/lib/format";
+import { formatDate, formatTimestamp } from "@/lib/format";
+import { recordTitle } from "./title";
 
 export type FormMode = "new" | "view" | "edit";
 
@@ -32,6 +43,7 @@ export function EntityForm({
   entity: Entity;
   mode: FormMode;
   row: Row | null;
+  /** Keyed by field name, not by target table — see `refOptions` in records.ts. */
   refs: Record<string, RefOption[]>;
   createdByEmail?: string;
   updatedByEmail?: string;
@@ -42,11 +54,11 @@ export function EntityForm({
   const toast = useToast();
   const editing = mode === "new" || mode === "edit";
   const basePath = `/${entity.module}/${entity.slug}`;
+  const moduleName = moduleByKey(entity.module)?.name ?? entity.module;
   /** Company has no write path at all — see `lib/siba/company.ts`. */
   const locked = isCompanyEntity(entity.slug);
   const canEdit = can.edit && !locked;
-  const canToggleStatus =
-    row?.status === "Active" ? can.deactivate : can.activate;
+  const statusModel = entity.statusModel;
 
   const [values, setValues] = useState<FormValues>(() => initialValues(entity, row));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -54,6 +66,12 @@ export function EntityForm({
   const [saving, setSaving] = useState(false);
   const [confirmToggle, setConfirmToggle] = useState(false);
   const [busyToggle, setBusyToggle] = useState(false);
+
+  const active = statusModel
+    ? isActiveStatus(statusModel, row?.[statusModel.field])
+    : true;
+  const canToggleStatus =
+    Boolean(statusModel?.toggle) && (active ? can.deactivate : can.activate);
 
   const setField = (field: Field, value: string | boolean | null) => {
     setValues((v) => {
@@ -71,14 +89,39 @@ export function EntityForm({
     });
   };
 
+  /** The short label of the Budget Category currently chosen, if any. */
+  const budgetCategoryLabel = (id: unknown) =>
+    refs.budget_category_id?.find((o) => o.id === Number(id))?.label;
+
+  const applies = (field: Field) =>
+    fieldApplies(field, values, budgetCategoryLabel);
+
+  /**
+   * The half of a ref narrowing that depends on what is being entered right
+   * now. The server already applied the structural half when it built these
+   * options, and re-checks the whole rule when the form is submitted.
+   */
   const optionsFor = (field: Field): RefOption[] => {
-    const all = (field.ref && refs[field.ref]) || [];
-    // Accounts are scoped to the company chosen on this form.
-    if (field.refFilter === "cashBankAccount") {
-      const companyId = Number(values.company_id ?? 0);
-      return companyId ? all.filter((o) => o.companyId === companyId) : [];
+    const all = refs[field.name] ?? [];
+    const companyId = Number(values.company_id ?? 0);
+
+    switch (field.refFilter) {
+      case "cashBankAccount":
+      case "postableAccount":
+        return companyId ? all.filter((o) => o.companyId === companyId) : [];
+      case "parentAccount":
+        return companyId
+          ? all.filter((o) => o.companyId === companyId && o.id !== row?.id)
+          : [];
+      case "mappingPartnerCategory": {
+        const label = budgetCategoryLabel(values.budget_category_id);
+        if (!label) return [];
+        const allowed = allowedPartnerCategories(label);
+        return all.filter((o) => allowed.includes(o.label));
+      }
+      default:
+        return all;
     }
-    return all;
   };
 
   const onSave = async () => {
@@ -124,9 +167,7 @@ export function EntityForm({
     if (result.ok) {
       toast(
         "Status diperbarui",
-        `${String(row[entity.nameField])} sekarang ${
-          result.status === "Active" ? "aktif" : "nonaktif"
-        }.`,
+        `${title} sekarang ${result.active ? "aktif" : "nonaktif"}.`,
         "ok"
       );
       router.refresh();
@@ -136,26 +177,28 @@ export function EntityForm({
   };
 
   const label = entity.labelField ? String(row?.[entity.labelField] ?? "") : "";
-  const name = String(row?.[entity.nameField] ?? "");
-  const status = entity.statusField ? String(row?.status ?? "") : "";
+  const title = recordTitle(entity, row, refs);
+  const statusValue = statusModel ? String(row?.[statusModel.field] ?? "") : "";
 
-  const businessFields = entity.fields.filter(
-    (f) => f.name !== "note" && f.name !== "status"
+  const visible = entity.fields.filter(applies);
+  const statusFieldName = statusModel?.field;
+  const businessFields = visible.filter(
+    (f) => f.name !== "note" && f.name !== statusFieldName
   );
-  const statusFields = entity.fields.filter((f) => f.name === "status");
-  const noteFields = entity.fields.filter((f) => f.name === "note");
+  const statusFields = visible.filter((f) => f.name === statusFieldName);
+  const noteFields = visible.filter((f) => f.name === "note");
 
-  const title = mode === "new" ? `Tambah ${entity.single ?? entity.name}` : name;
+  const heading = mode === "new" ? `Tambah ${entity.single ?? entity.name}` : title;
 
   return (
     <>
       <div className="ph">
         <div className="crumb">
-          <Link href="/dashboard">Master</Link>
+          <Link href="/dashboard">{moduleName}</Link>
           <span>/</span>
           <Link href={basePath}>{entity.name}</Link>
           <span>/</span>
-          <span className="cur">{mode === "new" ? "Baru" : label || name}</span>
+          <span className="cur">{mode === "new" ? "Baru" : title}</span>
         </div>
 
         <div className="ph-row">
@@ -163,20 +206,20 @@ export function EntityForm({
             <span className="ph-ico">
               <Icon name={entity.icon} size={16} />
             </span>
-            {title}
+            {heading}
             {mode !== "new" && label && <span className="lab lg">{label}</span>}
-            {mode === "view" && status && (
+            {mode === "view" && statusValue && (
               canToggleStatus ? (
                 <button
-                  className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}
+                  className={`bdg ${STATUS_CLASS[statusValue] ?? "s-mute"}`}
                   title="Klik untuk mengubah status"
                   onClick={() => setConfirmToggle(true)}
                 >
-                  {STATUS_TEXT[status] ?? status}
+                  {STATUS_TEXT[statusValue] ?? statusValue}
                 </button>
               ) : (
-                <span className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}>
-                  {STATUS_TEXT[status] ?? status}
+                <span className={`bdg ${STATUS_CLASS[statusValue] ?? "s-mute"}`}>
+                  {STATUS_TEXT[statusValue] ?? statusValue}
                 </span>
               )
             )}
@@ -238,7 +281,9 @@ export function EntityForm({
                 <div className="sec-t">
                   Status Data
                   <span className="h">
-                    Data Inactive tidak muncul pada pilihan transaksi baru
+                    {statusModel?.toggle
+                      ? "Data Inactive tidak muncul pada pilihan transaksi baru"
+                      : "Draft belum dipakai · Open menerima posting · Closed terkunci"}
                   </span>
                 </div>
                 <div className="frow">
@@ -252,6 +297,7 @@ export function EntityForm({
                       exists={mode !== "new"}
                       error={errors[f.name]}
                       options={[]}
+                      statusLike
                       onChange={(v) => setField(f, v)}
                     />
                   ))}
@@ -338,12 +384,12 @@ export function EntityForm({
                         </span>
                       </div>
                     )}
-                    {status && (
+                    {statusValue && (
                       <div className="mrow">
                         <span className="k">Status</span>
                         <span className="v">
-                          <span className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}>
-                            {STATUS_TEXT[status] ?? status}
+                          <span className={`bdg ${STATUS_CLASS[statusValue] ?? "s-mute"}`}>
+                            {STATUS_TEXT[statusValue] ?? statusValue}
                           </span>
                         </span>
                       </div>
@@ -378,17 +424,17 @@ export function EntityForm({
 
       <ConfirmDialog
         open={confirmToggle}
-        icon={status === "Active" ? "warn" : "check"}
-        tone={status === "Active" ? "danger" : "ok"}
-        title={`Konfirmasi ${status === "Active" ? "Nonaktifkan" : "Aktifkan"} Data`}
-        subject={label ? `${label} – ${name}` : name}
+        icon={active ? "warn" : "check"}
+        tone={active ? "danger" : "ok"}
+        title={`Konfirmasi ${active ? "Nonaktifkan" : "Aktifkan"} Data`}
+        subject={title}
         body={
-          status === "Active"
+          active
             ? "Data yang nonaktif tidak akan muncul lagi sebagai pilihan pada transaksi baru. Seluruh history dan referensi yang sudah ada tetap utuh."
             : "Data akan kembali tersedia sebagai pilihan pada transaksi baru."
         }
-        confirmLabel={`Ya, ${status === "Active" ? "Nonaktifkan" : "Aktifkan"}`}
-        confirmTone={status === "Active" ? "solid-danger" : "primary"}
+        confirmLabel={`Ya, ${active ? "Nonaktifkan" : "Aktifkan"}`}
+        confirmTone={active ? "solid-danger" : "primary"}
         busy={busyToggle}
         onConfirm={onToggle}
         onCancel={() => setConfirmToggle(false)}
@@ -402,9 +448,18 @@ function initialValues(entity: Entity, row: Row | null): FormValues {
   for (const f of entity.fields) {
     if (row) {
       const v = row[f.name];
-      out[f.name] = f.type === "bool" ? Boolean(v) : v == null ? null : String(v);
+      if (f.type === "bool") out[f.name] = Boolean(v);
+      // Dates arrive as full ISO timestamps; `<input type="date">` wants the
+      // calendar part only, and the Server Action parses it back at UTC midnight.
+      else if (f.type === "date") out[f.name] = v == null ? null : String(v).slice(0, 10);
+      else out[f.name] = v == null ? null : String(v);
     } else {
-      out[f.name] = f.defaultValue != null ? (f.defaultValue as string | boolean) : f.type === "bool" ? false : "";
+      out[f.name] =
+        f.defaultValue != null
+          ? (f.defaultValue as string | boolean)
+          : f.type === "bool"
+            ? false
+            : "";
     }
   }
   return out;
@@ -418,6 +473,7 @@ function FieldControl({
   exists,
   error,
   options,
+  statusLike,
   onChange,
 }: {
   field: Field;
@@ -427,6 +483,8 @@ function FieldControl({
   exists: boolean;
   error?: string;
   options: RefOption[];
+  /** This field carries the record's status, so a boolean reads Aktif/Non Aktif. */
+  statusLike?: boolean;
   onChange: (value: string | boolean | null) => void;
 }) {
   const wrapClass = `fld${field.full || field.type === "textarea" ? " full" : ""}`;
@@ -467,21 +525,25 @@ function FieldControl({
     } else if (field.type === "bool") {
       body = (
         <div className="ro">
-          <span className={`bdg ${raw ? "s-ok" : "s-bad"}`}>{raw ? "Aktif" : "Non Aktif"}</span>
+          <span className={`bdg ${raw ? "s-ok" : "s-bad"}`}>
+            {statusLike ? (raw ? "Aktif" : "Non Aktif") : raw ? "Ya" : "Tidak"}
+          </span>
         </div>
       );
-    } else if (field.name === "status") {
-      const s = String(raw);
-      body = (
-        <div className="ro">
-          <span className={`bdg ${STATUS_CLASS[s] ?? "s-mute"}`}>{STATUS_TEXT[s] ?? s}</span>
-        </div>
+    } else if (field.type === "date") {
+      body = raw ? (
+        <div className="ro">{formatDate(raw as string)}</div>
+      ) : (
+        <div className="ro nil">tidak diisi</div>
       );
     } else if (field.type === "select") {
       const s = String(raw);
+      const statusLike = STATUS_CLASS[s];
       body = (
         <div className="ro">
-          <span className={`bdg ${TAG_CLASS[s] ?? "t-slate"}`}>{s}</span>
+          <span className={`bdg ${statusLike ?? TAG_CLASS[s] ?? "t-slate"}`}>
+            {STATUS_TEXT[s] ?? s}
+          </span>
         </div>
       );
     } else if (field.type === "textarea") {

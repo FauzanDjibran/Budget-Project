@@ -37,8 +37,13 @@ function actionFiles(): string[] {
  * The parameter list is skipped by matching parentheses, and the body is then
  * the first brace that ends a line — a return type such as
  * `Promise<{ ok: boolean }>` opens its brace mid-line and is passed over.
+ *
+ * Line endings are normalised first: git checks these files out with CRLF on
+ * Windows, and "the brace that ends a line" would otherwise match nothing
+ * there, leaving the suite green on CI and vacuous on a developer's machine.
  */
-function exportedActions(source: string): { name: string; body: string }[] {
+function exportedActions(input: string): { name: string; body: string }[] {
+  const source = input.replace(/\r\n/g, "\n");
   const out: { name: string; body: string }[] = [];
   const pattern = /export async function (\w+)\s*\(/g;
 

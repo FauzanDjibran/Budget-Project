@@ -44,6 +44,31 @@ const ENTITY_PERMISSIONS: Record<string, EntityPermissions> = {
     activate: "CURRENCY_ACTIVATE",
     deactivate: "CURRENCY_DEACTIVATE",
   },
+  acc_account: {
+    view: "ACCOUNT_VIEW",
+    create: "ACCOUNT_CREATE",
+    edit: "ACCOUNT_EDIT",
+    activate: "ACCOUNT_ACTIVATE",
+    deactivate: "ACCOUNT_DEACTIVATE",
+  },
+  // Mapping and the fiscal calendar have no activate/deactivate: a mapping
+  // either exists or does not, and a fiscal record moves Draft -> Open ->
+  // Closed through an edit rather than a toggle.
+  acc_budget_category_account: {
+    view: "MAPPING_VIEW",
+    create: "MAPPING_CREATE",
+    edit: "MAPPING_EDIT",
+  },
+  acc_fiscal_year: {
+    view: "FISCAL_YEAR_VIEW",
+    create: "FISCAL_YEAR_CREATE",
+    edit: "FISCAL_YEAR_EDIT",
+  },
+  acc_fiscal_period: {
+    view: "FISCAL_PERIOD_VIEW",
+    create: "FISCAL_PERIOD_CREATE",
+    edit: "FISCAL_PERIOD_EDIT",
+  },
 };
 
 /**

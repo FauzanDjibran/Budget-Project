@@ -1,4 +1,4 @@
-import { EntityEditPage } from "@/components/master/entity-pages";
+import { EntityDetailPage } from "@/components/master/entity-pages";
 
 export const dynamic = "force-dynamic";
 
@@ -8,5 +8,5 @@ export default async function Page({
   params: Promise<{ entity: string; id: string }>;
 }) {
   const { entity, id } = await params;
-  return <EntityEditPage module="master" slug={entity} id={id} />;
+  return <EntityDetailPage module="accounting" slug={entity} id={id} />;
 }

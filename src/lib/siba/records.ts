@@ -1,7 +1,13 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { type Entity, entityBySlug } from "./entities";
+import {
+  allowedPartnerCategories,
+  budgetCategoryNeedsPartner,
+  type Entity,
+  type Field,
+  entityBySlug,
+} from "./entities";
 
 /**
  * Generic record access for registry-driven entities.
@@ -16,7 +22,12 @@ const DELEGATES = {
   m_cash_bank: () => prisma.mCashBank,
   ref_currency: () => prisma.refCurrency,
   sys_partner_category: () => prisma.sysPartnerCategory,
+  sys_budget_category: () => prisma.sysBudgetCategory,
   acc_account: () => prisma.accAccount,
+  acc_account_subcategory: () => prisma.accAccountSubcategory,
+  acc_budget_category_account: () => prisma.accBudgetCategoryAccount,
+  acc_fiscal_year: () => prisma.accFiscalYear,
+  acc_fiscal_period: () => prisma.accFiscalPeriod,
 } as const;
 
 export type EntityKey = keyof typeof DELEGATES;
@@ -62,22 +73,49 @@ export async function getRow(entity: Entity, id: number): Promise<Row | null> {
   return row ? serialize(row) : null;
 }
 
-/** Ref options for every `ref` field on an entity, keyed by target entity. */
+/**
+ * Ref options for every `ref` field on an entity, keyed by FIELD name.
+ *
+ * Keying by field rather than by target matters: two fields can point at the
+ * same table and still need different option sets. Chart of Accounts is the
+ * case that forces it — `parent_account` may pick any account in the Company,
+ * while Cash & Bank may only pick a postable Kas/Bank account. Both target
+ * `acc_account`.
+ *
+ * The structural half of each narrowing happens here, on the server, so the
+ * options a form offers are already the options the Server Action will accept.
+ * The half that depends on what the user is typing right now — the Company, the
+ * Budget Category — is applied again in the form.
+ */
 export async function refOptions(
   entity: Entity
 ): Promise<Record<string, RefOption[]>> {
-  const targets = Array.from(
-    new Set(entity.fields.filter((f) => f.type === "ref" && f.ref).map((f) => f.ref!))
-  );
-
   const result: Record<string, RefOption[]> = {};
-  for (const target of targets) {
-    result[target] = await optionsFor(target);
+  for (const field of entity.fields) {
+    if (field.type !== "ref" || !field.ref) continue;
+    result[field.name] = await optionsFor(field.ref, field.refFilter);
   }
   return result;
 }
 
-export async function optionsFor(target: string): Promise<RefOption[]> {
+/** Options a list needs for columns whose field the form does not edit. */
+export async function columnRefOptions(
+  entity: Entity,
+  existing: Record<string, RefOption[]>
+): Promise<Record<string, RefOption[]>> {
+  const out = { ...existing };
+  for (const column of entity.columns) {
+    if (!column.isRef || out[column.field]) continue;
+    const field = entity.fields.find((f) => f.name === column.field);
+    if (field?.ref) out[column.field] = await optionsFor(field.ref);
+  }
+  return out;
+}
+
+export async function optionsFor(
+  target: string,
+  filter?: Field["refFilter"]
+): Promise<RefOption[]> {
   switch (target) {
     case "sys_company": {
       const rows = await prisma.sysCompany.findMany({ orderBy: { id: "asc" } });
@@ -97,6 +135,15 @@ export async function optionsFor(target: string): Promise<RefOption[]> {
         active: true,
       }));
     }
+    case "sys_budget_category": {
+      const rows = await prisma.sysBudgetCategory.findMany({ orderBy: { id: "asc" } });
+      return rows.map((r) => ({
+        id: r.id,
+        label: r.category_label,
+        name: r.category_name,
+        active: true,
+      }));
+    }
     case "ref_currency": {
       const rows = await prisma.refCurrency.findMany({ orderBy: { id: "asc" } });
       return rows.map((r) => ({
@@ -106,14 +153,28 @@ export async function optionsFor(target: string): Promise<RefOption[]> {
         active: r.status === "Active",
       }));
     }
+    case "acc_account_subcategory": {
+      const rows = await prisma.accAccountSubcategory.findMany({ orderBy: { id: "asc" } });
+      return rows.map((r) => ({
+        id: r.id,
+        label: r.subcategory_label,
+        name: r.subcategory_name,
+        active: r.status === "Active",
+      }));
+    }
+    case "acc_fiscal_year": {
+      const rows = await prisma.accFiscalYear.findMany({ orderBy: { id: "asc" } });
+      return rows.map((r) => ({
+        id: r.id,
+        label: r.year_label,
+        name: r.year_name,
+        active: r.status !== "Closed",
+      }));
+    }
     case "acc_account": {
-      // Only postable Kas/Bank accounts can back a cash/bank resource.
       const rows = await prisma.accAccount.findMany({
-        where: {
-          is_postable: true,
-          account_subcategory: { subcategory_label: { in: ["Kas", "Bank"] } },
-        },
-        orderBy: { id: "asc" },
+        where: accountWhere(filter),
+        orderBy: [{ company_id: "asc" }, { account_label: "asc" }],
       });
       return rows.map((r) => ({
         id: r.id,
@@ -126,6 +187,106 @@ export async function optionsFor(target: string): Promise<RefOption[]> {
     default:
       return [];
   }
+}
+
+/**
+ * The structural half of an account narrowing — the part that does not depend
+ * on anything the user is still choosing. `validateAccountChoice` applies the
+ * same rules when the Server Action runs; this only decides what to offer.
+ */
+function accountWhere(filter?: Field["refFilter"]) {
+  switch (filter) {
+    case "cashBankAccount":
+      return {
+        is_postable: true,
+        account_subcategory: { subcategory_label: { in: CASH_BANK_SUBCATEGORIES } },
+      };
+    case "postableAccount":
+      return { is_postable: true };
+    default:
+      return {};
+  }
+}
+
+/** Only these account groups may back a cash/bank resource. */
+export const CASH_BANK_SUBCATEGORIES = ["Kas", "Bank"];
+
+/**
+ * The account a Cash & Bank resource posts to, checked against every rule at
+ * once. The form narrows its picker to the same set, but this is what actually
+ * enforces it: a Server Action is reachable directly, with any account id.
+ */
+export async function checkCashBankAccount(
+  accountId: number,
+  companyId: number
+): Promise<string | null> {
+  const account = await prisma.accAccount.findUnique({
+    where: { id: accountId },
+    select: {
+      company_id: true,
+      is_postable: true,
+      is_active: true,
+      account_subcategory: { select: { subcategory_label: true } },
+    },
+  });
+  if (!account) return "Account tidak ditemukan.";
+  if (account.company_id !== companyId) {
+    return "Account harus milik Company yang sama dengan resource ini.";
+  }
+  if (!account.is_postable) {
+    return "Account header tidak dapat menerima posting. Pilih account postable.";
+  }
+  if (!CASH_BANK_SUBCATEGORIES.includes(account.account_subcategory.subcategory_label)) {
+    return "Account harus berada pada kelompok Kas atau Bank.";
+  }
+  if (!account.is_active) {
+    return "Account tersebut non-aktif dan tidak dapat dipilih.";
+  }
+  return null;
+}
+
+/** The account ids that would form a cycle if made this account's parent. */
+export async function accountDescendants(rootId: number): Promise<Set<number>> {
+  const all = await prisma.accAccount.findMany({
+    select: { id: true, parent_account: true },
+  });
+  const byParent = new Map<number, number[]>();
+  for (const a of all) {
+    if (a.parent_account == null) continue;
+    const list = byParent.get(a.parent_account) ?? [];
+    list.push(a.id);
+    byParent.set(a.parent_account, list);
+  }
+  const out = new Set<number>([rootId]);
+  const queue = [rootId];
+  while (queue.length) {
+    for (const child of byParent.get(queue.shift()!) ?? []) {
+      if (out.has(child)) continue;
+      out.add(child);
+      queue.push(child);
+    }
+  }
+  return out;
+}
+
+/** Partner category ids a Budget Category accepts, resolved through labels. */
+export async function partnerCategoriesForBudgetCategory(
+  budgetCategoryId: number
+): Promise<{ needsPartner: boolean; allowedIds: number[] } | null> {
+  const category = await prisma.sysBudgetCategory.findUnique({
+    where: { id: budgetCategoryId },
+    select: { category_label: true },
+  });
+  if (!category) return null;
+  const labels = allowedPartnerCategories(category.category_label);
+  const rows = await prisma.sysPartnerCategory.findMany({
+    where: { category_label: { in: labels } },
+    select: { id: true },
+  });
+  return {
+    needsPartner: budgetCategoryNeedsPartner(category.category_label),
+    allowedIds: rows.map((r) => r.id),
+  };
 }
 
 /**
@@ -178,7 +339,111 @@ export async function computedValues(
     }
   }
 
+  if (entity.key === "acc_budget_category_account") {
+    const accounts = await prisma.accAccount.findMany({
+      select: { id: true, normal_balance: true },
+    });
+    const byId = new Map(accounts.map((a) => [a.id, a.normal_balance]));
+    for (const r of rows) {
+      out[r.id] = { normal_balance: byId.get(r.account_id as number) ?? "—" };
+    }
+  }
+
+  if (entity.key === "acc_fiscal_year") {
+    const groups = await prisma.accFiscalPeriod.groupBy({
+      by: ["fiscal_year_id"],
+      _count: { _all: true },
+    });
+    for (const r of rows) {
+      out[r.id] = {
+        period_count:
+          groups.find((g) => g.fiscal_year_id === r.id)?._count._all ?? 0,
+      };
+    }
+  }
+
   return out;
+}
+
+// ------------------------------------------------------------------ COA tree
+
+export type TreeAccount = {
+  id: number;
+  label: string;
+  name: string;
+  companyId: number;
+  companyLabel: string;
+  subcategoryId: number;
+  parentId: number | null;
+  normalBalance: string;
+  isPostable: boolean;
+  isActive: boolean;
+  requirePartner: boolean;
+  partnerCategoryLabel: string | null;
+  isControlAccount: boolean;
+};
+
+export type TreeSubcategory = { id: number; label: string; name: string };
+
+export type TreeCategory = {
+  id: number;
+  label: string;
+  typeLabel: string;
+  subcategories: TreeSubcategory[];
+};
+
+/**
+ * The structural skeleton of the bagan akun: category -> kelompok -> account.
+ *
+ * Categories and kelompok are seeded structure with no menu of their own — the
+ * mockup treats them the same way. They are read here so the tree can group
+ * accounts under them.
+ */
+export async function accountTree(): Promise<{
+  categories: TreeCategory[];
+  accounts: TreeAccount[];
+}> {
+  const [categories, subcategories, types, accounts, companies, partnerCategories] =
+    await Promise.all([
+      prisma.accAccountCategory.findMany({ orderBy: { id: "asc" } }),
+      prisma.accAccountSubcategory.findMany({ orderBy: { id: "asc" } }),
+      prisma.sysAccountType.findMany(),
+      prisma.accAccount.findMany({ orderBy: [{ account_label: "asc" }] }),
+      prisma.sysCompany.findMany(),
+      prisma.sysPartnerCategory.findMany(),
+    ]);
+
+  const typeLabel = new Map(types.map((t) => [t.id, t.type_label]));
+  const companyLabel = new Map(companies.map((c) => [c.id, c.company_label]));
+  const partnerLabel = new Map(partnerCategories.map((p) => [p.id, p.category_label]));
+
+  return {
+    categories: categories.map((c) => ({
+      id: c.id,
+      label: c.category_label,
+      typeLabel: typeLabel.get(c.account_type_id) ?? "",
+      subcategories: subcategories
+        .filter((s) => s.account_category_id === c.id)
+        .map((s) => ({ id: s.id, label: s.subcategory_label, name: s.subcategory_name })),
+    })),
+    accounts: accounts.map((a) => ({
+      id: a.id,
+      label: a.account_label,
+      name: a.account_name,
+      companyId: a.company_id,
+      companyLabel: companyLabel.get(a.company_id) ?? "",
+      subcategoryId: a.account_subcategory_id,
+      parentId: a.parent_account,
+      normalBalance: a.normal_balance,
+      isPostable: a.is_postable,
+      isActive: a.is_active,
+      requirePartner: a.require_partner,
+      partnerCategoryLabel: a.partner_category_id
+        ? partnerLabel.get(a.partner_category_id) ?? null
+        : null,
+      isControlAccount: a.is_control_account,
+    })),
+  };
 }
 
 export type CompanyStructure = {

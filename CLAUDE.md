@@ -50,13 +50,13 @@ source material lives in `Initialization/` (committed, treated as read-only refe
 | Dashboard | Done |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
-| Accounting module (COA tree, mapping, fiscal period) | Not started |
+| Accounting module (COA tree, mapping, fiscal year/period) | Done — registry-driven, with Chart of Accounts rendered as a tree |
 | Budget module | Not started |
 | Finance module | Not started |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
-| Tests | Security suite via `node:test` (`npm test`). No other tests. |
+| Tests | Security suite plus the Accounting enforcement points, via `node:test` (`npm test`). |
 
 ---
 
@@ -122,10 +122,11 @@ of its own.
 | User/role admin | `src/lib/siba/user-admin.ts` | Guarded service; all admin-protection rules |
 | Own account | `src/lib/siba/profile.ts` | Profile read/edit, own password change |
 | Entity permissions | `src/lib/siba/entity-access.ts` | Registry entity -> permission per operation |
-| Data access | `src/lib/siba/records.ts` | Generic list/get/options/computed; `server-only` |
+| Data access | `src/lib/siba/records.ts` | Generic list/get/options/computed, COA tree, the account rules the actions enforce; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
-| Generic UI | `src/components/master/`, `src/components/ui/` | Table, form, combobox, dialog, toast |
+| Registry pages | `src/components/master/entity-pages.tsx` | The four registry pages, mounted under each owning module |
+| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, combobox, dialog, toast |
 
 ### Data flow for a Master page
 
@@ -190,6 +191,7 @@ src/
       error.tsx          Generic failure screen (authz never lands here)
       dashboard/
       master/[entity]/   Dynamic: list, /new, /[id], /[id]/edit
+      accounting/[entity]/ The same four registry pages — COA, mapping, fiscal
       settings/user/     Admin-only user management (bespoke, not registry)
       settings/role/     Admin-only roles + permission matrix
       settings/profile/  Own account — authentication only, no permission
@@ -202,7 +204,8 @@ src/
     icon.tsx             <Icon name size /> renderer
     icon-paths.ts        SVG path map lifted from the mockup
     shell/               App shell
-    master/              EntityList, EntityForm
+    master/              entity-pages (the four shared pages), EntityList,
+                         AccountTree, EntityForm, recordTitle
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     ui/                  Combobox, ConfirmDialog, ToastProvider
@@ -213,7 +216,7 @@ src/
                          permissions, roles, access, auth, auth-errors,
                          session, login, user-admin, profile, entity-access
   generated/prisma/      Prisma client output — gitignored, never edit
-tests/                   Security suite (node:test); helpers.ts holds fixtures
+tests/                   Security suite + Accounting rules (node:test); helpers.ts holds fixtures
 .claude/skills/          Project skills — `run-siba` brings the app up locally (§6)
 .github/workflows/ci.yml PostgreSQL service -> migrate -> seed -> lint -> build -> test
 ```
@@ -249,11 +252,14 @@ client, migrates, seeds *only* when the database is empty, and leaves `npm run d
 serving on port 3000. It refuses to run in a remote/cloud session, where `localhost`
 is not the user's machine.
 
-**Tests cover the security paths only.** `npm test` runs `tests/*.test.ts` against a
-real, seeded database — authentication, sessions, RBAC, the admin protections, and a
-structural audit that every Server Action resolves its caller before acting. Nothing
-else has tests, so "validate" still means `npm run build`, `npm run lint`, `npm test`,
-and exercising the feature in a browser. State plainly when something is unverified.
+**Tests cover the security paths, plus the Accounting enforcement points.** `npm test`
+runs `tests/*.test.ts` against a real, seeded database — authentication, sessions,
+RBAC, the admin protections, a structural audit that every Server Action resolves its
+caller before acting, and the rules that decide which account a Cash & Bank resource
+may post to, whether a parent account would close a loop, and which Partner Categories
+a Budget Category admits. Everything else is untested, so "validate" still means
+`npm run build`, `npm run lint`, `npm test`, and exercising the feature in a browser.
+State plainly when something is unverified.
 
 The runner is `node:test` through `tsx`, with no extra dependency:
 `node --env-file-if-exists=.env --conditions=react-server --import tsx --test`.
@@ -401,11 +407,15 @@ Frozen structural rules:
 
 Implemented and enforced:
 
-3. **Cash bank ↔ account ownership.** A cash/bank resource must post to an account
-   owned by the same company. Enforced in `master.ts`, and the account picker filters
-   by the chosen company.
-4. **Cash/bank accounts.** Only `is_postable` accounts in the `Kas` or `Bank`
-   subcategories may back a cash/bank resource.
+3. **Cash bank ↔ account.** A cash/bank resource must post to an account that is owned
+   by the same company, `is_postable`, in the `Kas` or `Bank` subcategory, and active.
+   All four conditions are one check — `checkCashBankAccount` in `records.ts` — called
+   by the Server Action. The picker offers the same set, but the check is what enforces
+   it: the action is reachable directly, with any account id.
+4. **The connection holds in both directions.** An account a cash/bank resource already
+   posts to cannot then be made non-postable, moved out of the `Kas`/`Bank` groups, or
+   deactivated — including through the status toggle. The refusal names the resources
+   that depend on it.
 5. **Uniqueness is case-insensitive** on identity labels.
 6. **Locked fields.** `company_id` on Partner and Cash & Bank is immutable after
    creation — ledger history is tied to the company.
@@ -429,26 +439,40 @@ Implemented and enforced:
    set is frozen so the guard cannot be sidestepped by emptying the role instead.
 13. **A deactivated user loses their sessions immediately.** Deactivation revokes them,
    and validation re-reads the account's status on every request.
+14. **An account cannot become its own ancestor.** A parent must belong to the same
+   company, must not be the account itself, and must not sit anywhere below it —
+   otherwise the bagan akun would contain a loop no renderer could terminate on.
+15. **An account requiring a Partner must name the category.** `require_partner` makes
+   `partner_category_id` mandatory; clearing the flag clears the category, so a
+   subledger never carries a stale one.
+16. **A mapping is one combination.** Company × Budget Category × Partner Category
+   resolves to exactly one postable, active account of that same company. The Partner
+   Category applies only where `rules.ts` says the Budget Category takes one, and must
+   be one it accepts.
+17. **A fiscal period lives inside its year.** Both dates fall within the Fiscal Year's
+   range, the end is not before the start, and the sequence number is unique within the
+   year — otherwise a posting date could belong to two books, or to none.
 
 Defined in `rules.ts`, not yet exercised by UI:
 
-14. **Budget category → partner category → account.** Each budget category declares
+18. **Budget category → partner category → account.** Each budget category declares
    which partner categories are valid and which directions (In/Out) make sense.
-   Direction follows balance-sheet logic, not cash direction.
-15. **22 transaction purposes.** A purpose is exactly one budget category × one partner
+   Direction follows balance-sheet logic, not cash direction. Rule 16 above is the
+   Accounting half of this chain, now enforced.
+19. **22 transaction purposes.** A purpose is exactly one budget category × one partner
     category × one direction, which is what lets it resolve to a single account.
     Purposes are **application logic, never a master table** — see §12.
-16. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
+20. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
     and has no independent lifecycle or table.
 
 Specified in the concept doc, **not yet implemented** (V2 — see §13):
 
-17. Post fans out into the cash/bank ledger, subject ledgers, and Journal → General Ledger.
-18. Operational books are independent append-only stores — **never** views over
+21. Post fans out into the cash/bank ledger, subject ledgers, and Journal → General Ledger.
+22. Operational books are independent append-only stores — **never** views over
     journal lines. Only the General Ledger derives from journals.
-19. The child company's realization emits a Funding Request; the parent confirms it and
+23. The child company's realization emits a Funding Request; the parent confirms it and
     one atomic event produces two journals linked by an Intercompany Event.
-20. No partial funding: realization = request = funding amount.
+24. No partial funding: realization = request = funding amount.
 
 ---
 
@@ -506,11 +530,43 @@ Specified in the concept doc, **not yet implemented** (V2 — see §13):
 
 ### Registry-driven entity pages
 - **Decision:** One config in `entities.ts` drives list, detail and form. Routes are
-  dynamic (`/master/[entity]`).
+  dynamic (`/master/[entity]`, `/accounting/[entity]`), and the four page bodies are
+  written once in `components/master/entity-pages.tsx`; each module's route files are
+  three-line wrappers that pass their own module key. That key is checked against the
+  entity's, so `/accounting/partner` is a 404 rather than a second way into Partner.
 - **Reason:** Mirrors the mockup's `ENTITIES` map; ~15 entities would otherwise be ~45 pages.
-- **Impact:** Add an entity by adding config, not pages.
+  Mounting the same pages under a second module is config, not another copy.
+- **Impact:** Add an entity by adding config, not pages. A new module that owns registry
+  entities needs four wrapper files and nothing else.
 - **Do not change unless:** an entity needs behaviour the registry genuinely cannot express
   — then give that one a bespoke route and leave the registry intact.
+
+### Chart of Accounts is the one registry entity with a tree list
+- **Decision:** `Entity.view: "tree"` sends the *list* to `AccountTree` instead of
+  `EntityList`. Detail, create and edit stay generic. Category and kelompok are read as
+  structure only — they are seeded, have no menu, and are not accounts.
+- **Reason:** The shape of the bagan akun is the information. A flat table of 36 rows
+  hides what a reader of a chart of accounts is actually looking for, and the design
+  system already carries the tree (`.tree`, `.tn`, `.tkids`) lifted from the mockup.
+- **Impact:** One flag, one component. Everything else about the entity is registry
+  config, so its form and its rules are enforced exactly like any other entity's.
+- **Do not change unless:** a second entity needs a genuinely different list shape —
+  and then give it its own named view rather than generalising this one.
+
+### Ref options are keyed by field, and narrowed on the server
+- **Decision:** `refOptions()` returns options keyed by **field name**, not by target
+  table, and applies each field's structural `refFilter` in the query. The form applies
+  only the part that depends on values the user is still choosing (the Company, the
+  Budget Category). Every rule is then re-checked by the Server Action.
+- **Reason:** Two fields can target the same table and still need different sets —
+  `parent_account` may pick any account in the Company, while Cash & Bank may pick only
+  a postable Kas/Bank one. Keying by table made one of them wrong, and the narrowing
+  lived only in the client, so the picker and the action could disagree.
+- **Impact:** A ref column in a list looks its options up by its own field name. Adding
+  a narrowing means adding a `refFilter` name plus its server-side `where` — never a
+  client-only filter.
+- **Do not change unless:** explicitly instructed. **A picker's filter is never the
+  enforcement**; the matching check in the Server Action is.
 
 ### Prisma 7 requires a driver adapter
 - **Decision:** Clients are constructed with `new PrismaPg({ connectionString })`.

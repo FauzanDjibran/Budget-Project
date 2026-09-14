@@ -8,5 +8,5 @@ export default async function Page({
   params: Promise<{ entity: string }>;
 }) {
   const { entity } = await params;
-  return <EntityNewPage module="master" slug={entity} />;
+  return <EntityNewPage module="accounting" slug={entity} />;
 }

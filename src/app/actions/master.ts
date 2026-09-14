@@ -12,13 +12,24 @@ import {
   isCompanyEntity,
 } from "@/lib/siba/company";
 import { type Entity, type Field } from "@/lib/siba/entities";
-import { delegate, nextCode, requireEntity } from "@/lib/siba/records";
+import {
+  CASH_BANK_SUBCATEGORIES,
+  accountDescendants,
+  checkCashBankAccount,
+  delegate,
+  nextCode,
+  partnerCategoriesForBudgetCategory,
+  requireEntity,
+} from "@/lib/siba/records";
 
 /**
  * Every action here is permission-gated before it touches anything, and every
  * write is attributed to the signed-in user. A Server Action is reachable
  * directly, so the check below — not the hidden button in the list — is what
  * actually stops an unauthorized write.
+ *
+ * The same holds for the business rules in `validate`: a picker that offers
+ * only valid options is a convenience. The rules are enforced here.
  */
 
 export type FormValues = Record<string, string | boolean | null>;
@@ -79,32 +90,89 @@ function coerce(field: Field, raw: string | boolean | null | undefined) {
   return value;
 }
 
+const refValue = (values: FormValues, name: string): number | null => {
+  const raw = values[name];
+  if (raw == null || raw === "" || raw === true || raw === false) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+};
+
+const boolValue = (values: FormValues, name: string): boolean =>
+  values[name] === true || values[name] === "true";
+
+const dateValue = (values: FormValues, name: string): string | null => {
+  const raw = values[name];
+  return typeof raw === "string" && raw !== "" ? raw : null;
+};
+
+/**
+ * Which fields apply given what has been entered. A field that does not apply
+ * is not merely hidden: it is stored as null and its `required` is waived. The
+ * form hides the same fields, but this is the decision that counts.
+ */
+async function applicableFields(
+  entity: Entity,
+  values: FormValues
+): Promise<Set<string>> {
+  const applies = new Set<string>();
+  let budgetCategoryNeedsPartner: boolean | null = null;
+
+  for (const field of entity.fields) {
+    if (!field.visibleWhen) {
+      applies.add(field.name);
+      continue;
+    }
+    if (field.visibleWhen === "accountRequiresPartner") {
+      if (boolValue(values, "require_partner")) applies.add(field.name);
+      continue;
+    }
+    if (budgetCategoryNeedsPartner === null) {
+      const categoryId = refValue(values, "budget_category_id");
+      const rule = categoryId
+        ? await partnerCategoriesForBudgetCategory(categoryId)
+        : null;
+      budgetCategoryNeedsPartner = rule?.needsPartner ?? false;
+    }
+    if (budgetCategoryNeedsPartner) applies.add(field.name);
+  }
+  return applies;
+}
+
 async function validate(
   entity: Entity,
   values: FormValues,
-  currentId: number | null
+  currentId: number | null,
+  applies: Set<string>
 ): Promise<Record<string, string>> {
   const errors: Record<string, string> = {};
 
   for (const field of entity.fields) {
+    if (!applies.has(field.name)) continue;
     const value = coerce(field, values[field.name]);
 
     if (field.required) {
-      const missing =
-        value === null || value === undefined || value === "" ;
+      const missing = value === null || value === undefined || value === "";
       if (missing) errors[field.name] = `${field.label} wajib diisi.`;
     }
 
     if (field.unique && typeof value === "string" && value !== "") {
+      // Scoped uniqueness where the identity is only unique within a parent —
+      // an account number is unique per Company, not across the whole table.
+      const scope = field.uniqueWithin
+        ? { [field.uniqueWithin]: refValue(values, field.uniqueWithin) }
+        : {};
       const clash = await delegate(entity.key).findFirst({
         where: {
           [field.name]: { equals: value, mode: "insensitive" },
+          ...scope,
           ...(currentId ? { id: { not: currentId } } : {}),
         },
         select: { id: true },
       });
       if (clash) {
-        errors[field.name] = `${field.label} "${value}" sudah dipakai record lain.`;
+        errors[field.name] = field.uniqueWithin
+          ? `${field.label} "${value}" sudah dipakai pada Company yang sama.`
+          : `${field.label} "${value}" sudah dipakai record lain.`;
       }
     }
   }
@@ -113,18 +181,98 @@ async function validate(
   // here — the invariant is asserted against the seeded data instead, by
   // `companyStructure()` in records.ts.
 
-  // A cash/bank resource must post to an account owned by the same company.
   if (entity.key === "m_cash_bank") {
-    const companyId = coerce({ name: "company_id", label: "", type: "ref" }, values.company_id);
-    const accountId = coerce({ name: "account_id", label: "", type: "ref" }, values.account_id);
-    if (companyId && accountId) {
-      const account = await prisma.accAccount.findUnique({
-        where: { id: Number(accountId) },
+    Object.assign(errors, await validateCashBank(values, errors));
+  }
+  if (entity.key === "acc_account") {
+    Object.assign(errors, await validateAccount(values, currentId, errors));
+  }
+  if (entity.key === "acc_budget_category_account") {
+    Object.assign(errors, await validateMapping(values, currentId, errors, applies));
+  }
+  if (entity.key === "acc_fiscal_year") {
+    Object.assign(errors, validateFiscalYear(values));
+  }
+  if (entity.key === "acc_fiscal_period") {
+    Object.assign(errors, await validateFiscalPeriod(values, currentId));
+  }
+
+  return errors;
+}
+
+/**
+ * A Cash & Bank resource posts to exactly one account, and that account must be
+ * one the resource can legitimately use: owned by the same Company, postable,
+ * in the Kas or Bank group, and active.
+ */
+async function validateCashBank(
+  values: FormValues,
+  existing: Record<string, string>
+): Promise<Record<string, string>> {
+  if (existing.company_id || existing.account_id) return {};
+  const companyId = refValue(values, "company_id");
+  const accountId = refValue(values, "account_id");
+  if (!companyId || !accountId) return {};
+
+  const problem = await checkCashBankAccount(accountId, companyId);
+  return problem ? { account_id: problem } : {};
+}
+
+async function validateAccount(
+  values: FormValues,
+  currentId: number | null,
+  existing: Record<string, string>
+): Promise<Record<string, string>> {
+  const errors: Record<string, string> = {};
+  const companyId = refValue(values, "company_id");
+  const parentId = refValue(values, "parent_account");
+
+  if (parentId && companyId && !existing.parent_account) {
+    if (currentId && parentId === currentId) {
+      errors.parent_account = "Account tidak dapat menjadi parent dari dirinya sendiri.";
+    } else {
+      const parent = await prisma.accAccount.findUnique({
+        where: { id: parentId },
         select: { company_id: true },
       });
-      if (account && account.company_id !== Number(companyId)) {
-        errors.account_id =
-          "Account harus milik Company yang sama dengan resource ini.";
+      if (!parent) {
+        errors.parent_account = "Parent Account tidak ditemukan.";
+      } else if (parent.company_id !== companyId) {
+        errors.parent_account =
+          "Parent Account harus berada pada Company yang sama.";
+      } else if (currentId && (await accountDescendants(currentId)).has(parentId)) {
+        // Without this an account could be made a child of its own descendant,
+        // and the tree would contain a loop no renderer could terminate on.
+        errors.parent_account =
+          "Parent Account tidak boleh berada di bawah account ini.";
+      }
+    }
+  }
+
+  // An account that a Cash & Bank resource already posts to cannot be moved out
+  // from under the rule that let it be chosen in the first place.
+  if (currentId) {
+    const dependents = await prisma.mCashBank.findMany({
+      where: { account_id: currentId },
+      select: { cash_bank_label: true },
+    });
+    if (dependents.length) {
+      const used = dependents.map((d) => d.cash_bank_label).join(", ");
+      if (!boolValue(values, "is_postable")) {
+        errors.is_postable = `Account ini dipakai Cash & Bank (${used}) dan harus tetap postable.`;
+      }
+      if (!boolValue(values, "is_active")) {
+        errors.is_active = `Account ini dipakai Cash & Bank (${used}) dan tidak dapat dinonaktifkan.`;
+      }
+      const subcategoryId = refValue(values, "account_subcategory_id");
+      if (subcategoryId) {
+        const sub = await prisma.accAccountSubcategory.findUnique({
+          where: { id: subcategoryId },
+          select: { subcategory_label: true },
+        });
+        if (sub && !CASH_BANK_SUBCATEGORIES.includes(sub.subcategory_label)) {
+          errors.account_subcategory_id = `Account ini dipakai Cash & Bank (${used}) dan harus tetap pada kelompok Kas atau Bank.`;
+        }
       }
     }
   }
@@ -132,10 +280,141 @@ async function validate(
   return errors;
 }
 
-function buildData(entity: Entity, values: FormValues) {
+async function validateMapping(
+  values: FormValues,
+  currentId: number | null,
+  existing: Record<string, string>,
+  applies: Set<string>
+): Promise<Record<string, string>> {
+  const errors: Record<string, string> = {};
+  const companyId = refValue(values, "company_id");
+  const budgetCategoryId = refValue(values, "budget_category_id");
+  const partnerCategoryId = applies.has("partner_category_id")
+    ? refValue(values, "partner_category_id")
+    : null;
+  const accountId = refValue(values, "account_id");
+
+  if (budgetCategoryId) {
+    const rule = await partnerCategoriesForBudgetCategory(budgetCategoryId);
+    if (rule) {
+      if (rule.needsPartner && !partnerCategoryId) {
+        errors.partner_category_id =
+          "Budget Category ini mensyaratkan Partner Category.";
+      }
+      if (
+        partnerCategoryId &&
+        !rule.allowedIds.includes(partnerCategoryId)
+      ) {
+        errors.partner_category_id =
+          "Partner Category tersebut tidak berlaku untuk Budget Category ini.";
+      }
+    }
+  }
+
+  if (accountId && companyId && !existing.account_id) {
+    const account = await prisma.accAccount.findUnique({
+      where: { id: accountId },
+      select: { company_id: true, is_postable: true, is_active: true },
+    });
+    if (!account) errors.account_id = "Account tidak ditemukan.";
+    else if (account.company_id !== companyId) {
+      errors.account_id = "Account harus milik Company yang sama.";
+    } else if (!account.is_postable) {
+      errors.account_id = "Account header tidak dapat menjadi tujuan posting.";
+    } else if (!account.is_active) {
+      errors.account_id = "Account tersebut non-aktif dan tidak dapat dipilih.";
+    }
+  }
+
+  if (companyId && budgetCategoryId && !errors.partner_category_id) {
+    const clash = await prisma.accBudgetCategoryAccount.findFirst({
+      where: {
+        company_id: companyId,
+        budget_category_id: budgetCategoryId,
+        partner_category_id: partnerCategoryId,
+        ...(currentId ? { id: { not: currentId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (clash) {
+      errors.account_id =
+        "Kombinasi Company, Budget Category, dan Partner Category ini sudah dipetakan.";
+    }
+  }
+
+  return errors;
+}
+
+function validateFiscalYear(values: FormValues): Record<string, string> {
+  const start = dateValue(values, "start_date");
+  const end = dateValue(values, "end_date");
+  if (start && end && end <= start) {
+    return { end_date: "Tanggal selesai harus setelah tanggal mulai." };
+  }
+  return {};
+}
+
+async function validateFiscalPeriod(
+  values: FormValues,
+  currentId: number | null
+): Promise<Record<string, string>> {
+  const errors: Record<string, string> = {};
+  const start = dateValue(values, "start_date");
+  const end = dateValue(values, "end_date");
+  if (start && end && end < start) {
+    errors.end_date = "Tanggal selesai tidak boleh sebelum tanggal mulai.";
+  }
+
+  const yearId = refValue(values, "fiscal_year_id");
+  if (yearId) {
+    const year = await prisma.accFiscalYear.findUnique({
+      where: { id: yearId },
+      select: { start_date: true, end_date: true, year_label: true },
+    });
+    if (year) {
+      const from = year.start_date.toISOString().slice(0, 10);
+      const to = year.end_date.toISOString().slice(0, 10);
+      // A period that falls outside its own fiscal year would let a posting
+      // date belong to two different books, or to none.
+      if (start && (start < from || start > to)) {
+        errors.start_date = `Tanggal mulai harus berada dalam Fiscal Year ${year.year_label}.`;
+      }
+      if (end && (end < from || end > to)) {
+        errors.end_date = `Tanggal selesai harus berada dalam Fiscal Year ${year.year_label}.`;
+      }
+    }
+
+    const sequence = refValue(values, "sequence_no");
+    if (sequence != null) {
+      if (sequence < 1) {
+        errors.sequence_no = "Urutan harus 1 atau lebih.";
+      } else {
+        const clash = await prisma.accFiscalPeriod.findFirst({
+          where: {
+            fiscal_year_id: yearId,
+            sequence_no: sequence,
+            ...(currentId ? { id: { not: currentId } } : {}),
+          },
+          select: { id: true },
+        });
+        if (clash) {
+          errors.sequence_no = "Urutan ini sudah dipakai pada Fiscal Year yang sama.";
+        }
+      }
+    }
+  }
+
+  return errors;
+}
+
+function buildData(entity: Entity, values: FormValues, applies: Set<string>) {
   const data: Record<string, unknown> = {};
   for (const field of entity.fields) {
-    data[field.name] = coerce(field, values[field.name]);
+    data[field.name] = applies.has(field.name)
+      ? coerce(field, values[field.name])
+      : field.type === "bool"
+        ? false
+        : null;
   }
   return data;
 }
@@ -156,13 +435,14 @@ export async function createRecord(
   if (!guard.ok) return guard.denial;
   const actor = guard.actor;
 
-  const errors = await validate(entity, values, null);
+  const applies = await applicableFields(entity, values);
+  const errors = await validate(entity, values, null, applies);
   if (Object.keys(errors).length) return { ok: false, errors };
 
   const code = await nextCode(entity);
   const created = await delegate(entity.key).create({
     data: {
-      ...buildData(entity, values),
+      ...buildData(entity, values, applies),
       [entity.codeField]: code,
       created_by: actor.user.id,
       updated_by: null,
@@ -194,10 +474,11 @@ export async function updateRecord(
   if (!guard.ok) return guard.denial;
   const actor = guard.actor;
 
-  const errors = await validate(entity, values, id);
+  const applies = await applicableFields(entity, values);
+  const errors = await validate(entity, values, id, applies);
   if (Object.keys(errors).length) return { ok: false, errors };
 
-  const data = buildData(entity, values);
+  const data = buildData(entity, values, applies);
   // Locked fields are immutable once the record exists.
   for (const field of entity.fields) {
     if (field.locked) delete data[field.name];
@@ -221,30 +502,54 @@ export async function updateRecord(
 export async function toggleStatus(
   slug: string,
   id: number
-): Promise<{ ok: boolean; status?: string; message?: string }> {
+): Promise<{ ok: boolean; active?: boolean; message?: string }> {
   // Deactivating is an edit, so the company lock covers it too.
   if (isCompanyEntity(slug)) {
     return { ok: false, message: COMPANY_UPDATE_BLOCKED };
   }
 
   const entity = requireEntity(slug);
-  if (!entity.statusField) {
-    return { ok: false, message: `${entity.name} tidak memiliki status.` };
+  const model = entity.statusModel;
+  if (!model?.toggle) {
+    return { ok: false, message: `${entity.name} tidak memiliki status aktif/non-aktif.` };
   }
 
   const row = await delegate(entity.key).findUnique({ where: { id } });
   if (!row) return { ok: false, message: "Data tidak ditemukan." };
 
-  const next = row.status === "Active" ? "Inactive" : "Active";
+  const wasActive =
+    model.kind === "bool" ? row[model.field] === true : row[model.field] === "Active";
+  const nextActive = !wasActive;
 
   // Activating and deactivating are separate capabilities, so the direction of
   // the toggle decides which permission is required.
-  const guard = await authorize(entity.key, next === "Active" ? "activate" : "deactivate");
+  const guard = await authorize(entity.key, nextActive ? "activate" : "deactivate");
   if (!guard.ok) return { ok: false, message: guard.denial.errors._form };
   const actor = guard.actor;
+
+  // Deactivating an account that a Cash & Bank resource posts to would leave
+  // that resource pointing at an account it could no longer have chosen.
+  if (entity.key === "acc_account" && !nextActive) {
+    const dependents = await prisma.mCashBank.findMany({
+      where: { account_id: id },
+      select: { cash_bank_label: true },
+    });
+    if (dependents.length) {
+      return {
+        ok: false,
+        message: `Account ini dipakai Cash & Bank (${dependents
+          .map((d) => d.cash_bank_label)
+          .join(", ")}) dan tidak dapat dinonaktifkan.`,
+      };
+    }
+  }
+
   await delegate(entity.key).update({
     where: { id },
-    data: { status: next, updated_by: actor.user.id },
+    data: {
+      [model.field]: model.kind === "bool" ? nextActive : nextActive ? "Active" : "Inactive",
+      updated_by: actor.user.id,
+    },
   });
 
   await prisma.auditLog.create({
@@ -254,5 +559,5 @@ export async function toggleStatus(
   revalidatePath(`/${entity.module}/${entity.slug}`);
   revalidatePath(`/${entity.module}/${entity.slug}/${id}`);
   revalidatePath("/dashboard");
-  return { ok: true, status: next };
+  return { ok: true, active: nextActive };
 }

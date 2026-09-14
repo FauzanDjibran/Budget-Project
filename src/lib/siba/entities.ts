@@ -1,11 +1,15 @@
 /**
- * Entity registry for the Master module, ported from the mockup's ENTITIES map.
+ * Entity registry for the registry-driven modules, ported from the mockup's
+ * ENTITIES map.
  *
  * One config drives the list table, the detail view, and the create/edit form,
  * exactly as it did in the prototype. Adding an entity means adding a config
- * here, not writing another page.
+ * here, not writing another page. Master and Accounting both run on it; the
+ * only bespoke registry entity is Chart of Accounts, whose *list* renders as a
+ * tree (`view: "tree"`) while its detail and form stay generic.
  */
 import type { IconName } from "@/components/icon";
+import { BUDGET_CATEGORY_RULES } from "./rules";
 
 export type FieldType =
   | "text"
@@ -23,6 +27,11 @@ export type Field = {
   required?: boolean;
   /** Enforced case-insensitively across the table. */
   unique?: boolean;
+  /**
+   * Narrows `unique` to rows sharing this column's value — an account number is
+   * unique within a Company, not globally.
+   */
+  uniqueWithin?: string;
   /** Short human identifier — renders as a chip when read-only, mono when editing. */
   ident?: boolean;
   /** Immutable once the record exists. */
@@ -35,11 +44,23 @@ export type Field = {
   /** `ref` target entity key. */
   ref?: string;
   /**
-   * Named server-side narrowing for a ref field. Implemented in
-   * `options.ts` — kept as a name so the config stays serialisable.
+   * Named narrowing for a ref field. The server applies the structural half
+   * (postable, subcategory, active) when it builds the options; the form
+   * applies the half that depends on values the user is still choosing, such
+   * as the Company. Kept as a name so the config stays serialisable.
    */
-  refFilter?: "cashBankAccount";
-  defaultValue?: string | boolean;
+  refFilter?:
+    | "cashBankAccount"
+    | "postableAccount"
+    | "parentAccount"
+    | "mappingPartnerCategory";
+  /**
+   * Named predicate deciding whether the field applies at all. A field that
+   * does not apply is hidden and stored as null — the Server Action evaluates
+   * the same predicate, so hiding it is never what enforces the rule.
+   */
+  visibleWhen?: "accountRequiresPartner" | "budgetCategoryRequiresPartner";
+  defaultValue?: string | boolean | number;
   /** `bool` caption and sub-caption. */
   caption?: string;
   captionDetail?: string;
@@ -64,10 +85,28 @@ export type Column = {
   isStatus?: boolean;
   isTag?: boolean;
   isBool?: boolean;
+  isDate?: boolean;
   truncate?: boolean;
   /** Value comes from the server-computed map rather than the row. */
   computed?: boolean;
   filter?: "text" | "ref" | "enum" | "bool";
+};
+
+/**
+ * How a record carries active/inactive — or, for fiscal records, a lifecycle
+ * that is not a toggle at all.
+ *
+ * `toggle` is what decides whether activate/deactivate exist as operations.
+ * Fiscal Year and Fiscal Period move Draft -> Open -> Closed through an edit,
+ * so they declare a status for filtering and display but no toggle.
+ */
+export type StatusModel = {
+  field: string;
+  /** `enum` stores the value as text; `bool` stores true/false. */
+  kind: "enum" | "bool";
+  /** Values offered in the list's status filter, in order. */
+  options: string[];
+  toggle: boolean;
 };
 
 export type Entity = {
@@ -81,13 +120,33 @@ export type Entity = {
   codeField: string;
   codePrefix: string;
   labelField?: string;
-  nameField: string;
+  nameField?: string;
+  /**
+   * Records with no identity of their own — a mapping is named by what it
+   * connects. Titles are composed from these ref fields' labels.
+   */
+  titleRefs?: string[];
   /** Column used to filter by the topbar company context. */
   scope?: string;
-  /** Which column carries active/inactive, if any. */
-  statusField?: "status";
+  /** How the list page renders. */
+  view?: "table" | "tree";
+  statusModel?: StatusModel;
   fields: Field[];
   columns: Column[];
+};
+
+const ACTIVE_STATUS: StatusModel = {
+  field: "status",
+  kind: "enum",
+  options: ["Active", "Inactive"],
+  toggle: true,
+};
+
+const FISCAL_STATUS: StatusModel = {
+  field: "status",
+  kind: "enum",
+  options: ["Draft", "Open", "Closed"],
+  toggle: false,
 };
 
 const STATUS_FIELD: Field = {
@@ -99,6 +158,16 @@ const STATUS_FIELD: Field = {
   optionLabels: { Active: "Aktif", Inactive: "Non Aktif" },
   defaultValue: "Active",
   help: "Data Inactive tidak muncul sebagai pilihan pada transaksi baru.",
+};
+
+const FISCAL_STATUS_FIELD: Field = {
+  name: "status",
+  label: "Status",
+  type: "select",
+  required: true,
+  options: ["Draft", "Open", "Closed"],
+  defaultValue: "Draft",
+  help: "Draft belum dipakai · Open menerima posting · Closed terkunci.",
 };
 
 const NOTE_FIELD: Field = {
@@ -176,7 +245,7 @@ export const ENTITIES: Entity[] = [
     labelField: "partner_label",
     nameField: "partner_name",
     scope: "company_id",
-    statusField: "status",
+    statusModel: ACTIVE_STATUS,
     fields: [
       {
         name: "partner_label",
@@ -237,7 +306,7 @@ export const ENTITIES: Entity[] = [
     labelField: "cash_bank_label",
     nameField: "cash_bank_name",
     scope: "company_id",
-    statusField: "status",
+    statusModel: ACTIVE_STATUS,
     fields: [
       {
         name: "cash_bank_label",
@@ -317,7 +386,7 @@ export const ENTITIES: Entity[] = [
     codePrefix: "curr",
     labelField: "currency_label",
     nameField: "currency_name",
-    statusField: "status",
+    statusModel: ACTIVE_STATUS,
     fields: [
       {
         name: "currency_label",
@@ -348,6 +417,312 @@ export const ENTITIES: Entity[] = [
       { field: "note", label: "Catatan", muted: true, truncate: true },
     ],
   },
+
+  // ------------------------------------------------- accounting · chart of accounts
+
+  {
+    key: "acc_account",
+    slug: "account",
+    module: "accounting",
+    name: "Chart of Accounts",
+    single: "Account",
+    icon: "book",
+    desc: "Account accounting per Company. Account adalah subjek utama General Ledger.",
+    codeField: "account_code",
+    codePrefix: "coa",
+    labelField: "account_label",
+    nameField: "account_name",
+    scope: "company_id",
+    view: "tree",
+    statusModel: { field: "is_active", kind: "bool", options: ["true", "false"], toggle: true },
+    fields: [
+      {
+        name: "account_label",
+        label: "Label",
+        type: "text",
+        required: true,
+        unique: true,
+        uniqueWithin: "company_id",
+        ident: true,
+        placeholder: "1401",
+        help: "Nomor account. Unik dalam satu Company.",
+      },
+      {
+        name: "account_name",
+        label: "Nama Account",
+        type: "text",
+        required: true,
+        placeholder: "Persediaan",
+        help: "Nama lengkap entitas.",
+      },
+      {
+        name: "company_id",
+        label: "Company",
+        type: "ref",
+        ref: "sys_company",
+        required: true,
+        locked: true,
+        resets: ["parent_account"],
+        help: "Account adalah master per Company. Nomor yang sama pada Company berbeda adalah record berbeda.",
+      },
+      {
+        name: "account_subcategory_id",
+        label: "Kelompok Account",
+        type: "ref",
+        ref: "acc_account_subcategory",
+        required: true,
+        help: "Menentukan posisi account pada struktur bagan akun.",
+      },
+      {
+        name: "normal_balance",
+        label: "Normal Balance",
+        type: "select",
+        required: true,
+        options: ["Debit", "Kredit"],
+        defaultValue: "Debit",
+      },
+      {
+        name: "parent_account",
+        label: "Parent Account",
+        type: "ref",
+        ref: "acc_account",
+        refFilter: "parentAccount",
+        help: "Opsional. Mengaitkan account ini sebagai turunan dari account lain dalam Company yang sama.",
+      },
+      {
+        name: "is_postable",
+        label: "Postable",
+        type: "bool",
+        defaultValue: true,
+        caption: "Account dapat menerima Journal Line",
+        captionDetail:
+          "Matikan untuk account header yang hanya menampung turunan.",
+      },
+      {
+        name: "require_partner",
+        label: "Require Partner",
+        type: "bool",
+        defaultValue: false,
+        resets: ["partner_category_id"],
+        caption: "Journal Line wajib mengisi Partner",
+        captionDetail:
+          "Aktifkan untuk account subledger: Titipan, Hutang, Piutang, Prive, Investasi.",
+      },
+      {
+        name: "partner_category_id",
+        label: "Partner Category",
+        type: "ref",
+        ref: "sys_partner_category",
+        required: true,
+        visibleWhen: "accountRequiresPartner",
+        help: "Satu Account hanya menampung satu Partner Category, sehingga subledger tidak tercampur antar kategori subjek.",
+      },
+      {
+        name: "is_control_account",
+        label: "Control Account",
+        type: "bool",
+        defaultValue: false,
+        caption: "Direkonsiliasi dengan operational book",
+        captionDetail:
+          "Saldo GL dibandingkan dengan Hutang/Piutang/Titipan/Prive Ledger.",
+      },
+      {
+        name: "is_active",
+        label: "Aktif",
+        type: "bool",
+        defaultValue: true,
+        caption: "Account aktif",
+        captionDetail: "Account non-aktif tidak muncul pada pemilihan baru.",
+      },
+      NOTE_FIELD,
+    ],
+    columns: [
+      { field: "account_label", label: "Account", isLabel: true, width: "116px", filter: "text" },
+      { field: "account_name", label: "Nama Account", primary: true, filter: "text" },
+      { field: "company_id", label: "Company", isRef: true, width: "190px", filter: "ref" },
+      { field: "account_subcategory_id", label: "Kelompok", isRef: true, width: "196px", filter: "ref" },
+      { field: "normal_balance", label: "Normal", isTag: true, width: "96px", filter: "enum" },
+      { field: "partner_category_id", label: "Partner Cat.", isRef: true, refLabelOnly: true, width: "116px", filter: "ref" },
+      { field: "is_active", label: "Status", isBool: true, width: "100px", filter: "bool" },
+    ],
+  },
+
+  // ------------------------------------------------------- accounting · mapping
+
+  {
+    key: "acc_budget_category_account",
+    slug: "budget-category-account",
+    module: "accounting",
+    name: "Mapping Budget ke Account",
+    single: "Mapping",
+    icon: "link",
+    desc: "Menghubungkan Budget Category, Company, dan Account tujuan — jembatan antara klasifikasi planning dan account accounting.",
+    codeField: "bca_code",
+    codePrefix: "bcam",
+    titleRefs: ["budget_category_id", "partner_category_id", "account_id"],
+    scope: "company_id",
+    fields: [
+      {
+        name: "company_id",
+        label: "Company",
+        type: "ref",
+        ref: "sys_company",
+        required: true,
+        locked: true,
+        resets: ["account_id"],
+        help: "Mapping berlaku per Company karena bagan akun berbeda per Company.",
+      },
+      {
+        name: "budget_category_id",
+        label: "Budget Category",
+        type: "ref",
+        ref: "sys_budget_category",
+        required: true,
+        resets: ["partner_category_id", "account_id"],
+        help: "Menentukan Partner Category mana saja yang boleh dipasangkan pada baris ini.",
+      },
+      {
+        name: "partner_category_id",
+        label: "Partner Category",
+        type: "ref",
+        ref: "sys_partner_category",
+        required: true,
+        refFilter: "mappingPartnerCategory",
+        visibleWhen: "budgetCategoryRequiresPartner",
+        resets: ["account_id"],
+        help: "Satu kombinasi Budget Category × Partner Category menuju tepat satu Account.",
+      },
+      {
+        name: "account_id",
+        label: "Account",
+        type: "ref",
+        ref: "acc_account",
+        required: true,
+        full: true,
+        refFilter: "postableAccount",
+        help: "Hanya account postable milik Company yang sama.",
+      },
+    ],
+    columns: [
+      { field: "company_id", label: "Company", isRef: true, refLabelOnly: true, width: "104px", filter: "ref" },
+      { field: "budget_category_id", label: "Budget Category", isRef: true, refLabelOnly: true, width: "150px", filter: "ref" },
+      { field: "partner_category_id", label: "Partner Category", isRef: true, refLabelOnly: true, width: "150px", filter: "ref" },
+      { field: "account_id", label: "Account Tujuan", isRef: true, primary: true, filter: "ref" },
+      { field: "normal_balance", label: "Normal", computed: true, width: "96px" },
+    ],
+  },
+
+  // ------------------------------------------------ accounting · period control
+
+  {
+    key: "acc_fiscal_year",
+    slug: "fiscal-year",
+    module: "accounting",
+    name: "Fiscal Year",
+    icon: "cal",
+    desc: "Tahun buku, menjadi payung Fiscal Period dan Opening Balance.",
+    codeField: "year_code",
+    codePrefix: "fyr",
+    labelField: "year_label",
+    nameField: "year_name",
+    statusModel: FISCAL_STATUS,
+    fields: [
+      {
+        name: "year_label",
+        label: "Label",
+        type: "text",
+        required: true,
+        unique: true,
+        ident: true,
+        placeholder: "2028",
+        help: identHelp,
+      },
+      {
+        name: "year_name",
+        label: "Nama Tahun Buku",
+        type: "text",
+        required: true,
+        placeholder: "Tahun Buku 2028",
+        help: "Nama lengkap entitas.",
+      },
+      { name: "start_date", label: "Tanggal Mulai", type: "date", required: true },
+      { name: "end_date", label: "Tanggal Selesai", type: "date", required: true },
+      FISCAL_STATUS_FIELD,
+      NOTE_FIELD,
+    ],
+    columns: [
+      { field: "year_label", label: "Label", isLabel: true, width: "118px", filter: "text" },
+      { field: "year_name", label: "Nama Tahun Buku", primary: true, filter: "text" },
+      { field: "start_date", label: "Mulai", isDate: true, width: "132px" },
+      { field: "end_date", label: "Selesai", isDate: true, width: "132px" },
+      { field: "period_count", label: "Period", computed: true, numeric: true, width: "94px" },
+      { field: "status", label: "Status", isStatus: true, width: "118px", filter: "enum" },
+    ],
+  },
+
+  {
+    key: "acc_fiscal_period",
+    slug: "fiscal-period",
+    module: "accounting",
+    name: "Fiscal Period",
+    icon: "clock",
+    desc: "Period control untuk Budget Month dan posting accounting.",
+    codeField: "period_code",
+    codePrefix: "fprd",
+    labelField: "period_label",
+    nameField: "period_name",
+    statusModel: FISCAL_STATUS,
+    fields: [
+      {
+        name: "period_label",
+        label: "Label",
+        type: "text",
+        required: true,
+        unique: true,
+        ident: true,
+        placeholder: "2027-01",
+        help: identHelp,
+      },
+      {
+        name: "period_name",
+        label: "Nama Period",
+        type: "text",
+        required: true,
+        placeholder: "Januari 2027",
+        help: "Nama lengkap entitas.",
+      },
+      {
+        name: "fiscal_year_id",
+        label: "Fiscal Year",
+        type: "ref",
+        ref: "acc_fiscal_year",
+        required: true,
+        locked: true,
+        help: "Period tidak dapat dipindah ke tahun buku lain setelah dibuat.",
+      },
+      {
+        name: "sequence_no",
+        label: "Urutan",
+        type: "number",
+        required: true,
+        defaultValue: 1,
+        help: "Urutan periode dalam satu tahun buku.",
+      },
+      { name: "start_date", label: "Tanggal Mulai", type: "date", required: true },
+      { name: "end_date", label: "Tanggal Selesai", type: "date", required: true },
+      FISCAL_STATUS_FIELD,
+      NOTE_FIELD,
+    ],
+    columns: [
+      { field: "period_label", label: "Label", isLabel: true, width: "126px", filter: "text" },
+      { field: "period_name", label: "Nama Period", primary: true, filter: "text" },
+      { field: "fiscal_year_id", label: "Fiscal Year", isRef: true, width: "214px", filter: "ref" },
+      { field: "sequence_no", label: "Urutan", numeric: true, width: "86px" },
+      { field: "start_date", label: "Mulai", isDate: true, width: "132px" },
+      { field: "end_date", label: "Selesai", isDate: true, width: "132px" },
+      { field: "status", label: "Status", isStatus: true, width: "118px", filter: "enum" },
+    ],
+  },
 ];
 
 export function entityBySlug(slug: string): Entity | undefined {
@@ -363,6 +738,34 @@ export function createLabel(entity: Entity): string {
   return `Tambah ${entity.single ?? entity.name}`;
 }
 
+/** Whether a field applies, given the values currently entered. */
+export function fieldApplies(
+  field: Field,
+  values: Record<string, unknown>,
+  categoryLabelOf?: (id: unknown) => string | undefined
+): boolean {
+  if (!field.visibleWhen) return true;
+  if (field.visibleWhen === "accountRequiresPartner") {
+    const v = values.require_partner;
+    return v === true || v === "true";
+  }
+  // budgetCategoryRequiresPartner
+  const label = categoryLabelOf?.(values.budget_category_id);
+  return label ? budgetCategoryNeedsPartner(label) : false;
+}
+
+/**
+ * Whether a Budget Category is classified per Partner Category.
+ * `BUDGET_CATEGORY_RULES` in `rules.ts` is the source of truth.
+ */
+export function budgetCategoryNeedsPartner(categoryLabel: string): boolean {
+  return (BUDGET_CATEGORY_RULES[categoryLabel]?.partnerCategories.length ?? 0) > 0;
+}
+
+export function allowedPartnerCategories(categoryLabel: string): string[] {
+  return BUDGET_CATEGORY_RULES[categoryLabel]?.partnerCategories ?? [];
+}
+
 export const STATUS_TEXT: Record<string, string> = {
   Active: "Aktif",
   Inactive: "Non Aktif",
@@ -373,6 +776,8 @@ export const STATUS_TEXT: Record<string, string> = {
   Submitted: "Diajukan",
   Rejected: "Ditolak",
   Cancelled: "Dibatalkan",
+  true: "Aktif",
+  false: "Non Aktif",
 };
 
 export const STATUS_CLASS: Record<string, string> = {
@@ -385,6 +790,8 @@ export const STATUS_CLASS: Record<string, string> = {
   Submitted: "s-info",
   Rejected: "s-bad",
   Cancelled: "s-mute",
+  true: "s-ok",
+  false: "s-bad",
 };
 
 export const TAG_CLASS: Record<string, string> = {
@@ -393,3 +800,8 @@ export const TAG_CLASS: Record<string, string> = {
   Debit: "t-info",
   Kredit: "t-acc",
 };
+
+/** The value a status model treats as "active". */
+export function isActiveStatus(model: StatusModel, raw: unknown): boolean {
+  return model.kind === "bool" ? raw === true : raw === "Active";
+}
