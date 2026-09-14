@@ -78,6 +78,16 @@ npm run db:seed
 The seed mirrors the mockup's fixtures: 2 companies, 10 partners, 4 cash/bank
 accounts, 36 accounts, 41 budgets, and 8 transactions.
 
+It also creates two development accounts, both with the password `siba123`:
+
+| Email | Name |
+| --- | --- |
+| `meehun@siba.app` | MeeHun — the everyday user |
+| `sistem@siba.app` | Sistem — owns seeded records |
+
+These are development fixtures. Change the password before deploying anywhere
+reachable.
+
 ### 6. Run
 
 ```bash
