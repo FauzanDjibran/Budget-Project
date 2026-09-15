@@ -11,6 +11,8 @@ import { recordCashBankEntry } from "./cash-bank";
 import { nextDocumentNumber } from "./document-number";
 import { postJournal, type JournalLineInput } from "./journal";
 import { PURPOSES, purposeOf, type Purpose } from "./rules";
+import { subledgerForCategory } from "./subledger-catalogue";
+import { recordSubledgerEntry } from "./subledger";
 import type { TransactionStatus } from "./transaction-workflow";
 
 /**
@@ -890,6 +892,13 @@ export async function applyPosting(
   const entries = await journalEntries(doc);
   if (!entries.ok) return { ok: false, errors: entries.errors };
 
+  // Which subject book this document's Purpose writes into, if any. Resolved
+  // from the catalogue rather than from a table: a book is a screen somebody
+  // wrote (CLAUDE.md §12, subledger catalogue).
+  const subledger = subledgerForCategory(
+    purposeOf(doc.purpose)?.budgetCategory ?? null
+  );
+
   await prisma.$transaction(async (tx) => {
     await recordCashBankEntry(tx, {
       cashBankId: doc.cash_bank_id!,
@@ -902,6 +911,31 @@ export async function applyPosting(
       note: doc.transaction_no,
       actorId,
     });
+
+    // The subject book, where the document's Budget Category keeps one. A
+    // Partner's position is its own historical store (concept doc §11, §13),
+    // written straight from this document like the Cash Bank Book above and
+    // never derived from the journal below. One entry per document rather than
+    // per line: the subject moved once, and which Budgets that settled is what
+    // the document itself and the journal's counter lines record.
+    //
+    // Asset and Biaya name no Partner and keep no book, so they simply produce
+    // no entry — the Cash Bank Book and the Journal still record the movement.
+    if (subledger && doc.partner_id) {
+      await recordSubledgerEntry(tx, {
+        book: subledger.key,
+        partnerId: doc.partner_id,
+        currencyId: doc.currency_id,
+        date: today,
+        type: "Transaction",
+        direction: doc.transaction_type as "In" | "Out",
+        amount: doc.transaction_amount.toNumber(),
+        sourceDocTypeId: docTypeId,
+        sourceDocId: doc.id,
+        note: `${doc.transaction_no} — ${entries.purposeLabel}`,
+        actorId,
+      });
+    }
 
     // Realization is Budget's to write, not Finance's — same transaction, but
     // `bud_budget` is only ever touched by the module that owns it. Closing

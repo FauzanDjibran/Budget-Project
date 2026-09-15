@@ -1,0 +1,423 @@
+import "server-only";
+
+import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
+import { nextDocumentNumber } from "./document-number";
+import type { PeriodRange } from "./period";
+import {
+  SUBLEDGERS,
+  subledgerByKey,
+  subledgerMovement,
+  type SubledgerDef,
+} from "./subledger-catalogue";
+
+/**
+ * The subledgers — the authoritative record of where each Partner stands.
+ *
+ * This is the Cash Bank Book again with a different subject. `sub_ledger` is
+ * append-only: an entry is never edited and never deleted, because a book that
+ * can be rewritten is not evidence of anything, and a mistake is corrected by a
+ * further entry. `sub_ledger_balance` is the running position, written in the
+ * same database transaction as the entry that moved it, and always
+ * recomputable by `rebuildSubledgerBalance`.
+ *
+ * The books are **independent historical stores** (concept doc §11, §13): they
+ * are written straight from the business transaction at Post, alongside the
+ * Cash Bank Book and the Journal, and they never read a journal line. Only the
+ * General Ledger derives from the journal.
+ *
+ * A leaf, like every book: it imports the shared kernel and its own catalogue,
+ * and nothing else. It is written by callers and never reaches back to them —
+ * which is also why an entry carries its source document as the weak
+ * `(doc_type_id, doc_id)` pair plus whatever the caller wrote into `note`,
+ * rather than resolving a document number out of a module it would then depend
+ * on.
+ */
+
+/** A Prisma client or an interactive transaction — every write here takes one. */
+type Db = Prisma.TransactionClient | typeof prisma;
+
+export type SubledgerEntryType = "Opening" | "Transaction" | "Adjustment";
+
+export type NewSubledgerEntry = {
+  /** Catalogue key — `hutang`, `prive`, and so on. */
+  book: string;
+  partnerId: number;
+  currencyId: number;
+  /** `YYYY-MM-DD`. */
+  date: string;
+  type: SubledgerEntryType;
+  /** The direction the money moved; the book decides what that does to it. */
+  direction: "In" | "Out";
+  /** Positive; `direction` and the book's nature carry the sign. */
+  amount: number;
+  sourceDocTypeId?: number | null;
+  sourceDocId?: number | null;
+  note?: string | null;
+  actorId: number;
+};
+
+const asDate = (d: string) => new Date(`${d}T00:00:00Z`);
+const startOf = (d: string) => new Date(`${d}T00:00:00Z`);
+
+/** Next entry number, `SBL-0001`. The format lives in `document-number.ts`. */
+async function nextEntryNo(db: Db): Promise<string> {
+  return nextDocumentNumber("SBL", async () => {
+    const row = await db.subLedger.findFirst({
+      orderBy: { id: "desc" },
+      select: { entry_no: true },
+    });
+    return row?.entry_no ?? null;
+  });
+}
+
+/**
+ * Appends one entry and moves the subject's position with it.
+ *
+ * Both writes happen inside the caller's transaction, so the book and its total
+ * can never disagree. An unknown book **throws** rather than returning: this
+ * runs inside the posting transaction, and a posting that silently skipped a
+ * subject book would leave the Partner's history missing a movement the Cash
+ * Bank Book and the Journal both recorded.
+ */
+export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
+  const book = subledgerByKey(entry.book);
+  if (!book) {
+    throw new Error(
+      `Subledger "${entry.book}" tidak ada di katalog. ` +
+        "Katalog buku pembantu ada di lib/siba/subledger-catalogue.ts."
+    );
+  }
+
+  const amount = Math.abs(entry.amount);
+  const movement = subledgerMovement(book, entry.direction, amount);
+  const key = {
+    book: book.key,
+    partner_id: entry.partnerId,
+    currency_id: entry.currencyId,
+  };
+
+  const current = await db.subLedgerBalance.findUnique({
+    where: { book_partner_id_currency_id: key },
+    select: { balance: true, entry_count: true },
+  });
+  const after = (current ? current.balance.toNumber() : 0) + movement;
+
+  const created = await db.subLedger.create({
+    data: {
+      entry_no: await nextEntryNo(db),
+      ...key,
+      entry_date: asDate(entry.date),
+      entry_type: entry.type,
+      direction: entry.direction,
+      amount,
+      movement,
+      balance_after: after,
+      source_doc_type_id: entry.sourceDocTypeId ?? null,
+      source_doc_id: entry.sourceDocId ?? null,
+      note: entry.note ?? null,
+      created_by: entry.actorId,
+    },
+  });
+
+  await db.subLedgerBalance.upsert({
+    where: { book_partner_id_currency_id: key },
+    create: {
+      ...key,
+      balance: after,
+      entry_count: 1,
+      last_entry_id: created.id,
+      last_entry_date: created.entry_date,
+    },
+    update: {
+      balance: after,
+      entry_count: (current?.entry_count ?? 0) + 1,
+      last_entry_id: created.id,
+      last_entry_date: created.entry_date,
+    },
+  });
+
+  return created;
+}
+
+/**
+ * Recomputes one subject's position from its entries.
+ *
+ * The materialised total is a convenience; the book is the truth. This is what
+ * proves the two agree, and what repairs the total if anything ever writes the
+ * balance row on its own.
+ */
+export async function rebuildSubledgerBalance(
+  book: string,
+  partnerId: number,
+  currencyId: number
+): Promise<number> {
+  const key = { book, partner_id: partnerId, currency_id: currencyId };
+  const entries = await prisma.subLedger.findMany({
+    where: key,
+    orderBy: { id: "asc" },
+    select: { id: true, movement: true, entry_date: true },
+  });
+  const balance = entries.reduce((t, e) => t + e.movement.toNumber(), 0);
+  const last = entries.at(-1) ?? null;
+
+  await prisma.subLedgerBalance.upsert({
+    where: { book_partner_id_currency_id: key },
+    create: {
+      ...key,
+      balance,
+      entry_count: entries.length,
+      last_entry_id: last?.id ?? null,
+      last_entry_date: last?.entry_date ?? null,
+    },
+    update: {
+      balance,
+      entry_count: entries.length,
+      last_entry_id: last?.id ?? null,
+      last_entry_date: last?.entry_date ?? null,
+    },
+  });
+  return balance;
+}
+
+// ------------------------------------------------------------------ reports
+//
+// One Report View per book, all served by the reader below. The property every
+// one of them holds is `opening + naik - turun = closing`, per subject and per
+// currency — the same arithmetic `rebuildSubledgerBalance` uses, so the report
+// derives its own figures rather than trusting the stored total, and
+// `reconciles` reports whether the two agree.
+
+export type SubledgerEntryRow = {
+  id: number;
+  entryNo: string;
+  date: string;
+  type: string;
+  direction: string;
+  amount: number;
+  /** Signed in the book's direction: positive raises the position. */
+  movement: number;
+  balanceAfter: number;
+  note: string | null;
+  sourceDocId: number | null;
+};
+
+export type SubledgerSubject = {
+  partnerId: number;
+  label: string;
+  name: string;
+  categoryLabel: string;
+  companyLabel: string;
+  active: boolean;
+  currencyId: number;
+  currencyLabel: string;
+  opening: number;
+  raised: number;
+  lowered: number;
+  closing: number;
+  /** Oldest first — a book reads forward through the period. */
+  entries: SubledgerEntryRow[];
+  /** False when the stored running balance and the summed movements disagree. */
+  reconciles: boolean;
+};
+
+export type SubledgerReport = {
+  book: SubledgerDef;
+  range: PeriodRange;
+  /** One block per Partner and currency, never blended across currencies. */
+  subjects: SubledgerSubject[];
+};
+
+/**
+ * One book over a period, one block per subject.
+ *
+ * A subject is a **(Partner, currency)** pair rather than a Partner alone:
+ * amounts are never converted (§12), so a Partner who owes in two currencies
+ * holds two positions and neither is a component of a single figure.
+ *
+ * Subjects come from the book itself — a Partner with no entry in or before the
+ * period has no position to report, and inventing a zero row for every Partner
+ * in the master would bury the ones that moved. Entries dated exactly `from` or
+ * exactly `to` are inside the period; anything earlier folds into the opening.
+ */
+export async function subledgerReport(
+  bookKey: string,
+  range: PeriodRange,
+  options: { partnerIds?: number[]; companyIds: number[] }
+): Promise<SubledgerReport | null> {
+  const book = subledgerByKey(bookKey);
+  if (!book) return null;
+
+  const partnerWhere = {
+    company_id: { in: options.companyIds },
+    ...(options.partnerIds?.length ? { id: { in: options.partnerIds } } : {}),
+  };
+  const scope = { book: book.key, partner: partnerWhere };
+
+  const [before, within] = await Promise.all([
+    prisma.subLedger.groupBy({
+      by: ["partner_id", "currency_id"],
+      where: { ...scope, entry_date: { lt: startOf(range.from) } },
+      _sum: { movement: true },
+    }),
+    prisma.subLedger.findMany({
+      where: {
+        ...scope,
+        entry_date: { gte: startOf(range.from), lte: startOf(range.to) },
+      },
+      orderBy: { id: "asc" },
+    }),
+  ]);
+
+  type Acc = {
+    partnerId: number;
+    currencyId: number;
+    opening: number;
+    raised: number;
+    lowered: number;
+    entries: SubledgerEntryRow[];
+  };
+  const acc = new Map<string, Acc>();
+  const reach = (partnerId: number, currencyId: number): Acc => {
+    const k = `${partnerId}:${currencyId}`;
+    let found = acc.get(k);
+    if (!found) {
+      found = { partnerId, currencyId, opening: 0, raised: 0, lowered: 0, entries: [] };
+      acc.set(k, found);
+    }
+    return found;
+  };
+
+  for (const b of before) {
+    reach(b.partner_id, b.currency_id).opening = b._sum.movement?.toNumber() ?? 0;
+  }
+  for (const e of within) {
+    const subject = reach(e.partner_id, e.currency_id);
+    const movement = e.movement.toNumber();
+    if (movement >= 0) subject.raised += movement;
+    else subject.lowered += -movement;
+    subject.entries.push({
+      id: e.id,
+      entryNo: e.entry_no,
+      date: e.entry_date.toISOString().slice(0, 10),
+      type: e.entry_type,
+      direction: e.direction,
+      amount: e.amount.toNumber(),
+      movement,
+      balanceAfter: e.balance_after.toNumber(),
+      note: e.note,
+      sourceDocId: e.source_doc_id,
+    });
+  }
+
+  if (acc.size === 0) return { book, range, subjects: [] };
+
+  const [partners, currencies] = await Promise.all([
+    prisma.mPartner.findMany({
+      where: { id: { in: [...new Set([...acc.values()].map((a) => a.partnerId))] } },
+      select: {
+        id: true,
+        partner_label: true,
+        partner_name: true,
+        status: true,
+        company: { select: { company_label: true } },
+        category: { select: { category_label: true } },
+      },
+    }),
+    prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
+  ]);
+  const partnerOf = new Map(partners.map((p) => [p.id, p]));
+  const currencyOf = new Map(currencies.map((c) => [c.id, c.currency_label]));
+
+  const subjects: SubledgerSubject[] = [];
+  for (const a of acc.values()) {
+    const partner = partnerOf.get(a.partnerId);
+    if (!partner) continue;
+    const closing = a.opening + a.raised - a.lowered;
+    const last = a.entries.at(-1);
+    subjects.push({
+      partnerId: a.partnerId,
+      label: partner.partner_label,
+      name: partner.partner_name,
+      categoryLabel: partner.category.category_label,
+      companyLabel: partner.company.company_label,
+      active: partner.status === "Active",
+      currencyId: a.currencyId,
+      currencyLabel: currencyOf.get(a.currencyId) ?? "",
+      opening: a.opening,
+      raised: a.raised,
+      lowered: a.lowered,
+      closing,
+      entries: a.entries,
+      reconciles: last ? last.balanceAfter === closing : true,
+    });
+  }
+
+  subjects.sort(
+    (x, y) =>
+      x.label.localeCompare(y.label) || x.currencyLabel.localeCompare(y.currencyLabel)
+  );
+  return { book, range, subjects };
+}
+
+/**
+ * Every Partner that has ever moved in one book, for its filter bar.
+ *
+ * Read from the book rather than from the Partner master on purpose: a book's
+ * filter should offer the subjects it actually holds, not every Partner whose
+ * category might one day post here.
+ */
+export async function subledgerSubjects(
+  bookKey: string,
+  companyIds: number[]
+): Promise<{ id: number; label: string; name: string; active: boolean }[]> {
+  const book = subledgerByKey(bookKey);
+  if (!book) return [];
+
+  const rows = await prisma.subLedgerBalance.findMany({
+    where: { book: book.key, partner: { company_id: { in: companyIds } } },
+    select: {
+      partner: {
+        select: {
+          id: true,
+          partner_label: true,
+          partner_name: true,
+          status: true,
+          category: { select: { category_label: true } },
+        },
+      },
+    },
+  });
+
+  const seen = new Map<
+    number,
+    { id: number; label: string; name: string; active: boolean }
+  >();
+  for (const { partner } of rows) {
+    if (seen.has(partner.id)) continue;
+    seen.set(partner.id, {
+      id: partner.id,
+      label: partner.partner_label,
+      name:
+        `${partner.partner_name} - ${partner.category.category_label}` +
+        (partner.status === "Active" ? "" : " - non-aktif"),
+      // Always selectable: a report about last quarter is exactly when a
+      // Partner deactivated since still matters. The name says so instead.
+      active: true,
+    });
+  }
+  return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * How many entries each book holds.
+ *
+ * Counts rather than balances: a total across subjects would have to cross
+ * currencies, and the books never do that.
+ */
+export async function subledgerEntryCounts(): Promise<Map<string, number>> {
+  const rows = await prisma.subLedger.groupBy({ by: ["book"], _count: { _all: true } });
+  const counts = new Map<string, number>(SUBLEDGERS.map((s) => [s.key as string, 0]));
+  for (const r of rows) counts.set(r.book, r._count._all);
+  return counts;
+}

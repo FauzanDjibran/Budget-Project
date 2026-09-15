@@ -1,15 +1,20 @@
 import { notFound } from "next/navigation";
 import { CashBankBalanceReport } from "@/components/report/cash-bank-balance-report";
 import { CashBankLedgerReport } from "@/components/report/cash-bank-ledger-report";
+import { NoCompanyAccess } from "@/components/master/company-filter";
 import { ReportParams } from "@/components/report/report-params";
+import { SubjectParams } from "@/components/report/subject-params";
+import { SubledgerReport } from "@/components/report/subledger-report";
 import { ReportNeedsSubject, ReportView } from "@/components/report/report-view";
 import { requirePermission } from "@/lib/siba/auth";
 import {
   cashBankBalanceReport,
   cashBankLedgerReport,
 } from "@/lib/siba/cash-bank";
+import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
+import { subledgerReport, subledgerSubjects } from "@/lib/siba/subledger";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 
@@ -32,17 +37,34 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ report: string }>;
-  searchParams: Promise<{ cashBank?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    cashBank?: string;
+    partners?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const { report: slug } = await params;
   const report = reportBySlug(slug);
   if (!report) notFound();
 
-  await requirePermission(report.permission, reportHref(slug));
+  const actor = await requirePermission(report.permission, reportHref(slug));
 
   const query = await searchParams;
   const range = resolveRange(query.from, query.to);
   const cashBankId = positiveInt(query.cashBank);
+
+  // ------------------------------------------------------------ subledgers
+
+  if (report.subledger) {
+    return subledgerPage({
+      report,
+      slug,
+      range,
+      partnerIds: idList(query.partners),
+      companyIds: await accessibleCompanyIds(actor.permissions),
+    });
+  }
 
   const resources = await cashBankOptions();
   const runAt = new Date().toISOString();
@@ -122,6 +144,82 @@ export default async function Page({
 }
 
 /**
+ * One subject book over a period.
+ *
+ * Its own function rather than another branch in the body above, because a
+ * subledger asks a different question of the request: its subject is a set of
+ * Partners rather than one resource, and it is Company-scoped — a Partner
+ * belongs to a Company, so a user who may not see the anak must not read the
+ * anak's Hutang either. The rest of the Report View convention is unchanged:
+ * parameters in the URL, filter in the sticky header, read-only output.
+ */
+async function subledgerPage({
+  report,
+  slug,
+  range,
+  partnerIds,
+  companyIds,
+}: {
+  report: NonNullable<ReturnType<typeof reportBySlug>>;
+  slug: string;
+  range: PeriodRange;
+  partnerIds: number[];
+  companyIds: number[];
+}) {
+  const runAt = new Date().toISOString();
+
+  if (!companyIds.length) {
+    return (
+      <ReportView report={report} filter={null} runAt={runAt}>
+        <NoCompanyAccess what="Buku pembantu" />
+      </ReportView>
+    );
+  }
+
+  const [subjects, data] = await Promise.all([
+    subledgerSubjects(report.subledger!, companyIds),
+    subledgerReport(report.subledger!, range, { partnerIds, companyIds }),
+  ]);
+  if (!data) notFound();
+
+  return (
+    <ReportView
+      report={report}
+      filter={
+        <SubjectParams
+          slug={slug}
+          subjects={subjects}
+          selectedIds={partnerIds}
+          from={range.from}
+          to={range.to}
+          subjectRequired={report.subjectRequired}
+          label="Partner"
+          param="partners"
+          addPlaceholder="Tambah Partner…"
+          allPlaceholder="Semua Partner yang bergerak"
+          missingHint="Pilih minimal satu Partner terlebih dahulu."
+        />
+      }
+      runAt={runAt}
+      footnote={
+        <>
+          Saldo awal adalah seluruh mutasi sebelum {formatDate(range.from)},
+          bukan entri tersendiri — karena itu tidak muncul sebagai baris. Kolom
+          Bertambah dan Berkurang mengikuti arah buku ini, bukan arah uang:{" "}
+          {data.book.closingLabel.toLowerCase()} bertambah saat{" "}
+          {data.book.raises === "In" ? "uang masuk" : "uang keluar"}. Buku
+          pembantu ditulis langsung dari Cash Bank Transaction saat diposting,
+          terpisah dari Journal, dan bersifat append-only: koreksi dicatat
+          sebagai entri baru, bukan dengan mengubah entri lama.
+        </>
+      }
+    >
+      <SubledgerReport report={data} />
+    </ReportView>
+  );
+}
+
+/**
  * The period a report runs for.
  *
  * Defaults to the current month to date: predictable, needs no Fiscal Year to
@@ -152,6 +250,16 @@ function isDate(value: string | undefined): value is string {
 function positiveInt(value: string | undefined): number | null {
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** `partners=3,17,42` — a set of subjects, in one linkable parameter. */
+function idList(value: string | undefined): number[] {
+  if (!value) return [];
+  const ids = value
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  return [...new Set(ids)];
 }
 
 /**

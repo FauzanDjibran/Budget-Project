@@ -353,6 +353,16 @@ export async function cleanupFixtures(): Promise<void> {
   for (const a of accounts) {
     await prisma.accAccount.delete({ where: { id: a.id } });
   }
+  // The subject books are append-only in the application, exactly like the
+  // journal above — and a test tearing down its own fixtures is the same
+  // exception: these entries were written by this run against Partners that
+  // are about to stop existing.
+  const fixturePartners = {
+    partner: { partner_label: { startsWith: FIXTURE_PREFIX } },
+  };
+  await prisma.subLedgerBalance.deleteMany({ where: fixturePartners });
+  await prisma.subLedger.deleteMany({ where: fixturePartners });
+
   await prisma.mPartner.deleteMany({
     where: { partner_label: { startsWith: FIXTURE_PREFIX } },
   });

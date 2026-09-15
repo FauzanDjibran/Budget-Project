@@ -15,16 +15,21 @@
  */
 import type { IconName } from "@/components/icon";
 import type { PermissionCode } from "./permissions";
+import { SUBLEDGERS } from "./subledger-catalogue";
 
 /**
  * Which parameters a report takes.
  *
- * One set exists today: a Cash & Bank subject plus a date range. A second set
- * arrives when a report needs different parameters — as an added member here,
- * so the route keeps resolving parameters in one place rather than each report
- * parsing the query string its own way.
+ * Three sets exist: a Cash & Bank subject plus a date range, several accounts
+ * plus a date range, and several Partners plus a date range. A fourth arrives
+ * when a report needs different parameters — as an added member here, so the
+ * route keeps resolving parameters in one place rather than each report parsing
+ * the query string its own way.
  */
-export type ReportParams = "cash-bank-period" | "account-period";
+export type ReportParams =
+  | "cash-bank-period"
+  | "account-period"
+  | "subledger-period";
 
 export type ReportDef = {
   key: string;
@@ -39,9 +44,11 @@ export type ReportDef = {
   params: ReportParams;
   /** Whether the report can run without a subject chosen. */
   subjectRequired: boolean;
+  /** Which subject book this report reads, for the six subledgers. */
+  subledger?: string;
 };
 
-export const REPORTS = [
+const FIXED_REPORTS = [
   {
     key: "cash_bank_ledger",
     slug: "cash-bank-ledger",
@@ -103,7 +110,35 @@ export const REPORTS = [
   },
 ] as const satisfies readonly ReportDef[];
 
-export type ReportKey = (typeof REPORTS)[number]["key"];
+/**
+ * The six subject books, generated from their own catalogue.
+ *
+ * Written out here they would be six near-identical entries differing only in
+ * name and permission, and a book added to the catalogue would silently have no
+ * report. The catalogue is the one place a book is declared; this turns each
+ * entry into the Report View that shows it.
+ */
+const SUBLEDGER_REPORTS: ReportDef[] = SUBLEDGERS.map((book) => ({
+  key: `${book.key.replace(/-/g, "_")}_ledger`,
+  slug: book.slug,
+  module: "finance",
+  name: book.name,
+  desc: book.desc,
+  icon: book.icon,
+  permission: book.permission,
+  params: "subledger-period",
+  // The book itself is the subject. A Partner narrows it, which is a filter
+  // rather than a precondition — every subject at once is the useful default.
+  subjectRequired: false,
+  subledger: book.key,
+}));
+
+export const REPORTS: readonly ReportDef[] = [
+  ...FIXED_REPORTS,
+  ...SUBLEDGER_REPORTS,
+];
+
+export type ReportKey = (typeof FIXED_REPORTS)[number]["key"];
 
 const BY_SLUG = new Map<string, ReportDef>(REPORTS.map((r) => [r.slug, r]));
 

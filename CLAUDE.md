@@ -42,12 +42,13 @@ or invariants that assume a particular row exists.
 **Scope:**
 
 - **Built** — authentication and RBAC, Master, Accounting, Budget through approval,
-  the Cash Bank Book (`cash_bank_ledger` / `cash_bank_balance`), Finance's Cash Bank
-  Transaction — draft, edit, cancel and Post, which realizes approved Budgets and moves
-  the book, induk only — and the first two **Report Views** over that book.
-- **Not yet built** — the rest of the posting engine (Journal, General Ledger, and the
-  Prive / Titipan / Hutang / Piutang books), Opening Balance, and the intercompany
-  Funding Request flow that carries the anak's realization. Full list in §13.
+  the Cash Bank Book (`cash_bank_ledger` / `cash_bank_balance`), the six **subject
+  books** (`sub_ledger` / `sub_ledger_balance`), Finance's Cash Bank Transaction —
+  draft, edit, cancel and Post, which realizes approved Budgets and writes all three
+  stores, induk only — and the **Report Views** over them.
+- **Not yet built** — Opening Balance, Fiscal Year closing, report output (print and
+  export), and the intercompany Funding Request flow that carries the anak's
+  realization. Full list in §13.
 
 ### Current status
 
@@ -56,6 +57,7 @@ or invariants that assume a particular row exists.
 | Scaffold, DB, migration | Done |
 | Seed | Done — **system data only**, idempotent, destroys nothing (§12) |
 | Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; opening balance entered when a resource is registered |
+| Subject books (subledgers) | Done — append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. Six Report Views under Finance › Laporan. No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done |
@@ -63,8 +65,8 @@ or invariants that assume a particular row exists.
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
-| Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank), multi-Budget realization, Post writing the Cash Bank Book and `realized_amount` in one transaction. Induk only; the anak's realization waits on Funding Request. Journal and the subject ledgers are not built. Bespoke, not registry-driven. |
-| Report Views | Done — the screen type plus its first two: `Buku Kas & Bank` and `Saldo Kas & Bank`, under Finance › Laporan. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
+| Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal and `realized_amount` in one transaction. Induk only; the anak's realization waits on Funding Request. Bespoke, not registry-driven. |
+| Report Views | Done — the screen type plus eight reports: `Buku Kas & Bank`, `Saldo Kas & Bank` and the six subject books under Finance › Laporan, and General Ledger + Trial Balance under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
@@ -152,6 +154,8 @@ of its own.
 | Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
 | Budget data | `src/lib/siba/budget.ts` | Month rollups, budget reads, classification enforcement, `BGT-` numbering; `server-only` |
 | Cash Bank Book | `src/lib/siba/cash-bank.ts` | Append-only ledger writes, the materialised balance, `CBL-` numbering, per-currency summary; `server-only` |
+| Subledger catalogue | `src/lib/siba/subledger-catalogue.ts` | Which categories keep a subject book, which way each one moves; client-safe |
+| Subject books | `src/lib/siba/subledger.ts` | Append-only `sub_ledger` writes, the materialised position, `SBL-` numbering, the six reports; `server-only` |
 | Transaction lifecycle | `src/lib/siba/transaction-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Finance data | `src/lib/siba/finance.ts` | Header and line enforcement, Budget eligibility, `applyPosting`, `CBT-` numbering, realization trace; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
@@ -176,6 +180,7 @@ source scan and needs no database.
 | Budget | `bud_budget` | `lib/siba/budget.ts`, `app/actions/budget.ts` |
 | Finance | `fin_cash_bank_transaction(_line)` | `lib/siba/finance.ts`, `app/actions/finance.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance` | `lib/siba/cash-bank.ts` |
+| Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22) |
 | Fiscal | `acc_fiscal_year`, `acc_fiscal_period` | `lib/siba/fiscal.ts` |
 
@@ -188,8 +193,9 @@ Three rules, in force:
    depend on Budget and never the reverse: a plan is complete without an execution.
    The same applies to the UI — `components/finance` may reuse `components/budget`, not
    the other way round.
-3. **The books depend on nothing.** `cash-bank.ts` and `journal.ts` import only the
-   shared kernel (`document-number`, `period`, `account-code`, `permissions`). They are
+3. **The books depend on nothing.** `cash-bank.ts`, `journal.ts` and `subledger.ts`
+   import only the shared kernel (`document-number`, `period`, `account-code`,
+   `permissions`) and, for the subledgers, their own client-safe catalogue. They are
    independent historical stores (concept doc §2.5); a book that imported its writer
    could not be lifted out, and would invite being derived from it.
 
@@ -256,6 +262,9 @@ prisma/
   migrations/            Applied migrations
   seed.ts                System data only — idempotent, never touches business data
 scripts/
+  backfill-subledger.ts  One-off: replays already-posted Cash Bank Transactions
+                         into the subject books, in document order and
+                         idempotently. Run by hand, never by install or CI
   sample-data.ts         Dev convenience: plausible Partners, a Chart of Accounts
                          and the account mappings to test against. **Not** the
                          seeder — ordinary inserts, run by hand, never by
@@ -307,8 +316,10 @@ src/
                          ApproveDialog, ReportPicker, CashBalanceDialog,
                          RealizationCard
     finance/             TransactionList, TransactionForm, BudgetPicker
-    report/              ReportView chrome, ReportParams, and the two report
-                         bodies (Cash Bank Ledger, Cash Bank Balance)
+    report/              ReportView chrome, its two filter bars (ReportParams for
+                         one subject, SubjectParams for several), and the report
+                         bodies: Cash Bank Ledger, Cash Bank Balance, General
+                         Ledger, Trial Balance, Subledger
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     accounting/          FiscalPeriods (shown inside a Fiscal Year)
@@ -323,10 +334,11 @@ src/
                          permissions, roles, access, auth, auth-errors,
                          session, login, user-admin, profile, entity-access, fiscal,
                          fiscal-workflow, budget, budget-workflow, cash-bank,
+                         subledger, subledger-catalogue,
                          finance, transaction-workflow, reports,
                          system-defaults, system-settings
   generated/prisma/      Prisma client output — gitignored, never edit
-tests/                   Security, Accounting, Budget, Finance, Cash Bank Book, reports,
+tests/                   Security, Accounting, Budget, Finance, the books, reports,
                          fiscal, settings, schema and design-system suites
                          (node:test); helpers.ts builds and cleans up its own
                          business fixtures
@@ -353,6 +365,7 @@ npm run lint                 # ESLint
 npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
 npm run db:sample            # dev only: sample Partners + Chart of Accounts (NOT the seeder)
+npm run db:backfill-subledger  # one-off: subject books for already-posted documents
 npm run db:reset             # DESTRUCTIVE: drop, re-migrate, reseed
 npx prisma generate          # regenerate client after schema changes
 npx prisma migrate dev       # create + apply a migration
@@ -660,6 +673,30 @@ Implemented and enforced:
    Reporting raw debit-minus-credit would print every payable as negative,
    which is not how a ledger reads.
 
+52. **A Budget Category keeps a subject book exactly when it names a Partner.**
+   Six of the eight do: Titipan, Hutang, Piutang, Prive, Investasi and Hasil
+   Investasi. Asset and Biaya name no Partner, so a book of them would have no
+   subject. The catalogue is `lib/siba/subledger-catalogue.ts`, and
+   `tests/subledger.test.ts` fails if a category and its book ever disagree.
+53. **A subject book signs by its own direction, not by the cash direction.**
+   Money leaving the company *raises* a Piutang, a Prive and an Investasi, and
+   *lowers* a Hutang or a Titipan. Each book declares which cash direction
+   raises it, and `subledgerMovement` is the one place the sign is decided —
+   the subledger's counterpart to the General Ledger's normal-balance signing.
+   A book that mirrored the cash flow would print every position backwards.
+54. **A subject book is written by posting, one entry per document.** The
+   subject moved once; which Budgets that settled is recorded by the document
+   itself and by the journal's counter lines. The entry is written inside
+   `applyPosting`'s transaction, alongside the Cash Bank Book and the Journal
+   and never derived from either (concept doc §13).
+55. **A subject book is append-only and immutable, like every other book.** No
+   update path, no delete path, no cascade. A correction is a further entry,
+   which is what keeps `rebuildSubledgerBalance` able to re-derive the
+   position from the entries.
+56. **A subject is a Partner and a currency.** A Partner owing in two
+   currencies holds two positions, reported as two blocks. Nothing is ever
+   converted or pooled — there is no rate source (§12).
+
 44. **A chart-of-accounts code states its own lineage.** Every level continues
    its parent's number rather than starting a new one: Account Type `1`,
    Account Category `1.1`, Account Subcategory `1.1.1`, then accounts
@@ -771,16 +808,14 @@ Implemented and enforced:
     document's direction, its Budget Category, and whether a Partner is required.
     Purposes are **application logic, never a master table** — see §12.
 
+22. **Operational books are independent append-only stores** — never views over
+    journal lines. Only the General Ledger derives from journals.
+    `cash_bank_ledger` and `sub_ledger` are both built this way: `applyPosting`
+    calls `recordCashBankEntry`, `recordSubledgerEntry` and `postJournal` side by
+    side, and none of the three reads another.
+
 Specified in the concept doc, **not yet implemented** (see §13):
 
-21. Post fans out into the cash/bank ledger, subject ledgers, and Journal → General
-    Ledger. **The cash/bank half is built**: `applyPosting` calls
-    `recordCashBankEntry` and does not build a book of its own. The subject ledgers
-    (Prive / Titipan / Hutang / Piutang) and the Journal are still to come, and they
-    are added alongside that call rather than replacing it.
-22. Operational books are independent append-only stores — **never** views over
-    journal lines. Only the General Ledger derives from journals. `cash_bank_ledger`
-    is built this way already.
 23. The child company's realization emits a Funding Request; the parent confirms it and
     one atomic event produces two journals linked by an Intercompany Event.
 24. No partial funding: realization = request = funding amount.
@@ -991,6 +1026,47 @@ Specified in the concept doc, **not yet implemented** (see §13):
   or reversal path for a journal**, never derive an operational book from
   journal lines, never write a journal outside `postJournal`, and never
   back-date one.
+- **Status:** Frozen, current.
+
+### The subject books are one mechanism with six books (FROZEN)
+- **Decision:** The subledgers — the concept doc's Prive / Titipan / Hutang / Piutang
+  Ledgers, plus Investasi and Hasil Investasi — are **one** append-only table
+  (`sub_ledger`) with a `book` discriminator, one materialised position table
+  (`sub_ledger_balance`), one writer (`recordSubledgerEntry`), one reader
+  (`subledgerReport`) and one report body. What differs per book is a catalogue entry
+  in `src/lib/siba/subledger-catalogue.ts`: its name, its icon, its permission, and
+  **which cash direction raises its subject's position**. `reports.ts` and `nav.ts`
+  both generate their six entries from that catalogue.
+- **Which categories, and why six rather than four.** A category earns a book when its
+  postings name a Partner, because that is what gives the book a subject. The concept
+  doc (§11.3–§11.6) names four; it was written before `rules.ts` grew Investasi and
+  Hasil Investasi, which also carry a Cabang. Without books of their own, four of the
+  22 Purposes would move a Partner with no subject history to show for it, and §23's
+  coherence test — "Partner mana yang bergerak?" — would have no answer for them.
+  Asset and Biaya take no Partner and keep no book; their postings still reach the
+  Cash Bank Book and the Journal. Confirmed with the user before implementation.
+- **`book` is a catalogue key, not a foreign key.** A row says `hutang`, not a
+  `sys_budget_category` id. The book is meant to be liftable and its subject is the
+  Partner; tying every row to a classification table it does not otherwise need would
+  make the book unreadable without the module that owns that table. It is the same
+  reasoning that keeps the 22 Purposes out of a `fin_purpose` table (§12).
+- **Reason:** Six tables would be six copies of one shape differing only in a sign,
+  and the seventh would arrive as a migration instead of a line of config. The books
+  are genuinely the same thing — the Cash Bank Book with a Partner as its subject —
+  and the one place they differ is exactly what the catalogue records.
+- **Impact:** A book is added by adding a catalogue entry, a permission, and a
+  mapping; no table, no route, no component. Each book carries **its own** permission,
+  because who may read the owners' Prive is a different decision from who may read
+  Hutang. `applyPosting` writes the entry alongside `recordCashBankEntry` and
+  `postJournal`, inside the same transaction — the fan-out of concept doc §13.
+- **Menu placement deviates from the concept doc, deliberately.** §21 lists the
+  ledgers under Accounting › Ledger beside the General Ledger. They live under
+  **Finance › Laporan** instead, on the user's instruction: the books are written by
+  Finance's Post, and Accounting's two reports are the ones that derive from journals.
+- **Do not change unless:** explicitly instructed. **Never add an update, delete or
+  reversal path to `sub_ledger`**, never derive a subject book from a journal line,
+  never write one outside `recordSubledgerEntry`, and do not split the six into
+  separate tables or give one its own bespoke report.
 - **Status:** Frozen, current.
 
 ### The ledger reports take several accounts, one Company at a time (FROZEN)
@@ -1819,7 +1895,7 @@ decisions now that foreclose them.
 
 | Item | Planned behaviour |
 | --- | --- |
-| Posting engine — the rest | Post writes the Cash Bank Book, Budget realization **and the Journal**. Still to come, added *alongside* that call and never derived from it: the subject ledgers (Prive / Titipan / Hutang / Piutang) |
+| Subledger opening balances | A subject's position before the application started keeping its book. `SubLedgerEntryType.Opening` exists and nothing writes it; it belongs with Opening Balance below, not with a manual entry form |
 | Exchange rate | A real rate source, arriving in a later update. **Do not create a standalone exchange-rate master table, and do not reintroduce a hardcoded rate in the meantime** — §12 |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
@@ -1856,8 +1932,16 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   `category_id` or `partner_id` be set anywhere but approval.
 - Do **not** add a balance column to `m_cash_bank` or any other master table, and do
   **not** compute a balance anywhere but `src/lib/siba/cash-bank.ts` (§9, §12).
-- Do **not** add an update or delete path to `cash_bank_ledger`. The book is
-  append-only; a correction is a further entry.
+- Do **not** add an update or delete path to `cash_bank_ledger` or `sub_ledger`.
+  A book is append-only; a correction is a further entry.
+- Do **not** split the six subject books into separate tables, give one its own
+  bespoke report, or add a book for a Budget Category that names no Partner. A
+  book is a catalogue entry in `subledger-catalogue.ts` (§12).
+- Do **not** sign a subject book by the cash direction. Each book declares which
+  direction raises it, and `subledgerMovement` is the only place that is decided
+  (§10 rule 53).
+- Do **not** write a subledger entry outside `recordSubledgerEntry`, and do
+  **not** derive one from a journal line (§10 rule 22, §12).
 - Do **not** reintroduce a hardcoded exchange rate, and do **not** sum amounts across
   currencies. Totals are reported per currency until a real rate source exists (§12).
 - Do **not** put business data in `prisma/seed.ts`, and do **not** add a delete step to
@@ -2023,12 +2107,14 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | --- | --- |
 | An audit entry names a record by its current name | `audit_log` stores no snapshot, so a record renamed since it changed reads under the name it has now. Inventing a snapshot would be worse than saying nothing, but it does mean the panel is not a record of what a thing was called at the time. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
+| The subject books have no manual entry path, and no opening balance | A subledger entry is only ever written by posting a Cash Bank Transaction. `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated — that belongs with Opening Balance (§13). `Adjustment` is in the same position as the Cash Bank Book's. |
+| A subject book's report shows a document's note, not a link | An entry carries its source as the weak `(doc_type_id, doc_id)` pair and its document number inside `note`. Resolving that to a link would mean the book importing Finance, which is the boundary crossing `cash-bank.ts` already has and that has not been decided. |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
-| Tests cover security, Accounting, Budget, Finance, the Cash Bank Book, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
+| Tests cover security, Accounting, Budget, Finance, the books, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | Three module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a fourth fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) The dashboard counts rows from every module for its setup checklist — arguably fine for a cross-cutting screen, but it should ask each module for its own figure. (3) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |

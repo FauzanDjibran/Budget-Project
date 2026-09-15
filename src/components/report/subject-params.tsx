@@ -9,36 +9,56 @@ import type { RefOption } from "@/lib/siba/records";
 import { reportHref } from "@/lib/siba/reports";
 
 /**
- * The filter for the `account-period` set: **several** accounts plus an
- * inclusive date range.
+ * The filter for every report whose subject is a **set**: several accounts for
+ * the `account-period` reports, several Partners for the `subledger-period`
+ * ones, plus an inclusive date range.
  *
  * Several, because reading a ledger nearly always means reading a pair — the
- * cash account against whatever it moved against — and making that two page
- * loads is what makes checking the books tedious. The accounts go into the URL
- * as `accounts=3,17,42`, so a run of four accounts is still one link.
+ * cash account against whatever it moved against, or two Partners settling with
+ * each other — and making that two page loads is what makes checking the books
+ * tedious. The chosen subjects go into the URL as `accounts=3,17,42`, so a run
+ * of four is still one link.
+ *
+ * One component rather than one per subject: the two differ in their labels and
+ * in the query parameter they write, which is what props are for. A second copy
+ * would be the drift `tests/design-system.test.ts` exists to stop.
  *
  * It renders into the sticky page header (`.rfil`), so it is both the control
  * and the statement of what the figures below cover. That is why the controls
- * are compact and why the chosen accounts are chips on a second row rather than
+ * are compact and why the chosen subjects are chips on a second row rather than
  * a wider picker: the header's height is the report's lost viewport.
  */
-export function AccountParams({
+export function SubjectParams({
   slug,
-  accounts,
+  subjects,
   selectedIds,
   from,
   to,
   subjectRequired,
+  label,
+  param,
+  addPlaceholder,
+  allPlaceholder,
+  missingHint,
   companyId,
 }: {
   slug: string;
-  accounts: RefOption[];
+  subjects: RefOption[];
   selectedIds: number[];
   from: string;
   to: string;
   subjectRequired: boolean;
+  /** What one subject is called, above the picker. */
+  label: string;
+  /** The query parameter the ids are written to. */
+  param: "accounts" | "partners";
+  addPlaceholder: string;
+  /** Copy for "no subject chosen", where the report allows it. */
+  allPlaceholder: string;
+  /** Why the button is disabled while nothing is chosen. */
+  missingHint: string;
   /** Carried through the URL so switching Company does not lose the run. */
-  companyId: number | null;
+  companyId?: number | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -50,8 +70,8 @@ export function AccountParams({
   const invalidRange = Boolean(start && end && start > end);
   const missingSubject = subjectRequired && selected.length === 0;
 
-  const byId = new Map(accounts.map((a) => [a.id, a]));
-  const remaining = accounts.filter((a) => !selected.includes(a.id));
+  const byId = new Map(subjects.map((s) => [s.id, s]));
+  const remaining = subjects.filter((s) => !selected.includes(s.id));
 
   const add = (id: number | null) => {
     if (id == null || selected.includes(id)) return;
@@ -64,8 +84,8 @@ export function AccountParams({
     startTransition(() => {
       router.push(
         reportHref(slug, {
-          company: companyId,
-          accounts: selected.join(","),
+          company: companyId ?? null,
+          [param]: selected.join(","),
           from: start,
           to: end,
         })
@@ -75,14 +95,12 @@ export function AccountParams({
 
   return (
     <>
-      <span className="rl">Account</span>
+      <span className="rl">{label}</span>
       <div className="rf wide">
         <Combobox
           value={null}
           options={remaining}
-          placeholder={
-            subjectRequired ? "Tambah account…" : "Semua account yang bergerak"
-          }
+          placeholder={subjectRequired ? addPlaceholder : allPlaceholder}
           onChange={add}
         />
       </div>
@@ -106,7 +124,7 @@ export function AccountParams({
           invalidRange
             ? "Tanggal akhir tidak boleh lebih awal dari tanggal mulai."
             : missingSubject
-              ? "Pilih minimal satu account terlebih dahulu."
+              ? missingHint
               : undefined
         }
       >

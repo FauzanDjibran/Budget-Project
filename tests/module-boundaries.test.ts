@@ -81,6 +81,8 @@ const TABLE_OWNERS: Record<string, string[]> = {
   ],
   cashBankLedger: ["src/lib/siba/cash-bank.ts"],
   cashBankBalance: ["src/lib/siba/cash-bank.ts"],
+  subLedger: ["src/lib/siba/subledger.ts"],
+  subLedgerBalance: ["src/lib/siba/subledger.ts"],
   // The General Ledger is the one thing that may derive from journal lines
   // (CLAUDE.md §10 rule 22) — it reads them and never writes one.
   accJournal: ["src/lib/siba/journal.ts", "src/lib/siba/ledger.ts"],
@@ -155,8 +157,16 @@ describe("the dependency graph points one way", () => {
     // `cash_bank_ledger` and `acc_journal` are independent historical stores
     // (concept doc §2.5). A book that imported its writer could not be lifted
     // out, and would invite being derived from it.
-    const KERNEL = ["document-number", "period", "account-code", "permissions"];
-    for (const book of ["cash-bank", "journal"]) {
+    const KERNEL = [
+      "document-number",
+      "period",
+      "account-code",
+      "permissions",
+      // A book's own catalogue: which books exist and which way each one
+      // moves. Client-safe, database-free, and declared by the book itself.
+      "subledger-catalogue",
+    ];
+    for (const book of ["cash-bank", "journal", "subledger"]) {
       const leaked = sibaImports(sibaModule(book).text).filter(
         (d) => !KERNEL.includes(d)
       );

@@ -5,6 +5,7 @@
  */
 import type { IconName } from "@/components/icon";
 import type { PermissionCode } from "./permissions";
+import { SUBLEDGERS } from "./subledger-catalogue";
 
 export type NavEntity = {
   key: string;
@@ -166,6 +167,20 @@ export const MODULES: NavModule[] = [
             desc: "Saldo awal, penerimaan, pengeluaran, dan saldo akhir setiap resource kas dan bank.",
             permission: "REPORT_CASH_BANK_BALANCE_VIEW",
           },
+          // The six subject books, from the one catalogue that declares them.
+          // Listed individually rather than behind a single entry with a book
+          // picker, because each carries its own permission: who may read the
+          // owners' Prive is a different decision from who may read Hutang.
+          ...SUBLEDGERS.map(
+            (book): NavEntity => ({
+              key: `report_${book.key.replace(/-/g, "_")}_ledger`,
+              slug: `report/${book.slug}`,
+              name: book.name,
+              icon: book.icon,
+              desc: book.desc,
+              permission: book.permission,
+            })
+          ),
         ],
       },
     ],

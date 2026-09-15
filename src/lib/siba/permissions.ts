@@ -159,6 +159,49 @@ export const PERMISSIONS = [
     description: "Saldo awal, penerimaan, pengeluaran, dan saldo akhir per resource.",
   },
 
+  // One permission per subject book, deliberately. A subledger holds a
+  // Partner's position, and who may read which position is a real distinction:
+  // Prive is the owners' drawings, while Hutang is ordinary operational
+  // information. A single "lihat subledger" permission would make those one
+  // decision, which is exactly the decision an administrator should be able to
+  // take separately.
+  {
+    code: "REPORT_TITIPAN_LEDGER_VIEW",
+    name: "Lihat laporan Buku Titipan",
+    module: "finance",
+    description: "Riwayat dan sisa titipan per Partner.",
+  },
+  {
+    code: "REPORT_HUTANG_LEDGER_VIEW",
+    name: "Lihat laporan Buku Hutang",
+    module: "finance",
+    description: "Riwayat dan sisa hutang per Partner.",
+  },
+  {
+    code: "REPORT_PIUTANG_LEDGER_VIEW",
+    name: "Lihat laporan Buku Piutang",
+    module: "finance",
+    description: "Riwayat dan sisa piutang per Partner.",
+  },
+  {
+    code: "REPORT_PRIVE_LEDGER_VIEW",
+    name: "Lihat laporan Buku Prive",
+    module: "finance",
+    description: "Riwayat dan saldo prive per Stakeholder.",
+  },
+  {
+    code: "REPORT_INVESTASI_LEDGER_VIEW",
+    name: "Lihat laporan Buku Investasi",
+    module: "finance",
+    description: "Riwayat dan total investasi yang tertanam per Cabang.",
+  },
+  {
+    code: "REPORT_HASIL_INVESTASI_LEDGER_VIEW",
+    name: "Lihat laporan Buku Hasil Investasi",
+    module: "finance",
+    description: "Riwayat dan total hasil investasi yang diterima per Cabang.",
+  },
+
   // ---------------------------------------------------------------- settings
   { code: "MENU_SETTINGS_ACCESS", name: "Akses menu Pengaturan", module: "settings" },
   { code: "MENU_USER_ACCESS", name: "Akses menu User", module: "settings" },

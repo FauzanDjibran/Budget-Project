@@ -315,6 +315,7 @@ model SysDocType {
   transaction_lines FinCashBankTransactionLine[]
   ledger_entries    CashBankLedger[]
   journals          AccJournal[]
+  subledger_entries SubLedger[]
 
   @@map("sys_doc_type")
 }
@@ -371,10 +372,12 @@ model RefCurrency {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  cash_banks    MCashBank[]
-  budgets       BudBudget[]
-  transactions  FinCashBankTransaction[]
-  journal_lines AccJournalLine[]
+  cash_banks         MCashBank[]
+  budgets            BudBudget[]
+  transactions       FinCashBankTransaction[]
+  journal_lines      AccJournalLine[]
+  subledger_entries  SubLedger[]
+  subledger_balances SubLedgerBalance[]
 
   @@map("ref_currency")
 }
@@ -399,9 +402,11 @@ model MPartner {
   company  SysCompany         @relation(fields: [company_id], references: [id])
   category SysPartnerCategory @relation(fields: [category_id], references: [id])
 
-  budgets       BudBudget[]
-  transactions  FinCashBankTransaction[]
-  journal_lines AccJournalLine[]
+  budgets            BudBudget[]
+  transactions       FinCashBankTransaction[]
+  journal_lines      AccJournalLine[]
+  subledger_entries  SubLedger[]
+  subledger_balances SubLedgerBalance[]
 
   @@index([company_id])
   @@index([category_id])
@@ -512,6 +517,106 @@ model CashBankBalance {
   @@map("cash_bank_balance")
 }
 
+// ----------------------------------------------------------------- subledger
+
+/// An entry in a subledger, which is what a `CashBankEntryType` is to the Cash
+/// Bank Book. Its own enum rather than a shared one: a module that is meant to
+/// be liftable does not take its types from another module's table.
+enum SubLedgerEntryType {
+  /// A subject's position before the application started keeping its book.
+  /// Nothing writes one yet — it arrives with Opening Balance.
+  Opening
+  /// A posted Cash Bank Transaction.
+  Transaction
+  /// A manual correction, recorded rather than edited into an existing entry.
+  Adjustment
+}
+
+/// The subject books — Titipan, Hutang, Piutang, Prive, Investasi and Hasil
+/// Investasi — in one append-only table, keyed by `book`.
+///
+/// The subject is a **Partner** (concept doc §11.3-§11.6, §12), and every
+/// entry is written straight from the business transaction at Post, alongside
+/// the Cash Bank Book and the Journal. It is never derived from a journal
+/// line: an operational book is an independent historical store, and only the
+/// General Ledger reads the journal (§13, §14).
+///
+/// One table with a `book` discriminator rather than six identical tables. The
+/// books differ only in which cash direction raises their subject's position,
+/// which is a catalogue entry in `lib/siba/subledger-catalogue.ts` — six tables
+/// would be six copies of one shape, and adding the seventh would be a
+/// migration instead of a line of config.
+///
+/// `book` is a catalogue key (`hutang`), not a foreign key to
+/// `sys_budget_category`. The book is meant to be liftable, and its own subject
+/// is the Partner; tying every row to a reference table it does not otherwise
+/// need would make it depend on the classification module to be read.
+model SubLedger {
+  id          Int                @id @default(autoincrement())
+  entry_no    String             @unique
+  /// Catalogue key from `lib/siba/subledger-catalogue.ts`.
+  book        String
+  partner_id  Int
+  currency_id Int
+  entry_date  DateTime           @db.Date
+  entry_type  SubLedgerEntryType
+  /// The direction the **money** moved, exactly as the document recorded it.
+  direction   FlowDirection
+
+  /// Always positive; `direction` and the book's own nature carry the sign.
+  amount        Decimal @db.Decimal(18, 2)
+  /// The same figure signed in the **book's** direction: positive where the
+  /// entry raises the subject's position, negative where it lowers it. Summing
+  /// this column reconstructs the balance, which is how the total is verified.
+  movement      Decimal @db.Decimal(18, 2)
+  /// The subject's position after this entry, in its own currency.
+  balance_after Decimal @db.Decimal(18, 2)
+
+  /// What caused the movement, as the weak document pair every book uses.
+  source_doc_type_id Int?
+  source_doc_id      Int?
+
+  note String?
+
+  created_by Int
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  partner         MPartner    @relation(fields: [partner_id], references: [id])
+  currency        RefCurrency @relation(fields: [currency_id], references: [id])
+  source_doc_type SysDocType? @relation(fields: [source_doc_type_id], references: [id])
+
+  @@index([book, partner_id, entry_date])
+  @@index([source_doc_type_id, source_doc_id])
+  @@map("sub_ledger")
+}
+
+/// One row per subject and currency, derived from `sub_ledger` and written in
+/// the same transaction as the entry that changed it. Never written on its own:
+/// `rebuildSubledgerBalance` recomputes it from the entries.
+///
+/// Currency is part of the key because amounts are never converted (§12): a
+/// Partner owing IDR and USD holds two positions, not one blended figure.
+model SubLedgerBalance {
+  id          Int    @id @default(autoincrement())
+  book        String
+  partner_id  Int
+  currency_id Int
+
+  balance         Decimal   @default(0) @db.Decimal(18, 2)
+  entry_count     Int       @default(0)
+  last_entry_id   Int?
+  last_entry_date DateTime? @db.Date
+
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  partner  MPartner    @relation(fields: [partner_id], references: [id])
+  currency RefCurrency @relation(fields: [currency_id], references: [id])
+
+  @@unique([book, partner_id, currency_id])
+  @@index([book])
+  @@map("sub_ledger_balance")
+}
+
 // ---------------------------------------------------------------- accounting
 
 model AccAccountCategory {
@@ -531,8 +636,8 @@ model AccAccountCategory {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  account_type   SysAccountType          @relation(fields: [account_type_id], references: [id])
-  subcategories  AccAccountSubcategory[]
+  account_type  SysAccountType          @relation(fields: [account_type_id], references: [id])
+  subcategories AccAccountSubcategory[]
 
   @@index([account_type_id])
   @@map("acc_account_category")
@@ -605,14 +710,14 @@ model AccAccount {
 }
 
 model AccBudgetCategoryAccount {
-  id                 Int  @id @default(autoincrement())
-  bca_code           String @unique
-  budget_category_id Int
-  company_id         Int
+  id                  Int    @id @default(autoincrement())
+  bca_code            String @unique
+  budget_category_id  Int
+  company_id          Int
   /// Not in the DBML. Without it a single budget category cannot resolve to a
   /// different account per partner category.
   partner_category_id Int?
-  account_id         Int
+  account_id          Int
 
   created_by Int
   updated_by Int?
@@ -773,8 +878,8 @@ model FinCashBankTransactionLine {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  transaction   FinCashBankTransaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
-  source_doc_type SysDocType           @relation(fields: [source_doc_type_id], references: [id])
+  transaction     FinCashBankTransaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  source_doc_type SysDocType             @relation(fields: [source_doc_type_id], references: [id])
 
   @@unique([transaction_id, sequence_no])
   @@index([source_doc_type_id, source_doc_id])
@@ -802,17 +907,17 @@ enum JournalStatus {
 /// the Cash Bank Book today, the subject ledgers later — are independent
 /// historical stores written alongside the journal, never from it (§2.5).
 model AccJournal {
-  id           Int           @id @default(autoincrement())
-  journal_no   String        @unique
+  id                 Int           @id @default(autoincrement())
+  journal_no         String        @unique
   /// The day the journal was posted. Never back-dated: a journal records when
   /// the books were written, which is the moment the posting happened.
-  posting_date DateTime      @db.Date
+  posting_date       DateTime      @db.Date
   /// What produced this journal, for traceability back to the document.
   source_doc_type_id Int?
   source_doc_id      Int?
-  company_id   Int
-  description  String
-  status       JournalStatus @default(Posted)
+  company_id         Int
+  description        String
+  status             JournalStatus @default(Posted)
 
   created_by Int
   updated_by Int?
@@ -832,7 +937,7 @@ model AccJournal {
 /// carries the value and the other is zero; the two sides of a journal must
 /// sum equal, which `postJournal` refuses to write without.
 model AccJournalLine {
-  id          Int    @id @default(autoincrement())
+  id          Int @id @default(autoincrement())
   journal_id  Int
   sequence_no Int
 

@@ -260,10 +260,12 @@ after(async () => {
     });
     await prisma.mCashBank.deleteMany({ where: { id: { in: cashBanks } } });
   }
+  // Fixtures first: a subledger entry points at both a Partner and a
+  // currency, so the books have to be cleared before either can go.
+  await cleanupFixtures();
   await prisma.refCurrency.deleteMany({
     where: { currency_label: { startsWith: FIXTURE_PREFIX } },
   });
-  await cleanupFixtures();
   await disconnect();
 });
 
@@ -1159,5 +1161,140 @@ describe("posting writes a balanced journal alongside the book", () => {
         },
       });
     }
+  });
+});
+
+/**
+ * Post writes the subject book too, and by the book's own direction.
+ *
+ * The third store a posting fans out to (concept doc §13): the Cash Bank Book
+ * records which resource moved, the Journal records the accounting, and the
+ * subledger records where the Partner now stands. All three are written from
+ * the document, in one transaction, and none is derived from another.
+ */
+describe("posting writes the subject book alongside the cash book", () => {
+  test("a Hutang receipt raises the partner's position", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const budget = await makeBudget({
+      type: "In",
+      categoryLabel: "Hutang",
+      partnerId: partner,
+      amount: 3_000_000,
+    });
+    const doc = await makeDraft({
+      purpose: "HTG_CAB_IN",
+      cashBankId: cashBank,
+      partnerId: partner,
+      lines: [{ budgetId: budget, amount: 3_000_000, outstanding: 3_000_000 }],
+    });
+    await post(doc);
+
+    const entries = await prisma.subLedger.findMany({
+      where: { source_doc_id: doc, book: "hutang" },
+    });
+    assert.equal(entries.length, 1, "one document, one entry in its subject book");
+    assert.equal(entries[0].partner_id, partner);
+    assert.equal(entries[0].direction, "In");
+    assert.equal(
+      entries[0].movement.toNumber(),
+      3_000_000,
+      "receiving a loan raises the obligation"
+    );
+
+    const balance = await prisma.subLedgerBalance.findUniqueOrThrow({
+      where: {
+        book_partner_id_currency_id: {
+          book: "hutang",
+          partner_id: partner,
+          currency_id: currency,
+        },
+      },
+    });
+    assert.equal(balance.balance.toNumber(), 3_000_000);
+    assert.equal(balance.entry_count, 1);
+  });
+
+  test("a Piutang payment out raises the position while cash falls", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const cashBank = await makeCashBank({ opening: 9_000_000 });
+    const budget = await makeBudget({
+      type: "Out",
+      categoryLabel: "Piutang",
+      partnerId: partner,
+      amount: 2_000_000,
+    });
+    const doc = await makeDraft({
+      purpose: "PTG_KRY_OUT",
+      cashBankId: cashBank,
+      partnerId: partner,
+      lines: [{ budgetId: budget, amount: 2_000_000, outstanding: 2_000_000 }],
+    });
+    await post(doc);
+
+    const entry = await prisma.subLedger.findFirstOrThrow({
+      where: { source_doc_id: doc, book: "piutang" },
+    });
+    assert.equal(entry.direction, "Out", "the money left");
+    assert.equal(
+      entry.movement.toNumber(),
+      2_000_000,
+      "and lending raises what is owed to us — the book signs by its own direction"
+    );
+
+    assert.equal(
+      await rebuildCashBankBalance(cashBank),
+      7_000_000,
+      "while the cash resource itself falls"
+    );
+  });
+
+  test("a draft writes nothing into any subject book", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
+    const cashBank = await makeCashBank({ opening: 4_000_000 });
+    const budget = await makeBudget({
+      type: "Out",
+      categoryLabel: "Prive",
+      partnerId: partner,
+      amount: 500_000,
+    });
+    const doc = await makeDraft({
+      purpose: "PRV_SH_OUT",
+      cashBankId: cashBank,
+      partnerId: partner,
+      lines: [{ budgetId: budget, amount: 500_000, outstanding: 500_000 }],
+    });
+
+    assert.equal(
+      await prisma.subLedger.count({ where: { source_doc_id: doc } }),
+      0,
+      "a draft is inert in every book"
+    );
+  });
+
+  test("a category with no partner keeps no book", async () => {
+    const cashBank = await makeCashBank({ opening: 2_000_000 });
+    const budget = await makeBudget({
+      type: "Out",
+      categoryLabel: "Biaya",
+      amount: 250_000,
+    });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 250_000, outstanding: 250_000 }],
+    });
+    await post(doc);
+
+    assert.equal(
+      await prisma.subLedger.count({ where: { source_doc_id: doc } }),
+      0,
+      "Biaya names no Partner, so there is no subject whose position moved"
+    );
+    assert.equal(
+      await prisma.cashBankLedger.count({ where: { source_doc_id: doc } }),
+      1,
+      "the cash book and the journal still record it"
+    );
   });
 });

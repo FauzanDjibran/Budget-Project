@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { AccountParams } from "@/components/report/account-params";
+import { SubjectParams } from "@/components/report/subject-params";
 import { GeneralLedgerReport } from "@/components/report/general-ledger-report";
 import { TrialBalanceReport } from "@/components/report/trial-balance-report";
 import { ReportNeedsSubject, ReportView } from "@/components/report/report-view";
@@ -75,13 +75,18 @@ export default async function Page({
   const filterBar = (
     <>
       <CompanyFilter options={scope.options} selectedId={company.id} />
-      <AccountParams
+      <SubjectParams
         slug={slug}
-        accounts={options}
+        subjects={options}
         selectedIds={accountIds}
         from={range.from}
         to={range.to}
         subjectRequired={report.subjectRequired}
+        label="Account"
+        param="accounts"
+        addPlaceholder="Tambah account…"
+        allPlaceholder="Semua account yang bergerak"
+        missingHint="Pilih minimal satu account terlebih dahulu."
         companyId={company.id}
       />
     </>
