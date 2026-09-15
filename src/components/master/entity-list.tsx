@@ -25,7 +25,9 @@ import {
 } from "@/lib/siba/entities";
 import { moduleByKey } from "@/lib/siba/nav";
 import { formatDate } from "@/lib/format";
+import type { Company } from "@/lib/siba/company-access";
 import type { RefOption, Row } from "@/lib/siba/records";
+import { CompanyFilter, NoCompanyAccess } from "./company-filter";
 import { recordTitle } from "./title";
 
 type Computed = Record<number, Record<string, string | number>>;
@@ -44,12 +46,18 @@ export function EntityList({
   refs,
   computed,
   can,
+  companies,
+  companyId,
 }: {
   entity: Entity;
   rows: Row[];
   refs: Record<string, RefOption[]>;
   computed: Computed;
   can: EntityAbilities;
+  /** Companies this user may choose between; empty for an unscoped entity. */
+  companies: Company[];
+  /** The Company being shown, or null when the user may see none. */
+  companyId: number | null;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -288,8 +296,19 @@ export function EntityList({
         {locked && <p className="ph-sub">{COMPANY_LOCK_BODY}</p>}
       </div>
 
+      {/* A scoped entity with no Company open to this user has nothing to
+          filter or search, so the card carries the refusal alone rather than
+          an empty table that would read as "no data yet". */}
+      {entity.scope && companyId == null ? (
+        <div className="card">
+          <NoCompanyAccess what={entity.name} />
+        </div>
+      ) : (
       <div className="card">
         <div className="toolbar">
+          {companyId != null && (
+            <CompanyFilter options={companies} selectedId={companyId} />
+          )}
           <div className={`srch${query ? " has" : ""}`}>
             <Icon name="srch" size={14} />
             <input
@@ -490,6 +509,7 @@ export function EntityList({
           </>
         )}
       </div>
+      )}
 
       <ConfirmDialog
         open={Boolean(pendingToggle)}

@@ -109,12 +109,15 @@ function toRow(t: TxRecord): TransactionRow {
   };
 }
 
-export async function listTransactions(companyId: number): Promise<TransactionRow[]> {
-  // Every document belongs to the induk today (§12), so this filters nothing
-  // yet — it is here so the list is already right when Funding Request brings
-  // the anak into Finance, rather than quietly showing both Companies then.
+export async function listTransactions(
+  companyIds: number[]
+): Promise<TransactionRow[]> {
+  // Every document belongs to the induk today (§12), so a user holding induk
+  // access sees exactly what they did before. What this adds is the other
+  // half: a user without it sees none, and the list is already right when
+  // Funding Request brings the anak into Finance.
   const rows = await prisma.finCashBankTransaction.findMany({
-    where: { company_id: companyId },
+    where: { company_id: { in: companyIds } },
     orderBy: [{ id: "desc" }],
     include: { _count: { select: { lines: true } } },
   });

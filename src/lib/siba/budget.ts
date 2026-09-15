@@ -111,13 +111,15 @@ export type BudgetMonth = {
  * Periods with no budgets are still listed: a month you have planned nothing
  * for is exactly the month a planner needs to see.
  */
-export async function budgetMonths(companyId: number): Promise<BudgetMonth[]> {
+export async function budgetMonths(companyIds: number[]): Promise<BudgetMonth[]> {
   // Budgets belong to a Company; the fiscal calendar does not, so the months
-  // themselves are the same either way and only their rollups narrow.
+  // themselves are the same either way and only their rollups narrow. The
+  // Companies are the ones the reader's permissions open — none of them means
+  // no budget is readable, and the months come back empty rather than whole.
   const [periods, budgets] = await Promise.all([
     prisma.accFiscalPeriod.findMany({ orderBy: { start_date: "desc" } }),
     prisma.budBudget.findMany({
-      where: { company_id: companyId },
+      where: { company_id: { in: companyIds } },
       select: { budget_date: true },
     }),
   ]);
@@ -169,11 +171,11 @@ export async function fiscalPeriod(periodId: number) {
  */
 export async function listBudgets(
   range: { startDate: string; endDate: string } | null,
-  companyId: number
+  companyIds: number[]
 ): Promise<BudgetRow[]> {
   const rows = await prisma.budBudget.findMany({
     where: {
-      company_id: companyId,
+      company_id: { in: companyIds },
       ...(range
         ? {
             budget_date: {

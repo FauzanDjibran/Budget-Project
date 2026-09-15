@@ -18,6 +18,7 @@
  */
 
 export type PermissionModule =
+  | "company"
   | "dashboard"
   | "master"
   | "accounting"
@@ -38,6 +39,30 @@ export type PermissionDef = {
  * a module means adding its rows here — nothing else in the catalogue changes.
  */
 export const PERMISSIONS = [
+  // ---------------------------------------------------------------- company
+  //
+  // Which Company's records a user may see at all. There are exactly two and
+  // there will never be a third (CLAUDE.md §12), so they are two ordinary
+  // catalogue entries rather than a table of per-record grants — the RBAC path
+  // stays the only one. They resolve against `is_parent` at runtime, never
+  // against a label, because a Company's identity is editable in the seed.
+  //
+  // A user may hold both, one, or neither. Neither means no Company-scoped
+  // record is readable: no Partner, no Cash & Bank, no Account, no mapping,
+  // no Budget, no Finance document.
+  {
+    code: "COMPANY_INDUK_ACCESS",
+    name: "Akses data Company Induk",
+    module: "company",
+    description: "Melihat Partner, Cash & Bank, Account, Budget, dan dokumen Finance milik Induk.",
+  },
+  {
+    code: "COMPANY_ANAK_ACCESS",
+    name: "Akses data Company Anak",
+    module: "company",
+    description: "Melihat Partner, Cash & Bank, Account, Budget, dan dokumen Finance milik Anak.",
+  },
+
   // ---------------------------------------------------------------- dashboard
   { code: "MENU_DASHBOARD_ACCESS", name: "Akses menu Dashboard", module: "dashboard" },
 
@@ -189,6 +214,7 @@ export function isPermissionCode(code: string): code is PermissionCode {
 }
 
 export const MODULE_LABELS: Record<PermissionModule, string> = {
+  company: "Akses Company",
   dashboard: "Dashboard",
   master: "Master",
   accounting: "Accounting",
@@ -199,6 +225,7 @@ export const MODULE_LABELS: Record<PermissionModule, string> = {
 
 /** Catalogue order, grouped by module — drives the role permission matrix. */
 export const MODULE_ORDER: PermissionModule[] = [
+  "company",
   "dashboard",
   "master",
   "accounting",

@@ -322,13 +322,13 @@ describe("Budget Month is derived from Fiscal Period, never stored", () => {
     //
     // The Company is passed in rather than read from a cookie: these readers
     // take their scope as an argument precisely so a test can call them.
-    const company = await parentCompanyId();
-    const months = await budgetMonths(company);
+    const companies = [await parentCompanyId()];
+    const months = await budgetMonths(companies);
 
     for (const month of months) {
       const inRange = await listBudgets(
         { startDate: month.startDate, endDate: month.endDate },
-        company
+        companies
       );
       assert.equal(
         month.count,
@@ -339,10 +339,10 @@ describe("Budget Month is derived from Fiscal Period, never stored", () => {
   });
 
   test("the months together account for no more budgets than exist", async () => {
-    const company = await parentCompanyId();
-    const months = await budgetMonths(company);
+    const companies = [await parentCompanyId()];
+    const months = await budgetMonths(companies);
     const grouped = months.reduce((t, m) => t + m.count, 0);
-    const total = (await listBudgets(null, company)).length;
+    const total = (await listBudgets(null, companies)).length;
     assert.ok(
       grouped <= total,
       `months claim ${grouped} budgets out of ${total} — periods must not overlap`

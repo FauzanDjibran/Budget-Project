@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { AccountTree } from "@/components/master/account-tree";
-import { activeCompanyId } from "@/lib/siba/company-context";
+import { companyScope } from "@/lib/siba/company-access";
 import { FiscalPeriods } from "@/components/accounting/fiscal-periods";
 import { FiscalYearActions } from "@/components/accounting/fiscal-year-actions";
 import { CashBankBookCard } from "@/components/master/cash-bank-book-card";
@@ -45,9 +45,12 @@ function resolve(moduleKey: string, slug: string): Entity {
 export async function EntityListPage({
   module: moduleKey,
   slug,
+  company,
 }: {
   module: string;
   slug: string;
+  /** The page's own `?company=` parameter, for entities that declare a scope. */
+  company?: string;
 }) {
   const entity = resolve(moduleKey, slug);
 
@@ -57,18 +60,25 @@ export async function EntityListPage({
     `/${entity.module}/${entity.slug}`
   );
   const can = abilitiesFor(entity.key, actor.permissions);
-  // Scoped entities show the Company in context; the registry's `scope` is
-  // what decides which ones those are.
-  const companyId = await activeCompanyId();
+
+  // A Company-scoped entity shows one Company at a time, chosen from the
+  // Companies this user's permissions open. The registry's `scope` is what
+  // decides which entities those are; everything else ignores this entirely.
+  const scope = entity.scope
+    ? await companyScope(actor.permissions, company)
+    : null;
+  const companyId = scope ? scope.selected?.id ?? null : null;
 
   if (entity.view === "tree") {
-    const { company, categories, accounts } = await accountTree(companyId);
+    const tree =
+      companyId == null ? null : await accountTree(companyId);
     return (
       <AccountTree
         entity={entity}
-        company={company}
-        categories={categories}
-        accounts={accounts}
+        companies={scope?.options ?? []}
+        company={tree?.company ?? null}
+        categories={tree?.categories ?? []}
+        accounts={tree?.accounts ?? []}
         can={can}
       />
     );
@@ -86,6 +96,8 @@ export async function EntityListPage({
       refs={refs}
       computed={computed}
       can={can}
+      companies={scope?.options ?? []}
+      companyId={companyId}
     />
   );
 }

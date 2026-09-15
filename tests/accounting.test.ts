@@ -5,6 +5,13 @@ import { ENTITIES } from "../src/lib/siba/entities";
 import { entityPermissions } from "../src/lib/siba/entity-access";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import {
+  ANAK_PERMISSION,
+  INDUK_PERMISSION,
+  accessibleCompanies,
+  accessibleCompanyIds,
+  companyScope,
+} from "../src/lib/siba/company-access";
+import {
   SEGMENT_MAX,
   SEGMENT_MIN,
   codeDepth,
@@ -18,6 +25,7 @@ import {
   CASH_BANK_SUBCATEGORY,
   accountDescendants,
   checkAccountNumber,
+  listRows,
   checkCashBankAccount,
   partnerCategoriesForBudgetCategory,
 } from "../src/lib/siba/records";
@@ -390,5 +398,91 @@ describe("an account number cannot be reused within its Company", () => {
       /Unique constraint/,
       "@@unique([company_id, account_label]) is the backstop under the check"
     );
+  });
+});
+
+/**
+ * Which Company's records a user may see is a permission, held through a role
+ * like every other. A user may hold both, one, or neither — and neither means
+ * no Company-scoped record is readable at all, which is a different thing from
+ * an empty database.
+ */
+describe("Company access is a permission, not a preference", () => {
+  test("both permissions open both Companies, induk first", async () => {
+    const companies = await accessibleCompanies(
+      new Set([INDUK_PERMISSION, ANAK_PERMISSION])
+    );
+    assert.equal(companies.length, 2);
+    assert.equal(companies[0].isParent, true, "induk is offered first");
+    assert.equal(companies[1].isParent, false);
+  });
+
+  test("one permission opens exactly that Company", async () => {
+    const indukOnly = await accessibleCompanies(new Set([INDUK_PERMISSION]));
+    assert.deepEqual(indukOnly.map((c) => c.isParent), [true]);
+
+    const anakOnly = await accessibleCompanies(new Set([ANAK_PERMISSION]));
+    assert.deepEqual(anakOnly.map((c) => c.isParent), [false]);
+  });
+
+  test("neither permission opens nothing", async () => {
+    assert.deepEqual(await accessibleCompanies(new Set()), []);
+    assert.deepEqual(await accessibleCompanyIds(new Set()), []);
+  });
+
+  test("the permissions key on is_parent, never on a Company label", async () => {
+    // A Company's label and name are editable through the seed; the structure
+    // is not. Keying on the label would break the moment somebody renames one.
+    const [induk] = await accessibleCompanies(new Set([INDUK_PERMISSION]));
+    const row = await prisma.sysCompany.findUniqueOrThrow({
+      where: { id: induk.id },
+      select: { is_parent: true },
+    });
+    assert.equal(row.is_parent, true);
+  });
+
+  test("a scope falls back to the first Company a user may see", async () => {
+    const scope = await companyScope(new Set([ANAK_PERMISSION]), undefined);
+    assert.equal(scope.selected?.isParent, false);
+    assert.equal(scope.options.length, 1);
+  });
+
+  test("asking for a Company the permissions do not open falls back", async () => {
+    const induk = (await accessibleCompanies(new Set([INDUK_PERMISSION])))[0];
+    // A user holding only anak access, following a link built for the induk.
+    const scope = await companyScope(new Set([ANAK_PERMISSION]), induk.id);
+    assert.equal(
+      scope.selected?.isParent,
+      false,
+      "the fallback must stay inside what the permissions allow"
+    );
+  });
+
+  test("a scope with no access selects nothing", async () => {
+    const scope = await companyScope(new Set(), undefined);
+    assert.equal(scope.selected, null);
+    assert.deepEqual(scope.options, []);
+  });
+
+  test("a scoped entity reads nothing without a Company", async () => {
+    const partner = ENTITIES.find((e) => e.key === "m_partner")!;
+    assert.equal(partner.scope, "company_id", "Partner is Company-scoped");
+    assert.deepEqual(await listRows(partner, null), []);
+  });
+
+  test("an unscoped entity is unaffected by Company access", async () => {
+    const currency = ENTITIES.find((e) => e.key === "ref_currency")!;
+    assert.equal(currency.scope, undefined, "Currency belongs to no Company");
+    const rows = await listRows(currency, null);
+    assert.ok(rows.length > 0, "a base currency is seeded and stays readable");
+  });
+
+  test("both permissions are in the catalogue, so a role can grant them", () => {
+    for (const code of [INDUK_PERMISSION, ANAK_PERMISSION]) {
+      assert.ok(
+        PERMISSION_CODES.includes(code),
+        `${code} must be a catalogue entry — nothing else can grant it`
+      );
+    }
   });
 });

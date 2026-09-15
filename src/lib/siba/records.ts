@@ -5,7 +5,6 @@ import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney } from "@/lib/format";
 import { compareCodes } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
-import { scopeFilter } from "./company-context";
 import {
   allowedPartnerCategories,
   budgetCategoryNeedsPartner,
@@ -77,16 +76,23 @@ export function serialize<T extends Record<string, unknown>>(row: T): Row {
 }
 
 /**
- * A list, narrowed to the Company in context when the entity declares a scope.
+ * A list, narrowed to one Company when the entity declares a scope.
  *
  * `Entity.scope` is what decides: an entity without one — Company itself,
- * Currency, the reference tables — is never filtered. The context is a view
- * filter only; the view permission above this is what decides who may read
- * anything at all.
+ * Currency, the reference tables — is never filtered and ignores `companyId`.
+ * A scoped entity with `null` returns nothing, which is what a user holding
+ * neither Company permission may read.
+ *
+ * This narrows a view. The view permission above it is what decides whether
+ * the page may be read at all.
  */
-export async function listRows(entity: Entity, companyId: number): Promise<Row[]> {
+export async function listRows(
+  entity: Entity,
+  companyId: number | null
+): Promise<Row[]> {
+  if (entity.scope && companyId == null) return [];
   const rows = await delegate(entity.key).findMany({
-    where: scopeFilter(entity.scope, companyId),
+    where: entity.scope ? { [entity.scope]: companyId } : {},
     orderBy: { id: "asc" },
   });
   return rows.map(serialize);

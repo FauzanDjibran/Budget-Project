@@ -9,7 +9,7 @@ import {
   summarise,
 } from "@/lib/siba/budget";
 import { cashBookSummary } from "@/lib/siba/cash-bank";
-import { activeCompanyId } from "@/lib/siba/company-context";
+import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +37,7 @@ export default async function Page({
 
   const budgets = await listBudgets(
     month ? { startDate: month.startDate, endDate: month.endDate } : null,
-    await activeCompanyId()
+    await accessibleCompanyIds(actor.permissions)
   );
 
   const [refs, mappings, summary, cash] = await Promise.all([

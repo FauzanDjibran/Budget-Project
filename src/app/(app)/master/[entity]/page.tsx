@@ -4,9 +4,12 @@ export const dynamic = "force-dynamic";
 
 export default async function Page({
   params,
+  searchParams,
 }: {
   params: Promise<{ entity: string }>;
+  searchParams: Promise<{ company?: string }>;
 }) {
   const { entity } = await params;
-  return <EntityListPage module="master" slug={entity} />;
+  const { company } = await searchParams;
+  return <EntityListPage module="master" slug={entity} company={company} />;
 }

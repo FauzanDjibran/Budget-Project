@@ -4,9 +4,11 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { CompanyFilter, NoCompanyAccess } from "./company-filter";
 import type { EntityAbilities } from "@/lib/siba/entity-access";
 import { TAG_CLASS, createLabel, type Entity } from "@/lib/siba/entities";
 import { moduleByKey } from "@/lib/siba/nav";
+import type { Company } from "@/lib/siba/company-access";
 import type { TreeAccount, TreeCategory, TreeCompany } from "@/lib/siba/records";
 
 /**
@@ -24,14 +26,20 @@ import type { TreeAccount, TreeCategory, TreeCompany } from "@/lib/siba/records"
  */
 export function AccountTree({
   entity,
+  companies,
   company,
   categories,
   accounts,
   can,
 }: {
   entity: Entity;
-  /** The Company these accounts belong to; the server has already filtered. */
-  company: TreeCompany;
+  /** Companies this user may choose between. */
+  companies: Company[];
+  /**
+   * The Company these accounts belong to — the server has already filtered to
+   * it. Null when the user holds neither Company permission.
+   */
+  company: TreeCompany | null;
   categories: TreeCategory[];
   accounts: TreeAccount[];
   can: EntityAbilities;
@@ -304,8 +312,16 @@ export function AccountTree({
         <p className="ph-sub">{entity.desc}</p>
       </div>
 
+      {!company ? (
+        <div className="card">
+          <NoCompanyAccess what="Chart of Accounts" />
+        </div>
+      ) : (
       <div className="card">
         <div className="toolbar">
+          {company && (
+            <CompanyFilter options={companies} selectedId={company.id} />
+          )}
           <div
             className={`srch${query ? " has" : ""}`}
             style={{ maxWidth: "none", flex: "1 1 auto" }}
@@ -336,7 +352,7 @@ export function AccountTree({
           <div className="ct">
             <h3>
               Struktur Bagan Akun
-              <span className="lab">{company.label}</span>
+              {company && <span className="lab">{company.label}</span>}
             </h3>
             <p>
               Bagan akun per Company. Nomor melanjutkan induknya; kategori dan
@@ -355,8 +371,8 @@ export function AccountTree({
             </div>
             <h4>Tidak ada yang cocok</h4>
             <p>
-              Tidak ada account atau kelompok pada {company.label} yang mengandung
-              kata kunci tersebut.
+              Tidak ada account atau kelompok pada {company?.label ?? "Company ini"}{" "}
+              yang mengandung kata kunci tersebut.
             </p>
             <div className="cta">
               <button className="btn" onClick={() => setQuery("")}>
@@ -366,6 +382,7 @@ export function AccountTree({
           </div>
         )}
       </div>
+      )}
     </>
   );
 }

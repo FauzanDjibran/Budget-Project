@@ -1,7 +1,6 @@
 import { AppShell } from "@/components/shell/app-shell";
 import { ToastProvider } from "@/components/ui/toast";
 import { requireAuth } from "@/lib/siba/auth";
-import { activeCompany, companyOptions } from "@/lib/siba/company-context";
 import { visibleModules } from "@/lib/siba/nav";
 
 /**
@@ -16,16 +15,9 @@ export default async function AppLayout({
 }) {
   const actor = await requireAuth();
 
-  const [companies, company] = await Promise.all([
-    companyOptions(),
-    activeCompany(),
-  ]);
-
   return (
     <ToastProvider>
       <AppShell
-        companies={companies}
-        activeCompanyId={company.id}
         user={{
           name: actor.user.name,
           initials: actor.user.initials,
