@@ -1355,17 +1355,23 @@ they relate. Keep the table; keep it out of the UI's write path.
 ### A Report View is a screen type, with one convention (FROZEN)
 - **Decision:** A menu entry whose purpose is to *show* a report is a **Report View**,
   and every one of them is built the same way. The catalogue lives in
-  `src/lib/siba/reports.ts`; one route — `finance/report/[report]` — resolves the entry,
-  checks its permission and parses its parameters; `components/report/report-view.tsx`
-  carries the chrome; only the body differs per report. Ten rules define the type:
+  `src/lib/siba/reports.ts`; one route per module — `finance/report/[report]`,
+  `accounting/report/[report]` — resolves the entry, checks its permission and parses
+  its parameters; `components/report/report-view.tsx` carries the chrome; only the body
+  differs per report. Twelve rules define the type:
 
   1. **Parameters live in the URL.** `?cashBank=12&from=…&to=…`. A run is therefore
      linkable, bookmarkable and back-button-able, and the page stays a Server Component
      that queries directly (§3) instead of fetching from the client.
-  2. **Parameter bar on top, restated on the output.** The `.critbar` repeats the
-     subject, the period and the run timestamp. This is the one thing that separates a
-     report from a list page.
-  3. **The subject is explicit.** For these two it is always a Cash & Bank resource.
+  2. **The filter lives in the sticky page header, and there is no restatement.**
+     `.rfil` sits inside `.pad > .ph`, so the subject and the period travel with the
+     page and are on screen wherever the reader has scrolled to. That is what a
+     `.critbar` underneath used to buy, at the cost of a slab of vertical space on every
+     run — so the filter *is* the statement of what the figures cover, the run timestamp
+     is one muted line (`.rstamp`) at the foot, and **no Report View carries a
+     `.critbar`**. A Report View also carries no `.ph-sub`: the description belongs to
+     the menu entry that led there, and how to read the figures belongs in the footnote.
+  3. **The subject is explicit** — a Cash & Bank resource, or one or more accounts.
   4. **It reconciles on the page** — see §10 rule 40, and the no-type-filter rule that
      follows from it.
   5. **Empty is not zero.** A period with no movement still reports its opening and
@@ -1375,25 +1381,44 @@ they relate. Keep the table; keep it out of the UI's write path.
      parameters, so a figure is one click from the rows that produced it.
   8. **Money is grouped per currency, never converted** (§12, amounts are never
      converted).
-  9. **No new CSS.** The convention is a composition of classes the design system
-     already has — `.ph`, `.toolbar`, `.critbar`, `table.rcp`, `.cblock`/`.cbh`,
-     `table.grid`, `.totrow`, `.foot-note`, `.empty`. The "Laporan Pengajuan" modal is
-     where that vocabulary came from.
-  10. **Export belongs in `.ph-act`.** The slot exists and is empty; print and XLSX are
+  9. **A block states its headline figures as a `.rsum` strip**, label above value,
+     right-aligned and monospaced, closing balance last and larger. Written on one line
+     (`Awal Rp 0 · D Rp 0 · K Rp 200.000 · Akhir Rp -200.000`) the figures are all
+     present and none of them can be read at a glance, which is the only thing a summary
+     is for. `ReportSummary` is the one implementation.
+  10. **A report speaks about balance only when it is broken.** "Seimbang" on a header,
+      again in a total row, and again in the criteria says nothing three times — equal
+      totals are visible in the columns themselves. A difference gets a `.rwarn` chip and
+      a sentence, because that is the case a reader must act on.
+  11. **The result does not scroll sideways.** Money columns are fixed and one text
+      column flexes; anything that would be a narrow column of its own — a partner, a
+      normal balance, a company, a row number — is folded into the cell it belongs to
+      (`.rsub`, `.nb`) or dropped where the filter already states it. A report that has
+      to be scrolled horizontally cannot be read across a row, which is the only way a
+      ledger is read.
+  12. **Export belongs in `.ph-act`.** The slot exists and is empty; print and XLSX are
       deferred, and adding them later changes no layout.
 
-- **Reason:** Reports are the bulk of what the Journal, the General Ledger and the
-  subject ledgers will add, and a report invented per screen would produce a different
-  answer to "what period is this?" on every page. Settling the type once, while there
-  were only two, is far cheaper than reconciling six later.
+- **Reason:** Reports are the bulk of what the subject ledgers will add, and a report
+  invented per screen produces a different answer to "what period is this?" on every
+  page. Rules 2, 9, 10 and 11 arrived together, from reading the four built reports side
+  by side: the criteria strip restated what the bar above it already said, the block
+  summaries were unreadable run-on lines, the Trial Balance announced its own balance
+  three times, and every table was wide enough to need a horizontal scroll. All four
+  cost the figures room on the screen while adding nothing a reader did not have.
 - **Impact:** Adding a report is a `reports.ts` entry, a permission, a nav entry and a
-  body component — no new route file and no new CSS. Permissions are named
-  `REPORT_<SUBJECT>_VIEW`, prefix-first like `MENU_<AREA>_ACCESS` (§12). Report slugs
-  live under a `report/` namespace, which is why `resolvePath` matches the whole path
-  tail against entity slugs, longest match first.
+  body component — no new route file. Permissions are named `REPORT_<SUBJECT>_VIEW`,
+  prefix-first like `MENU_<AREA>_ACCESS` (§12). Report slugs live under a `report/`
+  namespace, which is why `resolvePath` matches the whole path tail against entity
+  slugs, longest match first. The report vocabulary is `.ph`/`.rfil`, `.rhead`,
+  `.cblock`/`.cbh` + `.rsum`/`.rwarn`, `table.grid`, `.totrow`, `.rsub`, `.nb`,
+  `.foot-note`, `.rstamp`, `.empty` — declared once in the "report view" section of
+  `globals.css`. A new report composes those; it does not author its own.
 - **Do not change unless:** explicitly instructed. **Never let a Report View write**,
-  never add a filter that breaks a money report's own arithmetic, and do not build a
-  generic report engine — the catalogue and the chrome are shared, the bodies are not.
+  never add a filter that breaks a money report's own arithmetic, **never put the filter
+  back in a `.toolbar` inside the card or reinstate the `.critbar`**, never label the
+  balanced case, and do not build a generic report engine — the catalogue, the chrome
+  and the vocabulary are shared, the bodies are not.
 - **Status:** Frozen, current.
 
 ### The Cash Bank Book is a report, not part of the master record
@@ -1652,7 +1677,7 @@ decisions now that foreclose them.
 | Posting engine — the rest | Post writes the Cash Bank Book, Budget realization **and the Journal**. Still to come, added *alongside* that call and never derived from it: the subject ledgers (Prive / Titipan / Hutang / Piutang) |
 | Exchange rate | A real rate source, arriving in a later update. **Do not create a standalone exchange-rate master table, and do not reintroduce a hardcoded rate in the meantime** — §12 |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
-| Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared |
+| Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
 | `Transfer` transaction type | Extend the transaction-type enum, UI and logic. Note `transaction_type` currently shares the `FlowDirection` enum with `budget_type`, so this likely needs a separate enum rather than a third member |
 | Fiscal Year closing | The closing process that moves a year Open → Closed, locking its periods against posting. Belongs with the journal and the general ledger. **Add `FISCAL_YEAR_CLOSE` to the catalogue in the same change that builds it, never before** — §12 |
 | Opening Balance | `acc_opening_balance(_line)` tables and UI — the accounting opening balance per account, distinct from a cash resource's opening entry, which already exists |
@@ -1744,6 +1769,14 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   filter on the Cash Bank Ledger (§10, §12).
 - Do **not** invent a new report screen shape or new report CSS; extend the Report View
   convention instead, and do **not** build a generic report engine (§12).
+- Do **not** move a Report View's filter out of the sticky page header into a
+  `.toolbar`, and do **not** reinstate the `.critbar` restatement or a `.ph-sub` on a
+  report — the filter states what was run (§12).
+- Do **not** label a report's balanced case. Equal totals are visible in the columns;
+  only a difference gets a `.rwarn` chip and a sentence (§12).
+- Do **not** give a report a column whose whole job is one short word — fold it into
+  the cell it belongs to. A report that scrolls sideways cannot be read across a row
+  (§12).
 - Do **not** re-embed the Cash Bank Book under the Cash & Bank master record. The
   master links into the report (§12).
 - Do **not** add an edit, delete or reversal path for a journal, do **not** write

@@ -14,6 +14,12 @@ import type { TrialBalanceReport as Report } from "@/lib/siba/ledger";
  * looking at, because "out of balance" and "somebody bypassed the posting
  * path" call for very different responses.
  *
+ * **Balance is stated only when it is broken.** A report that announced
+ * "seimbang" on the block header, again in the total row, and again in the
+ * criteria strip said nothing three times: equal totals are already visible in
+ * the two columns above, and the expected case needs no label. A difference —
+ * the one case a reader must act on — gets a chip and a sentence.
+ *
  * One table per currency, never summed together: there is no exchange-rate
  * source in this system (CLAUDE.md §12). Each currency balances on its own,
  * because every journal is written in one currency and every journal balances.
@@ -22,7 +28,16 @@ import type { TrialBalanceReport as Report } from "@/lib/siba/ledger";
  * that account's General Ledger for the same period — the drill-through the
  * Report View convention asks for.
  */
-export function TrialBalanceReport({ report }: { report: Report }) {
+export function TrialBalanceReport({
+  report,
+  companyId,
+}: {
+  report: Report;
+  /** Carried into the General Ledger link: a chart of accounts belongs to one
+      Company, so a drill-through that dropped it would land on whichever
+      Company the reader happens to default to. */
+  companyId: number;
+}) {
   if (!report.groups.length) {
     return (
       <div className="empty">
@@ -39,8 +54,17 @@ export function TrialBalanceReport({ report }: { report: Report }) {
     );
   }
 
+  const accounts = report.groups.reduce((t, g) => t + g.rows.length, 0);
+
   return (
     <>
+      <div className="rhead">
+        <span className="count">
+          <b>{accounts}</b> account · {formatDate(report.range.from)} –{" "}
+          {formatDate(report.range.to)}
+        </span>
+      </div>
+
       {report.unbalanced.length > 0 && (
         <div className="nbox warn" style={{ marginBottom: 12 }}>
           <Icon name="warn" size={14} />
@@ -54,101 +78,127 @@ export function TrialBalanceReport({ report }: { report: Report }) {
         </div>
       )}
 
-      {report.groups.map((g) => (
-        <div className="cblock" key={g.currencyLabel}>
-          <div className="cbh">
-            <b>{g.currencyLabel}</b>
-            <span className="cbn">{g.rows.length} account</span>
-            <span className="cbo2">
-              {g.balanced
-                ? "Debit = Kredit · seimbang"
-                : "TIDAK SEIMBANG — periksa journal"}
-            </span>
-          </div>
+      {report.groups.map((g) => {
+        const money = (n: number) => formatMoney(n, g.currencyLabel);
+        return (
+          <div className="cblock" key={g.currencyLabel}>
+            <div className="cbh">
+              <b>{g.currencyLabel}</b>
+              <span className="cbn">{g.rows.length} account</span>
+              {!g.balanced && (
+                <span className="rwarn">
+                  <Icon name="warn" size={11} />
+                  Debit ≠ Kredit
+                </span>
+              )}
+            </div>
 
-          <div className="tw">
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th style={{ width: 132 }}>Account</th>
-                  <th>Nama Account</th>
-                  <th style={{ width: 84 }}>Normal</th>
-                  <th className="num" style={{ width: 150 }}>
-                    Saldo Awal
-                  </th>
-                  <th className="num" style={{ width: 150 }}>
-                    Mutasi Debit
-                  </th>
-                  <th className="num" style={{ width: 150 }}>
-                    Mutasi Kredit
-                  </th>
-                  <th className="num" style={{ width: 160 }}>
-                    Saldo Akhir
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      <Link
-                        className="lab"
-                        href={reportHref("general-ledger", {
-                          accounts: r.id,
-                          from: report.range.from,
-                          to: report.range.to,
-                        })}
-                        title="Buka General Ledger account ini"
-                      >
-                        {r.label}
-                      </Link>
-                    </td>
-                    <td className="pri">{r.name}</td>
-                    <td className="mut">{r.normalBalance}</td>
+            <div className="tw">
+              <table className="grid">
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th className="num" style={{ width: 130 }}>
+                      Saldo Awal
+                    </th>
+                    <th className="num" style={{ width: 130 }}>
+                      Mutasi Debit
+                    </th>
+                    <th className="num" style={{ width: 130 }}>
+                      Mutasi Kredit
+                    </th>
+                    <th className="num" style={{ width: 140 }}>
+                      Saldo Akhir
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.rows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="pri">
+                        <span className="idc">
+                          <Link
+                            className="lab"
+                            href={reportHref("general-ledger", {
+                              company: companyId,
+                              accounts: r.id,
+                              from: report.range.from,
+                              to: report.range.to,
+                            })}
+                            title="Buka General Ledger account ini"
+                          >
+                            {r.label}
+                          </Link>
+                          <span className="nm">{r.name}</span>
+                          <span
+                            className="nb"
+                            title={`Normal balance ${r.normalBalance}`}
+                          >
+                            {r.normalBalance === "Debit" ? "D" : "K"}
+                          </span>
+                        </span>
+                      </td>
+                      <td className="num">
+                        <span className={`mny${r.opening ? "" : " z"}`}>
+                          {money(r.opening)}
+                        </span>
+                      </td>
+                      <td className="num">
+                        {r.debit ? (
+                          <span className="mny">{money(r.debit)}</span>
+                        ) : (
+                          <span className="dash">–</span>
+                        )}
+                      </td>
+                      <td className="num">
+                        {r.credit ? (
+                          <span className="mny">{money(r.credit)}</span>
+                        ) : (
+                          <span className="dash">–</span>
+                        )}
+                      </td>
+                      <td className="num">
+                        <span className={`mny${r.closing ? "" : " z"}`}>
+                          {money(r.closing)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="totrow">
+                    <td style={{ textAlign: "right" }}>Total mutasi periode</td>
+                    <td className="num mut">—</td>
+                    <td className="num">{money(g.totalDebit)}</td>
+                    <td className="num">{money(g.totalCredit)}</td>
+                    {/* Closing balances of accounts with opposite natures do
+                        not add to anything, so there is no total to print here.
+                        The cell speaks only when the two sides disagree. */}
                     <td className="num">
-                      {formatMoney(r.opening, g.currencyLabel)}
-                    </td>
-                    <td className="num">
-                      {r.debit ? formatMoney(r.debit, g.currencyLabel) : "—"}
-                    </td>
-                    <td className="num">
-                      {r.credit ? formatMoney(r.credit, g.currencyLabel) : "—"}
-                    </td>
-                    <td className="num">
-                      {formatMoney(r.closing, g.currencyLabel)}
+                      {g.balanced ? (
+                        <span className="dash">—</span>
+                      ) : (
+                        <span className="mny" style={{ color: "var(--bad)" }}>
+                          Selisih {money(Math.abs(g.totalDebit - g.totalCredit))}
+                        </span>
+                      )}
                     </td>
                   </tr>
-                ))}
-
-                <tr className="totrow">
-                  <td colSpan={4}>Total mutasi periode</td>
-                  <td className="num">
-                    {formatMoney(g.totalDebit, g.currencyLabel)}
-                  </td>
-                  <td className="num">
-                    {formatMoney(g.totalCredit, g.currencyLabel)}
-                  </td>
-                  <td className="num">
-                    {g.balanced ? "Seimbang" : "Selisih!"}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          {!g.balanced && (
-            <div className="cbnone">
-              Selisih debit dan kredit sebesar{" "}
-              {formatMoney(
-                Math.abs(g.totalDebit - g.totalCredit),
-                g.currencyLabel
-              )}
-              . Setiap journal wajib seimbang, jadi selisih di sini menandakan
-              masalah sistem — bukan kesalahan input.
+                </tfoot>
+              </table>
             </div>
-          )}
-        </div>
-      ))}
+
+            {!g.balanced && (
+              <div className="cbnone">
+                Selisih debit dan kredit sebesar{" "}
+                {money(Math.abs(g.totalDebit - g.totalCredit))}. Setiap journal
+                wajib seimbang, jadi selisih di sini menandakan masalah sistem —
+                bukan kesalahan input.
+              </div>
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }

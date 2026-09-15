@@ -47,7 +47,7 @@ export default async function Page({
   const resources = await cashBankOptions();
   const runAt = new Date().toISOString();
 
-  const paramBar = (
+  const filterBar = (
     <ReportParams
       slug={slug}
       resources={resources}
@@ -60,8 +60,6 @@ export default async function Page({
     />
   );
 
-  const period = `${formatDate(range.from)} – ${formatDate(range.to)}`;
-
   // --------------------------------------------------------------- ledger
 
   if (report.key === "cash_bank_ledger") {
@@ -72,28 +70,14 @@ export default async function Page({
     return (
       <ReportView
         report={report}
-        params={paramBar}
+        filter={filterBar}
         runAt={runAt}
-        criteria={
-          data
-            ? [
-                {
-                  label: "Resource",
-                  value: data.resource.label,
-                  hint: data.resource.name,
-                },
-                { label: "Company", value: data.resource.companyLabel },
-                { label: "Currency", value: data.resource.currencyLabel },
-                { label: "Periode", value: period },
-                { label: "Jumlah mutasi", value: String(data.entries.length) },
-              ]
-            : [{ label: "Periode", value: period }]
-        }
         footnote={
           <>
             Saldo awal adalah seluruh mutasi sebelum {formatDate(range.from)},
             bukan entri tersendiri — karena itu tidak muncul sebagai baris.
-            Kolom Saldo menampilkan saldo tercatat pada setiap entri, dan Buku
+            Entri saldo awal dan penyesuaian ditandai pada kolom Keterangan; baris tanpa
+            tanda adalah transaksi biasa. Kolom Saldo menampilkan saldo tercatat pada setiap entri, dan Buku
             Kas &amp; Bank bersifat append-only: koreksi dicatat sebagai entri
             baru, bukan dengan mengubah entri lama.
           </>
@@ -119,19 +103,8 @@ export default async function Page({
   return (
     <ReportView
       report={report}
-      params={paramBar}
+      filter={filterBar}
       runAt={runAt}
-      criteria={[
-        {
-          label: "Resource",
-          value: cashBankId
-            ? resources.find((r) => r.id === cashBankId)?.label ?? "—"
-            : "Semua resource",
-        },
-        { label: "Periode", value: period },
-        { label: "Currency", value: `${data.groups.length} currency` },
-        { label: "Jumlah resource", value: String(data.resources) },
-      ]}
       footnote={
         <>
           Setiap currency direkap terpisah dan tidak pernah dijumlahkan menjadi

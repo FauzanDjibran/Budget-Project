@@ -11,6 +11,15 @@ import { reportHref } from "@/lib/siba/reports";
  * added together: there is no exchange rate in this system, so a single
  * combined figure would be invented rather than reported (CLAUDE.md §12).
  *
+ * The four figures are the columns, so this is the one report whose block
+ * header carries no summary strip: the totals belong in the footer row, lined
+ * up under the columns they total. A strip repeating them above would be the
+ * same numbers twice.
+ *
+ * Type and Company travel under the resource name rather than in columns of
+ * their own. Two fixed columns to print one short word each is exactly what
+ * pushed the money columns off the right-hand edge.
+ *
  * Every row drills through to that resource's `Buku Kas & Bank` for the same
  * period — a summary figure should always be one click from the rows that
  * produced it, which is what makes a summary checkable rather than merely
@@ -34,50 +43,44 @@ export function CashBankBalanceReport({ report }: { report: BalanceReport }) {
 
   return (
     <>
+      <div className="rhead">
+        <span className="count">
+          <b>{report.resources}</b> resource · {formatDate(report.range.from)} –{" "}
+          {formatDate(report.range.to)}
+        </span>
+      </div>
+
       {report.groups.map((g) => {
         const money = (n: number) => formatMoney(n, g.currencyLabel);
         return (
-          <div className="cblock" key={g.currencyId} style={{ marginTop: 14 }}>
+          <div className="cblock" key={g.currencyId}>
             <div className="cbh">
-              <b>
-                {g.currencyLabel === "IDR"
-                  ? "Rupiah (IDR)"
-                  : g.currencyLabel}
-              </b>
-              <span className="cbn">
-                {g.rows.length} resource
-              </span>
-              <span className="cbo2">
-                {formatDate(report.range.from)} – {formatDate(report.range.to)}
-              </span>
+              <b>{g.currencyLabel}</b>
+              <span className="cbn">{g.rows.length} resource</span>
             </div>
 
             <div className="tw">
               <table className="grid">
                 <thead>
                   <tr>
-                    <th style={{ width: 38 }}>No</th>
                     <th>Resource</th>
-                    <th style={{ width: 84 }}>Tipe</th>
-                    <th style={{ width: 92 }}>Company</th>
-                    <th className="num" style={{ width: 140 }}>
+                    <th className="num" style={{ width: 130 }}>
                       Saldo Awal
                     </th>
-                    <th className="num" style={{ width: 140 }}>
+                    <th className="num" style={{ width: 130 }}>
                       Penerimaan
                     </th>
-                    <th className="num" style={{ width: 140 }}>
+                    <th className="num" style={{ width: 130 }}>
                       Pengeluaran
                     </th>
-                    <th className="num" style={{ width: 150 }}>
+                    <th className="num" style={{ width: 140 }}>
                       Saldo Akhir
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {g.rows.map((r, i) => (
+                  {g.rows.map((r) => (
                     <tr key={r.cashBankId} style={{ cursor: "default" }}>
-                      <td className="no">{i + 1}</td>
                       <td className="pri">
                         <Link
                           href={reportHref("cash-bank-ledger", {
@@ -90,23 +93,14 @@ export function CashBankBalanceReport({ report }: { report: BalanceReport }) {
                           <span className="idc">
                             <span className="lab">{r.label}</span>
                             <span className="nm">{r.name}</span>
+                            {!r.active && (
+                              <span className="bdg s-bad">Non Aktif</span>
+                            )}
                           </span>
                         </Link>
-                        {!r.active && (
-                          <span className="bdg s-bad" style={{ marginLeft: 6 }}>
-                            Non Aktif
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <span
-                          className={`bdg ${r.type === "Bank" ? "t-info" : "t-vio"}`}
-                        >
-                          {r.type}
+                        <span className="rsub">
+                          {r.type} · {r.companyLabel}
                         </span>
-                      </td>
-                      <td className="mono mut" style={{ fontSize: "11px" }}>
-                        {r.companyLabel}
                       </td>
                       <td className="num">
                         <span className={`mny${r.opening ? "" : " z"}`}>
@@ -133,20 +127,14 @@ export function CashBankBalanceReport({ report }: { report: BalanceReport }) {
                 </tbody>
                 <tfoot>
                   <tr className="totrow">
-                    <td colSpan={4} style={{ textAlign: "right" }}>
+                    <td style={{ textAlign: "right" }}>
                       Total {g.currencyLabel}
                     </td>
+                    <td className="num">{money(g.opening)}</td>
+                    <td className="num">{money(g.totalIn)}</td>
+                    <td className="num">{money(g.totalOut)}</td>
                     <td className="num">
-                      <span className="mny">{money(g.opening)}</span>
-                    </td>
-                    <td className="num">
-                      <span className="mny in">{money(g.totalIn)}</span>
-                    </td>
-                    <td className="num">
-                      <span className="mny">{money(g.totalOut)}</span>
-                    </td>
-                    <td className="num">
-                      <span className="mny big">{money(g.closing)}</span>
+                      <b>{money(g.closing)}</b>
                     </td>
                   </tr>
                 </tfoot>

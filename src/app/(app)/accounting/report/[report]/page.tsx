@@ -57,9 +57,8 @@ export default async function Page({
     return (
       <ReportView
         report={report}
-        params={null}
+        filter={null}
         runAt={new Date().toISOString()}
-        criteria={[]}
       >
         <NoCompanyAccess what={report.name} />
       </ReportView>
@@ -72,9 +71,8 @@ export default async function Page({
 
   const options = await ledgerAccountOptions(company.id);
   const runAt = new Date().toISOString();
-  const period = `${formatDate(range.from)} – ${formatDate(range.to)}`;
 
-  const paramBar = (
+  const filterBar = (
     <>
       <CompanyFilter options={scope.options} selectedId={company.id} />
       <AccountParams
@@ -99,26 +97,8 @@ export default async function Page({
     return (
       <ReportView
         report={report}
-        params={paramBar}
+        filter={filterBar}
         runAt={runAt}
-        criteria={
-          data
-            ? [
-                { label: "Company", value: company.label },
-                { label: "Account", value: `${data.accounts.length} account` },
-                { label: "Periode", value: period },
-                {
-                  label: "Jumlah mutasi",
-                  value: String(
-                    data.accounts.reduce((t, a) => t + a.entries.length, 0)
-                  ),
-                },
-              ]
-            : [
-                { label: "Company", value: company.label },
-                { label: "Periode", value: period },
-              ]
-        }
         footnote={
           <>
             Setiap account memiliki tabelnya sendiri dan tidak pernah
@@ -147,25 +127,12 @@ export default async function Page({
   // --------------------------------------------------------- trial balance
 
   const data = await trialBalanceReport(range, companyIds);
-  const accounts = data.groups.reduce((t, g) => t + g.rows.length, 0);
 
   return (
     <ReportView
       report={report}
-      params={paramBar}
+      filter={filterBar}
       runAt={runAt}
-      criteria={[
-        { label: "Company", value: company.label },
-        { label: "Periode", value: period },
-        { label: "Currency", value: `${data.groups.length} currency` },
-        { label: "Jumlah account", value: String(accounts) },
-        {
-          label: "Keseimbangan",
-          value: data.groups.every((g) => g.balanced)
-            ? "Debit = Kredit"
-            : "Tidak seimbang",
-        },
-      ]}
       footnote={
         <>
           Setiap currency direkap terpisah dan tidak pernah dijumlahkan menjadi
@@ -173,12 +140,13 @@ export default async function Page({
           debit dan kredit wajib sama: setiap journal ditolak bila kedua sisinya
           berbeda, sehingga selisih di sini berarti ada masalah sistem, bukan
           kesalahan input. Account yang tidak memiliki saldo awal maupun mutasi
-          tidak ditampilkan. Klik nomor account untuk membuka General Ledger-nya
-          pada periode yang sama.
+          tidak ditampilkan. Huruf D dan K di samping nama account adalah normal
+          balance-nya. Klik nomor account untuk membuka General Ledger-nya pada
+          periode yang sama.
         </>
       }
     >
-      <TrialBalanceReport report={data} />
+      <TrialBalanceReport report={data} companyId={company.id} />
     </ReportView>
   );
 }

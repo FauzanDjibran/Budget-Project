@@ -9,8 +9,8 @@ import type { RefOption } from "@/lib/siba/records";
 import { reportHref } from "@/lib/siba/reports";
 
 /**
- * The parameter bar for the `cash-bank-period` parameter set: a Cash & Bank
- * subject plus an inclusive date range.
+ * The filter for the `cash-bank-period` parameter set: a Cash & Bank subject
+ * plus an inclusive date range.
  *
  * **Parameters live in the URL**, which is the part of the Report View
  * convention that matters most here. Running a report is a navigation, so a run
@@ -21,7 +21,8 @@ import { reportHref } from "@/lib/siba/reports";
  * The controls are the application's own `Combobox` and `DateInput`, never a
  * native `<select>` or `<input type="date">` — those are drawn by the operating
  * system in its own locale, and a report whose dates read differently on two
- * machines is a data hazard (§12).
+ * machines is a data hazard (§12). Compact, because this sits in the sticky
+ * page header and every pixel it takes is a pixel the report does not get.
  */
 export function ReportParams({
   slug,
@@ -56,19 +57,14 @@ export function ReportParams({
   const run = () => {
     if (invalidRange || missingSubject) return;
     startTransition(() => {
-      router.push(
-        reportHref(slug, { cashBank: subject, from: start, to: end })
-      );
+      router.push(reportHref(slug, { cashBank: subject, from: start, to: end }));
     });
   };
 
   return (
     <>
-      <span className="count" style={{ marginRight: 2 }}>
-        {subjectLabel}
-      </span>
-
-      <div style={{ minWidth: 250, flex: "0 1 300px" }}>
+      <span className="rl">{subjectLabel}</span>
+      <div className="rf wide">
         <Combobox
           value={subject}
           options={resources}
@@ -77,13 +73,14 @@ export function ReportParams({
         />
       </div>
 
-      <span className="count">Periode</span>
+      <span className="rsep" />
 
-      <div style={{ width: 138 }}>
+      <span className="rl">Periode</span>
+      <div className="rf date">
         <DateInput value={start} invalid={invalidRange} onChange={setStart} />
       </div>
-      <span className="count">s/d</span>
-      <div style={{ width: 138 }}>
+      <span className="rl">s/d</span>
+      <div className="rf date">
         <DateInput value={end} invalid={invalidRange} onChange={setEnd} />
       </div>
 
@@ -99,17 +96,15 @@ export function ReportParams({
               : undefined
         }
       >
-        <Icon name="srch" size={14} /> Tampilkan
+        <Icon name="srch" size={13} /> Tampilkan
       </button>
 
       {invalidRange && (
-        <span className="err" style={{ marginLeft: 2 }}>
+        <span className="err">
           <Icon name="warn" size={11} />
           Tanggal akhir lebih awal dari tanggal mulai.
         </span>
       )}
-
-      <div className="tspace" />
     </>
   );
 }

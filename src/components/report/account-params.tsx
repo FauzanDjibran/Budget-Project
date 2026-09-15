@@ -9,7 +9,7 @@ import type { RefOption } from "@/lib/siba/records";
 import { reportHref } from "@/lib/siba/reports";
 
 /**
- * The parameter bar for the `account-period` set: **several** accounts plus an
+ * The filter for the `account-period` set: **several** accounts plus an
  * inclusive date range.
  *
  * Several, because reading a ledger nearly always means reading a pair — the
@@ -17,9 +17,10 @@ import { reportHref } from "@/lib/siba/reports";
  * loads is what makes checking the books tedious. The accounts go into the URL
  * as `accounts=3,17,42`, so a run of four accounts is still one link.
  *
- * Chosen accounts are listed as removable chips rather than staying inside the
- * picker: a Combobox shows one value, and the whole point here is seeing the
- * set. The picker keeps offering the accounts not yet chosen.
+ * It renders into the sticky page header (`.rfil`), so it is both the control
+ * and the statement of what the figures below cover. That is why the controls
+ * are compact and why the chosen accounts are chips on a second row rather than
+ * a wider picker: the header's height is the report's lost viewport.
  */
 export function AccountParams({
   slug,
@@ -74,11 +75,8 @@ export function AccountParams({
 
   return (
     <>
-      <span className="count" style={{ marginRight: 2 }}>
-        Account
-      </span>
-
-      <div style={{ minWidth: 250, flex: "0 1 320px" }}>
+      <span className="rl">Account</span>
+      <div className="rf wide">
         <Combobox
           value={null}
           options={remaining}
@@ -89,13 +87,14 @@ export function AccountParams({
         />
       </div>
 
-      <span className="count">Periode</span>
+      <span className="rsep" />
 
-      <div style={{ width: 138 }}>
+      <span className="rl">Periode</span>
+      <div className="rf date">
         <DateInput value={start} invalid={invalidRange} onChange={setStart} />
       </div>
-      <span className="count">s/d</span>
-      <div style={{ width: 138 }}>
+      <span className="rl">s/d</span>
+      <div className="rf date">
         <DateInput value={end} invalid={invalidRange} onChange={setEnd} />
       </div>
 
@@ -111,39 +110,36 @@ export function AccountParams({
               : undefined
         }
       >
-        <Icon name="srch" size={14} /> Tampilkan
+        <Icon name="srch" size={13} /> Tampilkan
       </button>
 
       {invalidRange && (
-        <span className="err" style={{ marginLeft: 2 }}>
+        <span className="err">
           <Icon name="warn" size={11} />
           Tanggal akhir lebih awal dari tanggal mulai.
         </span>
       )}
 
       {selected.length > 0 && (
-        <div className="tspace" style={{ flexBasis: "100%", height: 0 }} />
+        <div className="rchips">
+          {selected.map((id) => (
+            <button
+              key={id}
+              className="rchip"
+              title="Keluarkan dari laporan"
+              onClick={() => remove(id)}
+            >
+              {byId.get(id)?.label ?? id}
+              <Icon name="block" size={10} />
+            </button>
+          ))}
+          {selected.length > 1 && (
+            <button className="lnk" onClick={() => setSelected([])}>
+              Bersihkan
+            </button>
+          )}
+        </div>
       )}
-
-      {selected.map((id) => (
-        <button
-          key={id}
-          className="bdg t-acc"
-          title="Keluarkan dari laporan"
-          onClick={() => remove(id)}
-        >
-          {byId.get(id)?.label ?? id}
-          <Icon name="block" size={10} />
-        </button>
-      ))}
-
-      {selected.length > 1 && (
-        <button className="btn sm" onClick={() => setSelected([])}>
-          Bersihkan
-        </button>
-      )}
-
-      <div className="tspace" />
     </>
   );
 }
