@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { recordCashBankEntry } from "./cash-bank";
+import { postJournal, type JournalLineInput } from "./journal";
 import { PURPOSES, purposeOf, type Purpose } from "./rules";
 import type { TransactionStatus } from "./transaction-workflow";
 
@@ -731,6 +732,112 @@ export type PostingResult =
  * action resolves a caller and then calls this, and the test suite calls the
  * same function.
  */
+/**
+ * The accounting entries a Cash Bank Transaction produces.
+ *
+ * Two sides, which is what a cash document is: the Cash & Bank resource's own
+ * account, and the account its Purpose resolves to through the Company x Budget
+ * Category x Partner Category mapping. Direction decides which side each falls
+ * on — money in debits cash and credits the counterpart, money out does the
+ * reverse.
+ *
+ * One counter line per document line rather than one aggregated line: every
+ * line realizes a named Budget, and keeping them apart is what lets a ledger
+ * entry be read back to the plan it settled. They share an account, so the
+ * journal balances either way.
+ */
+async function journalEntries(doc: {
+  id: number;
+  transaction_no: string;
+  purpose: string;
+  company_id: number;
+  partner_id: number | null;
+  cash_bank_id: number | null;
+  transaction_type: string;
+  transaction_amount: { toNumber(): number };
+  lines: { source_doc_id: number; settlement_amount: { toNumber(): number } }[];
+}): Promise<
+  | { ok: true; lines: JournalLineInput[]; purposeLabel: string }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const purpose = purposeOf(doc.purpose);
+  if (!purpose) {
+    return { ok: false, errors: { _form: "Purpose dokumen tidak dikenali." } };
+  }
+
+  const cashBank = await prisma.mCashBank.findUnique({
+    where: { id: doc.cash_bank_id! },
+    select: {
+      account_id: true,
+      currency_id: true,
+      cash_bank_label: true,
+      account: { select: { account_label: true } },
+    },
+  });
+  if (!cashBank) {
+    return { ok: false, errors: { _form: "Cash & Bank dokumen tidak ditemukan." } };
+  }
+
+  const categoryId = await categoryIdOf(purpose);
+  if (!categoryId) {
+    return { ok: false, errors: { _form: "Budget Category Purpose tidak dikenali." } };
+  }
+
+  const partnerCategoryId = purpose.partnerCategory
+    ? (
+        await prisma.sysPartnerCategory.findFirst({
+          where: { category_label: purpose.partnerCategory },
+          select: { id: true },
+        })
+      )?.id ?? null
+    : null;
+
+  const mapping = await prisma.accBudgetCategoryAccount.findFirst({
+    where: {
+      company_id: doc.company_id,
+      budget_category_id: categoryId,
+      partner_category_id: partnerCategoryId,
+    },
+    select: { account_id: true },
+  });
+  if (!mapping) {
+    // Approval tolerates a missing mapping (§10 rule 28) because that gap
+    // belongs to Accounting. Posting cannot: without a mapping there is no
+    // account to journal against, and money must not move unaccounted for.
+    return {
+      ok: false,
+      errors: {
+        _form:
+          `Belum ada Mapping Budget ke Account untuk kombinasi ini (${purpose.label}). ` +
+          "Lengkapi mapping di Accounting sebelum dokumen diposting.",
+      },
+    };
+  }
+
+  const incoming = doc.transaction_type === "In";
+  const total = doc.lines.reduce((t, l) => t + l.settlement_amount.toNumber(), 0);
+
+  const lines: JournalLineInput[] = [
+    {
+      accountId: cashBank.account_id,
+      currencyId: cashBank.currency_id,
+      debit: incoming ? total : 0,
+      credit: incoming ? 0 : total,
+      description: `${doc.transaction_no} — ${cashBank.cash_bank_label}`,
+    },
+    ...doc.lines.map((l) => ({
+      accountId: mapping.account_id,
+      partnerId: doc.partner_id,
+      currencyId: cashBank.currency_id,
+      debit: incoming ? 0 : l.settlement_amount.toNumber(),
+      credit: incoming ? l.settlement_amount.toNumber() : 0,
+      description: `${purpose.label} — Budget #${l.source_doc_id}`,
+    })),
+  ];
+
+  return { ok: true, lines, purposeLabel: purpose.label };
+}
+
 export async function applyPosting(
   transactionId: number,
   actorId: number
@@ -781,6 +888,13 @@ export async function applyPosting(
   const docTypeId = await transactionDocTypeId();
   let closed = 0;
 
+  // Resolved before the transaction opens so a missing mapping refuses the
+  // post rather than aborting it halfway: a document whose Purpose has no
+  // account cannot be journalled, and a posting that moves the book without
+  // writing accounting is exactly the split §12 forbids.
+  const entries = await journalEntries(doc);
+  if (!entries.ok) return { ok: false, errors: entries.errors };
+
   await prisma.$transaction(async (tx) => {
     await recordCashBankEntry(tx, {
       cashBankId: doc.cash_bank_id!,
@@ -820,6 +934,20 @@ export async function applyPosting(
         },
       });
     }
+
+    // The Journal is written *alongside* the Cash Bank Book, never from it:
+    // an operational book is an independent historical store and only the
+    // General Ledger derives from journal lines (concept doc §2.5, §2.6).
+    // `postJournal` throws unless the two sides sum equal, and a throw in here
+    // takes the whole posting down — which is the guarantee.
+    await postJournal(tx, {
+      companyId: doc.company_id,
+      description: `${doc.transaction_no} — ${entries.purposeLabel}`,
+      sourceDocTypeId: docTypeId,
+      sourceDocId: doc.id,
+      lines: entries.lines,
+      actorId,
+    });
 
     await tx.finCashBankTransaction.update({
       where: { id: transactionId },

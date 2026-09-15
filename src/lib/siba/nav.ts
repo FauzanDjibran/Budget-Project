@@ -174,7 +174,7 @@ export const MODULES: NavModule[] = [
     key: "accounting",
     name: "Accounting",
     icon: "calc",
-    desc: "Bagan akun, mapping, dan kendali periode.",
+    desc: "Bagan akun, mapping, journal, buku besar, dan kendali periode.",
     permission: "MENU_ACCOUNTING_ACCESS",
     groups: [
       {
@@ -204,6 +204,37 @@ export const MODULES: NavModule[] = [
             icon: "link",
             desc: "Menghubungkan Budget Category, Company, dan Account tujuan — jembatan antara klasifikasi planning dan account accounting.",
             permission: "MAPPING_VIEW",
+          },
+        ],
+      },
+      {
+        key: "journal",
+        name: "Journal & Buku Besar",
+        entities: [
+          {
+            key: "acc_journal",
+            slug: "journal",
+            name: "Journal",
+            single: "Journal",
+            icon: "book",
+            desc: "Journal akuntansi yang dibuat otomatis setiap kali dokumen diposting. Append-only dan tidak dapat diubah.",
+            permission: "JOURNAL_VIEW",
+          },
+          {
+            key: "report_general_ledger",
+            slug: "report/general-ledger",
+            name: "General Ledger",
+            icon: "tree",
+            desc: "Mutasi dan saldo setiap account pada rentang tanggal yang dipilih, satu tabel per account.",
+            permission: "REPORT_GENERAL_LEDGER_VIEW",
+          },
+          {
+            key: "report_trial_balance",
+            slug: "report/trial-balance",
+            name: "Trial Balance",
+            icon: "calc",
+            desc: "Saldo awal, mutasi debit, mutasi kredit, dan saldo akhir seluruh account — dengan uji keseimbangan debit dan kredit.",
+            permission: "REPORT_TRIAL_BALANCE_VIEW",
           },
         ],
       },

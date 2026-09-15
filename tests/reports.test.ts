@@ -162,10 +162,14 @@ describe("the report catalogue is the index of every Report View", () => {
   });
 
   test("every report in the menu exists in the catalogue, and vice versa", () => {
-    const finance = MODULES.find((m) => m.key === "finance");
-    const menu = (finance?.groups ?? [])
-      .filter((g) => g.key === "report")
-      .flatMap((g) => g.entities);
+    // Report Views live in more than one module now — Finance has the cash
+    // books, Accounting the General Ledger and the Trial Balance — so the menu
+    // side is gathered by slug shape rather than from one module.
+    const menu = MODULES.flatMap((m) =>
+      (m.groups ?? []).flatMap((g) =>
+        g.entities.filter((e) => e.slug.startsWith("report/"))
+      )
+    );
 
     assert.equal(menu.length, REPORTS.length);
     for (const entry of menu) {

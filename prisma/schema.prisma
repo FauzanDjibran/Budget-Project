@@ -277,6 +277,8 @@ model SysCompany {
   budgets      BudBudget[]
   transactions FinCashBankTransaction[]
 
+  journals AccJournal[]
+
   @@map("sys_company")
 }
 
@@ -312,6 +314,7 @@ model SysDocType {
 
   transaction_lines FinCashBankTransactionLine[]
   ledger_entries    CashBankLedger[]
+  journals          AccJournal[]
 
   @@map("sys_doc_type")
 }
@@ -368,9 +371,10 @@ model RefCurrency {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  cash_banks   MCashBank[]
-  budgets      BudBudget[]
-  transactions FinCashBankTransaction[]
+  cash_banks    MCashBank[]
+  budgets       BudBudget[]
+  transactions  FinCashBankTransaction[]
+  journal_lines AccJournalLine[]
 
   @@map("ref_currency")
 }
@@ -395,8 +399,9 @@ model MPartner {
   company  SysCompany         @relation(fields: [company_id], references: [id])
   category SysPartnerCategory @relation(fields: [category_id], references: [id])
 
-  budgets      BudBudget[]
-  transactions FinCashBankTransaction[]
+  budgets       BudBudget[]
+  transactions  FinCashBankTransaction[]
+  journal_lines AccJournalLine[]
 
   @@index([company_id])
   @@index([category_id])
@@ -589,8 +594,9 @@ model AccAccount {
   parent              AccAccount?           @relation("AccountTree", fields: [parent_account], references: [id])
   children            AccAccount[]          @relation("AccountTree")
 
-  cash_banks MCashBank[]
-  mappings   AccBudgetCategoryAccount[]
+  cash_banks    MCashBank[]
+  mappings      AccBudgetCategoryAccount[]
+  journal_lines AccJournalLine[]
 
   @@unique([company_id, account_label])
   @@index([company_id])
@@ -779,6 +785,87 @@ model FinCashBankTransactionLine {
 
 /// One trail for every table. Referenced loosely by entity key and row id
 /// rather than by FK, since it spans every table.
+/// Every journal this application writes is Posted the moment it exists: a
+/// journal is *produced by* a posting, never drafted towards one. `Draft` is
+/// carried because the DBML declares it and a future import path might stage
+/// one, but nothing in the application writes it — see CLAUDE.md §12.
+enum JournalStatus {
+  Draft
+  Posted
+}
+
+/// The accounting journal. Append-only and immutable: once written, a journal
+/// and its lines are never updated and never deleted. A correction is a new
+/// journal, exactly as a corrected business transaction is a new document.
+///
+/// Only the General Ledger derives from these lines. The operational books —
+/// the Cash Bank Book today, the subject ledgers later — are independent
+/// historical stores written alongside the journal, never from it (§2.5).
+model AccJournal {
+  id           Int           @id @default(autoincrement())
+  journal_no   String        @unique
+  /// The day the journal was posted. Never back-dated: a journal records when
+  /// the books were written, which is the moment the posting happened.
+  posting_date DateTime      @db.Date
+  /// What produced this journal, for traceability back to the document.
+  source_doc_type_id Int?
+  source_doc_id      Int?
+  company_id   Int
+  description  String
+  status       JournalStatus @default(Posted)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company         SysCompany       @relation(fields: [company_id], references: [id])
+  source_doc_type SysDocType?      @relation(fields: [source_doc_type_id], references: [id])
+  lines           AccJournalLine[]
+
+  @@index([company_id, posting_date])
+  @@index([source_doc_type_id, source_doc_id])
+  @@map("acc_journal")
+}
+
+/// One accounting entry. Exactly one of `debit_amount` / `kredit_amount`
+/// carries the value and the other is zero; the two sides of a journal must
+/// sum equal, which `postJournal` refuses to write without.
+model AccJournalLine {
+  id          Int    @id @default(autoincrement())
+  journal_id  Int
+  sequence_no Int
+
+  account_id Int
+  partner_id Int?
+
+  currency_id   Int
+  /// The identity until a real exchange-rate source exists (§12). Nothing
+  /// reads it; it is here because the schema carries what that source fills.
+  exchange_rate Decimal @default(1) @db.Decimal(18, 6)
+
+  debit_amount  Decimal @default(0) @db.Decimal(18, 2)
+  kredit_amount Decimal @default(0) @db.Decimal(18, 2)
+  /// The transaction-currency value of the entry, whichever side it fell on.
+  trx_amount    Decimal @db.Decimal(18, 2)
+
+  description String
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  journal  AccJournal  @relation(fields: [journal_id], references: [id])
+  account  AccAccount  @relation(fields: [account_id], references: [id])
+  partner  MPartner?   @relation(fields: [partner_id], references: [id])
+  currency RefCurrency @relation(fields: [currency_id], references: [id])
+
+  @@index([journal_id])
+  @@index([account_id])
+  @@map("acc_journal_line")
+}
+
 model AuditLog {
   id         Int         @id @default(autoincrement())
   entity_key String

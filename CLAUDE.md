@@ -61,7 +61,7 @@ or invariants that assume a particular row exists.
 | Dashboard | Done |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
-| Accounting module (COA tree, mapping, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
+| Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank), multi-Budget realization, Post writing the Cash Bank Book and `realized_amount` in one transaction. Induk only; the anak's realization waits on Funding Request. Journal and the subject ledgers are not built. Bespoke, not registry-driven. |
 | Report Views | Done — the screen type plus its first two: `Buku Kas & Bank` and `Saldo Kas & Bank`, under Finance › Laporan. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
@@ -130,6 +130,8 @@ of its own.
 | Business rules | `src/lib/siba/rules.ts` | Budget categories and the 22 transaction purposes |
 | Account numbering | `src/lib/siba/account-code.ts` | The dotted lineage code — parsing, segments, ordering; client-safe |
 | Company access | `src/lib/siba/company-access.ts` | Permissions -> the Companies a user may read; `server-only` |
+| Journal | `src/lib/siba/journal.ts` | Writes the one balanced journal a posting produces, `JRN-` numbering, reads it back; `server-only` |
+| General Ledger | `src/lib/siba/ledger.ts` | General Ledger and Trial Balance over journal lines; `server-only` |
 | Permission catalogue | `src/lib/siba/permissions.ts` | Every capability in the system; client-safe |
 | Seeded roles | `src/lib/siba/roles.ts` | ADMIN / STAFF and their grants |
 | Authorization gate | `src/lib/siba/auth.ts` | `requireAuth`, `requirePermission`, `authorizeAction` |
@@ -263,7 +265,7 @@ src/
                          generated class, so `prisma generate` retires it (§12)
     format.ts            Date/number/money formatting (UTC-based)
     siba/                entities, nav, rules, records, users, account-code,
-                         company-access,
+                         company-access, journal, ledger,
                          permissions, roles, access, auth, auth-errors,
                          session, login, user-admin, profile, entity-access, fiscal,
                          fiscal-workflow, budget, budget-workflow, cash-bank,
@@ -561,6 +563,34 @@ Implemented and enforced:
    inside the year that owns them. Fiscal Period has no menu, no route and no
    permissions of its own — see §12.
 
+47. **Every journal balances, or nothing is written.** `postJournal` refuses a
+   journal whose debits and credits differ, whose lines carry value on both
+   sides or on neither, or whose amounts are negative — and it throws rather
+   than returning, because it runs inside the posting transaction and an
+   unbalanced journal must take the whole posting down. Amounts compare **in
+   cents**, so binary floating point cannot fail an arithmetically sound
+   journal. This is the guarantee the General Ledger and the Trial Balance rest
+   on: if every journal balances, every sum of journals balances, and a trial
+   balance that does not is a system fault rather than a bookkeeping one.
+48. **A journal is append-only and immutable.** It is produced *by* a posting,
+   never drafted towards one, and nothing updates, deletes or reverses it. A
+   correction is a new business transaction, which produces its own journal.
+   There is no JOURNAL_CREATE, JOURNAL_EDIT or JOURNAL_DELETE — viewing is the
+   whole capability.
+49. **A journal's posting date is the day it was posted.** Never back-dated: it
+   records when the books were written, not when somebody decided they should
+   have been.
+50. **Posting needs a mapping; approval does not.** A Cash Bank Transaction
+   journals against the account its Purpose resolves to through Company ×
+   Budget Category × Partner Category. Without that mapping there is no account
+   to post to, so the post is refused and nothing moves — while approval still
+   tolerates the gap (rule 28), because a planner must not be stranded behind
+   unfinished setup that belongs to someone else.
+51. **A General Ledger balance moves in the account's own direction.** A Debit
+   account rises on the debit side, a Kredit account on the credit side.
+   Reporting raw debit-minus-credit would print every payable as negative,
+   which is not how a ledger reads.
+
 44. **A chart-of-accounts code states its own lineage.** Every level continues
    its parent's number rather than starting a new one: Account Type `1`,
    Account Category `1.1`, Account Subcategory `1.1.1`, then accounts
@@ -829,6 +859,57 @@ Specified in the concept doc, **not yet implemented** (see §13):
   the price of the actions always being reachable.
 - **Do not change unless:** explicitly instructed. **Never add a button bar at
   the bottom of a form**, and never widen the sticky rule to a bare `.ph`.
+- **Status:** Frozen, current.
+
+### The Journal is written by posting, balances, and never changes (FROZEN)
+- **Decision:** `postJournal` in `lib/siba/journal.ts` is the only thing that
+  writes `acc_journal` / `acc_journal_line`, it is only ever called inside the
+  posting transaction, and it **refuses** any journal whose two sides do not sum
+  equal. Nothing updates or deletes a journal. The posting date is the day of
+  posting. `applyPosting` calls it **alongside** `recordCashBankEntry`, in the
+  same `prisma.$transaction`.
+- **Reason:** Concept doc §2.5 and §2.6 — operational books are independent
+  historical stores and only the General Ledger derives from journal lines. If
+  the book were derived from the journal, or the journal from the book, one
+  would silently become a view of the other and the reconciliation they exist
+  for would prove nothing. And the balance has to be refused at the point of
+  writing: a trial balance that fails to add up only means something if a
+  journal could never have been written unbalanced in the first place.
+- **Impact:** A Cash Bank Transaction journals its Cash & Bank resource's own
+  account against the account its Purpose maps to — one cash line, one counter
+  line per document line, so a ledger entry reads back to the Budget it
+  settled. **Posting now requires the mapping** (rule 50), which approval does
+  not. `unbalancedJournals` exists so the Trial Balance can say "this is a
+  system fault" rather than print a difference nobody can act on.
+- **Do not change unless:** explicitly instructed. **Never add an edit, delete
+  or reversal path for a journal**, never derive an operational book from
+  journal lines, never write a journal outside `postJournal`, and never
+  back-date one.
+- **Status:** Frozen, current.
+
+### The ledger reports take several accounts, one Company at a time (FROZEN)
+- **Decision:** General Ledger and Trial Balance are Report Views in the
+  **Accounting** module (`accounting/report/[report]`), on the same convention
+  as Finance's. They take the `account-period` parameter set: a **Company
+  filter**, **several accounts** (`?accounts=3,17,42`) and a date range. Each
+  account gets its own table, rolled up to opening / debit / credit / closing
+  and expandable to its entries.
+- **Reason:** Reading a ledger means comparing an account against its
+  counterpart, so one account per page load is what makes checking the books
+  tedious. Rolled up by default because the figure is what a reader checks
+  first and the rows are what they check it against. One Company per run
+  because each numbers its own chart — the induk's 1.1.1.1 and the anak's are
+  different accounts sharing a number, and offering both would read as
+  duplicates.
+- **Currency deviates from the concept doc, deliberately.** §11.2 says the
+  General Ledger uses the base currency. It cannot: there is no exchange-rate
+  source (§12), so converting would mean inventing the rate. Both reports group
+  **per currency** instead, and each group balances on its own because every
+  journal is single-currency and every journal balances. Revisit when the rate
+  source lands.
+- **Do not change unless:** explicitly instructed. **Do not sum across accounts
+  in the General Ledger** — that is the Trial Balance's job — and do not convert
+  between currencies.
 - **Status:** Frozen, current.
 
 ### Company access is a permission, and the picker lives on the page (FROZEN)
@@ -1566,7 +1647,7 @@ decisions now that foreclose them.
 
 | Item | Planned behaviour |
 | --- | --- |
-| Posting engine — the rest | Post already writes the Cash Bank Book and Budget realization. Still to come, added *alongside* that call and never derived from it: the subject ledgers (Prive / Titipan / Hutang / Piutang) and the Journal → General Ledger |
+| Posting engine — the rest | Post writes the Cash Bank Book, Budget realization **and the Journal**. Still to come, added *alongside* that call and never derived from it: the subject ledgers (Prive / Titipan / Hutang / Piutang) |
 | Exchange rate | A real rate source, arriving in a later update. **Do not create a standalone exchange-rate master table, and do not reintroduce a hardcoded rate in the meantime** — §12 |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared |
@@ -1663,6 +1744,12 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   convention instead, and do **not** build a generic report engine (§12).
 - Do **not** re-embed the Cash Bank Book under the Cash & Bank master record. The
   master links into the report (§12).
+- Do **not** add an edit, delete or reversal path for a journal, do **not** write
+  one outside `postJournal`, and do **not** back-date one (§10, §12).
+- Do **not** derive an operational book from journal lines. Only the General
+  Ledger derives from the journal (§10, §12).
+- Do **not** sum across accounts in the General Ledger, and do **not** convert
+  between currencies in either ledger report (§12).
 - Do **not** make account numbers globally unique, and do **not** show both
   Companies' charts in one tree (§10, §12).
 - Do **not** put a Company selector in the topbar, do **not** add a per-user or
@@ -1749,7 +1836,6 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
-| A posted document produces no Journal | Post writes the Cash Bank Book and Budget realization only. The Journal, the General Ledger and the subject ledgers are the next scope (§13), so a posted document is not yet reflected in accounting. |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | Tests cover security, Accounting, Budget, Finance, the Cash Bank Book, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |

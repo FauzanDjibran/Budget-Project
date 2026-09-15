@@ -1,5 +1,6 @@
 import { Icon } from "@/components/icon";
 import { formatTimestamp } from "@/lib/format";
+import { moduleByKey } from "@/lib/siba/nav";
 import type { ReportDef } from "@/lib/siba/reports";
 
 /**
@@ -46,7 +47,7 @@ export function ReportView({
     <>
       <div className="ph">
         <div className="crumb">
-          <span>Finance</span>
+          <span>{moduleByKey(report.module)?.name ?? report.module}</span>
           <span>/</span>
           <span>Laporan</span>
           <span>/</span>

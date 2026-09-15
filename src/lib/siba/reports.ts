@@ -24,13 +24,13 @@ import type { PermissionCode } from "./permissions";
  * so the route keeps resolving parameters in one place rather than each report
  * parsing the query string its own way.
  */
-export type ReportParams = "cash-bank-period";
+export type ReportParams = "cash-bank-period" | "account-period";
 
 export type ReportDef = {
   key: string;
   /** URL segment under the module's `report/` namespace. */
   slug: string;
-  module: "finance";
+  module: "finance" | "accounting";
   name: string;
   /** Singular subject line shown under the title. */
   desc: string;
@@ -72,6 +72,35 @@ export const REPORTS = [
     // filter, not a precondition.
     subjectRequired: false,
   },
+  {
+    key: "general_ledger",
+    slug: "general-ledger",
+    module: "accounting",
+    name: "General Ledger",
+    desc:
+      "Mutasi setiap account yang dipilih pada rentang tanggal, lengkap dengan saldo " +
+      "awal dan saldo akhir — satu tabel per account.",
+    icon: "tree",
+    permission: "REPORT_GENERAL_LEDGER_VIEW",
+    params: "account-period",
+    // A ledger is a ledger *of* an account: without one there is nothing to
+    // show. Several at once is the point, but zero is not a run.
+    subjectRequired: true,
+  },
+  {
+    key: "trial_balance",
+    slug: "trial-balance",
+    module: "accounting",
+    name: "Trial Balance",
+    desc:
+      "Saldo awal, mutasi debit, mutasi kredit, dan saldo akhir seluruh account yang " +
+      "bergerak pada rentang tanggal — per currency, dengan uji keseimbangan.",
+    icon: "calc",
+    permission: "REPORT_TRIAL_BALANCE_VIEW",
+    params: "account-period",
+    // Every account at once is the whole idea of a trial balance.
+    subjectRequired: false,
+  },
 ] as const satisfies readonly ReportDef[];
 
 export type ReportKey = (typeof REPORTS)[number]["key"];
@@ -87,7 +116,7 @@ export function reportHref(
   slug: string,
   params?: Record<string, string | number | null | undefined>
 ): string {
-  const base = `/finance/report/${slug}`;
+  const base = `/${BY_SLUG.get(slug)?.module ?? "finance"}/report/${slug}`;
   if (!params) return base;
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {

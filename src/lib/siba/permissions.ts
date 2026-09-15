@@ -116,6 +116,13 @@ export const PERMISSIONS = [
       "Mengubah tahun buku Draft menjadi Open dan membuat 12 Fiscal Period. Tidak dapat dikembalikan.",
   },
 
+  // A Journal is written by a posting and is immutable afterwards, so there is
+  // nothing to create, edit or delete — viewing is the whole capability. The
+  // General Ledger and the Trial Balance read the same lines and are reports.
+  { code: "JOURNAL_VIEW", name: "Lihat Journal", module: "accounting", description: "Journal dibuat otomatis saat posting dan tidak dapat diubah." },
+  { code: "REPORT_GENERAL_LEDGER_VIEW", name: "Lihat General Ledger", module: "accounting" },
+  { code: "REPORT_TRIAL_BALANCE_VIEW", name: "Lihat Trial Balance", module: "accounting" },
+
   // ---------------------------------------------------------------- budget
   { code: "MENU_BUDGET_ACCESS", name: "Akses menu Budget", module: "budget" },
 

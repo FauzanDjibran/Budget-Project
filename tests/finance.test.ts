@@ -19,7 +19,7 @@ import {
   type TransactionStatus,
 } from "../src/lib/siba/transaction-workflow";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
-import { PURPOSES, purposeOf } from "../src/lib/siba/rules";
+import { BUDGET_CATEGORY_RULES, PURPOSES, purposeOf } from "../src/lib/siba/rules";
 import { openCashBankBook, rebuildCashBankBalance } from "../src/lib/siba/cash-bank";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
@@ -29,6 +29,7 @@ import {
   cleanupFixtures,
   disconnect,
   makeAccount,
+  makeMapping,
   makePartner,
   parentCompanyId,
   prisma,
@@ -208,6 +209,30 @@ before(async () => {
       select: { id: true },
     });
     otherCurrency = made.id;
+  }
+
+  // Posting journals the document, and a journal needs an account to post
+  // against — so every Budget Category the tests exercise needs a mapping.
+  // Approval tolerates a missing one (§10 rule 28); posting does not, and the
+  // case below proves the refusal.
+  for (const companyId of [induk, anak]) {
+    const account = await makeAccount({
+      companyId,
+      subcategoryLabel: "5.3.1",
+    });
+    for (const [label, rule] of Object.entries(BUDGET_CATEGORY_RULES)) {
+      const partnerCategories = rule.partnerCategories.length
+        ? rule.partnerCategories
+        : [null];
+      for (const partnerCategory of partnerCategories) {
+        await makeMapping({
+          companyId,
+          budgetCategoryLabel: label,
+          partnerCategoryLabel: partnerCategory,
+          accountId: account,
+        });
+      }
+    }
   }
 });
 
@@ -985,3 +1010,146 @@ async function post(transactionId: number): Promise<void> {
     `posting ${transactionId} failed: ${result.ok ? "" : JSON.stringify(result.errors)}`
   );
 }
+
+/**
+ * Post writes the Journal alongside the Cash Bank Book — never from it.
+ *
+ * The book is an independent historical store and only the General Ledger
+ * derives from journal lines (concept doc §2.5). What matters here is that a
+ * posting produces both, in one transaction, and that the journal it produces
+ * balances.
+ */
+describe("posting writes a balanced journal alongside the book", () => {
+  test("a posted document produces one journal, and it balances", async () => {
+    const cashBank = await makeCashBank({ opening: 5_000_000 });
+    const budget = await makeBudget({
+      type: "Out",
+      categoryLabel: "Biaya",
+      amount: 750_000,
+    });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 750_000, outstanding: 750_000 }],
+    });
+    await post(doc);
+
+    const journals = await prisma.accJournal.findMany({
+      where: { source_doc_id: doc },
+      include: { lines: true },
+    });
+    assert.equal(journals.length, 1, "one posting, one journal");
+
+    const j = journals[0];
+    assert.equal(j.status, "Posted");
+    const debit = j.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0);
+    const credit = j.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0);
+    assert.equal(Math.round(debit * 100), Math.round(credit * 100));
+    assert.equal(Math.round(debit * 100), 750_000 * 100);
+  });
+
+  test("money out credits the cash account and debits its counterpart", async () => {
+    const cashBank = await makeCashBank({ opening: 5_000_000 });
+    const resource = await prisma.mCashBank.findUniqueOrThrow({
+      where: { id: cashBank },
+      select: { account_id: true },
+    });
+    const budget = await makeBudget({
+      type: "Out",
+      categoryLabel: "Biaya",
+      amount: 400_000,
+    });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 400_000, outstanding: 400_000 }],
+    });
+    await post(doc);
+
+    const lines = await prisma.accJournalLine.findMany({
+      where: { journal: { source_doc_id: doc } },
+    });
+    const cashLine = lines.find((l) => l.account_id === resource.account_id);
+    assert.ok(cashLine, "the resource's own account must be on the journal");
+    assert.equal(
+      cashLine.kredit_amount.toNumber(),
+      400_000,
+      "money leaving credits the cash account"
+    );
+    assert.equal(cashLine.debit_amount.toNumber(), 0);
+
+    const counter = lines.filter((l) => l.account_id !== resource.account_id);
+    assert.ok(counter.length > 0);
+    assert.equal(
+      counter.reduce((t, l) => t + l.debit_amount.toNumber(), 0),
+      400_000
+    );
+  });
+
+  test("a Draft has no journal at all", async () => {
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const budget = await makeBudget({
+      type: "Out",
+      categoryLabel: "Biaya",
+      amount: 100_000,
+    });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
+    });
+
+    assert.equal(
+      await prisma.accJournal.count({ where: { source_doc_id: doc } }),
+      0,
+      "a draft touches nothing, accounting included"
+    );
+  });
+
+  test("a document whose category has no mapping cannot be posted", async () => {
+    // Approval tolerates a missing mapping (§10 rule 28) because that gap
+    // belongs to Accounting. Posting cannot: there is no account to journal
+    // against, and money must not move unaccounted for.
+    const mapping = await prisma.accBudgetCategoryAccount.findFirstOrThrow({
+      where: { company_id: induk, budget_category: { category_label: "Asset" } },
+      select: { id: true, account_id: true },
+    });
+    await prisma.accBudgetCategoryAccount.delete({ where: { id: mapping.id } });
+
+    try {
+      const cashBank = await makeCashBank({ opening: 2_000_000 });
+      const budget = await makeBudget({
+        type: "Out",
+        categoryLabel: "Asset",
+        amount: 300_000,
+      });
+      const doc = await makeDraft({
+        purpose: "AST_OUT",
+        cashBankId: cashBank,
+        lines: [{ budgetId: budget, amount: 300_000, outstanding: 300_000 }],
+      });
+
+      const result = await applyPosting(doc, actor);
+      assert.equal(result.ok, false);
+      assert.match(String(result.errors?._form), /Mapping Budget ke Account/);
+
+      const doc2 = await prisma.finCashBankTransaction.findUniqueOrThrow({
+        where: { id: doc },
+        select: { status: true },
+      });
+      assert.equal(doc2.status, "Draft", "a refused post leaves the draft alone");
+      assert.equal(
+        await prisma.cashBankLedger.count({ where: { source_doc_id: doc } }),
+        0,
+        "and moves no money"
+      );
+    } finally {
+      await makeMapping({
+        companyId: induk,
+        budgetCategoryLabel: "Asset",
+        partnerCategoryLabel: null,
+        accountId: mapping.account_id,
+      });
+    }
+  });
+});

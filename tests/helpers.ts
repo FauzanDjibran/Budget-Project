@@ -245,6 +245,49 @@ export async function makeAccount(options: {
   return row.id;
 }
 
+/**
+ * A Company x Budget Category x Partner Category -> account mapping.
+ *
+ * Posting needs one: a document whose Purpose resolves to no account cannot be
+ * journalled, and money must not move unaccounted for. Approval deliberately
+ * tolerates a missing mapping (CLAUDE.md §10 rule 28); posting cannot.
+ */
+export async function makeMapping(options: {
+  companyId: number;
+  budgetCategoryLabel: string;
+  partnerCategoryLabel?: string | null;
+  accountId: number;
+}): Promise<number> {
+  const key = nextFixture();
+  const budgetCategory = await budgetCategoryId(options.budgetCategoryLabel);
+  const partnerCategory = options.partnerCategoryLabel
+    ? await partnerCategoryId(options.partnerCategoryLabel)
+    : null;
+
+  const existing = await prisma.accBudgetCategoryAccount.findFirst({
+    where: {
+      company_id: options.companyId,
+      budget_category_id: budgetCategory,
+      partner_category_id: partnerCategory,
+    },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const row = await prisma.accBudgetCategoryAccount.create({
+    data: {
+      bca_code: `${FIXTURE_PREFIX}.${key}`,
+      company_id: options.companyId,
+      budget_category_id: budgetCategory,
+      partner_category_id: partnerCategory,
+      account_id: options.accountId,
+      created_by: await systemUserId(),
+    },
+    select: { id: true },
+  });
+  return row.id;
+}
+
 export async function makePartner(options: {
   companyId: number;
   categoryLabel: string;
@@ -271,6 +314,35 @@ export async function makePartner(options: {
  * -referencing account tree never blocks a delete.
  */
 export async function cleanupFixtures(): Promise<void> {
+  // Mappings and journals point at accounts, so they go before the accounts do.
+  await prisma.accBudgetCategoryAccount.deleteMany({
+    where: { bca_code: { startsWith: FIXTURE_PREFIX } },
+  });
+
+  // The application never deletes a journal — it is append-only and immutable
+  // (CLAUDE.md §12). A test tearing down its own fixtures is the same
+  // exception already made for fixture accounts: these journals were written
+  // by this run against accounts that are about to stop existing.
+  const journalIds = [
+    ...new Set(
+      (
+        await prisma.accJournalLine.findMany({
+          where: { account: { account_code: { startsWith: FIXTURE_PREFIX } } },
+          select: { journal_id: true },
+        })
+      ).map((l) => l.journal_id)
+    ),
+  ];
+  if (journalIds.length) {
+    await prisma.accJournalLine.deleteMany({
+      where: { journal_id: { in: journalIds } },
+    });
+    await prisma.auditLog.deleteMany({
+      where: { entity_key: "acc_journal", row_id: { in: journalIds } },
+    });
+    await prisma.accJournal.deleteMany({ where: { id: { in: journalIds } } });
+  }
+
   const accounts = await prisma.accAccount.findMany({
     // Keyed on the system code, not the label: an account's label is now a
     // lineage code with no room for a fixture marker in it.
