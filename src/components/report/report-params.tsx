@@ -33,6 +33,7 @@ export function ReportParams({
   subjectRequired,
   subjectLabel,
   allLabel,
+  companyId,
 }: {
   slug: string;
   resources: RefOption[];
@@ -43,6 +44,8 @@ export function ReportParams({
   subjectLabel: string;
   /** Copy for "no subject chosen", where the report allows it. */
   allLabel?: string;
+  /** Carried through the URL so switching Company does not lose the run. */
+  companyId?: number | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -57,7 +60,14 @@ export function ReportParams({
   const run = () => {
     if (invalidRange || missingSubject) return;
     startTransition(() => {
-      router.push(reportHref(slug, { cashBank: subject, from: start, to: end }));
+      router.push(
+        reportHref(slug, {
+          company: companyId ?? null,
+          cashBank: subject,
+          from: start,
+          to: end,
+        })
+      );
     });
   };
 

@@ -1,7 +1,10 @@
 import { notFound } from "next/navigation";
 import { CashBankBalanceReport } from "@/components/report/cash-bank-balance-report";
 import { CashBankLedgerReport } from "@/components/report/cash-bank-ledger-report";
-import { NoCompanyAccess } from "@/components/master/company-filter";
+import {
+  CompanyFilter,
+  NoCompanyAccess,
+} from "@/components/master/company-filter";
 import { ReportParams } from "@/components/report/report-params";
 import { SubjectParams } from "@/components/report/subject-params";
 import { SubledgerReport } from "@/components/report/subledger-report";
@@ -11,7 +14,7 @@ import {
   cashBankBalanceReport,
   cashBankLedgerReport,
 } from "@/lib/siba/cash-bank";
-import { accessibleCompanyIds } from "@/lib/siba/company-access";
+import { companyScope } from "@/lib/siba/company-access";
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { subledgerReport, subledgerSubjects } from "@/lib/siba/subledger";
@@ -31,6 +34,12 @@ export const dynamic = "force-dynamic";
  * **Parameters come from the query string**, so a report run is a URL: linkable,
  * bookmarkable, and back-button-able. The page reads them, resolves defaults,
  * and queries — no client-side fetching (CLAUDE.md §3).
+ *
+ * **Every report runs for one Company**, chosen here and carried in `?company=`.
+ * A cash resource, a Partner and an account all belong to one, so a report over
+ * both reads as duplicated rows — and the scope is also what stops a reader
+ * without anak access seeing the anak's book, which is a permission the rest of
+ * the application already enforces and a report must not be a way around.
  */
 export default async function Page({
   params,
@@ -38,6 +47,7 @@ export default async function Page({
 }: {
   params: Promise<{ report: string }>;
   searchParams: Promise<{
+    company?: string;
     cashBank?: string;
     partners?: string;
     from?: string;
@@ -53,6 +63,19 @@ export default async function Page({
   const query = await searchParams;
   const range = resolveRange(query.from, query.to);
   const cashBankId = positiveInt(query.cashBank);
+  const scope = await companyScope(actor.permissions, query.company);
+  const company = scope.selected;
+  const runAt = new Date().toISOString();
+
+  if (!company) {
+    return (
+      <ReportView report={report} filter={null} runAt={runAt}>
+        <NoCompanyAccess what={report.name} />
+      </ReportView>
+    );
+  }
+
+  const companyIds = [company.id];
 
   // ------------------------------------------------------------ subledgers
 
@@ -62,31 +85,35 @@ export default async function Page({
       slug,
       range,
       partnerIds: idList(query.partners),
-      companyIds: await accessibleCompanyIds(actor.permissions),
+      company,
+      options: scope.options,
     });
   }
 
-  const resources = await cashBankOptions();
-  const runAt = new Date().toISOString();
+  const resources = await cashBankOptions(company.id);
 
   const filterBar = (
-    <ReportParams
-      slug={slug}
-      resources={resources}
-      cashBankId={cashBankId}
-      from={range.from}
-      to={range.to}
-      subjectRequired={report.subjectRequired}
-      subjectLabel="Cash & Bank"
-      allLabel={report.subjectRequired ? undefined : "Semua resource"}
-    />
+    <>
+      <CompanyFilter options={scope.options} selectedId={company.id} />
+      <ReportParams
+        slug={slug}
+        resources={resources}
+        cashBankId={cashBankId}
+        from={range.from}
+        to={range.to}
+        subjectRequired={report.subjectRequired}
+        subjectLabel="Cash & Bank"
+        allLabel={report.subjectRequired ? undefined : "Semua resource"}
+        companyId={company.id}
+      />
+    </>
   );
 
   // --------------------------------------------------------------- ledger
 
   if (report.key === "cash_bank_ledger") {
     const data = cashBankId
-      ? await cashBankLedgerReport(cashBankId, range)
+      ? await cashBankLedgerReport(cashBankId, range, companyIds)
       : null;
 
     return (
@@ -120,7 +147,7 @@ export default async function Page({
 
   // -------------------------------------------------------------- balance
 
-  const data = await cashBankBalanceReport(range, cashBankId);
+  const data = await cashBankBalanceReport(range, companyIds, cashBankId);
 
   return (
     <ReportView
@@ -158,23 +185,18 @@ async function subledgerPage({
   slug,
   range,
   partnerIds,
-  companyIds,
+  company,
+  options,
 }: {
   report: NonNullable<ReturnType<typeof reportBySlug>>;
   slug: string;
   range: PeriodRange;
   partnerIds: number[];
-  companyIds: number[];
+  company: { id: number; label: string; name: string };
+  options: { id: number; label: string; name: string }[];
 }) {
   const runAt = new Date().toISOString();
-
-  if (!companyIds.length) {
-    return (
-      <ReportView report={report} filter={null} runAt={runAt}>
-        <NoCompanyAccess what="Buku pembantu" />
-      </ReportView>
-    );
-  }
+  const companyIds = [company.id];
 
   const [subjects, data] = await Promise.all([
     subledgerSubjects(report.subledger!, companyIds),
@@ -186,19 +208,23 @@ async function subledgerPage({
     <ReportView
       report={report}
       filter={
-        <SubjectParams
-          slug={slug}
-          subjects={subjects}
-          selectedIds={partnerIds}
-          from={range.from}
-          to={range.to}
-          subjectRequired={report.subjectRequired}
-          label="Partner"
-          param="partners"
-          addPlaceholder="Tambah Partner…"
-          allPlaceholder="Semua Partner yang bergerak"
-          missingHint="Pilih minimal satu Partner terlebih dahulu."
-        />
+        <>
+          <CompanyFilter options={options} selectedId={company.id} />
+          <SubjectParams
+            slug={slug}
+            subjects={subjects}
+            selectedIds={partnerIds}
+            from={range.from}
+            to={range.to}
+            subjectRequired={report.subjectRequired}
+            label="Partner"
+            param="partners"
+            addPlaceholder="Tambah Partner…"
+            allPlaceholder="Semua Partner yang bergerak"
+            missingHint="Pilih minimal satu Partner terlebih dahulu."
+            companyId={company.id}
+          />
+        </>
       }
       runAt={runAt}
       footnote={
@@ -269,9 +295,10 @@ function idList(value: string | undefined): number[] {
  * resource that has since been deactivated still matters. The list marks them,
  * which is what `Combobox` does with `active: false` when the value is chosen.
  */
-async function cashBankOptions() {
+async function cashBankOptions(companyId: number) {
   const rows = await prisma.mCashBank.findMany({
-    orderBy: [{ company_id: "asc" }, { cash_bank_label: "asc" }],
+    where: { company_id: companyId },
+    orderBy: [{ cash_bank_label: "asc" }],
     select: {
       id: true,
       cash_bank_label: true,

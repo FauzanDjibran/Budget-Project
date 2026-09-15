@@ -424,7 +424,9 @@ boundary, entries before the period folding into the opening rather than appeari
 rows, a period with no movement still answering with its balances, a deactivated resource
 that still moved money staying visible, and the two reports agreeing with each other for
 the same subject and period. It also pins the navigation change the report routes needed,
-so `/master/partner/12` and `/budget/budget/month/5` cannot silently stop resolving.
+so `/master/partner/12` and `/budget/budget/month/5` cannot silently stop resolving,
+and it holds the Company scope: a resource belonging to a Company the reader may not
+see is not a row, and its book reads as not found rather than as data.
 The fiscal suite also holds the Fiscal Year lifecycle —
 that `status` is not an isian, that Draft is the only status a year opens from, and
 that nothing writes Draft or Closed — and the settings suite holds what a System
@@ -1215,8 +1217,12 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Impact:** `lib/siba/company-access.ts` resolves permissions to Companies,
   keyed on `is_parent` and never on a label — a Company's identity is editable
   through the seed, its structure is not. A page with a picker calls
-  `companyScope`; a page without one (Budget, Finance) reads
-  `accessibleCompanyIds` and shows every Company the user may see. A picker
+  `companyScope`; a page without one (Budget, Finance's document register) reads
+  `accessibleCompanyIds` and shows every Company the user may see. **Every Report
+  View has a picker**, and the reports it drives were the one place this was not
+  enforced at all: `cashBankLedgerReport` and `cashBankBalanceReport` read every
+  resource in the database regardless of who was asking, which is why they now
+  take the scope as an argument like everything else. A picker
   with fewer than two options does not render, because that is not a choice.
   A `?company=` naming a Company the user may not access falls back to one
   they can, inside what the permissions already allow.
@@ -1705,7 +1711,17 @@ they relate. Keep the table; keep it out of the UI's write path.
      is one muted line (`.rstamp`) at the foot, and **no Report View carries a
      `.critbar`**. A Report View also carries no `.ph-sub`: the description belongs to
      the menu entry that led there, and how to read the figures belongs in the footnote.
-  3. **The subject is explicit** — a Cash & Bank resource, or one or more accounts.
+  3. **The subject is explicit** — a Cash & Bank resource, one or more accounts,
+     or one or more Partners — and **every report runs for one Company**, named by
+     a `CompanyFilter` first in the filter bar and carried in `?company=`. A cash
+     resource, a Partner and an account all belong to one Company, so a report
+     spanning both reads as duplicated rows; and the scope is what stops a reader
+     without anak access reading the anak's book, which every other screen already
+     enforces. A reader who may see one Company never sees the control, because a
+     picker with one option is not a choice. **The scoped readers take the
+     Companies as an argument** — `cashBankLedgerReport`, `cashBankBalanceReport`,
+     `subledgerReport` — and a subject outside the scope reads as *not found*,
+     which is the same answer one that does not exist gives.
   4. **It reconciles on the page** — see §10 rule 40, and the no-type-filter rule that
      follows from it.
   5. **Empty is not zero.** A period with no movement still reports its opening and
@@ -2173,6 +2189,9 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   realization reaches its planned amount, as a consequence of posting (§12).
 - Do **not** let a Report View write anything, and do **not** give one a row action
   that mutates. A report reports (§10, §12).
+- Do **not** let a report read outside the reader's Company scope, and do **not**
+  let a scoped reader resolve its own scope. Every Report View runs for one
+  Company and takes it as an argument (§12).
 - Do **not** add a filter that breaks a money report's own arithmetic — no entry-type
   filter on the Cash Bank Ledger (§10, §12).
 - Do **not** invent a new report screen shape or new report CSS; extend the Report View

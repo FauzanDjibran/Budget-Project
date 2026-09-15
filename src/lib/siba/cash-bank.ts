@@ -340,13 +340,20 @@ export type LedgerReport = {
  *
  * Entries dated exactly `from` or exactly `to` are inside the period; anything
  * earlier is folded into the opening balance rather than listed.
+ *
+ * `companyIds` is the reader's Company scope, taken as an argument rather than
+ * resolved here (CLAUDE.md §12): a resource outside it reads as **not found**,
+ * which is the same answer a resource that does not exist gives. A report must
+ * not be a way around the Company permissions the rest of the application
+ * enforces.
  */
 export async function cashBankLedgerReport(
   cashBankId: number,
-  range: PeriodRange
+  range: PeriodRange,
+  companyIds: number[]
 ): Promise<LedgerReport | null> {
-  const resource = await prisma.mCashBank.findUnique({
-    where: { id: cashBankId },
+  const resource = await prisma.mCashBank.findFirst({
+    where: { id: cashBankId, company_id: { in: companyIds } },
     select: {
       id: true,
       cash_bank_label: true,
@@ -487,13 +494,20 @@ export type BalanceReport = {
  * would produce a report that does not reconcile against the ledger it claims
  * to summarise. `cashBookSummary` still excludes them, because that answers a
  * different question — what is spendable now.
+ *
+ * Scoped to the Companies the reader may see, for the same reason the ledger
+ * above is: a report is read-only, not exempt.
  */
 export async function cashBankBalanceReport(
   range: PeriodRange,
+  companyIds: number[],
   cashBankId?: number | null
 ): Promise<BalanceReport> {
   const resources = await prisma.mCashBank.findMany({
-    where: cashBankId ? { id: cashBankId } : {},
+    where: {
+      company_id: { in: companyIds },
+      ...(cashBankId ? { id: cashBankId } : {}),
+    },
     orderBy: [{ company_id: "asc" }, { cash_bank_label: "asc" }],
     select: {
       id: true,
