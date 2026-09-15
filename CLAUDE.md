@@ -51,12 +51,12 @@ source material lives in `Initialization/` (committed, treated as read-only refe
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, fiscal year/period) | Done — registry-driven, with Chart of Accounts rendered as a tree |
-| Budget module | Not started |
+| Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Not started |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
-| Tests | Security suite plus the Accounting enforcement points, via `node:test` (`npm test`). |
+| Tests | Security suite plus the Accounting and Budget enforcement points, via `node:test` (`npm test`). |
 
 ---
 
@@ -123,7 +123,10 @@ of its own.
 | Own account | `src/lib/siba/profile.ts` | Profile read/edit, own password change |
 | Entity permissions | `src/lib/siba/entity-access.ts` | Registry entity -> permission per operation |
 | Data access | `src/lib/siba/records.ts` | Generic list/get/options/computed, COA tree, the account rules the actions enforce; `server-only` |
+| Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
+| Budget data | `src/lib/siba/budget.ts` | Month rollups, budget reads, classification enforcement, `BGT-` numbering; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
+| Budget writes | `src/app/actions/budget.ts` | Create, edit, and the lifecycle transitions |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
 | Registry pages | `src/components/master/entity-pages.tsx` | The four registry pages, mounted under each owning module |
 | Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, combobox, dialog, toast |
@@ -192,11 +195,14 @@ src/
       dashboard/
       master/[entity]/   Dynamic: list, /new, /[id], /[id]/edit
       accounting/[entity]/ The same four registry pages — COA, mapping, fiscal
+      budget/budget/     Bespoke, not registry: month list, /month/[period],
+                         /new, /[id], /[id]/edit
       settings/user/     Admin-only user management (bespoke, not registry)
       settings/role/     Admin-only roles + permission matrix
       settings/profile/  Own account — authentication only, no permission
     actions/
       master.ts          Master module writes
+      budget.ts          Budget writes: create, edit, lifecycle transitions
       auth.ts            login / logout
       users.ts           User and role administration
       profile.ts         Own profile and password
@@ -206,6 +212,8 @@ src/
     shell/               App shell
     master/              entity-pages (the four shared pages), EntityList,
                          AccountTree, EntityForm, recordTitle
+    budget/              BudgetMonthList, BudgetList, BudgetForm,
+                         ApproveDialog, ReportPicker, CashPlaceholderDialog
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     ui/                  Combobox, ConfirmDialog, ToastProvider
@@ -214,7 +222,8 @@ src/
     format.ts            Date/number/money formatting (UTC-based)
     siba/                entities, nav, rules, records, users,
                          permissions, roles, access, auth, auth-errors,
-                         session, login, user-admin, profile, entity-access
+                         session, login, user-admin, profile, entity-access,
+                         budget, budget-workflow
   generated/prisma/      Prisma client output — gitignored, never edit
 tests/                   Security suite + Accounting rules (node:test); helpers.ts holds fixtures
 .claude/skills/          Project skills — `run-siba` brings the app up locally (§6)
@@ -252,12 +261,15 @@ client, migrates, seeds *only* when the database is empty, and leaves `npm run d
 serving on port 3000. It refuses to run in a remote/cloud session, where `localhost`
 is not the user's machine.
 
-**Tests cover the security paths, plus the Accounting enforcement points.** `npm test`
-runs `tests/*.test.ts` against a real, seeded database — authentication, sessions,
-RBAC, the admin protections, a structural audit that every Server Action resolves its
-caller before acting, and the rules that decide which account a Cash & Bank resource
-may post to, whether a parent account would close a loop, and which Partner Categories
-a Budget Category admits. Everything else is untested, so "validate" still means
+**Tests cover the security paths, plus the Accounting and Budget enforcement points.**
+`npm test` runs `tests/*.test.ts` against a real, seeded database — authentication,
+sessions, RBAC, the admin protections, a structural audit that every Server Action
+resolves its caller before acting, the rules that decide which account a Cash & Bank
+resource may post to, whether a parent account would close a loop, and which Partner
+Categories a Budget Category admits, and the Budget lifecycle: which transition is
+legal from which status, that approval's classification satisfies the whole
+category → partner-category → partner chain, and that Budget Month stays derived
+(no table, no month column). Everything else is untested, so "validate" still means
 `npm run build`, `npm run lint`, `npm test`, and exercising the feature in a browser.
 State plainly when something is unverified.
 
@@ -453,17 +465,35 @@ Implemented and enforced:
    range, the end is not before the start, and the sequence number is unique within the
    year — otherwise a posting date could belong to two books, or to none.
 
-Defined in `rules.ts`, not yet exercised by UI:
-
 18. **Budget category → partner category → account.** Each budget category declares
    which partner categories are valid and which directions (In/Out) make sense.
    Direction follows balance-sheet logic, not cash direction. Rule 16 above is the
-   Accounting half of this chain, now enforced.
+   Accounting half of this chain; rule 26 below is the Budget half. Both are enforced.
+20. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
+    and has no independent lifecycle or table. A budget belongs to the period its
+    `budget_date` falls inside, resolved by a date-range query at read time.
+25. **A budget is created without classification.** Date, Company, Currency, Type,
+    Amount and Description are all a planner supplies. `category_id` and `partner_id`
+    stay null until approval — concept doc §6.2 and §6.3.
+26. **Approval is what classifies.** The approver assigns the Budget Category, and the
+    Partner where the category takes a subject. The category must be valid for the
+    budget's direction, the partner must belong to the budget's Company, be active, and
+    hold a Partner Category that budget category admits. A category that takes no
+    subject stores null rather than a stale partner. `checkClassification` in
+    `budget.ts` is the enforcement; the approval dialog only narrows the pickers.
+27. **A budget is editable only while Draft or Rejected.** Submitting freezes it so it
+    cannot change under its approver; approving freezes it permanently so realization
+    stays traceable. Enforced in `updateBudget`, not merely by hiding the button.
+28. **A missing account mapping does not block approval.** The approval dialog reports
+    an unmapped Company × Category × Partner Category combination, but still allows the
+    approval — that gap belongs to the Accounting module, and refusing here would
+    strand a planner behind someone else's unfinished setup.
+
+Defined in `rules.ts`, not yet exercised by UI:
+
 19. **22 transaction purposes.** A purpose is exactly one budget category × one partner
     category × one direction, which is what lets it resolve to a single account.
     Purposes are **application logic, never a master table** — see §12.
-20. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
-    and has no independent lifecycle or table.
 
 Specified in the concept doc, **not yet implemented** (V2 — see §13):
 
@@ -683,9 +713,82 @@ they relate. Keep the table; keep it out of the UI's write path.
   container may exist in the UI, but it reads fiscal periods.
 - **Reason:** It has no independent lifecycle or business purpose — it is purely a
   grouping concept.
-- **Impact:** Matches the mockup, which treats Budget Month as virtual.
+- **Impact:** Matches the mockup, which treats Budget Month as virtual. Implemented as
+  a date-range query in `budgetMonths()` / `listBudgets()`: a budget belongs to the
+  period its `budget_date` falls inside, so it changes month by changing its date and
+  nothing else needs updating. `tests/budget.test.ts` asserts there is no
+  `bud_budget_month` table and no month column on `bud_budget`.
 - **Do not change unless:** Budget Month gains real independent state.
 - **Status:** Frozen, current.
+
+### Budget is bespoke, not a registry entity
+- **Decision:** Budget has its own routes under `/budget/budget`, its own data module
+  (`lib/siba/budget.ts`), its own actions (`app/actions/budget.ts`) and its own
+  components. It is **not** in `entities.ts`.
+- **Reason:** The registry expresses fields, columns and an optional active/inactive
+  toggle. Budget is a document: a six-state lifecycle with permissioned transitions,
+  two fields only an approver may write, immutability after approval, and a list
+  grouped by a derived month. That is precisely the escape hatch the registry decision
+  anticipated — the same one User and Role took.
+- **Impact:** The registry stays untouched and keeps driving Master and Accounting.
+  `entity-access.ts` has no `bud_budget` row and must not gain one; Budget
+  authorization runs through `budgetAbilities()` against the same catalogue.
+- **Status:** Frozen, current.
+
+### The Budget lifecycle is one transition table
+- **Decision:** `src/lib/siba/budget-workflow.ts` declares every transition once —
+  which statuses it may start from, which it produces, and the single permission it
+  needs. The row menu, the detail header and the Server Action all read it. The table
+  is client-safe and holds no database import.
+- **Reason:** A lifecycle expressed twice is a lifecycle with two answers, and the safe
+  one is whichever the code happened to check. One table means a hidden menu item and a
+  refused action can never disagree.
+- **Impact:** `Draft → Submit → Submitted → Approve (Open) / Reject (Rejected → Submit)`,
+  plus `Cancel` from Draft, Rejected or Submitted. Editing is confined to Draft and
+  Rejected — concept doc §6.4 makes an approved budget immutable, and a submitted one
+  must not change under its approver. Adding a transition means adding a row here and a
+  permission to the catalogue, never one without the other.
+- **Do not change unless:** explicitly instructed.
+- **Status:** Frozen, current.
+
+### Budget Close and Delete are deliberately absent
+- **Decision:** The module ships create → approve. There is no "Tutup budget" and no
+  delete, even though the mockup's row menu offers both.
+- **Reason:** Confirmed with the user when the module was built. Closing belongs to
+  realization, which is V2 — nothing can realize a budget until Finance exists — and the
+  permission catalogue carries neither `BUDGET_CLOSE` nor `BUDGET_DELETE`. A capability
+  is a catalogue entry first (§12, "The permission catalogue lives in code").
+- **Impact:** `Closed` remains a valid status because seeded data carries it and the
+  list renders it; nothing in the application produces it yet. A test asserts the
+  transition table holds exactly submit / approve / reject / cancel.
+- **Do not change unless:** explicitly instructed — and then add the catalogue entry
+  and reseed in the same change.
+- **Status:** Frozen, current.
+
+### The Budget page's cash balance card is an explicit placeholder
+- **Decision:** "Saldo Kas & Bank" on the budget list, its breakdown dialog, and the
+  submission report's Opening Balance all read `m_cash_bank.balance` — the mock-only
+  column §9 slates for deletion — and every one of them is labelled *Sementara* with
+  copy saying the real figure comes from the Cash Bank Ledger.
+- **Reason:** The user asked for the card to exist now and to be resolved in the next
+  module update. Showing it unlabelled would violate §9's "never treat it as the source
+  of truth"; the labelling is what makes the read acceptable in the meantime.
+- **Impact:** This is the **only** place in the application that reads that column. Do
+  not read it anywhere else, and do not quietly drop the "Sementara" badge or the
+  explanatory notes while the source is still the mock column. When
+  `cash_bank_ledger` / `cash_bank_balance` land in V2, these three call sites switch to
+  it and the column is dropped.
+- **Status:** Temporary by agreement — resolve with the V2 ledger, not before.
+
+### The submission report ships as UI without its export
+- **Decision:** "Laporan Pengajuan" renders the full picker — per-currency recap,
+  selection, totals — and its "Unduh XLSX" button is disabled with an explanation.
+- **Reason:** The user asked to see the feature working without the export yet. The
+  recap's Opening Balance is the placeholder figure above, so the export could not
+  produce a trustworthy report until the ledger exists anyway.
+- **Impact:** No XLSX writer and no spreadsheet dependency in the tree. Building the
+  export is a follow-up task, and it should wait for the ledger.
+- **Status:** Current, by agreement.
 
 ### `Initialization/` stays in the repository
 - **Decision:** The folder is intentionally committed and permanent. Do not remove,
@@ -844,6 +947,14 @@ for a finalised design and do not build a rate master.
 - Do **not** generalise the two-company structure into a configurable multi-company
   architecture, or build a configurable funding-provider mechanism.
 - Do **not** create a `fin_purpose` table, an exchange-rate master, or a Budget Month table.
+  Budget Month is a date-range query over `acc_fiscal_period`; do not add a month column
+  to `bud_budget` either.
+- Do **not** add a Budget Close or Budget Delete action, or move Budget into the entity
+  registry. The lifecycle is create → approve and lives in `budget-workflow.ts`.
+- Do **not** let a budget be edited outside Draft and Rejected, and do **not** let
+  `category_id` or `partner_id` be set anywhere but approval.
+- Do **not** read `m_cash_bank.balance` anywhere new, and do **not** remove the
+  "Sementara" labelling from the three Budget call sites that already do (§12).
 - Do **not** add a `sys_user_permission` table or any second path to a permission —
   roles are the only one.
 - Do **not** add permission inheritance, ABAC, per-record ACLs, a policy engine, or a
@@ -923,9 +1034,11 @@ for a finalised design and do not build a rate master.
 | --- | --- |
 | Company context selector is inert | The topbar dropdown is local state and filters nothing. `Entity.scope` exists in the registry but is unused. |
 | Audit log shows raw table keys | Dashboard renders `m_partner` rather than the mockup's `Partner / Cabang Medan`; needs entity display names + record lookup. (The author column now resolves correctly.) |
-| `m_cash_bank.balance` still present | Mock-only column, read by nothing in the app. Dropped in V2 (§13). |
+| `m_cash_bank.balance` still present | Mock-only column. Now read in exactly one place — the Budget page's cash placeholder, its dialog, and the report recap — always labelled *Sementara* (§12). Dropped in V2 (§13). |
+| Budget realization is inert | `realized_amount` is only ever what the seed carries: nothing in the app writes it until Finance exists. The "Belum Direalisasi" KPI and the `real.` sub-line are therefore accurate for seeded rows and zero for new ones. |
+| Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | `zod` unused | Installed; validation is hand-written in the services. |
-| Tests cover security only | No tests for the Master module or anything else. |
+| Tests cover security, Accounting and Budget only | No tests for the Master module or anything else. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Two of the mockup's checks (missing account, dangling FKs) were dropped — Postgres now makes them unrepresentable. This is intentional, recorded so it is not "restored" by mistake. |
 

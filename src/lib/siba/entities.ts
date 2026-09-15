@@ -9,7 +9,7 @@
  * tree (`view: "tree"`) while its detail and form stay generic.
  */
 import type { IconName } from "@/components/icon";
-import { BUDGET_CATEGORY_RULES } from "./rules";
+import { BUDGET_CATEGORY_RULES, type Direction } from "./rules";
 
 export type FieldType =
   | "text"
@@ -764,6 +764,21 @@ export function budgetCategoryNeedsPartner(categoryLabel: string): boolean {
 
 export function allowedPartnerCategories(categoryLabel: string): string[] {
   return BUDGET_CATEGORY_RULES[categoryLabel]?.partnerCategories ?? [];
+}
+
+/**
+ * Whether a Budget Category makes sense for a budget going this way.
+ *
+ * Direction follows balance-sheet logic, not cash direction: Biaya and Asset
+ * only ever go Out, Hasil Investasi only ever comes In, while the four subject
+ * categories move in both directions. `BUDGET_CATEGORY_RULES` is the source.
+ */
+export function budgetCategoryAllowsDirection(
+  categoryLabel: string,
+  direction: string
+): boolean {
+  const rule = BUDGET_CATEGORY_RULES[categoryLabel];
+  return rule ? rule.directions.includes(direction as Direction) : false;
 }
 
 export const STATUS_TEXT: Record<string, string> = {
