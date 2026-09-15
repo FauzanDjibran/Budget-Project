@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { AccountTree } from "@/components/master/account-tree";
+import { activeCompanyId } from "@/lib/siba/company-context";
 import { FiscalPeriods } from "@/components/accounting/fiscal-periods";
 import { FiscalYearActions } from "@/components/accounting/fiscal-year-actions";
 import { CashBankBookCard } from "@/components/master/cash-bank-book-card";
@@ -56,13 +57,16 @@ export async function EntityListPage({
     `/${entity.module}/${entity.slug}`
   );
   const can = abilitiesFor(entity.key, actor.permissions);
+  // Scoped entities show the Company in context; the registry's `scope` is
+  // what decides which ones those are.
+  const companyId = await activeCompanyId();
 
   if (entity.view === "tree") {
-    const { companies, categories, accounts } = await accountTree();
+    const { company, categories, accounts } = await accountTree(companyId);
     return (
       <AccountTree
         entity={entity}
-        companies={companies}
+        company={company}
         categories={categories}
         accounts={accounts}
         can={can}
@@ -70,7 +74,7 @@ export async function EntityListPage({
     );
   }
 
-  const rows = await listRows(entity);
+  const rows = await listRows(entity, companyId);
   const computed = await computedValues(entity, rows);
   // Columns can reference entities the form never edits, so top those up.
   const refs = await columnRefOptions(entity, await refOptions(entity));

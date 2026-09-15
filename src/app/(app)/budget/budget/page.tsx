@@ -1,6 +1,7 @@
 import { BudgetMonthList } from "@/components/budget/budget-month-list";
 import { requirePermission } from "@/lib/siba/auth";
 import { budgetMonths } from "@/lib/siba/budget";
+import { activeCompanyId } from "@/lib/siba/company-context";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,6 @@ export const dynamic = "force-dynamic";
  */
 export default async function Page() {
   await requirePermission("BUDGET_VIEW", "/budget/budget");
-  const months = await budgetMonths();
+  const months = await budgetMonths(await activeCompanyId());
   return <BudgetMonthList months={months} />;
 }

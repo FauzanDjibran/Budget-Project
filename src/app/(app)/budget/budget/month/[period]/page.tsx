@@ -9,6 +9,7 @@ import {
   summarise,
 } from "@/lib/siba/budget";
 import { cashBookSummary } from "@/lib/siba/cash-bank";
+import { activeCompanyId } from "@/lib/siba/company-context";
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +36,8 @@ export default async function Page({
   if (period !== "all" && !month) notFound();
 
   const budgets = await listBudgets(
-    month ? { startDate: month.startDate, endDate: month.endDate } : null
+    month ? { startDate: month.startDate, endDate: month.endDate } : null,
+    await activeCompanyId()
   );
 
   const [refs, mappings, summary, cash] = await Promise.all([

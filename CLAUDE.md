@@ -129,6 +129,7 @@ of its own.
 | Navigation model | `src/lib/siba/nav.ts` | Modules → groups → entities; rail and submenu |
 | Business rules | `src/lib/siba/rules.ts` | Budget categories and the 22 transaction purposes |
 | Account numbering | `src/lib/siba/account-code.ts` | The dotted lineage code — parsing, segments, ordering; client-safe |
+| Company context | `src/lib/siba/company-context.ts` | Which Company every scoped page renders; the only module reading the context cookie; `server-only` |
 | Permission catalogue | `src/lib/siba/permissions.ts` | Every capability in the system; client-safe |
 | Seeded roles | `src/lib/siba/roles.ts` | ADMIN / STAFF and their grants |
 | Authorization gate | `src/lib/siba/auth.ts` | `requireAuth`, `requirePermission`, `authorizeAction` |
@@ -239,6 +240,7 @@ src/
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
       settings.ts        System Default writes
       auth.ts            login / logout
+      context.ts         switches the Company in context
       users.ts           User and role administration
       profile.ts         Own profile and password
   components/
@@ -262,6 +264,7 @@ src/
                          generated class, so `prisma generate` retires it (§12)
     format.ts            Date/number/money formatting (UTC-based)
     siba/                entities, nav, rules, records, users, account-code,
+                         company-context,
                          permissions, roles, access, auth, auth-errors,
                          session, login, user-admin, profile, entity-access, fiscal,
                          fiscal-workflow, budget, budget-workflow, cash-bank,
@@ -829,21 +832,57 @@ Specified in the concept doc, **not yet implemented** (see §13):
   the bottom of a form**, and never widen the sticky rule to a bare `.ph`.
 - **Status:** Frozen, current.
 
+### The Company context is a cookie, and scoped readers take it as an argument (FROZEN)
+- **Decision:** The topbar Company selector is real. It writes
+  `siba_company` through `setCompanyContext` in `app/actions/context.ts`;
+  `activeCompany()` in `lib/siba/company-context.ts` resolves it against the
+  Company master and is **the only place the cookie is read**. Every scoped
+  screen narrows to it: the registry lists whose entity declares
+  `scope: "company_id"` (Partner, Cash & Bank, Chart of Accounts, the account
+  mappings), the COA tree, Budget Month, the Budget list, and the Finance
+  document list.
+- **Reason for a cookie, not a URL parameter:** reads happen in Server
+  Components (§3), so the context has to reach the server on an ordinary
+  navigation, and it has to survive every link in the rail, the submenu, a
+  breadcrumb and a row click without each carrying it. One forgotten `Link`
+  would silently drop it. Report Views keep *their* parameters in the URL
+  because a report run is something you send someone; a working context is not.
+- **A scoped reader takes `companyId` as an argument.** `listRows`,
+  `accountTree`, `budgetMonths`, `listBudgets` and `listTransactions` are all
+  passed the Company by the page; none of them calls `cookies()`. A first
+  attempt had them resolve it themselves and `tests/budget.test.ts` failed with
+  "cookies was called outside a request scope" — which is the point: a data
+  module that reaches into the request cannot be tested, and this codebase puts
+  rules in the data module precisely so tests can exercise them.
+- **There is always exactly one Company in context.** "Semua Company" is gone.
+  The two-Company structure is foundational, every scoped record belongs to one
+  of them, and a context meaning "neither" is what made the chart of accounts
+  appear to hold every number twice. An unset or unrecognised cookie resolves
+  to the induk.
+- **It is a view filter and nothing else.** It never widens what a user may
+  see — permissions do that — every list still runs behind its own view
+  permission, and every Server Action re-checks the Company on the record it is
+  given. Switching context cannot reach or write another Company's data.
+- **Do not change unless:** explicitly instructed. **Never let the context
+  decide authorization**, never read the cookie outside `company-context.ts`,
+  and do not make a scoped reader resolve its own Company.
+- **Status:** Frozen, current.
+
 ### A chart of accounts belongs to one Company, and the tree shows one (FROZEN)
 - **Decision:** Account numbering is per Company. Two Companies each holding
   their own `1.1.4.1` is correct and expected; one Company holding it twice is
   refused by `checkAccountNumber` and, underneath, by
   `@@unique([company_id, account_label])`. The Chart of Accounts tree therefore
-  carries its own **Company picker**, defaults to the induk, and renders that
-  Company's chart alone.
+  renders the chart of the **Company in context** alone, chosen from the topbar.
 - **Reason:** With both Companies populated the tree listed every number twice,
   one row per Company, which reads as duplicated data rather than as two books.
   The numbers were never duplicated — the screen was.
 - **Impact:** The per-row Company badge is gone from the tree: the picker names
   the Company once, so repeating it on every row earned nothing. Search, the
   expand/collapse state and the kelompok counts all work on the selected
-  Company's accounts only. This is the tree's own control, **not** the topbar
-  Company selector, which is still inert (§17) and is a separate change.
+  Company's accounts only. The control is the topbar selector — the tree had a
+  picker of its own for exactly one commit, and two controls for one thing is
+  one too many.
 - **Do not change unless:** explicitly instructed. **Never make account numbers
   globally unique** — that would stop the anak from keeping a normal chart of
   accounts — and do not merge both Companies back into one tree.
@@ -1628,6 +1667,10 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   master links into the report (§12).
 - Do **not** make account numbers globally unique, and do **not** show both
   Companies' charts in one tree (§10, §12).
+- Do **not** read the Company context cookie anywhere but
+  `lib/siba/company-context.ts`, do **not** let a scoped reader resolve its own
+  Company instead of taking it as an argument, and do **not** let the context
+  decide what a user is allowed to do (§12).
 - Do **not** put a form's buttons anywhere but `.ph-act`, and do **not**
   reintroduce a bottom action bar (§8, §12).
 - Do **not** write a bare `.ph` CSS rule — it is the Combobox and Select
@@ -1704,14 +1747,12 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 
 | Issue | Detail |
 | --- | --- |
-| Company context selector is inert | The topbar dropdown is local state and filters nothing. `Entity.scope` exists in the registry but is unused. |
 | Audit log shows raw table keys | Dashboard renders `m_partner` rather than `Partner / Cabang Medan`; needs entity display names + record lookup. (The author column resolves correctly.) |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | A posted document produces no Journal | Post writes the Cash Bank Book and Budget realization only. The Journal, the General Ledger and the subject ledgers are the next scope (§13), so a posted document is not yet reflected in accounting. |
-| The Finance list is not Company-scoped | Every document belongs to the induk today, so the topbar Company selector would filter nothing. This becomes real when Funding Request brings the anak into the picture. |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | Tests cover security, Accounting, Budget, Finance, the Cash Bank Book, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |

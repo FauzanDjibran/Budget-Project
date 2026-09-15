@@ -1,7 +1,7 @@
 import { AppShell } from "@/components/shell/app-shell";
 import { ToastProvider } from "@/components/ui/toast";
-import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/siba/auth";
+import { activeCompany, companyOptions } from "@/lib/siba/company-context";
 import { visibleModules } from "@/lib/siba/nav";
 
 /**
@@ -16,19 +16,16 @@ export default async function AppLayout({
 }) {
   const actor = await requireAuth();
 
-  const companies = await prisma.sysCompany.findMany({
-    orderBy: { id: "asc" },
-    select: { id: true, company_label: true, company_name: true },
-  });
+  const [companies, company] = await Promise.all([
+    companyOptions(),
+    activeCompany(),
+  ]);
 
   return (
     <ToastProvider>
       <AppShell
-        companies={companies.map((c) => ({
-          id: c.id,
-          label: c.company_label,
-          name: c.company_name,
-        }))}
+        companies={companies}
+        activeCompanyId={company.id}
         user={{
           name: actor.user.name,
           initials: actor.user.initials,

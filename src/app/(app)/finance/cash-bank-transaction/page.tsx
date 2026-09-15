@@ -1,6 +1,7 @@
 import { TransactionList } from "@/components/finance/transaction-list";
 import { requirePermission } from "@/lib/siba/auth";
 import { cashBookSummary } from "@/lib/siba/cash-bank";
+import { activeCompanyId } from "@/lib/siba/company-context";
 import {
   financeRefs,
   listTransactions,
@@ -17,7 +18,7 @@ export default async function Page() {
     "/finance/cash-bank-transaction"
   );
 
-  const transactions = await listTransactions();
+  const transactions = await listTransactions(await activeCompanyId());
   const [refs, summary, cash] = await Promise.all([
     financeRefs(),
     summariseTransactions(transactions),

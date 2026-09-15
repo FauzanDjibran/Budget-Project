@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Select } from "@/components/ui/select";
 import { logout } from "@/app/actions/auth";
+import { setCompanyContext } from "@/app/actions/context";
 import { type NavModule, resolvePath, entityHref } from "@/lib/siba/nav";
 
 export type ShellCompany = { id: number; label: string; name: string };
@@ -24,20 +25,27 @@ export type ShellUser = {
  */
 export function AppShell({
   companies,
+  activeCompanyId,
   user,
   modules,
   children,
 }: {
   companies: ShellCompany[];
+  /** The Company every scoped page is currently rendering — see company-context.ts. */
+  activeCompanyId: number;
   user: ShellUser;
   modules: NavModule[];
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { module: activeModule, entity: activeEntity } = resolvePath(pathname);
 
   const [subOpen, setSubOpen] = useState(true);
-  const [companyId, setCompanyId] = useState(0);
+  // Mirrors the cookie so the control responds at once; the server is what
+  // actually decides, and `router.refresh()` re-renders the page under it.
+  const [companyId, setCompanyId] = useState(activeCompanyId);
+  const [switching, setSwitching] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const userRef = useRef<HTMLDivElement>(null);
 
@@ -49,6 +57,22 @@ export function AppShell({
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [userOpen]);
+
+  const onSwitchCompany = async (id: number) => {
+    if (id === companyId) return;
+    const previous = companyId;
+    setCompanyId(id);
+    setSwitching(true);
+    const result = await setCompanyContext(id);
+    setSwitching(false);
+    // The server refused an id that names no Company — put the control back
+    // rather than leaving it showing a context the pages are not using.
+    if (!result.ok) {
+      setCompanyId(previous);
+      return;
+    }
+    router.refresh();
+  };
 
   // The submenu shows only the leaves this user may reach; a module whose
   // leaves are all hidden never reaches the rail in the first place.
@@ -72,16 +96,14 @@ export function AppShell({
           <Select
             variant="ctx"
             value={String(companyId)}
-            onChange={(v) => setCompanyId(Number(v))}
+            disabled={switching}
+            onChange={(v) => onSwitchCompany(Number(v))}
             title="Konteks Company"
             ariaLabel="Konteks Company"
-            options={[
-              { value: "0", label: "Semua Company" },
-              ...companies.map((c) => ({
-                value: String(c.id),
-                label: `${c.label} - ${c.name}`,
-              })),
-            ]}
+            options={companies.map((c) => ({
+              value: String(c.id),
+              label: `${c.label} - ${c.name}`,
+            }))}
           />
         </div>
 

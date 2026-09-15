@@ -5,6 +5,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney } from "@/lib/format";
 import { compareCodes } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
+import { scopeFilter } from "./company-context";
 import {
   allowedPartnerCategories,
   budgetCategoryNeedsPartner,
@@ -75,8 +76,19 @@ export function serialize<T extends Record<string, unknown>>(row: T): Row {
   return out as Row;
 }
 
-export async function listRows(entity: Entity): Promise<Row[]> {
-  const rows = await delegate(entity.key).findMany({ orderBy: { id: "asc" } });
+/**
+ * A list, narrowed to the Company in context when the entity declares a scope.
+ *
+ * `Entity.scope` is what decides: an entity without one — Company itself,
+ * Currency, the reference tables — is never filtered. The context is a view
+ * filter only; the view permission above this is what decides who may read
+ * anything at all.
+ */
+export async function listRows(entity: Entity, companyId: number): Promise<Row[]> {
+  const rows = await delegate(entity.key).findMany({
+    where: scopeFilter(entity.scope, companyId),
+    orderBy: { id: "asc" },
+  });
   return rows.map(serialize);
 }
 
@@ -495,13 +507,13 @@ export type TreeCategory = {
  * are seeded, they are not accounts, and application logic reads them by label.
  * They are read here so the tree can group accounts under them.
  *
- * The Companies come back too, because a chart of accounts belongs to exactly
- * one of them. Both keep their own numbering — the induk's `1.1.4.1` and the
- * anak's are different accounts — so a tree showing both at once reads as
- * duplicated rows. The tree picks one Company and shows that Company's chart.
+ * Accounts come back for the Company in context only. A chart of accounts
+ * belongs to exactly one Company and each keeps its own numbering, so a tree
+ * showing both at once reads as duplicated rows — the induk's `1.1.4.1` and
+ * the anak's are different accounts that share a number.
  */
-export async function accountTree(): Promise<{
-  companies: TreeCompany[];
+export async function accountTree(companyId: number): Promise<{
+  company: TreeCompany;
   categories: TreeCategory[];
   accounts: TreeAccount[];
 }> {
@@ -510,7 +522,7 @@ export async function accountTree(): Promise<{
       prisma.accAccountCategory.findMany({ orderBy: { id: "asc" } }),
       prisma.accAccountSubcategory.findMany({ orderBy: { id: "asc" } }),
       prisma.sysAccountType.findMany(),
-      prisma.accAccount.findMany(),
+      prisma.accAccount.findMany({ where: { company_id: companyId } }),
       prisma.sysCompany.findMany(),
       prisma.sysPartnerCategory.findMany(),
     ]);
@@ -519,11 +531,14 @@ export async function accountTree(): Promise<{
   const companyLabel = new Map(companies.map((c) => [c.id, c.company_label]));
   const partnerLabel = new Map(partnerCategories.map((p) => [p.id, p.category_label]));
 
+  const company = companies.find((c) => c.id === companyId)!;
+
   return {
-    // Induk first: it is the Company every module transacts for today.
-    companies: [...companies]
-      .sort((a, b) => Number(b.is_parent) - Number(a.is_parent))
-      .map((c) => ({ id: c.id, label: c.company_label, name: c.company_name })),
+    company: {
+      id: company.id,
+      label: company.company_label,
+      name: company.company_name,
+    },
     categories: categories
       .sort((a, b) => compareCodes(a.category_label, b.category_label))
       .map((c) => ({

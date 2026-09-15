@@ -111,10 +111,15 @@ export type BudgetMonth = {
  * Periods with no budgets are still listed: a month you have planned nothing
  * for is exactly the month a planner needs to see.
  */
-export async function budgetMonths(): Promise<BudgetMonth[]> {
+export async function budgetMonths(companyId: number): Promise<BudgetMonth[]> {
+  // Budgets belong to a Company; the fiscal calendar does not, so the months
+  // themselves are the same either way and only their rollups narrow.
   const [periods, budgets] = await Promise.all([
     prisma.accFiscalPeriod.findMany({ orderBy: { start_date: "desc" } }),
-    prisma.budBudget.findMany({ select: { budget_date: true } }),
+    prisma.budBudget.findMany({
+      where: { company_id: companyId },
+      select: { budget_date: true },
+    }),
   ]);
 
   const today = day(new Date());
@@ -163,17 +168,21 @@ export async function fiscalPeriod(periodId: number) {
  * months by having its date changed, and nothing else needs updating.
  */
 export async function listBudgets(
-  range: { startDate: string; endDate: string } | null
+  range: { startDate: string; endDate: string } | null,
+  companyId: number
 ): Promise<BudgetRow[]> {
   const rows = await prisma.budBudget.findMany({
-    where: range
-      ? {
-          budget_date: {
-            gte: new Date(`${range.startDate}T00:00:00Z`),
-            lte: new Date(`${range.endDate}T00:00:00Z`),
-          },
-        }
-      : undefined,
+    where: {
+      company_id: companyId,
+      ...(range
+        ? {
+            budget_date: {
+              gte: new Date(`${range.startDate}T00:00:00Z`),
+              lte: new Date(`${range.endDate}T00:00:00Z`),
+            },
+          }
+        : {}),
+    },
     orderBy: [{ budget_date: "desc" }, { id: "desc" }],
   });
   return rows.map(toRow);
