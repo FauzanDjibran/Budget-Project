@@ -180,7 +180,11 @@ export function EntityForm({
   const title = recordTitle(entity, row, refs);
   const statusValue = statusModel ? String(row?.[statusModel.field] ?? "") : "";
 
-  const visible = entity.fields.filter(applies);
+  // A create-only field has nowhere to read a value back from — it was never a
+  // column on this table — so it exists on the create form and nowhere else.
+  const visible = entity.fields.filter(
+    (f) => applies(f) && !(f.createOnly && mode !== "new")
+  );
   const statusFieldName = statusModel?.field;
   const businessFields = visible.filter(
     (f) => f.name !== "note" && f.name !== statusFieldName
@@ -398,7 +402,7 @@ export function EntityForm({
                       <span className="k">Dibuat</span>
                       <span className="v">
                         {formatTimestamp(row?.created_at as string)}
-                        <small>{createdByEmail ?? "sistem@siba.app"}</small>
+                        <small>{createdByEmail ?? "—"}</small>
                       </span>
                     </div>
                     <div className="mrow">

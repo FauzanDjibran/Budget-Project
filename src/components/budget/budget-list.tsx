@@ -7,15 +7,15 @@ import { Icon } from "@/components/icon";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionBudget } from "@/app/actions/budget";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatMoney, formatTotals } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type {
   BudgetMapping,
   BudgetRefs,
   BudgetRow,
   BudgetSummary,
-  CashPlaceholder,
 } from "@/lib/siba/budget";
+import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import {
   BUDGET_TRANSITIONS,
   BUDGET_TYPE_TEXT,
@@ -25,7 +25,7 @@ import {
   type BudgetAction,
 } from "@/lib/siba/budget-workflow";
 import { ApproveDialog } from "./approve-dialog";
-import { CashPlaceholderDialog } from "./cash-placeholder-dialog";
+import { CashBalanceDialog } from "./cash-balance-dialog";
 import { ReportPicker } from "./report-picker";
 
 /**
@@ -48,7 +48,7 @@ export function BudgetList({
   refs: BudgetRefs;
   mappings: BudgetMapping[];
   summary: BudgetSummary;
-  cash: CashPlaceholder;
+  cash: CashBookSummary;
   /** null when the page is showing every month at once. */
   month: { id: number; label: string; name: string } | null;
   can: BudgetAbilities;
@@ -274,7 +274,7 @@ export function BudgetList({
           <div className="h">
             <span
               className="i"
-              style={{ background: "var(--warn-bg)", color: "var(--warn)" }}
+              style={{ background: "var(--ok-bg)", color: "var(--ok)" }}
             >
               <Icon name="wallet2" size={14} />
             </span>
@@ -283,10 +283,22 @@ export function BudgetList({
               Rincian <Icon name="chev" size={11} />
             </span>
           </div>
-          <div className="v">Rp {formatNumber(cash.totalBase)}</div>
+          <div className="v">
+            {cash.byCurrency.length
+              ? formatMoney(cash.byCurrency[0].balance, cash.byCurrency[0].currencyLabel)
+              : "—"}
+          </div>
           <div className="d">
-            <span className="bdg s-warn">Sementara</span> {cash.resources} resource
-            aktif · belum dari ledger
+            {cash.resources} resource aktif
+            {cash.byCurrency.length > 1 && (
+              <>
+                {" · "}
+                {cash.byCurrency
+                  .slice(1)
+                  .map((c) => formatMoney(c.balance, c.currencyLabel))
+                  .join(" · ")}
+              </>
+            )}
           </div>
         </button>
 
@@ -309,7 +321,7 @@ export function BudgetList({
           </div>
           <div className="v">{summary.notApproved}</div>
           <div className="d">
-            Rp {formatNumber(summary.notApprovedBase)} · {summary.draft} draft,{" "}
+            {formatTotals(summary.notApprovedTotals)} · {summary.draft} draft,{" "}
             {summary.submitted} diajukan
           </div>
         </button>
@@ -333,7 +345,7 @@ export function BudgetList({
           </div>
           <div className="v">{summary.unrealized}</div>
           <div className="d">
-            Rp {formatNumber(summary.unrealizedBase)} sisa dari budget disetujui
+            {formatTotals(summary.unrealizedTotals)} sisa dari budget disetujui
           </div>
         </button>
       </div>
@@ -670,7 +682,7 @@ export function BudgetList({
       )}
 
       {showCash && (
-        <CashPlaceholderDialog cash={cash} onClose={() => setShowCash(false)} />
+        <CashBalanceDialog cash={cash} onClose={() => setShowCash(false)} />
       )}
 
       {showReport && (
@@ -693,7 +705,7 @@ export function BudgetList({
   );
 }
 
-/** The row action menu — a fixed popup, matching the mockup's `menuAt`. */
+/** The row action menu — a fixed popup anchored to the trigger. */
 function RowMenu({
   row,
   x,

@@ -1,6 +1,9 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
+import { formatMoney } from "@/lib/format";
+import { cashBankBalanceMap } from "./cash-bank";
 import {
   allowedPartnerCategories,
   budgetCategoryNeedsPartner,
@@ -16,18 +19,20 @@ import {
  * explicit. Everything crossing into a client component is flattened first:
  * Decimal and Date do not survive serialization.
  */
+type Client = typeof prisma | Prisma.TransactionClient;
+
 const DELEGATES = {
-  sys_company: () => prisma.sysCompany,
-  m_partner: () => prisma.mPartner,
-  m_cash_bank: () => prisma.mCashBank,
-  ref_currency: () => prisma.refCurrency,
-  sys_partner_category: () => prisma.sysPartnerCategory,
-  sys_budget_category: () => prisma.sysBudgetCategory,
-  acc_account: () => prisma.accAccount,
-  acc_account_subcategory: () => prisma.accAccountSubcategory,
-  acc_budget_category_account: () => prisma.accBudgetCategoryAccount,
-  acc_fiscal_year: () => prisma.accFiscalYear,
-  acc_fiscal_period: () => prisma.accFiscalPeriod,
+  sys_company: (db: Client) => db.sysCompany,
+  m_partner: (db: Client) => db.mPartner,
+  m_cash_bank: (db: Client) => db.mCashBank,
+  ref_currency: (db: Client) => db.refCurrency,
+  sys_partner_category: (db: Client) => db.sysPartnerCategory,
+  sys_budget_category: (db: Client) => db.sysBudgetCategory,
+  acc_account: (db: Client) => db.accAccount,
+  acc_account_subcategory: (db: Client) => db.accAccountSubcategory,
+  acc_budget_category_account: (db: Client) => db.accBudgetCategoryAccount,
+  acc_fiscal_year: (db: Client) => db.accFiscalYear,
+  acc_fiscal_period: (db: Client) => db.accFiscalPeriod,
 } as const;
 
 export type EntityKey = keyof typeof DELEGATES;
@@ -44,11 +49,12 @@ export type RefOption = {
   companyId?: number;
 };
 
+/** Pass a transaction client to run the write inside someone else's transaction. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function delegate(key: string): any {
+function delegate(key: string, db: Client = prisma): any {
   const fn = DELEGATES[key as EntityKey];
   if (!fn) throw new Error(`Unknown entity: ${key}`);
-  return fn();
+  return fn(db);
 }
 
 /** Decimal -> number, Date -> ISO string, so rows can cross to the client. */
@@ -290,8 +296,8 @@ export async function partnerCategoriesForBudgetCategory(
 }
 
 /**
- * Values for columns marked `computed` — counts and derived text the mockup
- * calculated inline against its in-memory store.
+ * Values for columns marked `computed` — counts and derived text that are not
+ * columns on the row itself.
  */
 export async function computedValues(
   entity: Entity,
@@ -335,6 +341,24 @@ export async function computedValues(
       out[r.id] = {
         cash_bank_count:
           groups.find((g) => g.currency_id === r.id)?._count._all ?? 0,
+      };
+    }
+  }
+
+  // Balance is never a column on the master: it comes from the Cash Bank Book,
+  // which is the only thing that knows what has actually moved.
+  if (entity.key === "m_cash_bank") {
+    const [balances, currencies] = await Promise.all([
+      cashBankBalanceMap(),
+      prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
+    ]);
+    const label = new Map(currencies.map((c) => [c.id, c.currency_label]));
+    for (const r of rows) {
+      out[r.id] = {
+        balance: formatMoney(
+          balances.get(r.id) ?? 0,
+          label.get(r.currency_id as number) ?? "IDR"
+        ),
       };
     }
   }
@@ -395,9 +419,9 @@ export type TreeCategory = {
 /**
  * The structural skeleton of the bagan akun: category -> kelompok -> account.
  *
- * Categories and kelompok are seeded structure with no menu of their own — the
- * mockup treats them the same way. They are read here so the tree can group
- * accounts under them.
+ * Categories and kelompok are system structure with no menu of their own: they
+ * are seeded, they are not accounts, and application logic reads them by label.
+ * They are read here so the tree can group accounts under them.
  */
 export async function accountTree(): Promise<{
   categories: TreeCategory[];

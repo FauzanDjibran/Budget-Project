@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { AccountTree } from "@/components/master/account-tree";
+import { CashBankBook } from "@/components/master/cash-bank-book";
 import { EntityForm } from "@/components/master/entity-form";
 import { EntityLocked } from "@/components/master/entity-locked";
 import { requirePermission } from "@/lib/siba/auth";
@@ -14,6 +15,7 @@ import {
   listRows,
   refOptions,
 } from "@/lib/siba/records";
+import { cashBankBalanceMap, cashBankLedger } from "@/lib/siba/cash-bank";
 import { userEmails } from "@/lib/siba/users";
 import { EntityList } from "@/components/master/entity-list";
 
@@ -139,7 +141,7 @@ export async function EntityDetailPage({
   const refs = await refOptions(entity);
   const emails = await userEmails([row.created_by as number, row.updated_by as number]);
 
-  return (
+  const form = (
     <EntityForm
       entity={entity}
       mode="view"
@@ -149,6 +151,29 @@ export async function EntityDetailPage({
       updatedByEmail={emails[row.updated_by as number]}
       can={abilitiesFor(entity.key, actor.permissions)}
     />
+  );
+
+  // A Cash & Bank resource is the one master with a book behind it, so its
+  // detail shows that book. The registry describes fields; it does not describe
+  // an append-only ledger, and nothing is gained by making it try.
+  if (entity.key !== "m_cash_bank") return form;
+
+  const [entries, balances] = await Promise.all([
+    cashBankLedger(row.id),
+    cashBankBalanceMap(),
+  ]);
+  const currencyLabel =
+    refs.currency_id?.find((o) => o.id === row.currency_id)?.label ?? "IDR";
+
+  return (
+    <>
+      {form}
+      <CashBankBook
+        entries={entries}
+        balance={balances.get(row.id) ?? 0}
+        currencyLabel={currencyLabel}
+      />
+    </>
   );
 }
 
@@ -193,6 +218,7 @@ export async function EntityEditPage({
   if (!row) notFound();
 
   const refs = await refOptions(entity);
+  const emails = await userEmails([row.created_by as number, row.updated_by as number]);
 
   return (
     <EntityForm
@@ -200,6 +226,8 @@ export async function EntityEditPage({
       mode="edit"
       row={row}
       refs={refs}
+      createdByEmail={emails[row.created_by as number]}
+      updatedByEmail={emails[row.updated_by as number]}
       can={abilitiesFor(entity.key, actor.permissions)}
     />
   );

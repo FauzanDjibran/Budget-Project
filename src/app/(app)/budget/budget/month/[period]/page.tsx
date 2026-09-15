@@ -4,11 +4,11 @@ import { requirePermission } from "@/lib/siba/auth";
 import {
   budgetMappings,
   budgetRefs,
-  cashPlaceholder,
   fiscalPeriod,
   listBudgets,
   summarise,
 } from "@/lib/siba/budget";
+import { cashBookSummary } from "@/lib/siba/cash-bank";
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +42,7 @@ export default async function Page({
     budgetRefs(),
     budgetMappings(),
     summarise(budgets),
-    cashPlaceholder(),
+    cashBookSummary(),
   ]);
 
   return (

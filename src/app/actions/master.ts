@@ -12,6 +12,7 @@ import {
   isCompanyEntity,
 } from "@/lib/siba/company";
 import { type Entity, type Field } from "@/lib/siba/entities";
+import { openCashBankBook } from "@/lib/siba/cash-bank";
 import {
   CASH_BANK_SUBCATEGORIES,
   accountDescendants,
@@ -90,12 +91,16 @@ function coerce(field: Field, raw: string | boolean | null | undefined) {
   return value;
 }
 
-const refValue = (values: FormValues, name: string): number | null => {
+/** A numeric field's value, or null when it was blank or unparseable. */
+const numberValue = (values: FormValues, name: string): number | null => {
   const raw = values[name];
   if (raw == null || raw === "" || raw === true || raw === false) return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 };
+
+/** A ref field carries a row id, which is a number like any other. */
+const refValue = numberValue;
 
 const boolValue = (values: FormValues, name: string): boolean =>
   values[name] === true || values[name] === "true";
@@ -112,12 +117,16 @@ const dateValue = (values: FormValues, name: string): string | null => {
  */
 async function applicableFields(
   entity: Entity,
-  values: FormValues
+  values: FormValues,
+  exists: boolean
 ): Promise<Set<string>> {
   const applies = new Set<string>();
   let budgetCategoryNeedsPartner: boolean | null = null;
 
   for (const field of entity.fields) {
+    // A create-only field is not merely hidden on edit: it is not part of the
+    // submission at all, so an edit cannot smuggle one in.
+    if (field.createOnly && exists) continue;
     if (!field.visibleWhen) {
       applies.add(field.name);
       continue;
@@ -178,7 +187,7 @@ async function validate(
   }
 
   // Company has no write path, so there is no single-parent rule to validate
-  // here — the invariant is asserted against the seeded data instead, by
+  // here — the invariant is asserted against what is in the database instead, by
   // `companyStructure()` in records.ts.
 
   if (entity.key === "m_cash_bank") {
@@ -410,6 +419,7 @@ async function validateFiscalPeriod(
 function buildData(entity: Entity, values: FormValues, applies: Set<string>) {
   const data: Record<string, unknown> = {};
   for (const field of entity.fields) {
+    if (field.virtual) continue;
     data[field.name] = applies.has(field.name)
       ? coerce(field, values[field.name])
       : field.type === "bool"
@@ -435,18 +445,35 @@ export async function createRecord(
   if (!guard.ok) return guard.denial;
   const actor = guard.actor;
 
-  const applies = await applicableFields(entity, values);
+  const applies = await applicableFields(entity, values, false);
   const errors = await validate(entity, values, null, applies);
   if (Object.keys(errors).length) return { ok: false, errors };
 
   const code = await nextCode(entity);
-  const created = await delegate(entity.key).create({
-    data: {
-      ...buildData(entity, values, applies),
-      [entity.codeField]: code,
-      created_by: actor.user.id,
-      updated_by: null,
-    },
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await delegate(entity.key, tx).create({
+      data: {
+        ...buildData(entity, values, applies),
+        [entity.codeField]: code,
+        created_by: actor.user.id,
+        updated_by: null,
+      },
+    });
+
+    // A Cash & Bank resource gets its book in the same transaction it is
+    // registered in, so no resource can ever exist without one. A non-zero
+    // starting figure becomes the book's opening entry rather than a column on
+    // the master — see `lib/siba/cash-bank.ts`.
+    if (entity.key === "m_cash_bank") {
+      await openCashBankBook(tx, {
+        cashBankId: row.id,
+        openingBalance: numberValue(values, "opening_balance") ?? 0,
+        date: new Date().toISOString().slice(0, 10),
+        actorId: actor.user.id,
+      });
+    }
+
+    return row;
   });
 
   await prisma.auditLog.create({
@@ -464,7 +491,7 @@ export async function updateRecord(
   values: FormValues
 ): Promise<SaveResult> {
   // Company is edit-locked for the same reason it is create-locked. Identity
-  // changes go through seed data, not through this path.
+  // changes are made directly in the database, not through this path.
   if (isCompanyEntity(slug)) {
     return { ok: false, errors: { _form: COMPANY_UPDATE_BLOCKED } };
   }
@@ -474,7 +501,7 @@ export async function updateRecord(
   if (!guard.ok) return guard.denial;
   const actor = guard.actor;
 
-  const applies = await applicableFields(entity, values);
+  const applies = await applicableFields(entity, values, true);
   const errors = await validate(entity, values, id, applies);
   if (Object.keys(errors).length) return { ok: false, errors };
 

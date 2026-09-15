@@ -1,12 +1,11 @@
 /**
- * Entity registry for the registry-driven modules, ported from the mockup's
- * ENTITIES map.
+ * Entity registry for the registry-driven modules.
  *
- * One config drives the list table, the detail view, and the create/edit form,
- * exactly as it did in the prototype. Adding an entity means adding a config
- * here, not writing another page. Master and Accounting both run on it; the
- * only bespoke registry entity is Chart of Accounts, whose *list* renders as a
- * tree (`view: "tree"`) while its detail and form stay generic.
+ * One config drives the list table, the detail view, and the create/edit form.
+ * Adding an entity means adding a config here, not writing another page. Master
+ * and Accounting both run on it; the only bespoke registry entity is Chart of
+ * Accounts, whose *list* renders as a tree (`view: "tree"`) while its detail and
+ * form stay generic.
  */
 import type { IconName } from "@/components/icon";
 import { BUDGET_CATEGORY_RULES, type Direction } from "./rules";
@@ -36,6 +35,15 @@ export type Field = {
   ident?: boolean;
   /** Immutable once the record exists. */
   locked?: boolean;
+  /**
+   * Offered only when creating, and never written to the entity's own table —
+   * the Server Action decides what to do with it. A Cash & Bank resource's
+   * opening balance is the case: it becomes the first entry in that resource's
+   * book, which is where a balance belongs.
+   */
+  createOnly?: boolean;
+  /** Not a column on this table; `buildData` leaves it out entirely. */
+  virtual?: boolean;
   placeholder?: string;
   help?: string;
   /** `select` options. */
@@ -361,6 +369,16 @@ export const ENTITIES: Entity[] = [
         refFilter: "cashBankAccount",
         help: "Hanya account postable pada kelompok Kas atau Bank milik Company yang sama.",
       },
+      {
+        name: "opening_balance",
+        label: "Saldo Awal",
+        type: "number",
+        createOnly: true,
+        virtual: true,
+        defaultValue: 0,
+        placeholder: "0",
+        help: "Saldo resource ini saat mulai dicatat. Disimpan sebagai entri pembuka pada Cash Bank Book, bukan sebagai kolom pada master — saldo berikutnya selalu berasal dari buku.",
+      },
       STATUS_FIELD,
       NOTE_FIELD,
     ],
@@ -369,9 +387,10 @@ export const ENTITIES: Entity[] = [
       { field: "cash_bank_name", label: "Nama Cash Bank", primary: true, filter: "text" },
       { field: "company_id", label: "Company", isRef: true, width: "158px", filter: "ref" },
       { field: "cash_bank_type", label: "Tipe", isTag: true, width: "92px", filter: "enum" },
-      { field: "currency_id", label: "Currency", isRef: true, width: "126px", filter: "ref" },
-      { field: "account_id", label: "Account", isRef: true, width: "152px", filter: "ref" },
-      { field: "status", label: "Status", isStatus: true, width: "112px", filter: "enum" },
+      { field: "currency_id", label: "Currency", isRef: true, width: "116px", filter: "ref" },
+      { field: "account_id", label: "Account", isRef: true, width: "142px", filter: "ref" },
+      { field: "balance", label: "Saldo", computed: true, numeric: true, width: "142px" },
+      { field: "status", label: "Status", isStatus: true, width: "104px", filter: "enum" },
     ],
   },
 

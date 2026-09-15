@@ -123,3 +123,130 @@ export async function disconnect(): Promise<void> {
 }
 
 export { prisma };
+
+// --------------------------------------------------------- business fixtures
+//
+// The seed carries system data only — no partners, no accounts, no budgets — so
+// a test that needs business data creates it. Fixtures are labelled with
+// `FIXTURE_PREFIX` and removed by `cleanupFixtures`, which is what keeps a run
+// from leaving anything behind in a database somebody is actually using.
+
+export const FIXTURE_PREFIX = "ZZTEST";
+
+let fixtureSeq = 0;
+const nextFixture = () => `${FIXTURE_PREFIX}${Date.now() % 1_000_000}${++fixtureSeq}`;
+
+/** The account seeded rows are attributed to; fixtures borrow it. */
+export async function systemUserId(): Promise<number> {
+  const row = await prisma.sysUser.findFirstOrThrow({
+    where: { email: "sistem@siba.app" },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+export async function parentCompanyId(): Promise<number> {
+  const row = await prisma.sysCompany.findFirstOrThrow({
+    where: { is_parent: true },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+export async function childCompanyId(): Promise<number> {
+  const row = await prisma.sysCompany.findFirstOrThrow({
+    where: { is_parent: false },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+export async function budgetCategoryId(label: string): Promise<number> {
+  const row = await prisma.sysBudgetCategory.findFirstOrThrow({
+    where: { category_label: label },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+export async function partnerCategoryId(label: string): Promise<number> {
+  const row = await prisma.sysPartnerCategory.findFirstOrThrow({
+    where: { category_label: label },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+export async function subcategoryId(label: string): Promise<number> {
+  const row = await prisma.accAccountSubcategory.findFirstOrThrow({
+    where: { subcategory_label: label },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+export async function makeAccount(options: {
+  companyId: number;
+  subcategoryLabel: string;
+  postable?: boolean;
+  active?: boolean;
+  parentId?: number | null;
+  normalBalance?: "Debit" | "Kredit";
+}): Promise<number> {
+  const key = nextFixture();
+  const row = await prisma.accAccount.create({
+    data: {
+      account_code: `test.${key}`,
+      account_label: key,
+      account_name: `Fixture ${key}`,
+      company_id: options.companyId,
+      account_subcategory_id: await subcategoryId(options.subcategoryLabel),
+      parent_account: options.parentId ?? null,
+      is_postable: options.postable ?? true,
+      is_active: options.active ?? true,
+      normal_balance: options.normalBalance ?? "Debit",
+      created_by: await systemUserId(),
+    },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+export async function makePartner(options: {
+  companyId: number;
+  categoryLabel: string;
+  status?: "Active" | "Inactive";
+}): Promise<number> {
+  const key = nextFixture();
+  const row = await prisma.mPartner.create({
+    data: {
+      partner_code: `test.${key}`,
+      partner_label: key,
+      partner_name: `Fixture ${key}`,
+      company_id: options.companyId,
+      category_id: await partnerCategoryId(options.categoryLabel),
+      status: options.status ?? "Active",
+      created_by: await systemUserId(),
+    },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/**
+ * Removes every business fixture, children before parents so the self
+ * -referencing account tree never blocks a delete.
+ */
+export async function cleanupFixtures(): Promise<void> {
+  const accounts = await prisma.accAccount.findMany({
+    where: { account_label: { startsWith: FIXTURE_PREFIX } },
+    orderBy: { id: "desc" },
+    select: { id: true },
+  });
+  for (const a of accounts) {
+    await prisma.accAccount.delete({ where: { id: a.id } });
+  }
+  await prisma.mPartner.deleteMany({
+    where: { partner_label: { startsWith: FIXTURE_PREFIX } },
+  });
+}

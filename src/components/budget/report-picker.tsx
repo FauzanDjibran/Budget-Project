@@ -2,25 +2,23 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
-import { formatDate, formatNumber } from "@/lib/format";
-import type { BudgetRefs, BudgetRow, CashPlaceholder } from "@/lib/siba/budget";
+import { formatDate, formatMoney } from "@/lib/format";
+import type { BudgetRefs, BudgetRow } from "@/lib/siba/budget";
+import type { CashBookSummary } from "@/lib/siba/cash-bank";
 
 /**
  * Laporan Pengajuan — the picker that decides which Submitted budgets go into
  * a submission report, with an opening -> closing recap per currency.
  *
+ * The opening balance comes from the Cash Bank Book, so the recap reflects what
+ * the resources actually hold. Each currency is recapped on its own line and
+ * never combined, since there is no exchange rate to combine them with.
+ *
  * **The XLSX export is deliberately not built.** The picker is here so the
- * feature is visible and its selection behaviour can be exercised, but the
- * download button is inert and says so. Two reasons: the export itself is a
- * sizeable piece of work in its own right, and the opening balance this recap
- * is built on is the same placeholder figure the KPI card carries — it cannot
- * produce a trustworthy report until `cash_bank_ledger` exists in V2.
+ * feature is visible and its selection behaviour can be exercised; the download
+ * button is inert and says so. Writing the spreadsheet is its own piece of work.
  */
-function money(value: number, currencyLabel: string): string {
-  const prefix =
-    currencyLabel === "IDR" ? "Rp " : currencyLabel === "USD" ? "$ " : `${currencyLabel} `;
-  return prefix + formatNumber(value, currencyLabel === "IDR" ? 0 : 2);
-}
+const money = formatMoney;
 
 export function ReportPicker({
   budgets,
@@ -32,7 +30,7 @@ export function ReportPicker({
   /** Already narrowed to Submitted budgets in the current month scope. */
   budgets: BudgetRow[];
   refs: BudgetRefs;
-  cash: CashPlaceholder;
+  cash: CashBookSummary;
   periodName: string | null;
   onClose: () => void;
 }) {
@@ -73,7 +71,7 @@ export function ReportPicker({
 
   const recapOf = (cur: string) => {
     const opening =
-      cash.byCurrency.find((c) => c.currencyLabel === cur)?.amount ?? 0;
+      cash.byCurrency.find((c) => c.currencyLabel === cur)?.balance ?? 0;
     const mine = chosen.filter((b) => currencyLabel(b.currency_id) === cur);
     const inn = mine
       .filter((b) => b.budget_type === "In")
@@ -182,9 +180,9 @@ export function ReportPicker({
               </div>
 
               <p className="help" style={{ margin: "8px 2px 0" }}>
-                <Icon name="warn" size={11} /> Opening Balance masih memakai
-                angka sementara dari master Cash &amp; Bank. Angka sebenarnya
-                berasal dari Cash Bank Ledger dan belum tersedia.
+                <Icon name="wallet2" size={11} /> Opening Balance diambil dari Cash
+                Bank Book, yaitu saldo seluruh resource aktif pada currency
+                tersebut. Setiap currency direkap terpisah.
               </p>
 
               <div className="rp-sec">Isi Laporan per Currency</div>
@@ -336,7 +334,7 @@ export function ReportPicker({
           <button
             className="btn primary"
             disabled
-            title="Ekspor XLSX belum tersedia — menyusul bersama Cash Bank Ledger."
+            title="Ekspor XLSX belum tersedia."
           >
             <Icon name="down" size={14} /> Unduh XLSX
             {chosen.length > 0 && ` (${chosen.length})`}

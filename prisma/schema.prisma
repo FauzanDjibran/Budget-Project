@@ -1,9 +1,10 @@
 // SIBA 3.0 — Prisma schema
 //
-// Translated from `Initialization/SIBA 3.0 DBML.txt` (MySQL-flavoured DBML).
-// Scope: V1 = parity with `SIBA Mockup 2.0.html`.
+// Translated from `Initialization/SIBA 3.0 DBML.txt` (MySQL-flavoured DBML),
+// which is reference material rather than gospel: where the application needs a
+// column the DBML lacks, the column is added and the reason recorded here.
 //
-// Deliberate deviations from the source DBML, each flagged in the analysis:
+// Deliberate deviations from the source DBML:
 //   * `datetime`            -> DateTime @db.Timestamptz(6)
 //   * inline `enum(...)`    -> native Postgres enums
 //   * `bigint` ids          -> Int (avoids BigInt serialization pain across the
@@ -15,15 +16,13 @@
 //   * created_by/updated_by stay plain Int with no FK, exactly as the DBML
 //                             declares them (it defines no ref for these).
 //
-// Additions the mockup requires but the DBML lacks:
+// Additions the application requires but the DBML lacks:
 //   * SysUser                      — nothing in the DBML backs created_by/updated_by
 //   * SysCompany.is_parent         — marks the single induk of the fixed
 //                             two-company structure (one induk, one anak)
 //   * AccAccount.partner_category_id       — one account holds one partner category
 //   * AccBudgetCategoryAccount.partner_category_id — category x partner-category -> account
-//   * MCashBank.balance            — mock-only running balance; V2 replaces it with
-//                             cash_bank_ledger / cash_bank_balance
-//   * AuditLog                     — the mockup's in-memory `_audit` array
+//   * AuditLog                     — one trail spanning every table
 //   * SysRole / SysPermission / SysUserRole / SysRolePermission / SysSession
 //                                  — authentication and RBAC; the DBML has no
 //                             authentication model at all
@@ -32,11 +31,10 @@
 //   * AccAccount.partner_type — flagged `// diganti nanti` in the source and
 //     superseded by partner_category_id.
 //
-// Deferred to V2 (present in the DBML and/or concept doc, no UI in the mockup):
-//   acc_opening_balance(_line), acc_journal(_line), fin_funding_request,
-//   and the operational books: cash_bank_ledger / cash_bank_balance (the
-//   concept doc calls this book the "Cash Bank Book"), prive/titipan/hutang/
-//   piutang ledgers, general_ledger, intercompany_event.
+// Not yet modelled (present in the DBML and/or the concept doc):
+//   acc_opening_balance(_line), acc_journal(_line), fin_funding_request, the
+//   remaining operational books (prive / titipan / hutang / piutang ledgers),
+//   general_ledger, intercompany_event.
 
 generator client {
   provider = "prisma-client"
@@ -291,6 +289,7 @@ model SysDocType {
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   transaction_lines FinCashBankTransactionLine[]
+  ledger_entries    CashBankLedger[]
 
   @@map("sys_doc_type")
 }
@@ -391,10 +390,6 @@ model MCashBank {
   cash_bank_type  CashBankType
   currency_id     Int
   account_id      Int
-  /// Mock-only running balance, carried over so V1 matches the mockup. Nothing
-  /// in the app reads it. In V2 the balance is derived from cash_bank_ledger /
-  /// cash_bank_balance and this column goes away.
-  balance         Decimal      @default(0) @db.Decimal(18, 2)
   note            String?
   status          ActiveStatus @default(Active)
 
@@ -408,9 +403,86 @@ model MCashBank {
   account  AccAccount  @relation(fields: [account_id], references: [id])
 
   transactions FinCashBankTransaction[]
+  ledger       CashBankLedger[]
+  book_balance CashBankBalance?
 
   @@index([company_id])
   @@map("m_cash_bank")
+}
+
+// ---------------------------------------------------------------- cash bank book
+//
+// The Cash Bank Book: an independent, append-only record of every movement
+// through a cash or bank resource, plus the balance it adds up to.
+//
+// `cash_bank_ledger` is the truth. Entries are never edited and never deleted —
+// a mistake is corrected by a further entry, which is what makes the book
+// auditable. `cash_bank_balance` is a materialised running total kept in step
+// inside the same transaction as the entry that moved it, so reading a balance
+// costs one row instead of a scan.
+//
+// The concept doc requires this book to stay independent of the journal: it is
+// never a view over journal lines. Only the General Ledger derives from
+// journals.
+
+enum CashBankEntryType {
+  /// The balance a resource starts with, written once when it is registered.
+  Opening
+  /// A posted cash/bank transaction.
+  Transaction
+  /// A manual correction, recorded rather than edited into an existing entry.
+  Adjustment
+}
+
+model CashBankLedger {
+  id           Int               @id @default(autoincrement())
+  entry_no     String            @unique
+  cash_bank_id Int
+  entry_date   DateTime          @db.Date
+  entry_type   CashBankEntryType
+  direction    FlowDirection
+
+  /// Always positive; `direction` carries the sign.
+  amount        Decimal @db.Decimal(18, 2)
+  /// The same figure, signed: +In, -Out. Summing this column reconstructs the
+  /// balance from scratch, which is how the materialised total is verified.
+  movement      Decimal @db.Decimal(18, 2)
+  /// Balance after this entry, in the resource's own currency.
+  balance_after Decimal @db.Decimal(18, 2)
+
+  /// What caused the movement. Null for an opening balance, which has no
+  /// source document — the registration of the resource is the event.
+  source_doc_type_id Int?
+  source_doc_id      Int?
+
+  note String?
+
+  created_by Int
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  cash_bank       MCashBank   @relation(fields: [cash_bank_id], references: [id])
+  source_doc_type SysDocType? @relation(fields: [source_doc_type_id], references: [id])
+
+  @@index([cash_bank_id, entry_date])
+  @@index([source_doc_type_id, source_doc_id])
+  @@map("cash_bank_ledger")
+}
+
+/// One row per cash/bank resource, derived from `cash_bank_ledger` and written
+/// in the same transaction as the entry that changed it. Never written on its
+/// own: `rebuildCashBankBalance` recomputes it from the ledger.
+model CashBankBalance {
+  cash_bank_id    Int       @id
+  balance         Decimal   @default(0) @db.Decimal(18, 2)
+  entry_count     Int       @default(0)
+  last_entry_id   Int?
+  last_entry_date DateTime? @db.Date
+
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  cash_bank MCashBank @relation(fields: [cash_bank_id], references: [id])
+
+  @@map("cash_bank_balance")
 }
 
 // ---------------------------------------------------------------- accounting
@@ -603,15 +675,15 @@ model BudBudget {
 model FinCashBankTransaction {
   id               Int           @id @default(autoincrement())
   transaction_no   String        @unique
-  /// Null until the document is posted. The DBML declared this NOT NULL, but the
-  /// mockup only records it at post time — the point the money actually moves.
+  /// Null until the document is posted. The DBML declared this NOT NULL, but a
+  /// document only acquires a date when the money actually moves.
   document_date    DateTime?     @db.Date
   posting_date     DateTime?     @db.Timestamptz(6)
   transaction_type FlowDirection
   company_id       Int
-  /// Purpose key (e.g. `PRV_SH_OUT`). Resolved in `src/lib/siba/rules.ts`,
-  /// mirroring the mockup. Purposes stay application logic: the mockup's own
-  /// note suggests a `fin_purpose` config table, which CLAUDE.md §12 rejects.
+  /// Purpose key (e.g. `PRV_SH_OUT`), resolved in `src/lib/siba/rules.ts`. A
+  /// purpose carries behaviour a config table cannot express, so it stays
+  /// application logic — CLAUDE.md §12 rejects a `fin_purpose` table.
   purpose          String
   cash_bank_id     Int?
   currency_id      Int
@@ -676,8 +748,8 @@ model FinCashBankTransactionLine {
 
 // ---------------------------------------------------------------- audit
 
-/// Backs the mockup's in-memory `_audit` array. Referenced loosely by entity key
-/// and row id rather than by FK, since it spans every table.
+/// One trail for every table. Referenced loosely by entity key and row id
+/// rather than by FK, since it spans every table.
 model AuditLog {
   id         Int         @id @default(autoincrement())
   entity_key String

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
-import { formatDate, formatNumber } from "@/lib/format";
+import { formatDate, formatTotals } from "@/lib/format";
 import type { BudgetMonth } from "@/lib/siba/budget";
 
 /**
@@ -170,8 +170,8 @@ function MonthRow({ month, index }: { month: BudgetMonth; index: number }) {
         )}
       </td>
       <td className="num">
-        <span className={`mny${month.totalBase ? "" : " z"}`}>
-          Rp {formatNumber(month.totalBase)}
+        <span className={`mny${month.totals.length ? "" : " z"}`}>
+          {formatTotals(month.totals, "0")}
         </span>
       </td>
       <td>

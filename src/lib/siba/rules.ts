@@ -1,15 +1,15 @@
 /**
- * Business classification rules, ported from the mockup's data layer.
+ * Business classification rules.
  *
  * The chain is: Budget Category -> allowed Partner Categories -> Partner, and
  * a Purpose fully resolves (Budget Category, Partner Category, direction) to
  * exactly one Account.
  *
- * These live in code rather than the database because the source DBML models
- * `purpose` as a plain varchar. The mockup's own note suggests promoting them
- * to a `fin_purpose` config table — a V2 candidate.
+ * These live in code rather than the database because each entry carries
+ * behaviour a generic config table cannot express — which fields a purpose
+ * requires, whether it takes a partner, and which direction is meaningful.
+ * CLAUDE.md §12 records the decision.
  */
-
 export type Direction = "In" | "Out";
 
 /**
@@ -93,12 +93,4 @@ export function purposeLabel(key: string | null | undefined): string {
 
 export function purposeNeedsPartner(key: string | null | undefined): boolean {
   return purposeOf(key)?.partnerCategory != null;
-}
-
-/** Base-currency (IDR) conversion rates. The mockup hardcodes these; a real
- *  exchange-rate master is out of V1 scope. */
-export const RATES: Record<string, number> = { IDR: 1, USD: 16000, SGD: 12500 };
-
-export function rateFor(currencyLabel: string): number {
-  return RATES[currencyLabel] ?? 1;
 }

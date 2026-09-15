@@ -1,6 +1,5 @@
 /**
- * Display formatting, ported from the mockup's utility block so dates, numbers
- * and money render identically to the prototype.
+ * Display formatting for dates, numbers and money.
  *
  * Dates are formatted from their UTC parts. Every date in this system is a
  * calendar date stored at UTC midnight, so reading local parts would shift some
@@ -48,4 +47,45 @@ export function formatMoney(
 ): string {
   const prefix = currencyLabel === "IDR" ? "Rp " : `${currencyLabel} `;
   return prefix + formatNumber(value, currencyLabel === "IDR" ? 0 : 2);
+}
+
+/** One currency's share of a figure. Totals are kept per currency, never summed. */
+export type MoneyTotal = {
+  currencyId: number;
+  currencyLabel: string;
+  amount: number;
+};
+
+/**
+ * `Rp 45.000.000 · USD 3.500,00`.
+ *
+ * Amounts in different currencies are listed side by side rather than added
+ * together: converting them would need an exchange rate, and the system has no
+ * authoritative source for one. A single combined figure would be a guess
+ * presented as a fact.
+ */
+export function formatTotals(totals: MoneyTotal[], empty = "—"): string {
+  if (!totals.length) return empty;
+  return totals
+    .map((t) => formatMoney(t.amount, t.currencyLabel))
+    .join(" · ");
+}
+
+/** Groups amounts by currency, dropping currencies that contribute nothing. */
+export function sumByCurrency(
+  rows: { currencyId: number; currencyLabel: string; amount: number }[]
+): MoneyTotal[] {
+  const by = new Map<number, MoneyTotal>();
+  for (const r of rows) {
+    const acc = by.get(r.currencyId) ?? {
+      currencyId: r.currencyId,
+      currencyLabel: r.currencyLabel,
+      amount: 0,
+    };
+    acc.amount += r.amount;
+    by.set(r.currencyId, acc);
+  }
+  return [...by.values()]
+    .filter((t) => t.amount !== 0)
+    .sort((a, b) => a.currencyLabel.localeCompare(b.currencyLabel));
 }

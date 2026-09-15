@@ -6,7 +6,7 @@ import {
   budgetCategoryAllowsDirection,
   budgetCategoryNeedsPartner,
 } from "./entities";
-import { rateFor } from "./rules";
+import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import {
   NOT_APPROVED,
   type BudgetStatus,
@@ -100,8 +100,11 @@ export type BudgetMonth = {
   draft: number;
   submitted: number;
   open: number;
-  /** Totals converted to IDR so months of mixed currency stay comparable. */
-  totalBase: number;
+  /**
+   * Planned amounts, one entry per currency. Never a single combined figure:
+   * there is no authoritative exchange rate to combine them with.
+   */
+  totals: MoneyTotal[];
 };
 
 /**
@@ -117,7 +120,7 @@ export async function budgetMonths(): Promise<BudgetMonth[]> {
     prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
   ]);
 
-  const rateOf = currencyRates(currencies);
+  const currencyLabel = new Map(currencies.map((c) => [c.id, c.currency_label]));
   const today = day(new Date());
 
   return periods.map((p) => {
@@ -139,19 +142,15 @@ export async function budgetMonths(): Promise<BudgetMonth[]> {
       draft: mine.filter((b) => b.status === "Draft").length,
       submitted: mine.filter((b) => b.status === "Submitted").length,
       open: mine.filter((b) => b.status === "Open").length,
-      totalBase: mine.reduce(
-        (t, b) => t + b.budget_amount.toNumber() * rateOf(b.currency_id),
-        0
+      totals: sumByCurrency(
+        mine.map((b) => ({
+          currencyId: b.currency_id,
+          currencyLabel: currencyLabel.get(b.currency_id) ?? "",
+          amount: b.budget_amount.toNumber(),
+        }))
       ),
     };
   });
-}
-
-function currencyRates(
-  currencies: { id: number; currency_label: string }[]
-): (id: number) => number {
-  const byId = new Map(currencies.map((c) => [c.id, rateFor(c.currency_label)]));
-  return (id: number) => byId.get(id) ?? 1;
 }
 
 // ------------------------------------------------------------------ budgets
@@ -431,88 +430,43 @@ export async function nextBudgetNo(): Promise<string> {
 
 export type BudgetSummary = {
   notApproved: number;
-  notApprovedBase: number;
+  notApprovedTotals: MoneyTotal[];
   draft: number;
   submitted: number;
   unrealized: number;
-  unrealizedBase: number;
+  unrealizedTotals: MoneyTotal[];
 };
 
-/** The two KPI cards that are computed from `bud_budget` itself. */
-export async function summarise(
-  rows: BudgetRow[]
-): Promise<BudgetSummary> {
+/** The two KPI cards computed from `bud_budget` itself. */
+export async function summarise(rows: BudgetRow[]): Promise<BudgetSummary> {
   const currencies = await prisma.refCurrency.findMany({
     select: { id: true, currency_label: true },
   });
-  const rateOf = currencyRates(currencies);
+  const labelOf = new Map(currencies.map((c) => [c.id, c.currency_label]));
+  const money = (b: BudgetRow, amount: number) => ({
+    currencyId: b.currency_id,
+    currencyLabel: labelOf.get(b.currency_id) ?? "",
+    amount,
+  });
 
   const notApproved = rows.filter((b) => NOT_APPROVED.includes(b.status));
   // "Unrealized" means an approved budget with money still left to spend
-  // against it. Realization itself arrives with Finance in V2; until then this
-  // reads the seeded realized_amount and is simply zero for anything new.
+  // against it. Nothing writes `realized_amount` until the Finance module
+  // exists, so this currently reads as the full amount of every approved budget.
   const unrealized = rows.filter(
     (b) => b.status === "Open" && b.realized_amount < b.budget_amount
   );
 
   return {
     notApproved: notApproved.length,
-    notApprovedBase: notApproved.reduce(
-      (t, b) => t + b.budget_amount * rateOf(b.currency_id),
-      0
+    notApprovedTotals: sumByCurrency(
+      notApproved.map((b) => money(b, b.budget_amount))
     ),
     draft: rows.filter((b) => b.status === "Draft").length,
     submitted: rows.filter((b) => b.status === "Submitted").length,
     unrealized: unrealized.length,
-    unrealizedBase: unrealized.reduce(
-      (t, b) => t + (b.budget_amount - b.realized_amount) * rateOf(b.currency_id),
-      0
+    unrealizedTotals: sumByCurrency(
+      unrealized.map((b) => money(b, b.budget_amount - b.realized_amount))
     ),
-  };
-}
-
-export type CashPlaceholder = {
-  totalBase: number;
-  resources: number;
-  byCurrency: { currencyLabel: string; amount: number; base: number }[];
-};
-
-/**
- * The "Saldo Kas & Bank" card — A PLACEHOLDER, not a real balance.
- *
- * It reads `m_cash_bank.balance`, which §9 marks mock-only and slates for
- * deletion: the authoritative balance comes from `cash_bank_ledger` /
- * `cash_bank_balance` in V2, and this number will not agree with reality the
- * moment anything posts. It is surfaced only because the user asked for the
- * card to exist now, and every place it appears says so on the page.
- *
- * Do not read this anywhere else, and do not quietly drop the "sementara"
- * labelling from the components that render it.
- */
-export async function cashPlaceholder(): Promise<CashPlaceholder> {
-  const rows = await prisma.mCashBank.findMany({
-    where: { status: "Active" },
-    select: { balance: true, currency: { select: { currency_label: true } } },
-  });
-
-  const byCurrency = new Map<string, { amount: number; base: number }>();
-  let totalBase = 0;
-  for (const r of rows) {
-    const label = r.currency.currency_label;
-    const amount = r.balance.toNumber();
-    const base = amount * rateFor(label);
-    const acc = byCurrency.get(label) ?? { amount: 0, base: 0 };
-    byCurrency.set(label, { amount: acc.amount + amount, base: acc.base + base });
-    totalBase += base;
-  }
-
-  return {
-    totalBase,
-    resources: rows.length,
-    byCurrency: [...byCurrency.entries()]
-      .map(([currencyLabel, v]) => ({ currencyLabel, ...v }))
-      .sort((a, b) =>
-        a.currencyLabel === "IDR" ? -1 : b.currencyLabel === "IDR" ? 1 : 0
-      ),
   };
 }
