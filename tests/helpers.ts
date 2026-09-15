@@ -185,6 +185,27 @@ export async function subcategoryId(label: string): Promise<number> {
   return row.id;
 }
 
+/**
+ * The next unused number under `parentLabel` in this Company.
+ *
+ * A fixture cannot simply take segment 1: the database it runs against belongs
+ * to whoever uses the application, and a real user's own `1.1.1.1` would
+ * collide with it. Probing exact labels rather than a prefix is deliberate —
+ * `1.1.1.1.1` starts with `1.1.1.` but is a grandchild, not a sibling.
+ */
+async function freeSegment(companyId: number, parentLabel: string): Promise<string> {
+  const siblings = await prisma.accAccount.findMany({
+    where: { company_id: companyId, account_label: { startsWith: `${parentLabel}.` } },
+    select: { account_label: true },
+  });
+  const taken = new Set(siblings.map((a) => a.account_label));
+  for (let segment = 1; segment <= 999; segment += 1) {
+    const label = `${parentLabel}.${segment}`;
+    if (!taken.has(label)) return label;
+  }
+  throw new Error(`No free account number left under ${parentLabel}`);
+}
+
 export async function makeAccount(options: {
   companyId: number;
   subcategoryLabel: string;
@@ -196,8 +217,7 @@ export async function makeAccount(options: {
   const key = nextFixture();
   // A fixture account carries a real lineage code: it continues its parent
   // account's number when it has one and its kelompok's otherwise, exactly as
-  // `createRecord` composes it. The segment is the fixture sequence, which is
-  // what keeps the codes distinct within a run.
+  // `createRecord` composes it.
   const parentLabel = options.parentId
     ? (
         await prisma.accAccount.findUniqueOrThrow({
@@ -210,7 +230,7 @@ export async function makeAccount(options: {
   const row = await prisma.accAccount.create({
     data: {
       account_code: `${FIXTURE_PREFIX}.${key}`,
-      account_label: `${parentLabel}.${fixtureSeq}`,
+      account_label: await freeSegment(options.companyId, parentLabel),
       account_name: `Fixture ${key}`,
       company_id: options.companyId,
       account_subcategory_id: await subcategoryId(options.subcategoryLabel),

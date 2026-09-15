@@ -192,6 +192,11 @@ export function BudgetForm({
             {title}
           </h1>
           <div className="ph-act">
+            {editing && dirty && (
+              <span className="ph-dirty">
+                <span className="pulse" /> Belum disimpan
+              </span>
+            )}
             {mode === "view" && budget && (
               <>
                 {can.edit && budgetIsEditable(budget.status) && (
@@ -217,9 +222,14 @@ export function BudgetForm({
               </>
             )}
             {editing && (
-              <Link className="btn" href={backHref}>
-                <Icon name="back" size={15} /> Batal
-              </Link>
+              <>
+                <Link className="btn" href={backHref}>
+                  <Icon name="back" size={15} /> Batal
+                </Link>
+                <button className="btn primary" onClick={onSave} disabled={saving}>
+                  <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -492,21 +502,6 @@ export function BudgetForm({
                 </div>
               )}
             </div>
-
-            {editing && dirty && (
-              <div className="dirty">
-                <span className="msg">
-                  <span className="pulse" />
-                  Ada perubahan yang belum disimpan
-                </span>
-                <Link className="btn sm" href={backHref}>
-                  Batal
-                </Link>
-                <button className="btn primary sm" onClick={onSave} disabled={saving}>
-                  <Icon name="save" size={14} /> Simpan
-                </button>
-              </div>
-            )}
           </div>
 
           {mode === "view" && realizations && (

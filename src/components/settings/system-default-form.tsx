@@ -94,6 +94,21 @@ export function SystemDefaultForm({
             </span>
             System Default
           </h1>
+          <div className="ph-act">
+            {canEdit && dirty && (
+              <>
+                <span className="ph-dirty">
+                  <span className="pulse" /> Belum disimpan
+                </span>
+                <button className="btn" onClick={reset} disabled={saving}>
+                  Batal
+                </button>
+                <button className="btn primary" onClick={onSave} disabled={saving}>
+                  <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
+                </button>
+              </>
+            )}
+          </div>
         </div>
         <p className="ph-sub">
           Nilai bawaan yang dipakai seluruh aplikasi. Default hanya mengisi
@@ -161,21 +176,6 @@ export function SystemDefaultForm({
             </div>
           </div>
         </div>
-
-        {canEdit && dirty && (
-          <div className="dirty">
-            <span className="msg">
-              <span className="pulse" />
-              Ada perubahan yang belum disimpan
-            </span>
-            <button className="btn sm" onClick={reset} disabled={saving}>
-              Batal
-            </button>
-            <button className="btn primary sm" onClick={onSave} disabled={saving}>
-              <Icon name="save" size={14} /> Simpan
-            </button>
-          </div>
-        )}
       </div>
 
       <p className="foot-note">

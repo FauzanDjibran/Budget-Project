@@ -408,6 +408,11 @@ export function TransactionForm({
             {mode === "edit" && <span className="bdg t-vio">Mode Ubah</span>}
           </h1>
           <div className="ph-act">
+            {editing && dirty && (
+              <span className="ph-dirty">
+                <span className="pulse" /> Belum disimpan
+              </span>
+            )}
             {mode === "view" && transaction && (
               <>
                 {can.edit && transactionIsEditable(transaction.status) && (
@@ -443,9 +448,14 @@ export function TransactionForm({
               </>
             )}
             {editing && (
-              <Link className="btn" href={backHref}>
-                <Icon name="back" size={15} /> Batal
-              </Link>
+              <>
+                <Link className="btn" href={backHref}>
+                  <Icon name="back" size={15} /> Batal
+                </Link>
+                <button className="btn primary" onClick={onSave} disabled={saving}>
+                  <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -670,21 +680,6 @@ export function TransactionForm({
                 </div>
               </div>
             </div>
-
-            {editing && dirty && (
-              <div className="dirty">
-                <span className="msg">
-                  <span className="pulse" />
-                  Ada perubahan yang belum disimpan
-                </span>
-                <Link className="btn sm" href={backHref}>
-                  Batal
-                </Link>
-                <button className="btn primary sm" onClick={onSave} disabled={saving}>
-                  <Icon name="save" size={14} /> Simpan
-                </button>
-              </div>
-            )}
           </div>
 
           <div className="card" style={{ marginTop: 14 }}>

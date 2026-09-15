@@ -146,10 +146,16 @@ body.no-sub .reopen{display:none!important}
 .reopen{position:absolute;left:0;top:0;z-index:5;width:26px;height:26px;border:1px solid var(--line);background:#fff;
   border-radius:50%;display:none;place-items:center;cursor:pointer;color:var(--muted);box-shadow:var(--sh-sm)}
 body.sub-off .reopen{display:grid}
-.pad{padding:2px 4px 44px}
+.pad{padding:0 4px 44px}
 
 /* ============================================================ page header */
 .ph{margin-bottom:15px}
+/* The header travels with the page: a form's actions stay reachable from
+   anywhere in it, which is why nothing is parked at the bottom any more.
+   Scoped to `.pad >` deliberately — `.ph` is also the placeholder class
+   inside a Combobox and a Select, and those must not become sticky. */
+.pad > .ph{position:sticky;top:0;z-index:30;margin:0 -4px 15px;padding:10px 4px 12px;
+  background:var(--bg);box-shadow:0 10px 12px -10px rgba(15,23,42,.10)}
 .crumb{display:flex;align-items:center;gap:7px;font-size:9.5px;font-weight:800;letter-spacing:.11em;
   text-transform:uppercase;color:var(--muted-2);margin-bottom:7px;flex-wrap:wrap}
 .crumb button{border:0;background:none;padding:0;font:inherit;text-transform:uppercase;letter-spacing:inherit;color:var(--muted-2);cursor:pointer}
@@ -421,10 +427,10 @@ td.acts{width:88px;padding-right:7px}
 .rnav span{display:grid;place-items:center;padding:0 9px;font-size:11px;font-weight:700;color:var(--muted);
   border-left:1px solid var(--line);border-right:1px solid var(--line);font-variant-numeric:tabular-nums}
 
-.dirty{position:sticky;bottom:0;z-index:12;display:flex;align-items:center;gap:12px;padding:11px 16px;
-  background:rgba(255,255,255,.96);backdrop-filter:blur(8px);border-top:1px solid var(--line);
-  border-radius:0 0 var(--r-lg) var(--r-lg);box-shadow:0 -6px 18px rgba(15,23,42,.06);flex-wrap:wrap}
-.dirty .msg{flex:1 1 auto;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--warn)}
+/* Unsaved changes, stated beside the Simpan button that resolves them. */
+.ph-dirty{display:inline-flex;align-items:center;gap:6px;height:33px;padding:0 11px;border-radius:var(--r);
+  border:1px solid var(--warn-line);background:var(--warn-bg);color:var(--warn);
+  font-size:11.5px;font-weight:700;white-space:nowrap}
 .pulse{width:7px;height:7px;border-radius:50%;background:var(--warn-solid);animation:pl 1.6s ease-in-out infinite}
 @keyframes pl{0%,100%{opacity:1}50%{opacity:.35}}
 
@@ -815,7 +821,7 @@ table.pkt2 tbody tr.on:hover td{background:#F7F0D4}
   .reopen{display:none!important}
   .content{padding:12px}
 }
-@media print{ .topbar,.rail,.sub,.toolbar,.pager,.ph-act,.dirty,.ract{display:none!important} .content{overflow:visible} body{background:#fff} }
+@media print{ .topbar,.rail,.sub,.toolbar,.pager,.ph-act,.ract{display:none!important} .pad > .ph{position:static;box-shadow:none} .content{overflow:visible} body{background:#fff} }
 
 
 /* ============================================================ font wiring

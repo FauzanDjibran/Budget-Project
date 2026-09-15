@@ -200,6 +200,11 @@ export function UserForm({
           </h1>
 
           <div className="ph-act">
+            {editing && dirty && (
+              <span className="ph-dirty">
+                <span className="pulse" /> Belum disimpan
+              </span>
+            )}
             {editing ? (
               <>
                 <Link
@@ -375,24 +380,6 @@ export function UserForm({
                     )}
                   </div>
                 </div>
-              </div>
-            )}
-
-            {editing && dirty && (
-              <div className="dirty">
-                <span className="msg">
-                  <span className="pulse" />
-                  Ada perubahan yang belum disimpan
-                </span>
-                <Link
-                  className="btn sm"
-                  href={mode === "new" ? "/settings/user" : `/settings/user/${user!.id}`}
-                >
-                  Batal
-                </Link>
-                <button className="btn primary sm" onClick={onSave} disabled={saving}>
-                  <Icon name="save" size={14} /> Simpan
-                </button>
               </div>
             )}
           </div>

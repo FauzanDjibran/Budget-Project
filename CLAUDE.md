@@ -397,7 +397,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Concern | Convention |
 | --- | --- |
 | Layout | Topbar → icon rail → collapsible submenu → content. Shell owns it. |
-| Page header | `.ph` → `.crumb`, `.ph-row` (h1 + `.ph-act`), `.ph-sub` |
+| Page header | `.ph` → `.crumb`, `.ph-row` (h1 + `.ph-act`), `.ph-sub`. **Sticky**, and `.ph-act` is where every action on the page lives |
 | Cards | `.card` + `.card-h` (icon `.ci`, title `.ct`) |
 | Tables | `.tw` wrapper → `table.grid`; sortable `th.srt`; `.pri` `.mut` `.num` cells |
 | Identity cells | `.idc` = `.lab` code chip + `.nm` name |
@@ -409,7 +409,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`) |
 | Dates | `DateInput` — **never `<input type="date">`**; types and shows `dd/mm/yyyy`, opens the app's own calendar |
 | Validation | Inline `.err` under the field + `.bad` on the control + error toast |
-| Unsaved changes | Sticky `.dirty` bar with pulse indicator |
+| Unsaved changes | `.ph-dirty` chip with pulse indicator, in `.ph-act` beside Simpan |
 | Confirmations | `ConfirmDialog` — tinted icon, subject chip, **consequence copy** |
 | Feedback | Toasts via `useToast()` |
 | Empty states | `.empty` — icon, heading, explanation, CTA only when the user can act |
@@ -417,6 +417,8 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 
 **Anti-patterns explicitly rejected** (from `akui_proto_ui_reference.md`, its §9 and §11):
 
+- Actions parked at the bottom of a form, where a reader has to scroll to find
+  out what they can do. Every action belongs in `.ph-act`.
 - Read-only presented as disabled inputs.
 - Font scales below ~10px.
 - Duplicating filters in both a header row and a separate filter panel.
@@ -782,6 +784,31 @@ Specified in the concept doc, **not yet implemented** (see §13):
   client-only filter.
 - **Do not change unless:** explicitly instructed. **A picker's filter is never the
   enforcement**; the matching check in the Server Action is.
+
+### The page header is sticky, and every action lives in it (FROZEN)
+- **Decision:** `.pad > .ph` is `position: sticky; top: 0`, so the breadcrumb,
+  title, status and `.ph-act` travel with the page as it scrolls. **Every**
+  action a page offers sits in `.ph-act` at the top right — Batal and Simpan
+  while editing, Ubah and the lifecycle transitions while viewing. The bottom
+  `.dirty` bar is gone from all six forms; unsaved changes are stated by a
+  `.ph-dirty` chip beside the Simpan button that resolves them.
+- **Reason:** Cash Bank Transaction showed why. Its header carried only Batal
+  while editing, so on a new document the only Simpan was inside the bottom
+  bar — and that bar rendered only once the form was dirty. A user who had
+  filled nothing in could not see how to save, and a user who had could only
+  save by scrolling past a Budget table of arbitrary length. Actions belong
+  where a reader looks first, and one place, not two.
+- **Impact:** A new page gets its buttons in `.ph-act` and nowhere else. The
+  sticky rule is scoped `.pad >` **deliberately**: `.ph` is also the
+  placeholder class inside `Combobox` and `Select`, and a bare `.ph` rule would
+  make every placeholder in the app sticky. Page headers are always a direct
+  child of `.pad`, so the selector is exact. `z-index: 30` puts the header over
+  a table's own sticky `thead` (3) and the report criteria bar (20), under the
+  topbar (40). The header costs about 100px of a scrolling viewport, which is
+  the price of the actions always being reachable.
+- **Do not change unless:** explicitly instructed. **Never add a button bar at
+  the bottom of a form**, and never widen the sticky rule to a bare `.ph`.
+- **Status:** Frozen, current.
 
 ### The chart of accounts is one lineage-numbered tree (FROZEN)
 - **Decision:** Account Type, Account Category, Account Subcategory and Account
@@ -1560,6 +1587,11 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   convention instead, and do **not** build a generic report engine (§12).
 - Do **not** re-embed the Cash Bank Book under the Cash & Bank master record. The
   master links into the report (§12).
+- Do **not** put a form's buttons anywhere but `.ph-act`, and do **not**
+  reintroduce a bottom action bar (§8, §12).
+- Do **not** write a bare `.ph` CSS rule — it is the Combobox and Select
+  placeholder class as well as the page header. Scope page-header rules to
+  `.pad > .ph` (§12).
 - Do **not** let an account number be typed whole, renumbered, or moved to a
   different parent. A code is composed from its lineage and frozen once saved
   (§10, §12).
