@@ -4,10 +4,11 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/ui/select";
 import type { EntityAbilities } from "@/lib/siba/entity-access";
 import { TAG_CLASS, createLabel, type Entity } from "@/lib/siba/entities";
 import { moduleByKey } from "@/lib/siba/nav";
-import type { TreeAccount, TreeCategory } from "@/lib/siba/records";
+import type { TreeAccount, TreeCategory, TreeCompany } from "@/lib/siba/records";
 
 /**
  * Chart of Accounts renders as a tree rather than a table — it is the one
@@ -16,14 +17,21 @@ import type { TreeAccount, TreeCategory } from "@/lib/siba/records";
  *
  * Category and kelompok rows are seeded structure, not accounts: only numbered
  * rows can carry a Journal Line. Detail, create and edit stay generic.
+ *
+ * The tree shows **one Company's** chart at a time. Each Company numbers its
+ * own chart independently, so the induk's `1.1.4.1` and the anak's are
+ * different accounts that happen to share a number — listing both together
+ * reads as duplicated rows rather than as two books.
  */
 export function AccountTree({
   entity,
+  companies,
   categories,
   accounts,
   can,
 }: {
   entity: Entity;
+  companies: TreeCompany[];
   categories: TreeCategory[];
   accounts: TreeAccount[];
   can: EntityAbilities;
@@ -32,23 +40,31 @@ export function AccountTree({
   const basePath = `/${entity.module}/${entity.slug}`;
   const moduleName = moduleByKey(entity.module)?.name ?? entity.module;
 
+  const [companyId, setCompanyId] = useState(companies[0]?.id ?? 0);
   const [query, setQuery] = useState("");
   /** Collapsed keys. Every branch starts open. */
   const [closed, setClosed] = useState<Set<string>>(new Set());
 
+  const company = companies.find((c) => c.id === companyId) ?? null;
   const q = query.trim().toLowerCase();
   const searching = q.length > 0;
 
+  /** One Company's chart. Everything below works on this set alone. */
+  const owned = useMemo(
+    () => accounts.filter((a) => a.companyId === companyId),
+    [accounts, companyId]
+  );
+
   const childrenOf = useMemo(() => {
     const map = new Map<number, TreeAccount[]>();
-    for (const a of accounts) {
+    for (const a of owned) {
       if (a.parentId == null) continue;
       const list = map.get(a.parentId) ?? [];
       list.push(a);
       map.set(a.parentId, list);
     }
     return map;
-  }, [accounts]);
+  }, [owned]);
 
   /**
    * Accounts matching the search, plus every ancestor needed to reach them —
@@ -56,9 +72,9 @@ export function AccountTree({
    */
   const matched = useMemo(() => {
     if (!searching) return null;
-    const byId = new Map(accounts.map((a) => [a.id, a]));
+    const byId = new Map(owned.map((a) => [a.id, a]));
     const keep = new Set<number>();
-    for (const a of accounts) {
+    for (const a of owned) {
       if (
         !a.label.toLowerCase().includes(q) &&
         !a.name.toLowerCase().includes(q)
@@ -73,11 +89,11 @@ export function AccountTree({
       }
     }
     return keep;
-  }, [accounts, q, searching]);
+  }, [owned, q, searching]);
 
   const visibleAccounts = matched
-    ? accounts.filter((a) => matched.has(a.id))
-    : accounts;
+    ? owned.filter((a) => matched.has(a.id))
+    : owned;
 
   const isOpen = (key: string) => searching || !closed.has(key);
   const toggle = (key: string) =>
@@ -98,7 +114,7 @@ export function AccountTree({
       all.add(`c${c.id}`);
       for (const s of c.subcategories) all.add(`s${s.id}`);
     }
-    for (const a of accounts) all.add(`a${a.id}`);
+    for (const a of owned) all.add(`a${a.id}`);
     setClosed(all);
   };
 
@@ -137,7 +153,6 @@ export function AccountTree({
           <span className="tname">{account.name}</span>
           <span className="tright">
             {kids.length > 0 && <span className="tcount">{kids.length} turunan</span>}
-            <span className="bdg t-slate">{account.companyLabel}</span>
             <span className={`bdg ${TAG_CLASS[account.normalBalance] ?? "t-slate"}`}>
               {account.normalBalance}
             </span>
@@ -299,6 +314,19 @@ export function AccountTree({
 
       <div className="card">
         <div className="toolbar">
+          {companies.length > 1 && (
+            <Select
+              variant="toolbar"
+              value={String(companyId)}
+              onChange={(v) => setCompanyId(Number(v))}
+              title="Company pemilik bagan akun"
+              ariaLabel="Company"
+              options={companies.map((c) => ({
+                value: String(c.id),
+                label: `${c.label} - ${c.name}`,
+              }))}
+            />
+          )}
           <div
             className={`srch${query ? " has" : ""}`}
             style={{ maxWidth: "none", flex: "1 1 auto" }}
@@ -327,12 +355,13 @@ export function AccountTree({
             <Icon name="tree" size={15} />
           </span>
           <div className="ct">
-            <h3>Struktur Bagan Akun</h3>
+            <h3>
+              Struktur Bagan Akun
+              {company && <span className="lab">{company.label}</span>}
+            </h3>
             <p>
-              Nomor diwariskan ke bawah: Kategori melanjutkan nomor Type, Kelompok
-              melanjutkan Kategori, dan setiap account melanjutkan induknya. Kategori
-              dan kelompok adalah struktur, bukan account — hanya account yang dapat
-              menerima Journal Line.
+              Bagan akun per Company. Nomor melanjutkan induknya; kategori dan
+              kelompok adalah struktur, bukan account.
             </p>
           </div>
           <span className="hint">Klik baris account untuk membuka detail</span>
@@ -347,7 +376,8 @@ export function AccountTree({
             </div>
             <h4>Tidak ada yang cocok</h4>
             <p>
-              Tidak ada account atau kelompok yang mengandung kata kunci tersebut.
+              Tidak ada account atau kelompok pada {company?.label ?? "Company ini"}{" "}
+              yang mengandung kata kunci tersebut.
             </p>
             <div className="cta">
               <button className="btn" onClick={() => setQuery("")}>

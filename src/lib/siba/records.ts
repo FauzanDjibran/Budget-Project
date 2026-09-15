@@ -285,6 +285,40 @@ export async function checkCashBankAccount(
   return null;
 }
 
+/**
+ * Whether an account number is free, checked the way the database constrains
+ * it: unique **within a Company**, never globally.
+ *
+ * Two Companies each keeping their own `1.1.4.1` is the point — a chart of
+ * accounts belongs to one legal entity, and the two here are separate books
+ * (CLAUDE.md §10). What must never happen is one Company holding the number
+ * twice, which is what this refuses and what
+ * `@@unique([company_id, account_label])` backs up underneath.
+ *
+ * Returns the refusal to show, or null when the number is free. Lives here
+ * rather than inside the Server Action so it is reachable from a test: an
+ * action resolves its caller from a session cookie, which a test has no way
+ * to produce.
+ */
+export async function checkAccountNumber(
+  companyId: number,
+  accountLabel: string,
+  currentId: number | null = null
+): Promise<string | null> {
+  if (!accountLabel) return null;
+  const clash = await prisma.accAccount.findFirst({
+    where: {
+      company_id: companyId,
+      account_label: accountLabel,
+      ...(currentId ? { id: { not: currentId } } : {}),
+    },
+    select: { account_name: true },
+  });
+  return clash
+    ? `Nomor ${accountLabel} sudah dipakai oleh ${clash.account_name} pada Company ini.`
+    : null;
+}
+
 /** The account ids that would form a cycle if made this account's parent. */
 export async function accountDescendants(rootId: number): Promise<Set<number>> {
   const all = await prisma.accAccount.findMany({
@@ -441,6 +475,8 @@ export type TreeAccount = {
   isControlAccount: boolean;
 };
 
+export type TreeCompany = { id: number; label: string; name: string };
+
 export type TreeSubcategory = { id: number; label: string; name: string };
 
 export type TreeCategory = {
@@ -458,8 +494,14 @@ export type TreeCategory = {
  * Categories and kelompok are system structure with no menu of their own: they
  * are seeded, they are not accounts, and application logic reads them by label.
  * They are read here so the tree can group accounts under them.
+ *
+ * The Companies come back too, because a chart of accounts belongs to exactly
+ * one of them. Both keep their own numbering — the induk's `1.1.4.1` and the
+ * anak's are different accounts — so a tree showing both at once reads as
+ * duplicated rows. The tree picks one Company and shows that Company's chart.
  */
 export async function accountTree(): Promise<{
+  companies: TreeCompany[];
   categories: TreeCategory[];
   accounts: TreeAccount[];
 }> {
@@ -478,6 +520,10 @@ export async function accountTree(): Promise<{
   const partnerLabel = new Map(partnerCategories.map((p) => [p.id, p.category_label]));
 
   return {
+    // Induk first: it is the Company every module transacts for today.
+    companies: [...companies]
+      .sort((a, b) => Number(b.is_parent) - Number(a.is_parent))
+      .map((c) => ({ id: c.id, label: c.company_label, name: c.company_name })),
     categories: categories
       .sort((a, b) => compareCodes(a.category_label, b.category_label))
       .map((c) => ({

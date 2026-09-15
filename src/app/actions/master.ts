@@ -22,6 +22,7 @@ import { fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
 import {
   CASH_BANK_SUBCATEGORY,
   accountDescendants,
+  checkAccountNumber,
   checkCashBankAccount,
   delegate,
   nextCode,
@@ -346,16 +347,12 @@ async function validateAccount(
 
     // `derive` has already composed the code by now, so this is the check the
     // user's own number gets: two 1.1.1.10 in one Company are refused, while
-    // 1.1.1.10 and 1.1.2.10 are different accounts and both may exist.
+    // 1.1.1.10 and 1.1.2.10 are different accounts and both may exist, as do
+    // the induk's 1.1.4.1 and the anak's.
     const label = String(values.account_label ?? "");
     if (label && companyId && !errors.parent_account) {
-      const clash = await prisma.accAccount.findFirst({
-        where: { company_id: companyId, account_label: label },
-        select: { account_name: true },
-      });
-      if (clash) {
-        errors.account_segment = `Nomor ${label} sudah dipakai oleh ${clash.account_name}.`;
-      }
+      const taken = await checkAccountNumber(companyId, label, currentId);
+      if (taken) errors.account_segment = taken;
     }
   }
 

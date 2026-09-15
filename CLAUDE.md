@@ -518,7 +518,14 @@ Implemented and enforced:
    creation — ledger history is tied to the company.
 7. **Inactive records** disappear from new-transaction pickers but remain visible when
    already selected, and all history stays intact.
-8. **Account numbers** are unique per company, not globally (`@@unique([company_id, account_label])`).
+8. **Account numbers are unique per Company, never globally**
+   (`@@unique([company_id, account_label])`). A chart of accounts belongs to one
+   legal entity, so the induk's `1.1.4.1` and the anak's are different accounts
+   that happen to share a number — not a duplicate. `checkAccountNumber` in
+   `records.ts` is the enforcement and names the account already holding the
+   number; the database constraint is the backstop under it. **Because of this,
+   the Chart of Accounts tree shows one Company at a time** — listing both at
+   once reads as doubled rows.
 9. **Access comes only from roles.** A user's permissions are the union of their
    *active* roles' permissions, recomputed from the database on every request. There is
    no direct user-to-permission grant, and deactivating a role withdraws it from
@@ -820,6 +827,26 @@ Specified in the concept doc, **not yet implemented** (see §13):
   the price of the actions always being reachable.
 - **Do not change unless:** explicitly instructed. **Never add a button bar at
   the bottom of a form**, and never widen the sticky rule to a bare `.ph`.
+- **Status:** Frozen, current.
+
+### A chart of accounts belongs to one Company, and the tree shows one (FROZEN)
+- **Decision:** Account numbering is per Company. Two Companies each holding
+  their own `1.1.4.1` is correct and expected; one Company holding it twice is
+  refused by `checkAccountNumber` and, underneath, by
+  `@@unique([company_id, account_label])`. The Chart of Accounts tree therefore
+  carries its own **Company picker**, defaults to the induk, and renders that
+  Company's chart alone.
+- **Reason:** With both Companies populated the tree listed every number twice,
+  one row per Company, which reads as duplicated data rather than as two books.
+  The numbers were never duplicated — the screen was.
+- **Impact:** The per-row Company badge is gone from the tree: the picker names
+  the Company once, so repeating it on every row earned nothing. Search, the
+  expand/collapse state and the kelompok counts all work on the selected
+  Company's accounts only. This is the tree's own control, **not** the topbar
+  Company selector, which is still inert (§17) and is a separate change.
+- **Do not change unless:** explicitly instructed. **Never make account numbers
+  globally unique** — that would stop the anak from keeping a normal chart of
+  accounts — and do not merge both Companies back into one tree.
 - **Status:** Frozen, current.
 
 ### The chart of accounts is one lineage-numbered tree (FROZEN)
@@ -1599,6 +1626,8 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   convention instead, and do **not** build a generic report engine (§12).
 - Do **not** re-embed the Cash Bank Book under the Cash & Bank master record. The
   master links into the report (§12).
+- Do **not** make account numbers globally unique, and do **not** show both
+  Companies' charts in one tree (§10, §12).
 - Do **not** put a form's buttons anywhere but `.ph-act`, and do **not**
   reintroduce a bottom action bar (§8, §12).
 - Do **not** write a bare `.ph` CSS rule — it is the Combobox and Select

@@ -58,10 +58,11 @@ export async function EntityListPage({
   const can = abilitiesFor(entity.key, actor.permissions);
 
   if (entity.view === "tree") {
-    const { categories, accounts } = await accountTree();
+    const { companies, categories, accounts } = await accountTree();
     return (
       <AccountTree
         entity={entity}
+        companies={companies}
         categories={categories}
         accounts={accounts}
         can={can}

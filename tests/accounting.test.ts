@@ -17,16 +17,20 @@ import {
 import {
   CASH_BANK_SUBCATEGORY,
   accountDescendants,
+  checkAccountNumber,
   checkCashBankAccount,
   partnerCategoriesForBudgetCategory,
 } from "../src/lib/siba/records";
 import {
+  FIXTURE_PREFIX,
   childCompanyId,
+  subcategoryId,
   cleanupFixtures,
   disconnect,
   makeAccount,
   parentCompanyId,
   prisma,
+  systemUserId,
 } from "./helpers";
 
 /**
@@ -61,6 +65,8 @@ let receivable = 0;
 let foreignCash = 0;
 /** A deactivated Kas account. */
 let inactiveCash = 0;
+/** Holds the number the uniqueness cases contest, on the parent Company. */
+let contested = 0;
 
 before(async () => {
   parent = await parentCompanyId();
@@ -84,6 +90,21 @@ before(async () => {
     subcategoryLabel: CASH_BANK_SUBCATEGORY,
     active: false,
   });
+
+  contested = (
+    await prisma.accAccount.create({
+      data: {
+        account_code: `${FIXTURE_PREFIX}.contested`,
+        account_label: `${CASH_BANK_SUBCATEGORY}.987`,
+        account_name: "Fixture Nomor Diperebutkan",
+        company_id: parent,
+        account_subcategory_id: await subcategoryId(CASH_BANK_SUBCATEGORY),
+        normal_balance: "Debit",
+        created_by: await systemUserId(),
+      },
+      select: { id: true },
+    })
+  ).id;
 });
 
 describe("every registry entity declares its permissions", () => {
@@ -311,5 +332,63 @@ describe("an account code states its own lineage", () => {
     });
     assert.equal(parentCode(child.account_label), parent.account_label);
     assert.ok(isUnder(child.account_label, CASH_BANK_SUBCATEGORY));
+  });
+});
+
+/**
+ * An account number is unique within a Company and not beyond it.
+ *
+ * Both halves matter. One Company holding 1.1.4.1 twice is a broken chart;
+ * the induk and the anak each holding their own 1.1.4.1 is two books, which
+ * is the whole point of a chart of accounts belonging to a legal entity.
+ */
+describe("an account number cannot be reused within its Company", () => {
+  // A number chosen high enough that no chart a person builds will hold it,
+  // so the two halves below turn on the Company and nothing else.
+  const CONTESTED = `${CASH_BANK_SUBCATEGORY}.987`;
+
+  test("a number already taken in this Company is refused, and names the holder", async () => {
+    const holder = await prisma.accAccount.findUniqueOrThrow({
+      where: { id: contested },
+      select: { account_name: true },
+    });
+
+    const problem = await checkAccountNumber(parent, CONTESTED);
+    assert.ok(problem, "the number is in use and must be refused");
+    assert.match(String(problem), new RegExp(holder.account_name));
+  });
+
+  test("the same number in the other Company is free", async () => {
+    assert.equal(
+      await checkAccountNumber(child, CONTESTED),
+      null,
+      "each Company numbers its own chart — this is not a duplicate"
+    );
+  });
+
+  test("an unused number is free", async () => {
+    assert.equal(await checkAccountNumber(parent, "9.9.9.999"), null);
+  });
+
+  test("an account does not collide with itself when edited", async () => {
+    assert.equal(await checkAccountNumber(parent, CONTESTED, contested), null);
+  });
+
+  test("the database refuses a duplicate even if nothing checked first", async () => {
+    await assert.rejects(
+      prisma.accAccount.create({
+        data: {
+          account_code: `${FIXTURE_PREFIX}.collision`,
+          account_label: CONTESTED,
+          account_name: "Fixture collision",
+          company_id: parent,
+          account_subcategory_id: await subcategoryId(CASH_BANK_SUBCATEGORY),
+          normal_balance: "Debit",
+          created_by: await systemUserId(),
+        },
+      }),
+      /Unique constraint/,
+      "@@unique([company_id, account_label]) is the backstop under the check"
+    );
   });
 });
