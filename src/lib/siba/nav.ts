@@ -146,6 +146,28 @@ export const MODULES: NavModule[] = [
           },
         ],
       },
+      {
+        key: "report",
+        name: "Laporan",
+        entities: [
+          {
+            key: "report_cash_bank_ledger",
+            slug: "report/cash-bank-ledger",
+            name: "Buku Kas & Bank",
+            icon: "book",
+            desc: "Seluruh mutasi satu resource kas atau bank pada rentang tanggal yang dipilih.",
+            permission: "REPORT_CASH_BANK_LEDGER_VIEW",
+          },
+          {
+            key: "report_cash_bank_balance",
+            slug: "report/cash-bank-balance",
+            name: "Saldo Kas & Bank",
+            icon: "wallet",
+            desc: "Saldo awal, penerimaan, pengeluaran, dan saldo akhir setiap resource kas dan bank.",
+            permission: "REPORT_CASH_BANK_BALANCE_VIEW",
+          },
+        ],
+      },
     ],
   },
   {
@@ -231,6 +253,20 @@ export const MODULES: NavModule[] = [
         ],
       },
       {
+        key: "system",
+        name: "Sistem",
+        entities: [
+          {
+            key: "sys_setting",
+            slug: "system-default",
+            name: "System Default",
+            icon: "gear",
+            desc: "Nilai bawaan yang dipakai seluruh aplikasi. Default mengisi sebuah pilihan lebih dulu; pengguna tetap dapat menggantinya.",
+            permission: "MENU_SYSTEM_DEFAULT_ACCESS",
+          },
+        ],
+      },
+      {
         key: "account",
         name: "Akun Saya",
         entities: [
@@ -291,14 +327,35 @@ export function entityHref(moduleKey: string, slug: string): string {
   return `/${moduleKey}/${slug}`;
 }
 
-/** Finds the module/group/entity that owns a pathname like `/master/partner`. */
+/**
+ * Finds the module/group/entity that owns a pathname like `/master/partner`.
+ *
+ * The slug is matched against the **whole** tail after the module, not just its
+ * first segment, because a Report View's slug spans two (`report/cash-bank-ledger`).
+ * Deeper paths still resolve to the entity that owns them — `/master/partner/12`
+ * and `/budget/budget/month/5` both land on their list entity — and the longest
+ * matching slug wins, so an entity whose slug is a prefix of another's can never
+ * swallow it.
+ */
 export function resolvePath(pathname: string) {
-  const [, moduleKey, slug] = pathname.split("/");
+  const [, moduleKey, ...rest] = pathname.split("/");
   const mod = moduleByKey(moduleKey ?? "");
   if (!mod) return { module: undefined, group: undefined, entity: undefined };
+
+  const tail = rest.join("/");
+  let best: { group: NavGroup; entity: NavEntity } | null = null;
+
   for (const group of mod.groups ?? []) {
-    const entity = group.entities.find((e) => e.slug === slug);
-    if (entity) return { module: mod, group, entity };
+    for (const entity of group.entities) {
+      const matches = tail === entity.slug || tail.startsWith(`${entity.slug}/`);
+      if (!matches) continue;
+      if (!best || entity.slug.length > best.entity.slug.length) {
+        best = { group, entity };
+      }
+    }
   }
-  return { module: mod, group: undefined, entity: undefined };
+
+  return best
+    ? { module: mod, group: best.group, entity: best.entity }
+    : { module: mod, group: undefined, entity: undefined };
 }

@@ -29,6 +29,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PERMISSIONS } from "../src/lib/siba/permissions";
 import { SEEDED_ROLES, ADMIN_ROLE, adminPermissionCodes } from "../src/lib/siba/roles";
+import { parentCode } from "../src/lib/siba/account-code";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -88,11 +89,10 @@ const tally = (what: string, n = 1) => {
 // ------------------------------------------------------------- system data
 //
 // Labels are load-bearing: `src/lib/siba/rules.ts` keys its classification
-// rules off budget and partner category labels, and `CASH_BANK_SUBCATEGORIES`
-// in `records.ts` names the Kas and Bank groups. Renaming a label here without
-// renaming it there silently breaks a business rule.
-
-const ACCOUNT_TYPES = ["Aset", "Kewajiban", "Ekuitas", "Pendapatan", "Beban"];
+// rules off budget and partner category labels, and `CASH_BANK_SUBCATEGORY` in
+// `records.ts` names the chart-of-accounts group a cash or bank resource posts
+// into. Renaming a label here without renaming it there silently breaks a
+// business rule.
 
 const DOC_TYPES: [label: string, table: string][] = [
   ["Budget", "bud_budget"],
@@ -119,34 +119,95 @@ const PARTNER_CATEGORIES: [label: string, name: string, note: string][] = [
   ["Stakeholder", "Pemegang Saham", "Pemilik / pemegang saham. Dipakai oleh Titipan, Hutang, Piutang, dan Prive."],
 ];
 
-/** [account type label, category label] */
-const ACCOUNT_CATEGORIES: [string, string][] = [
-  ["Aset", "Kas & Setara Kas"],
-  ["Aset", "Piutang"],
-  ["Aset", "Investasi"],
-  ["Aset", "Aset Tetap"],
-  ["Kewajiban", "Titipan"],
-  ["Kewajiban", "Hutang"],
-  ["Ekuitas", "Ekuitas"],
-  ["Ekuitas", "Prive"],
-  ["Pendapatan", "Pendapatan"],
-  ["Beban", "Beban"],
+/**
+ * The chart-of-accounts skeleton, transcribed from `Initialization/Template
+ * COA.xlsx` (Sheet1, the workbook's only visible sheet).
+ *
+ * One flat list, because the hierarchy is already in the codes: a row's depth
+ * is its number of segments, and its parent is its code minus the last one.
+ * Depth 1 is an Account Type, depth 2 an Account Category, depth 3 an Account
+ * Subcategory. Anything deeper is an account, which users create through the
+ * application — see `lib/siba/account-code.ts`.
+ *
+ * Three deviations from the sheet, all of them forced:
+ *
+ *   - Categories 3.2–3.5 have no row of their own in the sheet, only their
+ *     single subcategory. They are named after it, because a subcategory
+ *     cannot exist without the category its code claims.
+ *   - 4.1.1, 5.1.1 and 5.2.1 have a blank name cell. Each takes its category's
+ *     name, the convention the sheet already uses at 4.9.1 and 5.9.1.
+ *   - Names are kept verbatim from the sheet, capitals included. They are the
+ *     user's own chart, not ours to restyle.
+ *
+ * `CASH_BANK_SUBCATEGORY` in `lib/siba/records.ts` names 1.1.1 as the group a
+ * cash or bank resource posts into, so that code is load-bearing.
+ */
+const COA_SKELETON: [code: string, name: string][] = [
+  ["1", "AKTIVA"],
+  ["1.1", "AKTIVA LANCAR"],
+  ["1.1.1", "KAS / SETARA KAS"],
+  ["1.1.2", "INVESTASI LANCAR"],
+  ["1.1.3", "PIUTANG DAGANG"],
+  ["1.1.4", "PIUTANG LAIN-LAIN"],
+  ["1.1.5", "PERSEDIAAN"],
+  ["1.1.6", "UANG MUKA PEMBELIAN"],
+  ["1.1.7", "UANG MUKA PAJAK"],
+  ["1.1.8", "BIAYA DIBAYAR DIMUKA"],
+  ["1.2", "AKTIVA TIDAK LANCAR"],
+  ["1.2.1", "INVESTASI JANGKA PANJANG"],
+  ["1.3", "AKTIVA TETAP"],
+  ["1.3.1", "TANAH"],
+  ["1.3.2", "PERALATAN DAN MESIN"],
+  ["1.3.3", "GEDUNG DAN BANGUNAN"],
+  ["1.3.4", "KENDARAAN DAN INVENTARIS"],
+  ["1.3.9", "AKUMULASI PENYUSUTAN"],
+  ["1.4", "ASET LAINNYA"],
+  ["1.4.1", "ASET TIDAK BERWUJUD"],
+  ["1.4.8", "PRA OPERASI"],
+  ["1.4.9", "AMORTISASI ASET LAINNYA"],
+  ["2", "PASIVA"],
+  ["2.1", "KEWAJIBAN JANGKA PENDEK"],
+  ["2.1.1", "HUTANG DAGANG"],
+  ["2.1.2", "HUTANG PAJAK"],
+  ["2.1.3", "HUTANG BIAYA"],
+  ["2.1.4", "PENDAPATAN DITERIMA DIMUKA"],
+  ["2.1.5", "HUTANG LAIN LAIN"],
+  ["2.2", "KEWAJIBAN JANGKA PANJANG"],
+  ["2.2.1", "HUTANG JANGKA PANJANG"],
+  ["3", "EKUITAS"],
+  ["3.1", "MODAL"],
+  ["3.1.1", "MODAL AWAL"],
+  ["3.2", "REVALUASI AKTIVA TETAP"],
+  ["3.2.1", "REVALUASI AKTIVA TETAP"],
+  ["3.3", "LABA/RUGI TAHUN SEBELUMNYA"],
+  ["3.3.1", "LABA/RUGI TAHUN SEBELUMNYA"],
+  ["3.4", "LABA/RUGI TAHUN BERJALAN"],
+  ["3.4.1", "LABA/RUGI TAHUN BERJALAN"],
+  ["3.5", "L/R ATAS INVESTASI"],
+  ["3.5.1", "L/R ATAS INVESTASI"],
+  ["4", "PENDAPATAN"],
+  ["4.1", "PENDAPATAN DARI USAHA"],
+  ["4.1.1", "PENDAPATAN DARI USAHA"],
+  ["4.1.8", "PENGURANG HASIL PENJUALAN"],
+  ["4.9", "PENDAPATAN DILUAR USAHA"],
+  ["4.9.1", "PENDAPATAN DILUAR USAHA"],
+  ["5", "BIAYA"],
+  ["5.1", "HARGA POKOK PENJUALAN"],
+  ["5.1.1", "HARGA POKOK PENJUALAN"],
+  ["5.1.9", "HARGA POKOK PENJUALAN WASTE"],
+  ["5.2", "BIAYA PENJUALAN"],
+  ["5.2.1", "BIAYA PENJUALAN"],
+  ["5.3", "BIAYA UMUM DAN ADMINISTRASI"],
+  ["5.3.1", "BIAYA UMUM"],
+  ["5.3.2", "BIAYA PAJAK"],
+  ["5.9", "BIAYA DILUAR USAHA"],
+  ["5.9.1", "BIAYA DILUAR USAHA"],
 ];
 
-/** [category label, subcategory label, subcategory name] */
-const ACCOUNT_SUBCATEGORIES: [string, string, string][] = [
-  ["Kas & Setara Kas", "Kas", "Kas"],
-  ["Kas & Setara Kas", "Bank", "Bank"],
-  ["Piutang", "Piutang", "Piutang per Partner Category"],
-  ["Investasi", "Investasi", "Investasi pada Entitas"],
-  ["Aset Tetap", "Aset Tetap", "Aset Tetap"],
-  ["Titipan", "Titipan", "Titipan per Partner Category"],
-  ["Hutang", "Hutang", "Hutang per Partner Category"],
-  ["Ekuitas", "Modal", "Modal"],
-  ["Prive", "Prive", "Prive / Dividen"],
-  ["Pendapatan", "Pendapatan Investasi", "Pendapatan Hasil Investasi"],
-  ["Beban", "Beban Umum", "Beban Umum"],
-];
+/** The skeleton rows at one depth, in the order the sheet lists them. */
+const skeletonLevel = (depth: number) =>
+  COA_SKELETON.filter(([c]) => c.split(".").length === depth);
+
 
 // --------------------------------------------------------------------- run
 
@@ -388,12 +449,12 @@ async function ensureCompanies(audit: { created_by: number; updated_by: null }):
 async function ensureReferenceData(
   audit: { created_by: number; updated_by: null }
 ): Promise<void> {
-  for (const [i, label] of ACCOUNT_TYPES.entries()) {
+  for (const [i, [label, name]] of skeletonLevel(1).entries()) {
     const made = await create(
       () => prisma.sysAccountType.findUnique({ where: { type_label: label } }),
       () =>
         prisma.sysAccountType.create({
-          data: { type_code: code("atyp", i + 1), type_label: label, type_name: label, ...audit },
+          data: { type_code: code("atyp", i + 1), type_label: label, type_name: name, ...audit },
         })
     );
     tally("account types", made);
@@ -457,16 +518,18 @@ async function ensureReferenceData(
     ])
   );
 
-  for (const [i, [typeLabel, label]] of ACCOUNT_CATEGORIES.entries()) {
+  // A category hangs off the type its own code names: `1.1` belongs to `1`.
+  // Nothing has to be stated twice, and the skeleton cannot contradict itself.
+  for (const [i, [label, name]] of skeletonLevel(2).entries()) {
     const made = await create(
       () => prisma.accAccountCategory.findFirst({ where: { category_label: label } }),
       () =>
         prisma.accAccountCategory.create({
           data: {
-            account_type_id: typeId.get(typeLabel)!,
+            account_type_id: typeId.get(parentCode(label)!)!,
             category_code: code("acat", i + 1),
             category_label: label,
-            category_name: label,
+            category_name: name,
             ...audit,
           },
         })
@@ -480,19 +543,16 @@ async function ensureReferenceData(
     ).map((c) => [c.category_label, c.id])
   );
 
-  for (const [i, [categoryLabel, label, name]] of ACCOUNT_SUBCATEGORIES.entries()) {
+  for (const [i, [label, name]] of skeletonLevel(3).entries()) {
     const made = await create(
       () =>
         prisma.accAccountSubcategory.findFirst({
-          where: {
-            subcategory_label: label,
-            account_category_id: categoryId.get(categoryLabel)!,
-          },
+          where: { subcategory_label: label },
         }),
       () =>
         prisma.accAccountSubcategory.create({
           data: {
-            account_category_id: categoryId.get(categoryLabel)!,
+            account_category_id: categoryId.get(parentCode(label)!)!,
             subcategory_code: code("asub", i + 1),
             subcategory_label: label,
             subcategory_name: name,

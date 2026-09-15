@@ -466,7 +466,10 @@ export function BudgetList({
                     const over = b.realized_amount > b.budget_amount;
                     const actions = availableActions(b.status, can);
                     return (
-                      <tr key={b.id}>
+                      <tr
+                        key={b.id}
+                        onClick={() => router.push(`/budget/budget/${b.id}`)}
+                      >
                         <td className="no">{from + i + 1}</td>
                         <td>
                           <Link href={`/budget/budget/${b.id}`}>
@@ -518,6 +521,7 @@ export function BudgetList({
                               className="iact"
                               href={`/budget/budget/${b.id}`}
                               title="Lihat detail"
+                              onClick={(e) => e.stopPropagation()}
                             >
                               <Icon name="eye" size={15} />
                             </Link>
@@ -526,6 +530,7 @@ export function BudgetList({
                                 className="iact"
                                 href={`/budget/budget/${b.id}/edit`}
                                 title="Ubah"
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <Icon name="pen" size={15} />
                               </Link>
@@ -537,6 +542,7 @@ export function BudgetList({
                                 className="iact kb"
                                 title="Aksi lain"
                                 onClick={(e) => {
+                                  e.stopPropagation();
                                   const r = (
                                     e.currentTarget as HTMLElement
                                   ).getBoundingClientRect();

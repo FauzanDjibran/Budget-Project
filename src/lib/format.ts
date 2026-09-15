@@ -20,6 +20,16 @@ export const MONTHS_LONG = [
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
+/**
+ * Today as `yyyy-mm-dd` — the wire form every date field carries.
+ *
+ * Read from UTC parts like every other date here, so the day a form prefills
+ * is the same day the database stores.
+ */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /** `2026-09-02` -> `02/09/2026` */
 export function formatDate(value: Date | string | null | undefined): string {
   if (!value) return "";

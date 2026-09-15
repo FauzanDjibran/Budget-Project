@@ -5,7 +5,17 @@ import { ENTITIES } from "../src/lib/siba/entities";
 import { entityPermissions } from "../src/lib/siba/entity-access";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import {
-  CASH_BANK_SUBCATEGORIES,
+  SEGMENT_MAX,
+  SEGMENT_MIN,
+  codeDepth,
+  compareCodes,
+  isUnder,
+  joinCode,
+  parentCode,
+  parseSegment,
+} from "../src/lib/siba/account-code";
+import {
+  CASH_BANK_SUBCATEGORY,
   accountDescendants,
   checkCashBankAccount,
   partnerCategoriesForBudgetCategory,
@@ -56,22 +66,22 @@ before(async () => {
   parent = await parentCompanyId();
   child = await childCompanyId();
 
-  cash = await makeAccount({ companyId: parent, subcategoryLabel: "Kas" });
+  cash = await makeAccount({ companyId: parent, subcategoryLabel: CASH_BANK_SUBCATEGORY });
   bankHeader = await makeAccount({
     companyId: parent,
-    subcategoryLabel: "Bank",
+    subcategoryLabel: CASH_BANK_SUBCATEGORY,
     postable: false,
   });
   bankLeaf = await makeAccount({
     companyId: parent,
-    subcategoryLabel: "Bank",
+    subcategoryLabel: CASH_BANK_SUBCATEGORY,
     parentId: bankHeader,
   });
-  receivable = await makeAccount({ companyId: parent, subcategoryLabel: "Piutang" });
-  foreignCash = await makeAccount({ companyId: child, subcategoryLabel: "Kas" });
+  receivable = await makeAccount({ companyId: parent, subcategoryLabel: "1.1.3" });
+  foreignCash = await makeAccount({ companyId: child, subcategoryLabel: CASH_BANK_SUBCATEGORY });
   inactiveCash = await makeAccount({
     companyId: parent,
-    subcategoryLabel: "Kas",
+    subcategoryLabel: CASH_BANK_SUBCATEGORY,
     active: false,
   });
 });
@@ -120,7 +130,7 @@ describe("a Cash & Bank resource may only post to an eligible account", () => {
     assert.match(String(problem), /postable/);
   });
 
-  test("refuses a postable account outside the Kas and Bank groups", async () => {
+  test("refuses a postable account outside the Kas / Setara Kas group", async () => {
     const row = await prisma.accAccount.findUniqueOrThrow({
       where: { id: receivable },
       select: {
@@ -129,10 +139,10 @@ describe("a Cash & Bank resource may only post to an eligible account", () => {
       },
     });
     assert.equal(row.is_postable, true, "only the group rule may stop this one");
-    assert.ok(!CASH_BANK_SUBCATEGORIES.includes(row.account_subcategory.subcategory_label));
+    assert.notEqual(row.account_subcategory.subcategory_label, CASH_BANK_SUBCATEGORY);
 
     const problem = await checkCashBankAccount(receivable, parent);
-    assert.match(String(problem), /Kas atau Bank/);
+    assert.match(String(problem), /Kas \/ Setara Kas/);
   });
 
   test("refuses a deactivated account", async () => {
@@ -188,5 +198,118 @@ describe("a mapping's Partner Category follows the Budget Category", () => {
     assert.ok(rule);
     assert.equal(rule.needsPartner, false);
     assert.deepEqual(rule.allowedIds, []);
+  });
+});
+
+/**
+ * The chart of accounts is one numbering scheme, and its whole value is that a
+ * code cannot disagree with where the row sits. These are the two halves of
+ * that: what counts as a segment, and whether the seeded skeleton the user's
+ * accounts hang off is actually well formed.
+ */
+describe("an account code states its own lineage", () => {
+  test("a segment is a whole number 1-999 and nothing else", () => {
+    assert.equal(parseSegment("1"), SEGMENT_MIN);
+    assert.equal(parseSegment("999"), SEGMENT_MAX);
+    assert.equal(parseSegment(" 42 "), 42);
+
+    for (const bad of ["0", "1000", "007", "1.2", "-1", "", "  ", "1a", null]) {
+      assert.equal(parseSegment(bad), null, `${JSON.stringify(bad)} is not a segment`);
+    }
+  });
+
+  test("a leading zero is refused rather than trimmed", () => {
+    // Otherwise 1.1.1.01 and 1.1.1.1 would be two spellings of one account.
+    assert.equal(codeDepth("1.1.1.01"), 0);
+    assert.equal(codeDepth("1.1.1.1"), 4);
+  });
+
+  test("a code knows its depth and its parent", () => {
+    assert.equal(codeDepth("1"), 1);
+    assert.equal(codeDepth("1.1.1.2.1"), 5);
+    assert.equal(parentCode("1.1.1.2"), "1.1.1");
+    assert.equal(parentCode("1"), null);
+    assert.equal(joinCode("1.1.1", 2), "1.1.1.2");
+  });
+
+  test("a subtree is recognised by its prefix, not by string matching", () => {
+    assert.ok(isUnder("1.1.1.2", "1.1.1"));
+    assert.ok(isUnder("1.1.1", "1.1.1"));
+    assert.ok(!isUnder("1.1.10", "1.1.1"), "1.1.10 is a sibling, not a child");
+  });
+
+  test("codes order as numbers, so 1.1.2 comes before 1.1.10", () => {
+    const sorted = ["1.1.10", "1.1.2", "1.2", "1.1"].sort(compareCodes);
+    assert.deepEqual(sorted, ["1.1", "1.1.2", "1.1.10", "1.2"]);
+  });
+
+  test("the seeded skeleton is exactly three levels, each continuing its parent", async () => {
+    const [types, categories, subcategories] = await Promise.all([
+      prisma.sysAccountType.findMany({ select: { type_label: true } }),
+      prisma.accAccountCategory.findMany({
+        select: { category_label: true, account_type: { select: { type_label: true } } },
+      }),
+      prisma.accAccountSubcategory.findMany({
+        select: {
+          subcategory_label: true,
+          account_category: { select: { category_label: true } },
+        },
+      }),
+    ]);
+
+    for (const t of types) assert.equal(codeDepth(t.type_label), 1, t.type_label);
+
+    for (const c of categories) {
+      assert.equal(codeDepth(c.category_label), 2, c.category_label);
+      assert.equal(
+        parentCode(c.category_label),
+        c.account_type.type_label,
+        `${c.category_label} must continue its account type's code`
+      );
+    }
+
+    for (const sub of subcategories) {
+      assert.equal(codeDepth(sub.subcategory_label), 3, sub.subcategory_label);
+      assert.equal(
+        parentCode(sub.subcategory_label),
+        sub.account_category.category_label,
+        `${sub.subcategory_label} must continue its category's code`
+      );
+    }
+  });
+
+  test("the kelompok Cash & Bank posts into is one that exists", async () => {
+    const row = await prisma.accAccountSubcategory.findUnique({
+      where: { subcategory_label: CASH_BANK_SUBCATEGORY },
+      select: { subcategory_name: true },
+    });
+    assert.ok(
+      row,
+      `${CASH_BANK_SUBCATEGORY} must be seeded — checkCashBankAccount refuses everything otherwise`
+    );
+  });
+
+  test("a fixture account's number continues whatever it hangs under", async () => {
+    const kelompok = await makeAccount({
+      companyId: await parentCompanyId(),
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+    });
+    const parent = await prisma.accAccount.findUniqueOrThrow({
+      where: { id: kelompok },
+      select: { account_label: true },
+    });
+    assert.equal(parentCode(parent.account_label), CASH_BANK_SUBCATEGORY);
+
+    const childId = await makeAccount({
+      companyId: await parentCompanyId(),
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+      parentId: kelompok,
+    });
+    const child = await prisma.accAccount.findUniqueOrThrow({
+      where: { id: childId },
+      select: { account_label: true },
+    });
+    assert.equal(parentCode(child.account_label), parent.account_label);
+    assert.ok(isUnder(child.account_label, CASH_BANK_SUBCATEGORY));
   });
 });

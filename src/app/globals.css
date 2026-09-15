@@ -367,6 +367,23 @@ td.acts{width:88px;padding-right:7px}
 .chk input{margin:1px 0 0;width:15px;height:15px;accent-color:var(--brand);cursor:pointer;flex:0 0 auto}
 .chk .ct{font-size:12px;font-weight:600}
 .chk .cd{font-size:10.5px;color:var(--muted-2);margin-top:1px;line-height:1.45}
+/* A toggle whose caption says it all: one line, no explanation under it. */
+.chk.sm{align-items:center;gap:8px;padding:0 10px;height:34px}
+.chk.sm input{margin:0;width:14px;height:14px}
+.chk.sm .ct{font-size:11.5px}
+
+/* An identifier continued from its parent: the inherited code, then the one
+   number that is typed. `.pfx` is read-only text, never a disabled input. */
+.segf{display:flex;align-items:stretch;border:1px solid var(--line);border-radius:var(--r);background:#fff;overflow:hidden}
+.segf:focus-within{border-color:var(--accent-s);box-shadow:0 0 0 3px var(--accent-50)}
+.segf.bad{border-color:var(--bad-solid);box-shadow:0 0 0 3px var(--bad-bg)}
+.segf .pfx{display:flex;align-items:center;padding:0 2px 0 11px;background:var(--line-3);border-right:1px solid var(--line-2);
+  font-family:var(--f-mono);font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap;flex:0 0 auto}
+.segf .pfx.nil{font-family:inherit;font-size:11px;font-weight:500;font-style:italic;color:var(--muted-3);padding-right:11px}
+.segf input{flex:1 1 auto;min-width:0;width:100%;height:34px;border:0;background:transparent;padding:0 11px;
+  font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--ink)}
+.segf input:focus{outline:none}
+.segf input:disabled{background:var(--line-3);color:var(--muted-3);cursor:not-allowed}
 .ro{min-height:32px;display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;color:var(--ink);border-bottom:1px dashed var(--line)}
 .ro.nil,.ro .nil{color:var(--muted-3);font-style:italic;font-size:12px}
 .ro.mono{font-family:var(--f-mono);font-size:12px}

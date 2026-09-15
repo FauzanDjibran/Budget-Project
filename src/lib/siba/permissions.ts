@@ -82,7 +82,14 @@ export const PERMISSIONS = [
   // inside it, so seeing and opening a year is the whole capability.
   { code: "FISCAL_YEAR_VIEW", name: "Lihat Fiscal Year", module: "accounting", description: "Termasuk Fiscal Period di dalamnya." },
   { code: "FISCAL_YEAR_CREATE", name: "Tambah Fiscal Year", module: "accounting" },
-  { code: "FISCAL_YEAR_EDIT", name: "Ubah Fiscal Year", module: "accounting", description: "Termasuk mengaktifkan tahun buku, yang membuat 12 Fiscal Period." },
+  { code: "FISCAL_YEAR_EDIT", name: "Ubah Fiscal Year", module: "accounting", description: "Catatan tahun buku. Status bukan isian dan tidak berubah lewat Ubah." },
+  {
+    code: "FISCAL_YEAR_OPEN",
+    name: "Aktifkan Fiscal Year",
+    module: "accounting",
+    description:
+      "Mengubah tahun buku Draft menjadi Open dan membuat 12 Fiscal Period. Tidak dapat dikembalikan.",
+  },
 
   // ---------------------------------------------------------------- budget
   { code: "MENU_BUDGET_ACCESS", name: "Akses menu Budget", module: "budget" },
@@ -104,10 +111,40 @@ export const PERMISSIONS = [
   { code: "CASH_BANK_TRANSACTION_POST", name: "Post Cash Bank Transaction", module: "finance" },
   { code: "CASH_BANK_TRANSACTION_CANCEL", name: "Batalkan Cash Bank Transaction", module: "finance" },
 
+  // Report Views. `REPORT_` comes first for the same reason `MENU_` does: the
+  // prefix says what kind of capability this is before it says which subject.
+  // A report is read-only, so a single view permission is the whole capability.
+  {
+    code: "REPORT_CASH_BANK_LEDGER_VIEW",
+    name: "Lihat laporan Buku Kas & Bank",
+    module: "finance",
+    description: "Seluruh mutasi satu resource kas/bank pada rentang tanggal.",
+  },
+  {
+    code: "REPORT_CASH_BANK_BALANCE_VIEW",
+    name: "Lihat laporan Saldo Kas & Bank",
+    module: "finance",
+    description: "Saldo awal, penerimaan, pengeluaran, dan saldo akhir per resource.",
+  },
+
   // ---------------------------------------------------------------- settings
   { code: "MENU_SETTINGS_ACCESS", name: "Akses menu Pengaturan", module: "settings" },
   { code: "MENU_USER_ACCESS", name: "Akses menu User", module: "settings" },
   { code: "MENU_ROLE_ACCESS", name: "Akses menu Role", module: "settings" },
+  { code: "MENU_SYSTEM_DEFAULT_ACCESS", name: "Akses menu System Default", module: "settings" },
+
+  {
+    code: "SYSTEM_DEFAULT_VIEW",
+    name: "Lihat System Default",
+    module: "settings",
+    description: "Nilai bawaan yang dipakai seluruh aplikasi, seperti Currency default.",
+  },
+  {
+    code: "SYSTEM_DEFAULT_EDIT",
+    name: "Ubah System Default",
+    module: "settings",
+    description: "Default hanya mengisi awal sebuah pilihan; pengguna tetap dapat menggantinya.",
+  },
 
   { code: "USER_VIEW", name: "Lihat User", module: "settings" },
   { code: "USER_CREATE", name: "Tambah User", module: "settings" },

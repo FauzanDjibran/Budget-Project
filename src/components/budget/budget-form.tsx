@@ -15,7 +15,7 @@ import {
   updateBudget,
   type BudgetValues,
 } from "@/app/actions/budget";
-import { formatDate, formatMoney, formatTimestamp } from "@/lib/format";
+import { formatDate, formatMoney, formatTimestamp, todayIso } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type {
   BudgetMapping,
@@ -30,7 +30,9 @@ import {
   type BudgetAbilities,
   type BudgetAction,
 } from "@/lib/siba/budget-workflow";
+import type { budgetRealizations } from "@/lib/siba/finance";
 import { ApproveDialog } from "./approve-dialog";
+import { RealizationCard } from "./realization-card";
 
 export type BudgetFormMode = "new" | "view" | "edit";
 
@@ -51,6 +53,8 @@ export function BudgetForm({
   createdByEmail,
   updatedByEmail,
   can,
+  defaultCurrencyId,
+  realizations,
 }: {
   mode: BudgetFormMode;
   budget: BudgetRow | null;
@@ -61,13 +65,23 @@ export function BudgetForm({
   createdByEmail?: string;
   updatedByEmail?: string;
   can: BudgetAbilities;
+  /**
+   * The Currency a new budget starts on, from System Default and already
+   * resolved against the master. A starting point only — the planner changes
+   * it like any other field, and the Server Action validates what is saved.
+   */
+  defaultCurrencyId?: number | null;
+  /** The documents behind `realized_amount` — view mode only. */
+  realizations?: Awaited<ReturnType<typeof budgetRealizations>>;
 }) {
   const router = useRouter();
   const toast = useToast();
   const editing = mode === "new" || mode === "edit";
   const exists = Boolean(budget);
 
-  const [values, setValues] = useState<BudgetValues>(() => initialValues(budget));
+  const [values, setValues] = useState<BudgetValues>(() =>
+    initialValues(budget, defaultCurrencyId)
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -357,16 +371,19 @@ export function BudgetForm({
                       Nominal Budget{editing && <span className="req">*</span>}
                     </label>
                     {editing ? (
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        inputMode="decimal"
-                        className={errors.budget_amount ? "bad" : undefined}
-                        value={values.budget_amount}
-                        onChange={(e) => set("budget_amount", e.target.value)}
-                        placeholder="0"
-                      />
+                      <span className="mwrap">
+                        <span className="cur">{currencyLabel}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          inputMode="decimal"
+                          className={`inp mfield${errors.budget_amount ? " bad" : ""}`}
+                          value={values.budget_amount}
+                          onChange={(e) => set("budget_amount", e.target.value)}
+                          placeholder="0"
+                        />
+                      </span>
                     ) : (
                       <div className="ro">
                         <span className="mny big">
@@ -402,7 +419,7 @@ export function BudgetForm({
                       </div>
                       <div className="help">
                         Terisi otomatis oleh dokumen Cash Bank Transaction yang
-                        sudah di-Post.
+                        sudah di-Post — rinciannya ada di kartu Realisasi.
                       </div>
                     </div>
                   )}
@@ -415,7 +432,7 @@ export function BudgetForm({
                     </label>
                     {editing ? (
                       <textarea
-                        className={errors.description ? "bad" : undefined}
+                        className={`ta${errors.description ? " bad" : ""}`}
                         rows={3}
                         value={values.description}
                         onChange={(e) => set("description", e.target.value)}
@@ -491,6 +508,13 @@ export function BudgetForm({
               </div>
             )}
           </div>
+
+          {mode === "view" && realizations && (
+            <RealizationCard
+              realizations={realizations}
+              currencyLabel={currencyOf(refs, budget!.currency_id)}
+            />
+          )}
         </div>
 
         <div>
@@ -634,12 +658,17 @@ function listHref(month: { id: number } | null): string {
   return month ? `/budget/budget/month/${month.id}` : "/budget/budget/month/all";
 }
 
-function initialValues(budget: BudgetRow | null): BudgetValues {
+function initialValues(
+  budget: BudgetRow | null,
+  defaultCurrencyId?: number | null
+): BudgetValues {
   if (!budget) {
     return {
-      budget_date: "",
+      // A plan is nearly always made for today, so the field starts there and
+      // is changed only when it is not.
+      budget_date: todayIso(),
       company_id: "",
-      currency_id: "",
+      currency_id: defaultCurrencyId ? String(defaultCurrencyId) : "",
       budget_type: "Out",
       budget_amount: "",
       description: "",

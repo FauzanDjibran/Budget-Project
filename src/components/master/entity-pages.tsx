@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import { AccountTree } from "@/components/master/account-tree";
 import { FiscalPeriods } from "@/components/accounting/fiscal-periods";
-import { CashBankBook } from "@/components/master/cash-bank-book";
+import { FiscalYearActions } from "@/components/accounting/fiscal-year-actions";
+import { CashBankBookCard } from "@/components/master/cash-bank-book-card";
 import { EntityForm } from "@/components/master/entity-form";
 import { EntityLocked } from "@/components/master/entity-locked";
-import { requirePermission } from "@/lib/siba/auth";
+import { can as actorHas, requirePermission } from "@/lib/siba/auth";
 import { isCompanyEntity } from "@/lib/siba/company";
 import { abilitiesFor, entityPermissions } from "@/lib/siba/entity-access";
 import { entityBySlug, type Entity } from "@/lib/siba/entities";
@@ -16,8 +17,13 @@ import {
   listRows,
   refOptions,
 } from "@/lib/siba/records";
-import { cashBankBalanceMap, cashBankLedger } from "@/lib/siba/cash-bank";
+import { cashBankBookSummary } from "@/lib/siba/cash-bank";
 import { fiscalYearPeriods } from "@/lib/siba/fiscal";
+import { defaultCurrencyId } from "@/lib/siba/system-settings";
+import {
+  fiscalYearAbilities,
+  type FiscalYearStatus,
+} from "@/lib/siba/fiscal-workflow";
 import { userEmails } from "@/lib/siba/users";
 import { EntityList } from "@/components/master/entity-list";
 
@@ -117,6 +123,7 @@ export async function EntityNewPage({
       row={null}
       refs={refs}
       can={abilitiesFor(entity.key, actor.permissions)}
+      defaults={{ default_currency: await defaultCurrencyId() }}
     />
   );
 }
@@ -143,6 +150,18 @@ export async function EntityDetailPage({
   const refs = await refOptions(entity);
   const emails = await userEmails([row.created_by as number, row.updated_by as number]);
 
+  // A Fiscal Year has a lifecycle rather than a status field: it is activated,
+  // which is what generates its periods. Everything else here is registry-driven.
+  const headerActions =
+    entity.key === "acc_fiscal_year" ? (
+      <FiscalYearActions
+        id={row.id}
+        subject={`${row.year_label} – ${row.year_name}`}
+        status={String(row.status ?? "Draft") as FiscalYearStatus}
+        can={fiscalYearAbilities(actor.permissions)}
+      />
+    ) : undefined;
+
   const form = (
     <EntityForm
       entity={entity}
@@ -152,6 +171,7 @@ export async function EntityDetailPage({
       createdByEmail={emails[row.created_by as number]}
       updatedByEmail={emails[row.updated_by as number]}
       can={abilitiesFor(entity.key, actor.permissions)}
+      headerActions={headerActions}
     />
   );
 
@@ -171,24 +191,24 @@ export async function EntityDetailPage({
   }
 
   // A Cash & Bank resource is the one master with a book behind it, so its
-  // detail shows that book. The registry describes fields; it does not describe
-  // an append-only ledger, and nothing is gained by making it try.
+  // detail says what that book adds up to and shows the way into it. The book
+  // itself is a report, not a property of the master — see `CashBankBookCard`.
   if (entity.key !== "m_cash_bank") return form;
 
-  const [entries, balances] = await Promise.all([
-    cashBankLedger(row.id),
-    cashBankBalanceMap(),
-  ]);
+  const summary = await cashBankBookSummary(row.id);
   const currencyLabel =
     refs.currency_id?.find((o) => o.id === row.currency_id)?.label ?? "IDR";
 
   return (
     <>
       {form}
-      <CashBankBook
-        entries={entries}
-        balance={balances.get(row.id) ?? 0}
+      <CashBankBookCard
+        cashBankId={row.id}
+        balance={summary.balance}
+        entries={summary.entries}
+        lastEntryDate={summary.lastEntryDate}
         currencyLabel={currencyLabel}
+        canViewReport={await actorHas("REPORT_CASH_BANK_LEDGER_VIEW")}
       />
     </>
   );

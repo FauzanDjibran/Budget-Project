@@ -194,10 +194,23 @@ export async function makeAccount(options: {
   normalBalance?: "Debit" | "Kredit";
 }): Promise<number> {
   const key = nextFixture();
+  // A fixture account carries a real lineage code: it continues its parent
+  // account's number when it has one and its kelompok's otherwise, exactly as
+  // `createRecord` composes it. The segment is the fixture sequence, which is
+  // what keeps the codes distinct within a run.
+  const parentLabel = options.parentId
+    ? (
+        await prisma.accAccount.findUniqueOrThrow({
+          where: { id: options.parentId },
+          select: { account_label: true },
+        })
+      ).account_label
+    : options.subcategoryLabel;
+
   const row = await prisma.accAccount.create({
     data: {
-      account_code: `test.${key}`,
-      account_label: key,
+      account_code: `${FIXTURE_PREFIX}.${key}`,
+      account_label: `${parentLabel}.${fixtureSeq}`,
       account_name: `Fixture ${key}`,
       company_id: options.companyId,
       account_subcategory_id: await subcategoryId(options.subcategoryLabel),
@@ -239,7 +252,9 @@ export async function makePartner(options: {
  */
 export async function cleanupFixtures(): Promise<void> {
   const accounts = await prisma.accAccount.findMany({
-    where: { account_label: { startsWith: FIXTURE_PREFIX } },
+    // Keyed on the system code, not the label: an account's label is now a
+    // lineage code with no room for a fixture marker in it.
+    where: { account_code: { startsWith: FIXTURE_PREFIX } },
     orderBy: { id: "desc" },
     select: { id: true },
   });

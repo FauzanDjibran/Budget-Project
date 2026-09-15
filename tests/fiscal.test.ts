@@ -11,16 +11,25 @@ import {
   fiscalYearShape,
   parseYear,
 } from "../src/lib/siba/fiscal";
+import {
+  FISCAL_YEAR_TRANSITIONS,
+  availableActions,
+  fiscalYearAbilities,
+  transitionAllowed,
+  type FiscalYearStatus,
+} from "../src/lib/siba/fiscal-workflow";
 import { formatDate, formatTimestamp, toDisplayDate, toIsoDate } from "../src/lib/format";
 import { disconnect, prisma, systemUserId } from "./helpers";
 
 /**
  * The fiscal calendar, and the date format the whole application reads in.
  *
- * Two things have to hold. A Fiscal Period is never authored — it has no menu,
- * no route and no permissions of its own, and opening a Fiscal Year is what
- * produces exactly twelve of them, one per calendar month. And every date shown
- * anywhere is `dd/mm/yyyy`, which is one function's job.
+ * Three things have to hold. A Fiscal Period is never authored — it has no
+ * menu, no route and no permissions of its own, and opening a Fiscal Year is
+ * what produces exactly twelve of them, one per calendar month. A Fiscal Year
+ * has a lifecycle rather than a status field, so Draft -> Open is a deliberate
+ * act and nothing goes back. And every date shown anywhere is `dd/mm/yyyy`,
+ * which is one function's job.
  */
 
 const FIXTURE_YEAR = 2087; // Far enough out that no real data uses it.
@@ -239,5 +248,70 @@ describe("opening a Fiscal Year generates its twelve months", () => {
     const id = await makeYear(FIXTURE_YEAR + 100, "Draft");
     assert.deepEqual(await fiscalYearPeriods(id), []);
     await prisma.accFiscalYear.delete({ where: { id } });
+  });
+});
+
+// ---------------------------------------------------- the year has a lifecycle
+
+describe("a Fiscal Year is activated, not edited into Open", () => {
+  test("status is not an isian on the form", () => {
+    const field = entityBySlug("fiscal-year")!.fields.find((f) => f.name === "status")!;
+    assert.equal(field.derived, true, "status must never be offered as an input");
+    assert.equal(
+      field.locked,
+      true,
+      "and an update must drop it, so a submitted value cannot move the year"
+    );
+  });
+
+  test("the entity has no activate/deactivate toggle either", () => {
+    const entity = entityBySlug("fiscal-year")!;
+    assert.equal(entity.statusModel?.toggle, false);
+    assert.deepEqual(entity.statusModel?.options, ["Draft", "Open", "Closed"]);
+  });
+
+  test("opening is its own permission, separate from editing", () => {
+    assert.equal(FISCAL_YEAR_TRANSITIONS.open.permission, "FISCAL_YEAR_OPEN");
+    assert.ok(PERMISSION_CODES.includes("FISCAL_YEAR_OPEN" as never));
+    assert.notEqual(
+      FISCAL_YEAR_TRANSITIONS.open.permission,
+      "FISCAL_YEAR_EDIT",
+      "editing a year's note is not permission to start it"
+    );
+  });
+
+  test("Draft is the only status a year can be opened from", () => {
+    assert.deepEqual(FISCAL_YEAR_TRANSITIONS.open.from, ["Draft"]);
+    assert.equal(FISCAL_YEAR_TRANSITIONS.open.to, "Open");
+    assert.equal(transitionAllowed("open", "Draft"), true);
+    assert.equal(transitionAllowed("open", "Open"), false, "reopening is not a move");
+    assert.equal(transitionAllowed("open", "Closed"), false);
+  });
+
+  test("nothing returns a year to Draft, and nothing closes it from here", () => {
+    // Closing locks periods against posting and belongs with the journal, which
+    // is not built. Until it is, no transition may write Closed — a status that
+    // only pretends to close a book is worse than none.
+    for (const transition of Object.values(FISCAL_YEAR_TRANSITIONS)) {
+      assert.notEqual(transition.to, "Draft", "Open is a one-way door");
+      assert.notEqual(transition.to, "Closed", "closing is a process, not a status change");
+    }
+    assert.ok(
+      !PERMISSION_CODES.includes("FISCAL_YEAR_CLOSE" as never),
+      "a capability is a catalogue entry first — do not declare one nothing performs"
+    );
+  });
+
+  test("the button appears only for someone holding the permission", () => {
+    const allowed = fiscalYearAbilities(["FISCAL_YEAR_OPEN"]);
+    const editorOnly = fiscalYearAbilities(["FISCAL_YEAR_EDIT", "FISCAL_YEAR_VIEW"]);
+
+    assert.deepEqual(availableActions("Draft" as FiscalYearStatus, allowed), ["open"]);
+    assert.deepEqual(
+      availableActions("Draft" as FiscalYearStatus, editorOnly),
+      [],
+      "seeing and editing a year is not permission to start it"
+    );
+    assert.deepEqual(availableActions("Open" as FiscalYearStatus, allowed), []);
   });
 });

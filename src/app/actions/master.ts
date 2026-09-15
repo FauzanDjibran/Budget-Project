@@ -12,15 +12,21 @@ import {
   isCompanyEntity,
 } from "@/lib/siba/company";
 import { type Entity, type Field } from "@/lib/siba/entities";
-import { openCashBankBook } from "@/lib/siba/cash-bank";
-import { ensureFiscalPeriods, fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
 import {
-  CASH_BANK_SUBCATEGORIES,
+  SEGMENT_RANGE_TEXT,
+  joinCode,
+  parseSegment,
+} from "@/lib/siba/account-code";
+import { openCashBankBook } from "@/lib/siba/cash-bank";
+import { fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
+import {
+  CASH_BANK_SUBCATEGORY,
   accountDescendants,
   checkCashBankAccount,
   delegate,
   nextCode,
   partnerCategoriesForBudgetCategory,
+  refLabel,
   requireEntity,
 } from "@/lib/siba/records";
 
@@ -79,6 +85,9 @@ async function authorize(
  */
 function coerce(field: Field, raw: string | boolean | null | undefined) {
   if (field.type === "bool") return raw === true || raw === "true";
+  // A segment is virtual — only the code composed from it is ever stored — so
+  // it stays the text that was typed, and `parseSegment` is what judges it.
+  if (field.type === "segment") return raw == null ? "" : String(raw).trim();
 
   const value = raw == null ? "" : String(raw).trim();
 
@@ -114,20 +123,73 @@ const boolValue = (values: FormValues, name: string): boolean =>
  * follow from that and are written here rather than submitted, so a crafted
  * request cannot put a fiscal year's dates out of step with the year it claims
  * to be. Runs before validation, so the derived values are what gets checked.
+ *
+ * Its status is pinned to Draft for the same reason. A fiscal year is created
+ * as Draft and moves on only through `transitionFiscalYear` — the field is
+ * locked, so an update drops it, and a create writes Draft whatever was sent.
+ *
+ * An account's number is derived the same way, from its place in the chart
+ * rather than from what was typed: the form offers one segment, and the whole
+ * code is composed here. A submitted `account_label` is therefore ignored,
+ * which is what makes a code that contradicts its own lineage unreachable.
  */
-function derive(entity: Entity, values: FormValues): FormValues {
-  if (entity.key !== "acc_fiscal_year") return values;
+async function derive(entity: Entity, values: FormValues): Promise<FormValues> {
+  if (entity.key === "acc_fiscal_year") {
+    const year = parseYear(String(values.year_label ?? ""));
+    if (!year) return { ...values, status: "Draft" };
 
-  const year = parseYear(String(values.year_label ?? ""));
-  if (!year) return values;
+    const shape = fiscalYearShape(year);
+    return {
+      ...values,
+      status: "Draft",
+      year_name: shape.year_name,
+      start_date: shape.start_date.toISOString().slice(0, 10),
+      end_date: shape.end_date.toISOString().slice(0, 10),
+    };
+  }
 
-  const shape = fiscalYearShape(year);
-  return {
-    ...values,
-    year_name: shape.year_name,
-    start_date: shape.start_date.toISOString().slice(0, 10),
-    end_date: shape.end_date.toISOString().slice(0, 10),
-  };
+  return composeSegmentCode(entity, values);
+}
+
+/**
+ * Writes the full code for a `segment` field: the code of whatever the record
+ * hangs under, plus the one number that was typed.
+ *
+ * Driven entirely by the field's own `inheritsFrom` / `writesTo`, so a second
+ * entity that numbers itself this way is config rather than another branch.
+ * When either half is missing the values are returned untouched and
+ * `validate` reports it — composing half a code would be worse than none.
+ */
+async function composeSegmentCode(
+  entity: Entity,
+  values: FormValues
+): Promise<FormValues> {
+  const field = entity.fields.find((f) => f.type === "segment");
+  if (!field?.writesTo) return values;
+
+  const segment = parseSegment(values[field.name]);
+  if (segment == null) return values;
+
+  const prefix = await inheritedCode(entity, field, values);
+  if (!prefix) return values;
+
+  return { ...values, [field.writesTo]: joinCode(prefix, segment) };
+}
+
+/** The code a segment continues — the first `inheritsFrom` field that is set. */
+async function inheritedCode(
+  entity: Entity,
+  field: Field,
+  values: FormValues
+): Promise<string | null> {
+  for (const name of field.inheritsFrom ?? []) {
+    const id = refValue(values, name);
+    if (!id) continue;
+    const source = entity.fields.find((f) => f.name === name);
+    if (!source?.ref) continue;
+    return refLabel(source.ref, id);
+  }
+  return null;
 }
 
 /**
@@ -214,7 +276,7 @@ async function validate(
     Object.assign(errors, await validateCashBank(values, errors));
   }
   if (entity.key === "acc_account") {
-    Object.assign(errors, await validateAccount(values, currentId, errors));
+    Object.assign(errors, await validateAccount(values, currentId, errors, applies));
   }
   if (entity.key === "acc_budget_category_account") {
     Object.assign(errors, await validateMapping(values, currentId, errors, applies));
@@ -249,13 +311,55 @@ async function validateCashBank(
 async function validateAccount(
   values: FormValues,
   currentId: number | null,
-  existing: Record<string, string>
+  existing: Record<string, string>,
+  applies: Set<string>
 ): Promise<Record<string, string>> {
   const errors: Record<string, string> = {};
   const companyId = refValue(values, "company_id");
   const parentId = refValue(values, "parent_account");
+  const subcategoryId = refValue(values, "account_subcategory_id");
 
-  if (parentId && companyId && !existing.parent_account) {
+  // ---- the number, and the lineage it has to agree with ------------------
+  //
+  // Only ever checked while creating: `account_segment` is create-only and
+  // both Kelompok and Parent Account are locked, so an existing account's
+  // number cannot move and nothing below it can be orphaned.
+  if (applies.has("account_segment")) {
+    const segment = parseSegment(values.account_segment);
+    if (segment == null) {
+      if (!existing.account_segment) {
+        errors.account_segment = `Nomor Urut harus bilangan bulat ${SEGMENT_RANGE_TEXT}.`;
+      }
+    } else if (parentId && subcategoryId) {
+      // A parent decides the number, so it has to sit in the same kelompok:
+      // otherwise the code would claim a place in the chart the account is
+      // not actually in.
+      const parent = await prisma.accAccount.findUnique({
+        where: { id: parentId },
+        select: { account_subcategory_id: true },
+      });
+      if (parent && parent.account_subcategory_id !== subcategoryId) {
+        errors.parent_account =
+          "Parent Account harus berada pada Kelompok Account yang sama.";
+      }
+    }
+
+    // `derive` has already composed the code by now, so this is the check the
+    // user's own number gets: two 1.1.1.10 in one Company are refused, while
+    // 1.1.1.10 and 1.1.2.10 are different accounts and both may exist.
+    const label = String(values.account_label ?? "");
+    if (label && companyId && !errors.parent_account) {
+      const clash = await prisma.accAccount.findFirst({
+        where: { company_id: companyId, account_label: label },
+        select: { account_name: true },
+      });
+      if (clash) {
+        errors.account_segment = `Nomor ${label} sudah dipakai oleh ${clash.account_name}.`;
+      }
+    }
+  }
+
+  if (parentId && companyId && !existing.parent_account && !errors.parent_account) {
     if (currentId && parentId === currentId) {
       errors.parent_account = "Account tidak dapat menjadi parent dari dirinya sendiri.";
     } else {
@@ -298,8 +402,8 @@ async function validateAccount(
           where: { id: subcategoryId },
           select: { subcategory_label: true },
         });
-        if (sub && !CASH_BANK_SUBCATEGORIES.includes(sub.subcategory_label)) {
-          errors.account_subcategory_id = `Account ini dipakai Cash & Bank (${used}) dan harus tetap pada kelompok Kas atau Bank.`;
+        if (sub && sub.subcategory_label !== CASH_BANK_SUBCATEGORY) {
+          errors.account_subcategory_id = `Account ini dipakai Cash & Bank (${used}) dan harus tetap pada kelompok ${CASH_BANK_SUBCATEGORY} Kas / Setara Kas.`;
         }
       }
     }
@@ -402,7 +506,7 @@ export async function createRecord(
   if (!guard.ok) return guard.denial;
   const actor = guard.actor;
 
-  values = derive(entity, values);
+  values = await derive(entity, values);
   const applies = await applicableFields(entity, values, false);
   const errors = await validate(entity, values, null, applies);
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -417,16 +521,6 @@ export async function createRecord(
         updated_by: null,
       },
     });
-
-    // A Fiscal Year opened straight away gets its twelve months now; one saved
-    // as Draft gets them when it is opened. Either way nobody types a month.
-    if (entity.key === "acc_fiscal_year" && values.status === "Open") {
-      await ensureFiscalPeriods(tx, {
-        fiscalYearId: row.id,
-        year: parseYear(String(values.year_label ?? ""))!,
-        actorId: actor.user.id,
-      });
-    }
 
     // A Cash & Bank resource gets its book in the same transaction it is
     // registered in, so no resource can ever exist without one. A non-zero
@@ -469,7 +563,7 @@ export async function updateRecord(
   if (!guard.ok) return guard.denial;
   const actor = guard.actor;
 
-  values = derive(entity, values);
+  values = await derive(entity, values);
   const applies = await applicableFields(entity, values, true);
   const errors = await validate(entity, values, id, applies);
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -480,29 +574,9 @@ export async function updateRecord(
     if (field.locked) delete data[field.name];
   }
 
-  await prisma.$transaction(async (tx) => {
-    await delegate(entity.key, tx).update({
-      where: { id },
-      data: { ...data, updated_by: actor.user.id },
-    });
-
-    // Opening a Fiscal Year is what creates its calendar. The year comes from
-    // the stored row, not the submission: `year_label` is locked, so an edit
-    // never carries one.
-    if (entity.key === "acc_fiscal_year" && values.status === "Open") {
-      const row = await tx.accFiscalYear.findUniqueOrThrow({
-        where: { id },
-        select: { year_label: true },
-      });
-      const year = parseYear(row.year_label);
-      if (year) {
-        await ensureFiscalPeriods(tx, {
-          fiscalYearId: id,
-          year,
-          actorId: actor.user.id,
-        });
-      }
-    }
+  await delegate(entity.key).update({
+    where: { id },
+    data: { ...data, updated_by: actor.user.id },
   });
 
   await prisma.auditLog.create({

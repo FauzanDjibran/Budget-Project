@@ -8,6 +8,7 @@ import {
   rebuildCashBankBalance,
   recordCashBankEntry,
 } from "../src/lib/siba/cash-bank";
+import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
   FIXTURE_PREFIX,
   cleanupFixtures,
@@ -35,7 +36,7 @@ let currency = 0;
 const made: number[] = [];
 
 async function makeCashBank(openingBalance: number): Promise<number> {
-  const account = await makeAccount({ companyId: company, subcategoryLabel: "Kas" });
+  const account = await makeAccount({ companyId: company, subcategoryLabel: CASH_BANK_SUBCATEGORY });
   const key = `${FIXTURE_PREFIX}CB${made.length + 1}${Date.now() % 100000}`;
   const row = await prisma.mCashBank.create({
     data: {

@@ -96,15 +96,13 @@ export type BudgetMonth = {
   status: string;
   /** The period containing today — the one a planner most likely wants. */
   current: boolean;
-  count: number;
-  draft: number;
-  submitted: number;
-  open: number;
   /**
-   * Planned amounts, one entry per currency. Never a single combined figure:
-   * there is no authoritative exchange rate to combine them with.
+   * How many budgets fall inside the period. A month is a container, so how
+   * many it holds is the whole of what the list needs to say about it — the
+   * statuses and the planned amounts belong to the budgets themselves and are
+   * read inside the month.
    */
-  totals: MoneyTotal[];
+  count: number;
 };
 
 /**
@@ -114,13 +112,11 @@ export type BudgetMonth = {
  * for is exactly the month a planner needs to see.
  */
 export async function budgetMonths(): Promise<BudgetMonth[]> {
-  const [periods, budgets, currencies] = await Promise.all([
+  const [periods, budgets] = await Promise.all([
     prisma.accFiscalPeriod.findMany({ orderBy: { start_date: "desc" } }),
-    prisma.budBudget.findMany(),
-    prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
+    prisma.budBudget.findMany({ select: { budget_date: true } }),
   ]);
 
-  const currencyLabel = new Map(currencies.map((c) => [c.id, c.currency_label]));
   const today = day(new Date());
 
   return periods.map((p) => {
@@ -139,16 +135,6 @@ export async function budgetMonths(): Promise<BudgetMonth[]> {
       status: p.status,
       current: today >= from && today <= to,
       count: mine.length,
-      draft: mine.filter((b) => b.status === "Draft").length,
-      submitted: mine.filter((b) => b.status === "Submitted").length,
-      open: mine.filter((b) => b.status === "Open").length,
-      totals: sumByCurrency(
-        mine.map((b) => ({
-          currencyId: b.currency_id,
-          currencyLabel: currencyLabel.get(b.currency_id) ?? "",
-          amount: b.budget_amount.toNumber(),
-        }))
-      ),
     };
   });
 }
@@ -451,8 +437,9 @@ export async function summarise(rows: BudgetRow[]): Promise<BudgetSummary> {
 
   const notApproved = rows.filter((b) => NOT_APPROVED.includes(b.status));
   // "Unrealized" means an approved budget with money still left to spend
-  // against it. Nothing writes `realized_amount` until the Finance module
-  // exists, so this currently reads as the full amount of every approved budget.
+  // against it. `realized_amount` is written by a posted Cash Bank Transaction,
+  // and a budget that reaches its planned amount leaves Open for Closed — so a
+  // budget only counts here while it is both approved and not yet spent out.
   const unrealized = rows.filter(
     (b) => b.status === "Open" && b.realized_amount < b.budget_amount
   );

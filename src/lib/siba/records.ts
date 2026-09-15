@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney } from "@/lib/format";
+import { compareCodes } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
 import {
   allowedPartnerCategories,
@@ -46,6 +47,12 @@ export type RefOption = {
   active: boolean;
   /** Narrows options for dependent fields, e.g. accounts belong to a company. */
   companyId?: number;
+  /**
+   * Accounts only. A Parent Account must sit in the same kelompok as the
+   * account continuing its number, so the form needs this to narrow the
+   * picker — `validateAccount` re-checks it.
+   */
+  subcategoryId?: number;
 };
 
 /** Pass a transaction client to run the write inside someone else's transaction. */
@@ -159,30 +166,60 @@ export async function optionsFor(
       }));
     }
     case "acc_account_subcategory": {
-      const rows = await prisma.accAccountSubcategory.findMany({ orderBy: { id: "asc" } });
-      return rows.map((r) => ({
-        id: r.id,
-        label: r.subcategory_label,
-        name: r.subcategory_name,
-        active: r.status === "Active",
-      }));
+      const rows = await prisma.accAccountSubcategory.findMany();
+      return rows
+        .sort((a, b) => compareCodes(a.subcategory_label, b.subcategory_label))
+        .map((r) => ({
+          id: r.id,
+          label: r.subcategory_label,
+          name: r.subcategory_name,
+          active: r.status === "Active",
+        }));
     }
     case "acc_account": {
-      const rows = await prisma.accAccount.findMany({
-        where: accountWhere(filter),
-        orderBy: [{ company_id: "asc" }, { account_label: "asc" }],
-      });
-      return rows.map((r) => ({
-        id: r.id,
-        label: r.account_label,
-        name: r.account_name,
-        active: r.is_active,
-        companyId: r.company_id,
-      }));
+      const rows = await prisma.accAccount.findMany({ where: accountWhere(filter) });
+      return rows
+        .sort(
+          (a, b) =>
+            a.company_id - b.company_id ||
+            compareCodes(a.account_label, b.account_label)
+        )
+        .map((r) => ({
+          id: r.id,
+          label: r.account_label,
+          name: r.account_name,
+          active: r.is_active,
+          companyId: r.company_id,
+          subcategoryId: r.account_subcategory_id,
+        }));
     }
     default:
       return [];
   }
+}
+
+/**
+ * The identity column of each ref target — the short label a record is known
+ * by. `refLabel` reads one, which is how a Server Action resolves the code an
+ * inherited `segment` continues without loading a whole option list.
+ */
+const LABEL_COLUMN: Record<string, string> = {
+  sys_company: "company_label",
+  sys_partner_category: "category_label",
+  sys_budget_category: "category_label",
+  ref_currency: "currency_label",
+  acc_account_subcategory: "subcategory_label",
+  acc_account: "account_label",
+};
+
+export async function refLabel(target: string, id: number): Promise<string | null> {
+  const column = LABEL_COLUMN[target];
+  if (!column) return null;
+  const row = await delegate(target).findUnique({
+    where: { id },
+    select: { [column]: true },
+  });
+  return row ? String(row[column]) : null;
 }
 
 /**
@@ -195,7 +232,7 @@ function accountWhere(filter?: Field["refFilter"]) {
     case "cashBankAccount":
       return {
         is_postable: true,
-        account_subcategory: { subcategory_label: { in: CASH_BANK_SUBCATEGORIES } },
+        account_subcategory: { subcategory_label: CASH_BANK_SUBCATEGORY },
       };
     case "postableAccount":
       return { is_postable: true };
@@ -204,8 +241,15 @@ function accountWhere(filter?: Field["refFilter"]) {
   }
 }
 
-/** Only these account groups may back a cash/bank resource. */
-export const CASH_BANK_SUBCATEGORIES = ["Kas", "Bank"];
+/**
+ * The one chart-of-accounts group a cash or bank resource may post into:
+ * `1.1.1 KAS / SETARA KAS`, from the seeded skeleton.
+ *
+ * Anchored on the kelompok rather than on individual accounts because the
+ * accounts underneath it are the user's to create — KAS, BANK, BANK BCA IDR
+ * and everything below them all live in this group, at whatever depth.
+ */
+export const CASH_BANK_SUBCATEGORY = "1.1.1";
 
 /**
  * The account a Cash & Bank resource posts to, checked against every rule at
@@ -232,8 +276,8 @@ export async function checkCashBankAccount(
   if (!account.is_postable) {
     return "Account header tidak dapat menerima posting. Pilih account postable.";
   }
-  if (!CASH_BANK_SUBCATEGORIES.includes(account.account_subcategory.subcategory_label)) {
-    return "Account harus berada pada kelompok Kas atau Bank.";
+  if (account.account_subcategory.subcategory_label !== CASH_BANK_SUBCATEGORY) {
+    return `Account harus berada pada kelompok ${CASH_BANK_SUBCATEGORY} Kas / Setara Kas.`;
   }
   if (!account.is_active) {
     return "Account tersebut non-aktif dan tidak dapat dipilih.";
@@ -402,7 +446,9 @@ export type TreeSubcategory = { id: number; label: string; name: string };
 export type TreeCategory = {
   id: number;
   label: string;
+  name: string;
   typeLabel: string;
+  typeName: string;
   subcategories: TreeSubcategory[];
 };
 
@@ -422,41 +468,48 @@ export async function accountTree(): Promise<{
       prisma.accAccountCategory.findMany({ orderBy: { id: "asc" } }),
       prisma.accAccountSubcategory.findMany({ orderBy: { id: "asc" } }),
       prisma.sysAccountType.findMany(),
-      prisma.accAccount.findMany({ orderBy: [{ account_label: "asc" }] }),
+      prisma.accAccount.findMany(),
       prisma.sysCompany.findMany(),
       prisma.sysPartnerCategory.findMany(),
     ]);
 
-  const typeLabel = new Map(types.map((t) => [t.id, t.type_label]));
+  const typeById = new Map(types.map((t) => [t.id, t]));
   const companyLabel = new Map(companies.map((c) => [c.id, c.company_label]));
   const partnerLabel = new Map(partnerCategories.map((p) => [p.id, p.category_label]));
 
   return {
-    categories: categories.map((c) => ({
-      id: c.id,
-      label: c.category_label,
-      typeLabel: typeLabel.get(c.account_type_id) ?? "",
-      subcategories: subcategories
-        .filter((s) => s.account_category_id === c.id)
-        .map((s) => ({ id: s.id, label: s.subcategory_label, name: s.subcategory_name })),
-    })),
-    accounts: accounts.map((a) => ({
-      id: a.id,
-      label: a.account_label,
-      name: a.account_name,
-      companyId: a.company_id,
-      companyLabel: companyLabel.get(a.company_id) ?? "",
-      subcategoryId: a.account_subcategory_id,
-      parentId: a.parent_account,
-      normalBalance: a.normal_balance,
-      isPostable: a.is_postable,
-      isActive: a.is_active,
-      requirePartner: a.require_partner,
-      partnerCategoryLabel: a.partner_category_id
-        ? partnerLabel.get(a.partner_category_id) ?? null
-        : null,
-      isControlAccount: a.is_control_account,
-    })),
+    categories: categories
+      .sort((a, b) => compareCodes(a.category_label, b.category_label))
+      .map((c) => ({
+        id: c.id,
+        label: c.category_label,
+        name: c.category_name,
+        typeLabel: typeById.get(c.account_type_id)?.type_label ?? "",
+        typeName: typeById.get(c.account_type_id)?.type_name ?? "",
+        subcategories: subcategories
+          .filter((s) => s.account_category_id === c.id)
+          .sort((a, b) => compareCodes(a.subcategory_label, b.subcategory_label))
+          .map((s) => ({ id: s.id, label: s.subcategory_label, name: s.subcategory_name })),
+      })),
+    accounts: accounts
+      .sort((a, b) => compareCodes(a.account_label, b.account_label))
+      .map((a) => ({
+        id: a.id,
+        label: a.account_label,
+        name: a.account_name,
+        companyId: a.company_id,
+        companyLabel: companyLabel.get(a.company_id) ?? "",
+        subcategoryId: a.account_subcategory_id,
+        parentId: a.parent_account,
+        normalBalance: a.normal_balance,
+        isPostable: a.is_postable,
+        isActive: a.is_active,
+        requirePartner: a.require_partner,
+        partnerCategoryLabel: a.partner_category_id
+          ? partnerLabel.get(a.partner_category_id) ?? null
+          : null,
+        isControlAccount: a.is_control_account,
+      })),
   };
 }
 

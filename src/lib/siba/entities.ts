@@ -9,6 +9,7 @@
  */
 import type { IconName } from "@/components/icon";
 import { BUDGET_CATEGORY_RULES, type Direction } from "./rules";
+import type { SystemDefaultKey } from "./system-defaults";
 
 export type FieldType =
   | "text"
@@ -17,7 +18,13 @@ export type FieldType =
   | "ref"
   | "bool"
   | "date"
-  | "number";
+  | "number"
+  /**
+   * One number continuing a code the record inherits. The user types `5`; the
+   * Server Action writes `1.1.1.5` into the field named by `writesTo`. See
+   * `lib/siba/account-code.ts` — Chart of Accounts is the entity that needs it.
+   */
+  | "segment";
 
 export type Field = {
   name: string;
@@ -74,7 +81,24 @@ export type Field = {
    * the same predicate, so hiding it is never what enforces the rule.
    */
   visibleWhen?: "accountRequiresPartner" | "budgetCategoryRequiresPartner";
+  /**
+   * `segment` only. The ref fields whose chosen row supplies the code this
+   * segment continues, in priority order — the first one filled wins. Chart of
+   * Accounts inherits from its Parent Account when there is one and from its
+   * Kelompok otherwise, which is exactly what makes the number shown on screen
+   * the number that gets stored.
+   */
+  inheritsFrom?: string[];
+  /** `segment` only. The field the composed code is written into. */
+  writesTo?: string;
   defaultValue?: string | boolean | number;
+  /**
+   * The System Default this field starts on when creating. A default fills the
+   * control in and nothing more: it is not applied on edit, it never overrides
+   * a value, and the Server Action validates the result exactly as it would a
+   * value the user picked.
+   */
+  systemDefault?: SystemDefaultKey;
   /** `bool` caption and sub-caption. */
   caption?: string;
   captionDetail?: string;
@@ -375,6 +399,7 @@ export const ENTITIES: Entity[] = [
         type: "ref",
         ref: "ref_currency",
         required: true,
+        systemDefault: "default_currency",
         help: "Currency dari resource, bukan currency transaksi.",
       },
       {
@@ -473,25 +498,6 @@ export const ENTITIES: Entity[] = [
     statusModel: { field: "is_active", kind: "bool", options: ["true", "false"], toggle: true },
     fields: [
       {
-        name: "account_label",
-        label: "Label",
-        type: "text",
-        required: true,
-        unique: true,
-        uniqueWithin: "company_id",
-        ident: true,
-        placeholder: "1401",
-        help: "Nomor account. Unik dalam satu Company.",
-      },
-      {
-        name: "account_name",
-        label: "Nama Account",
-        type: "text",
-        required: true,
-        placeholder: "Persediaan",
-        help: "Nama lengkap entitas.",
-      },
-      {
         name: "company_id",
         label: "Company",
         type: "ref",
@@ -507,7 +513,48 @@ export const ENTITIES: Entity[] = [
         type: "ref",
         ref: "acc_account_subcategory",
         required: true,
-        help: "Menentukan posisi account pada struktur bagan akun.",
+        locked: true,
+        resets: ["parent_account"],
+        help: "Menentukan posisi account pada struktur bagan akun, sekaligus awal nomornya.",
+      },
+      {
+        name: "parent_account",
+        label: "Parent Account",
+        type: "ref",
+        ref: "acc_account",
+        refFilter: "parentAccount",
+        locked: true,
+        help: "Opsional. Diisi bila account ini turunan dari account lain pada Kelompok yang sama — nomornya melanjutkan nomor parent.",
+      },
+      {
+        name: "account_segment",
+        label: "Nomor Urut",
+        type: "segment",
+        required: true,
+        virtual: true,
+        createOnly: true,
+        inheritsFrom: ["parent_account", "account_subcategory_id"],
+        writesTo: "account_label",
+        placeholder: "1",
+        help: "Angka 1–999, unik di bawah induk yang sama. Nomor lengkap dibentuk dari induknya dan tidak dapat diubah setelah disimpan.",
+      },
+      {
+        name: "account_label",
+        label: "Nomor Account",
+        type: "text",
+        required: true,
+        derived: true,
+        locked: true,
+        ident: true,
+        help: "Dibentuk otomatis dari Kelompok atau Parent Account ditambah Nomor Urut.",
+      },
+      {
+        name: "account_name",
+        label: "Nama Account",
+        type: "text",
+        required: true,
+        placeholder: "Persediaan",
+        help: "Nama lengkap entitas.",
       },
       {
         name: "normal_balance",
@@ -518,21 +565,11 @@ export const ENTITIES: Entity[] = [
         defaultValue: "Debit",
       },
       {
-        name: "parent_account",
-        label: "Parent Account",
-        type: "ref",
-        ref: "acc_account",
-        refFilter: "parentAccount",
-        help: "Opsional. Mengaitkan account ini sebagai turunan dari account lain dalam Company yang sama.",
-      },
-      {
         name: "is_postable",
         label: "Postable",
         type: "bool",
         defaultValue: true,
-        caption: "Account dapat menerima Journal Line",
-        captionDetail:
-          "Matikan untuk account header yang hanya menampung turunan.",
+        caption: "Menerima Journal Line",
       },
       {
         name: "require_partner",
@@ -540,9 +577,7 @@ export const ENTITIES: Entity[] = [
         type: "bool",
         defaultValue: false,
         resets: ["partner_category_id"],
-        caption: "Journal Line wajib mengisi Partner",
-        captionDetail:
-          "Aktifkan untuk account subledger: Titipan, Hutang, Piutang, Prive, Investasi.",
+        caption: "Wajib mengisi Partner",
       },
       {
         name: "partner_category_id",
@@ -558,9 +593,7 @@ export const ENTITIES: Entity[] = [
         label: "Control Account",
         type: "bool",
         defaultValue: false,
-        caption: "Direkonsiliasi dengan operational book",
-        captionDetail:
-          "Saldo GL dibandingkan dengan Hutang/Piutang/Titipan/Prive Ledger.",
+        caption: "Direkonsiliasi dengan book",
       },
       {
         name: "is_active",
@@ -568,7 +601,6 @@ export const ENTITIES: Entity[] = [
         type: "bool",
         defaultValue: true,
         caption: "Account aktif",
-        captionDetail: "Account non-aktif tidak muncul pada pemilihan baru.",
       },
       NOTE_FIELD,
     ],
@@ -680,10 +712,17 @@ export const ENTITIES: Entity[] = [
       { name: "start_date", label: "Tanggal Mulai", type: "date", derived: true },
       { name: "end_date", label: "Tanggal Selesai", type: "date", derived: true },
       {
+        // A fiscal year's status is its lifecycle, not an isian: it is created
+        // as Draft, activated into Open — which is what generates the twelve
+        // periods — and closed by a process of its own. Derived and locked, so
+        // neither form nor a submitted value can move it. See
+        // `fiscal-workflow.ts` and `app/actions/fiscal.ts`.
         ...FISCAL_STATUS_FIELD,
+        derived: true,
+        locked: true,
         help:
-          "Draft belum dipakai · Open menerima posting dan otomatis membuat 12 " +
-          "Fiscal Period · Closed terkunci.",
+          "Draft belum dipakai · Open menerima posting dan memiliki 12 Fiscal " +
+          "Period · Closed terkunci.",
       },
       NOTE_FIELD,
     ],

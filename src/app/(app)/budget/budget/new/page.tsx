@@ -2,6 +2,7 @@ import { BudgetForm } from "@/components/budget/budget-form";
 import { requirePermission } from "@/lib/siba/auth";
 import { budgetMappings, budgetRefs, fiscalPeriod } from "@/lib/siba/budget";
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
+import { defaultCurrencyId } from "@/lib/siba/system-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,11 @@ export default async function Page({
   const period =
     Number.isInteger(id) && id > 0 ? await fiscalPeriod(id) : null;
 
-  const [refs, mappings] = await Promise.all([budgetRefs(), budgetMappings()]);
+  const [refs, mappings, currencyDefault] = await Promise.all([
+    budgetRefs(),
+    budgetMappings(),
+    defaultCurrencyId(),
+  ]);
 
   return (
     <BudgetForm
@@ -29,6 +34,7 @@ export default async function Page({
       mappings={mappings}
       month={period ? { id: period.id, label: period.label, name: period.name } : null}
       can={budgetAbilities(actor.permissions)}
+      defaultCurrencyId={currencyDefault}
     />
   );
 }

@@ -174,6 +174,28 @@ model SysPermission {
   @@map("sys_permission")
 }
 
+/// System defaults — what the application prefills and assumes when the user
+/// has not said otherwise. One row per setting key.
+///
+/// The catalogue of keys lives in code (`lib/siba/system-defaults.ts`), the way
+/// the permission catalogue does: a setting is a branch in the code, so a row
+/// nothing reads would be a setting nobody implemented. This table holds only
+/// what each key is currently set to. Values are text because the catalogue
+/// says how to read them — a `ref` setting stores a row id.
+///
+/// Not in the source DBML, which has no settings table at all.
+model SysSetting {
+  id            Int     @id @default(autoincrement())
+  setting_key   String  @unique
+  setting_value String?
+
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("sys_setting")
+}
+
 /// A grant, not master data: revoking removes the row and writes an audit entry.
 model SysUserRole {
   id      Int @id @default(autoincrement())
@@ -491,7 +513,10 @@ model AccAccountCategory {
   id              Int          @id @default(autoincrement())
   account_type_id Int
   category_code   String       @unique
-  category_label  String
+  /// The category's place in the chart of accounts: its account type's code
+  /// plus one segment, e.g. `1.1` under type `1`. Not in the DBML, which
+  /// carried no numbering scheme — see lib/siba/account-code.ts.
+  category_label  String       @unique
   category_name   String
   note            String?
   status          ActiveStatus @default(Active)
@@ -512,7 +537,9 @@ model AccAccountSubcategory {
   id                  Int          @id @default(autoincrement())
   account_category_id Int
   subcategory_code    String       @unique
-  subcategory_label   String
+  /// Its category's code plus one segment, e.g. `1.1.1`. Every account
+  /// number starts from one of these, so it is unique across the chart.
+  subcategory_label   String       @unique
   subcategory_name    String
   note                String?
   status              ActiveStatus @default(Active)
@@ -533,7 +560,9 @@ model AccAccount {
   id                     Int           @id @default(autoincrement())
   account_subcategory_id Int
   account_code           String        @unique
-  /// The account number (1101, 110201). Unique within a company — see @@unique
+  /// The account number, continuing whatever the account hangs under: its
+  /// subcategory's code (`1.1.1` -> `1.1.1.2`) or its parent account's
+  /// (`1.1.1.2` -> `1.1.1.2.1`). Unique within a company — see @@unique
   /// below. The DBML only constrained the generated account_code globally.
   account_label          String
   account_name           String

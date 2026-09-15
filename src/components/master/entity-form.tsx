@@ -28,7 +28,8 @@ import {
 } from "@/lib/siba/entities";
 import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
-import { formatDate, formatTimestamp } from "@/lib/format";
+import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
+import { formatDate, formatTimestamp, todayIso } from "@/lib/format";
 import { recordTitle } from "./title";
 
 export type FormMode = "new" | "view" | "edit";
@@ -41,6 +42,8 @@ export function EntityForm({
   createdByEmail,
   updatedByEmail,
   can,
+  headerActions,
+  defaults,
 }: {
   entity: Entity;
   mode: FormMode;
@@ -51,6 +54,19 @@ export function EntityForm({
   updatedByEmail?: string;
   /** Presentation only — the Server Actions check the same permissions. */
   can: EntityAbilities;
+  /**
+   * Buttons an entity with a lifecycle of its own contributes to the detail
+   * header — a Fiscal Year is activated, not edited into Open. The registry
+   * describes fields, not lifecycles, so the escape hatch is a slot rather
+   * than another config key nothing else would use.
+   */
+  headerActions?: React.ReactNode;
+  /**
+   * System Defaults, already resolved against their masters, used to fill a
+   * create form in. Absent on view and edit: a default is a starting point for
+   * a new record, never something that reaches an existing one.
+   */
+  defaults?: Partial<Record<SystemDefaultKey, number | null>>;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -62,7 +78,9 @@ export function EntityForm({
   const canEdit = can.edit && !locked;
   const statusModel = entity.statusModel;
 
-  const [values, setValues] = useState<FormValues>(() => initialValues(entity, row));
+  const [values, setValues] = useState<FormValues>(() =>
+    initialValues(entity, row, defaults)
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -99,6 +117,21 @@ export function EntityForm({
     fieldApplies(field, values, budgetCategoryLabel);
 
   /**
+   * The code a `segment` field continues — the first of its `inheritsFrom`
+   * fields that has a value. Shown beside the input so the number being typed
+   * is read in full; the Server Action resolves the same prefix from the
+   * database and composes the code there.
+   */
+  const inheritedCode = (field: Field): string | null => {
+    for (const name of field.inheritsFrom ?? []) {
+      const id = Number(values[name] ?? 0);
+      if (!id) continue;
+      return refs[name]?.find((o) => o.id === id)?.label ?? null;
+    }
+    return null;
+  };
+
+  /**
    * The half of a ref narrowing that depends on what is being entered right
    * now. The server already applied the structural half when it built these
    * options, and re-checks the whole rule when the form is submitted.
@@ -111,10 +144,18 @@ export function EntityForm({
       case "cashBankAccount":
       case "postableAccount":
         return companyId ? all.filter((o) => o.companyId === companyId) : [];
-      case "parentAccount":
-        return companyId
-          ? all.filter((o) => o.companyId === companyId && o.id !== row?.id)
-          : [];
+      case "parentAccount": {
+        // A parent decides this account's number, so it has to sit in the same
+        // Company and the same kelompok. `validateAccount` re-checks both.
+        const subcategoryId = Number(values.account_subcategory_id ?? 0);
+        if (!companyId || !subcategoryId) return [];
+        return all.filter(
+          (o) =>
+            o.companyId === companyId &&
+            o.subcategoryId === subcategoryId &&
+            o.id !== row?.id
+        );
+      }
       case "mappingPartnerCategory": {
         const label = budgetCategoryLabel(values.budget_category_id);
         if (!label) return [];
@@ -238,6 +279,7 @@ export function EntityForm({
           </h1>
 
           <div className="ph-act">
+            {mode === "view" && headerActions}
             {editing ? (
               <>
                 <Link
@@ -281,6 +323,7 @@ export function EntityForm({
                     exists={mode !== "new"}
                     error={errors[f.name]}
                     options={optionsFor(f)}
+                    prefix={f.type === "segment" ? inheritedCode(f) : null}
                     onChange={(v) => setField(f, v)}
                   />
                 ))}
@@ -454,9 +497,14 @@ export function EntityForm({
   );
 }
 
-function initialValues(entity: Entity, row: Row | null): FormValues {
+function initialValues(
+  entity: Entity,
+  row: Row | null,
+  defaults?: Partial<Record<SystemDefaultKey, number | null>>
+): FormValues {
   const out: FormValues = {};
   for (const f of entity.fields) {
+    const preset = f.systemDefault ? defaults?.[f.systemDefault] : null;
     if (row) {
       const v = row[f.name];
       if (f.type === "bool") out[f.name] = Boolean(v);
@@ -465,13 +513,18 @@ function initialValues(entity: Entity, row: Row | null): FormValues {
       // at UTC midnight.
       else if (f.type === "date") out[f.name] = v == null ? null : String(v).slice(0, 10);
       else out[f.name] = v == null ? null : String(v);
+    } else if (preset != null) {
+      out[f.name] = String(preset);
+    } else if (f.defaultValue != null) {
+      out[f.name] = f.defaultValue as string | boolean;
+    } else if (f.type === "bool") {
+      out[f.name] = false;
+    } else if (f.type === "date" && !f.derived && !f.locked) {
+      // A date somebody types is almost always today's. A derived date is the
+      // action's to write, so it is left alone.
+      out[f.name] = todayIso();
     } else {
-      out[f.name] =
-        f.defaultValue != null
-          ? (f.defaultValue as string | boolean)
-          : f.type === "bool"
-            ? false
-            : "";
+      out[f.name] = "";
     }
   }
   return out;
@@ -485,6 +538,7 @@ function FieldControl({
   exists,
   error,
   options,
+  prefix,
   statusLike,
   onChange,
 }: {
@@ -495,6 +549,8 @@ function FieldControl({
   exists: boolean;
   error?: string;
   options: RefOption[];
+  /** `segment` only: the code this field's number continues. */
+  prefix?: string | null;
   /** This field carries the record's status, so a boolean reads Aktif/Non Aktif. */
   statusLike?: boolean;
   onChange: (value: string | boolean | null) => void;
@@ -591,10 +647,13 @@ function FieldControl({
 
   // ---- editable controls -------------------------------------------------
   if (field.type === "bool") {
+    // A caption that stands on its own gets the one-line control, so a form
+    // full of toggles does not read as a wall of explanation.
+    const compact = !field.captionDetail;
     return (
       <div className={wrapClass}>
         <label>{field.label}</label>
-        <label className={`chk${error ? " bad" : ""}`}>
+        <label className={`chk${compact ? " sm" : ""}${error ? " bad" : ""}`}>
           <input
             type="checkbox"
             checked={Boolean(value)}
@@ -605,6 +664,32 @@ function FieldControl({
             {field.captionDetail && <span className="cd">{field.captionDetail}</span>}
           </span>
         </label>
+        {footer}
+      </div>
+    );
+  }
+
+  // One number continuing an inherited code. Until the field it inherits from
+  // is chosen there is nothing to continue, so the input waits rather than
+  // collecting a number that would have no place to go.
+  if (field.type === "segment") {
+    return (
+      <div className={wrapClass}>
+        {labelNode}
+        <div className={`segf${error ? " bad" : ""}`}>
+          <span className={`pfx${prefix ? "" : " nil"}`}>
+            {prefix ? `${prefix}.` : "menunggu induk"}
+          </span>
+          <input
+            value={value == null ? "" : String(value)}
+            placeholder={field.placeholder}
+            disabled={!prefix}
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={3}
+            onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ""))}
+          />
+        </div>
         {footer}
       </div>
     );

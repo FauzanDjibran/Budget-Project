@@ -1,0 +1,1209 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Icon } from "@/components/icon";
+import { Select } from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
+import {
+  createTransaction,
+  listEligibleBudgets,
+  transitionTransaction,
+  updateTransaction,
+  type TransactionValues,
+} from "@/app/actions/finance";
+import {
+  formatDate,
+  formatMoney,
+  formatNumber,
+  formatTimestamp,
+} from "@/lib/format";
+import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
+import type { BudgetMapping } from "@/lib/siba/budget";
+import type {
+  EligibleBudget,
+  FinanceRefs,
+  PurposeOption,
+  TransactionLineRow,
+  TransactionRow,
+} from "@/lib/siba/finance";
+import {
+  TRANSACTION_TRANSITIONS,
+  TRANSACTION_TYPE_TEXT,
+  availableTransactionActions,
+  transactionIsEditable,
+  type TransactionAbilities,
+  type TransactionAction,
+} from "@/lib/siba/transaction-workflow";
+import { BudgetPicker } from "./budget-picker";
+
+export type TransactionFormMode = "new" | "view" | "edit";
+
+/** A line while the document is being edited — before it is a database row. */
+type DraftLine = {
+  budget_id: number;
+  budget_no: string;
+  budget_date: string;
+  description: string;
+  outstanding: number;
+  amount: number;
+};
+
+/**
+ * Cash Bank Transaction create / detail / edit.
+ *
+ * The header is the context (concept doc §9): Purpose, Company, Partner and
+ * Cash & Bank together decide which approved Budgets this document may
+ * realize. Change any of them and the eligible set changes with it, so lines
+ * that no longer qualify are dropped and the user is told how many — leaving
+ * them would let a document settle a Budget its own header rejects.
+ *
+ * Nothing on this screen moves money. Post does, and it is deliberately a
+ * separate, confirmed act: §2.3 makes Post the actual boundary, and §15 makes
+ * everything past it permanent.
+ */
+export function TransactionForm({
+  mode,
+  transaction,
+  lines,
+  refs,
+  purposes,
+  mappings,
+  createdByEmail,
+  updatedByEmail,
+  can,
+}: {
+  mode: TransactionFormMode;
+  transaction: TransactionRow | null;
+  lines: TransactionLineRow[];
+  refs: FinanceRefs;
+  purposes: PurposeOption[];
+  mappings: BudgetMapping[];
+  createdByEmail?: string;
+  updatedByEmail?: string;
+  can: TransactionAbilities;
+}) {
+  const router = useRouter();
+  const toast = useToast();
+  const editing = mode === "new" || mode === "edit";
+
+  const [values, setValues] = useState<TransactionValues>(() =>
+    initialValues(transaction, refs)
+  );
+  const [draftLines, setDraftLines] = useState<DraftLine[]>(() =>
+    lines.map((l) => ({
+      budget_id: l.budget_id,
+      budget_no: l.budget_no,
+      budget_date: l.budget_date,
+      description: l.description,
+      outstanding: l.outstanding_amount,
+      amount: l.settlement_amount,
+    }))
+  );
+  const [pool, setPool] = useState<EligibleBudget[]>([]);
+  const [dropped, setDropped] = useState(0);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [picking, setPicking] = useState(false);
+
+  const [confirm, setConfirm] = useState<TransactionAction | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const purpose = purposes.find((p) => p.key === values.purpose) ?? null;
+  const needsPartner = Boolean(purpose?.partnerCategory);
+
+  const companyId = values.company_id ? Number(values.company_id) : null;
+  const cashBank =
+    refs.cashBanks.find((c) => String(c.id) === values.cash_bank_id) ?? null;
+  const currencyLabel = editing
+    ? cashBank?.currencyLabel ?? "—"
+    : refs.currencies.find((c) => c.id === transaction?.currency_id)?.label ??
+      "IDR";
+
+  const headerReady = Boolean(
+    purpose &&
+      companyId &&
+      values.cash_bank_id &&
+      (!needsPartner || values.partner_id)
+  );
+
+  const set = (key: keyof TransactionValues, value: string) => {
+    setValues((v) => {
+      const next = { ...v, [key]: value };
+      // A purpose that takes no subject must not keep one from the purpose
+      // before it, or the document would carry a partner its rules reject.
+      if (key === "purpose") {
+        const p = purposes.find((x) => x.key === value);
+        if (!p?.partnerCategory) next.partner_id = "";
+      }
+      return next;
+    });
+    setDirty(true);
+    setErrors((e) => {
+      if (!e[key] && !e._form && !e._lines) return e;
+      const nextErrors = { ...e };
+      delete nextErrors[key];
+      delete nextErrors._form;
+      delete nextErrors._lines;
+      return nextErrors;
+    });
+  };
+
+  // ------------------------------------------------------- eligibility pool
+
+  // The current lines, readable from the effect below without making it re-run
+  // every time an amount is typed. Written from an effect, never during render.
+  const linesRef = useRef(draftLines);
+  useEffect(() => {
+    linesRef.current = draftLines;
+  }, [draftLines]);
+
+  const { purpose: purposeKey, company_id, partner_id, cash_bank_id } = values;
+  const transactionId = transaction?.id;
+
+  useEffect(() => {
+    if (!editing) return;
+    let cancelled = false;
+
+    const load = async () => {
+      const result = headerReady
+        ? await listEligibleBudgets(
+            {
+              purpose: purposeKey,
+              company_id,
+              partner_id,
+              cash_bank_id,
+              note: "",
+            },
+            transactionId ? { excludeTransactionId: transactionId } : {}
+          )
+        : { ok: true as const, budgets: [] };
+      if (cancelled) return;
+
+      const budgets = result.ok ? result.budgets : [];
+      setPool(budgets);
+
+      // A line whose Budget the new header does not admit cannot stay: the
+      // document would otherwise settle a plan its own context rejects. The
+      // count is surfaced rather than swallowed.
+      const allowed = new Set(budgets.map((b) => b.id));
+      const previous = linesRef.current;
+      const keep = previous.filter((l) => allowed.has(l.budget_id));
+      if (keep.length !== previous.length) {
+        setDropped((d) => d + (previous.length - keep.length));
+        setDraftLines(keep);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    editing,
+    headerReady,
+    purposeKey,
+    company_id,
+    partner_id,
+    cash_bank_id,
+    transactionId,
+  ]);
+
+  // --------------------------------------------------------------- derived
+
+  const total = editing
+    ? draftLines.reduce((t, l) => t + (l.amount || 0), 0)
+    : transaction?.transaction_amount ?? 0;
+
+  const account = useMemo(() => {
+    if (!purpose || !companyId) return null;
+    const category = refs.categories.find(
+      (c) => c.label === purpose.budgetCategory
+    );
+    if (!category) return null;
+    const partnerCategoryId = purpose.partnerCategory
+      ? refs.partnerCategories.find((c) => c.label === purpose.partnerCategory)
+          ?.id ?? null
+      : null;
+    return (
+      mappings.find(
+        (m) =>
+          m.companyId === companyId &&
+          m.budgetCategoryId === category.id &&
+          m.partnerCategoryId === partnerCategoryId
+      ) ?? null
+    );
+  }, [purpose, companyId, refs.categories, refs.partnerCategories, mappings]);
+
+  const partnerOptions = useMemo(() => {
+    if (!purpose?.partnerCategory || !companyId) return [];
+    return refs.partners.filter(
+      (p) =>
+        p.companyId === companyId &&
+        p.categoryLabel === purpose.partnerCategory
+    );
+  }, [refs.partners, purpose, companyId]);
+
+  const cashBankOptions = useMemo(
+    () =>
+      refs.cashBanks
+        .filter((c) => c.companyId === companyId)
+        .map((c) => ({
+          id: c.id,
+          label: c.label,
+          name: `${c.name} · ${c.currencyLabel} ${formatNumber(c.balance)}`,
+          active: c.active,
+        })),
+    [refs.cashBanks, companyId]
+  );
+
+  const company = refs.companies.find((c) => c.id === companyId) ?? null;
+  const partner =
+    refs.partners.find((p) => String(p.id) === values.partner_id) ?? null;
+
+  const inn = editing
+    ? purpose?.direction === "In"
+    : transaction?.transaction_type === "In";
+
+  const balanceBefore = cashBank?.balance ?? 0;
+  const balanceAfter =
+    transaction?.status === "Posted" || transaction?.status === "Cancelled"
+      ? balanceBefore
+      : balanceBefore + (inn ? 1 : -1) * total;
+
+  // ------------------------------------------------------------------ lines
+
+  const alreadyPicked = new Set(draftLines.map((l) => l.budget_id));
+  const pickable = pool.filter((b) => !alreadyPicked.has(b.id));
+
+  const addLines = (picked: { budget_id: number; amount: number }[]) => {
+    setDraftLines((current) => {
+      const byId = new Map(pool.map((b) => [b.id, b]));
+      const added = picked.flatMap((p) => {
+        const b = byId.get(p.budget_id);
+        if (!b) return [];
+        return [
+          {
+            budget_id: b.id,
+            budget_no: b.budget_no,
+            budget_date: b.budget_date,
+            description: b.description,
+            outstanding: b.outstanding,
+            amount: p.amount,
+          },
+        ];
+      });
+      return [...current, ...added];
+    });
+    setDirty(true);
+    setPicking(false);
+    setErrors((e) => {
+      const next = { ...e };
+      delete next._lines;
+      return next;
+    });
+  };
+
+  // ----------------------------------------------------------------- writes
+
+  const onSave = async () => {
+    setSaving(true);
+    const payload = draftLines.map((l) => ({
+      budget_id: String(l.budget_id),
+      amount: String(l.amount),
+    }));
+    const result =
+      mode === "new"
+        ? await createTransaction(values, payload)
+        : await updateTransaction(transaction!.id, values, payload);
+    setSaving(false);
+
+    if (!result.ok) {
+      setErrors(result.errors);
+      toast(
+        "Gagal menyimpan",
+        result.errors._form ??
+          result.errors._lines ??
+          "Periksa kembali isian yang ditandai.",
+        "err"
+      );
+      return;
+    }
+    setDirty(false);
+    toast(
+      mode === "new" ? "Dokumen dibuat" : "Perubahan disimpan",
+      mode === "new"
+        ? `${result.transaction_no} dibuat otomatis. Dokumen masih Draft.`
+        : transaction?.transaction_no,
+      "ok"
+    );
+    router.push(`/finance/cash-bank-transaction/${result.id}`);
+    router.refresh();
+  };
+
+  const run = async (action: TransactionAction) => {
+    if (!transaction) return;
+    setBusy(true);
+    const result = await transitionTransaction(transaction.id, action);
+    setBusy(false);
+    setConfirm(null);
+    if (result.ok) {
+      toast(result.message, transaction.transaction_no, "ok");
+      router.refresh();
+      return;
+    }
+    toast(
+      "Tidak dapat diproses",
+      result.errors._form ?? Object.values(result.errors)[0],
+      "err"
+    );
+  };
+
+  // ----------------------------------------------------------------- render
+
+  const listHref = "/finance/cash-bank-transaction";
+  const backHref = transaction ? `${listHref}/${transaction.id}` : listHref;
+  const actions = transaction
+    ? availableTransactionActions(transaction.status, can)
+    : [];
+  const postable = actions.includes("post") && lines.length > 0;
+
+  return (
+    <>
+      <div className="ph">
+        <div className="crumb">
+          <Link href={listHref}>Finance</Link>
+          <span>/</span>
+          <Link href={listHref}>Cash Bank Transaction</Link>
+          <span>/</span>
+          <span className="cur">
+            {mode === "new" ? "Baru" : transaction?.transaction_no}
+          </span>
+        </div>
+        <div className="ph-row">
+          <h1>
+            <span className="ph-ico">
+              <Icon name="wallet2" size={16} />
+            </span>
+            {mode === "new" ? "Dokumen Baru" : transaction!.transaction_no}
+            {transaction && (
+              <>
+                <span className="lab lg">
+                  {purposes.find((p) => p.key === transaction.purpose)?.label ??
+                    transaction.purpose}
+                </span>
+                {!editing && (
+                  <span
+                    className={`bdg ${STATUS_CLASS[transaction.status] ?? "s-mute"}`}
+                  >
+                    {STATUS_TEXT[transaction.status] ?? transaction.status}
+                  </span>
+                )}
+              </>
+            )}
+            {mode === "edit" && <span className="bdg t-vio">Mode Ubah</span>}
+          </h1>
+          <div className="ph-act">
+            {mode === "view" && transaction && (
+              <>
+                {can.edit && transactionIsEditable(transaction.status) && (
+                  <Link className="btn" href={`${listHref}/${transaction.id}/edit`}>
+                    <Icon name="pen" size={15} /> Ubah
+                  </Link>
+                )}
+                {actions.map((a) => {
+                  const t = TRANSACTION_TRANSITIONS[a];
+                  const blocked = a === "post" && !postable;
+                  return (
+                    <button
+                      key={a}
+                      className={`btn${t.danger ? " danger" : a === "post" ? " primary" : ""}`}
+                      disabled={busy || blocked}
+                      title={
+                        blocked ? "Tambahkan minimal satu Budget" : undefined
+                      }
+                      onClick={() => setConfirm(a)}
+                    >
+                      <Icon name={t.icon} size={15} /> {t.label}
+                    </button>
+                  );
+                })}
+                {!actions.length && (
+                  <span className="lockchip">
+                    <Icon name="lock" size={13} />{" "}
+                    {transaction.status === "Posted"
+                      ? "Terkunci setelah Post"
+                      : "Dokumen dibatalkan"}
+                  </span>
+                )}
+              </>
+            )}
+            {editing && (
+              <Link className="btn" href={backHref}>
+                <Icon name="back" size={15} /> Batal
+              </Link>
+            )}
+          </div>
+        </div>
+        <p className="ph-sub">
+          Layer eksekusi. Satu dokumen kas/bank dapat merealisasikan beberapa
+          Budget yang sudah disetujui; saldo dan realisasi baru bergerak saat
+          dokumen diposting.
+        </p>
+      </div>
+
+      {errors._form && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="card-b">
+            <div className="err">
+              <Icon name="warn" size={12} />
+              {errors._form}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="fgrid">
+        <div>
+          <div className="card">
+            <div className="card-h">
+              <span className="ci">
+                <Icon name="wallet2" size={15} />
+              </span>
+              <div className="ct">
+                <h3>Header Dokumen</h3>
+                <p>
+                  Kombinasi Purpose · Company · Partner · Cash &amp; Bank
+                  menentukan Budget yang dapat direalisasikan.
+                </p>
+              </div>
+            </div>
+            <div className="card-b">
+              <div className="fsec">
+                <div className="frow">
+                  <div className="fld">
+                    <label>
+                      Transaction Purpose{editing && <span className="req">*</span>}
+                    </label>
+                    {editing ? (
+                      <Select
+                        value={values.purpose}
+                        searchable
+                        invalid={Boolean(errors.purpose)}
+                        placeholder="Pilih Purpose…"
+                        options={purposes.map((p) => ({
+                          value: p.key,
+                          label: p.label,
+                          hint: `${TRANSACTION_TYPE_TEXT[p.direction]} · ${p.budgetCategory}`,
+                        }))}
+                        onChange={(v) => set("purpose", v)}
+                      />
+                    ) : (
+                      <div className="ro">
+                        <span>
+                          {purposes.find((p) => p.key === transaction!.purpose)
+                            ?.label ?? transaction!.purpose}
+                        </span>
+                      </div>
+                    )}
+                    <Foot
+                      error={errors.purpose}
+                      help={
+                        purpose
+                          ? `${TRANSACTION_TYPE_TEXT[purpose.direction]} · Category ${purpose.budgetCategory}` +
+                            (purpose.partnerCategory
+                              ? ` · Partner ${purpose.partnerCategory}`
+                              : " · tanpa Partner")
+                          : editing
+                            ? "Purpose menentukan arah kas, Budget Category, dan apakah Partner diperlukan."
+                            : undefined
+                      }
+                    />
+                  </div>
+
+                  <div className="fld">
+                    <label>
+                      Company
+                      {editing && <span className="lockb">Terkunci</span>}
+                    </label>
+                    <div className="ro">
+                      <span className="lab">{company?.label ?? "—"}</span>
+                      <span>{company?.name ?? ""}</span>
+                    </div>
+                    <Foot
+                      error={errors.company_id}
+                      help={
+                        editing
+                          ? "Dokumen kas/bank langsung hanya untuk Company induk. Kebutuhan Company anak dipenuhi melalui Funding Request."
+                          : undefined
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="frow">
+                  <div className="fld">
+                    <label>
+                      Partner
+                      {editing && needsPartner && <span className="req">*</span>}
+                    </label>
+                    {editing ? (
+                      needsPartner ? (
+                        <Combobox
+                          value={values.partner_id ? Number(values.partner_id) : null}
+                          options={partnerOptions}
+                          placeholder="Pilih Partner…"
+                          invalid={Boolean(errors.partner_id)}
+                          onChange={(v) => set("partner_id", v ? String(v) : "")}
+                        />
+                      ) : (
+                        <div className="ro">
+                          <span className="dash">
+                            {purpose
+                              ? "Purpose ini tidak memakai Partner"
+                              : "Menunggu Purpose"}
+                          </span>
+                        </div>
+                      )
+                    ) : (
+                      <div className="ro">
+                        {partner ? (
+                          <>
+                            <span className="lab">{partner.label}</span>
+                            <span>
+                              {partner.name} ({partner.categoryLabel})
+                            </span>
+                          </>
+                        ) : (
+                          <span className="dash">Tidak diperlukan</span>
+                        )}
+                      </div>
+                    )}
+                    <Foot
+                      error={errors.partner_id}
+                      help={
+                        editing && needsPartner
+                          ? `Hanya Partner berkategori ${purpose?.partnerCategory} pada Company ini.`
+                          : undefined
+                      }
+                    />
+                  </div>
+
+                  <div className="fld">
+                    <label>
+                      Cash &amp; Bank{editing && <span className="req">*</span>}
+                    </label>
+                    {editing ? (
+                      <Combobox
+                        value={values.cash_bank_id ? Number(values.cash_bank_id) : null}
+                        options={cashBankOptions}
+                        placeholder="Pilih Cash & Bank…"
+                        invalid={Boolean(errors.cash_bank_id)}
+                        onChange={(v) => set("cash_bank_id", v ? String(v) : "")}
+                      />
+                    ) : (
+                      <div className="ro">
+                        <span className="lab">
+                          {refs.cashBanks.find(
+                            (c) => c.id === transaction!.cash_bank_id
+                          )?.label ?? "—"}
+                        </span>
+                        <span>
+                          {refs.cashBanks.find(
+                            (c) => c.id === transaction!.cash_bank_id
+                          )?.name ?? ""}
+                        </span>
+                      </div>
+                    )}
+                    <Foot
+                      error={errors.cash_bank_id}
+                      help={
+                        editing
+                          ? "Resource tempat uang bergerak. Currency dokumen mengikuti resource ini."
+                          : undefined
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="frow">
+                  <div className="fld">
+                    <label>Currency</label>
+                    <div className="ro">
+                      <span className="lab">{currencyLabel}</span>
+                      <span>mengikuti Cash &amp; Bank</span>
+                    </div>
+                  </div>
+                  <div className="fld">
+                    <label>Tanggal Dokumen</label>
+                    <div className="ro">
+                      {transaction?.document_date ? (
+                        formatDate(transaction.document_date)
+                      ) : (
+                        <span className="dash">dicatat saat diposting</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="frow">
+                  <div className="fld full">
+                    <label>Catatan</label>
+                    {editing ? (
+                      <textarea
+                        className="ta"
+                        rows={2}
+                        value={values.note}
+                        onChange={(e) => set("note", e.target.value)}
+                        placeholder="Keterangan tambahan untuk dokumen ini…"
+                      />
+                    ) : (
+                      <div className="ro">
+                        {transaction!.note || <span className="dash">—</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {editing && dirty && (
+              <div className="dirty">
+                <span className="msg">
+                  <span className="pulse" />
+                  Ada perubahan yang belum disimpan
+                </span>
+                <Link className="btn sm" href={backHref}>
+                  Batal
+                </Link>
+                <button className="btn primary sm" onClick={onSave} disabled={saving}>
+                  <Icon name="save" size={14} /> Simpan
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="card" style={{ marginTop: 14 }}>
+            <div className="card-h">
+              <span className="ci">
+                <Icon name="clip" size={15} />
+              </span>
+              <div className="ct">
+                <h3>Budget yang Direalisasikan</h3>
+                <p>
+                  Satu dokumen dapat merealisasikan beberapa Budget sekaligus
+                  selama memenuhi kriteria header.
+                </p>
+              </div>
+              {editing ? (
+                <button
+                  className="btn sm primary"
+                  disabled={!headerReady}
+                  title={
+                    headerReady ? undefined : "Lengkapi header dokumen terlebih dahulu"
+                  }
+                  onClick={() => setPicking(true)}
+                >
+                  <Icon name="plus" size={14} /> Tambah Budget
+                </button>
+              ) : (
+                <span className="hint">{lines.length} budget</span>
+              )}
+            </div>
+
+            {editing && dropped > 0 && (
+              <div className="nbox warn slim">
+                <span className="ni">
+                  <Icon name="warn" size={14} />
+                </span>
+                <div>
+                  <b>{dropped} baris dikeluarkan otomatis.</b>
+                  <p>
+                    Budget tersebut tidak lagi memenuhi kriteria header yang
+                    baru.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {errors._lines && (
+              <div className="nbox bad slim">
+                <span className="ni">
+                  <Icon name="warn" size={14} />
+                </span>
+                <div>
+                  <b>{errors._lines}</b>
+                </div>
+              </div>
+            )}
+
+            {(editing ? draftLines.length : lines.length) ? (
+              <div className="tw">
+                <table className="grid ltab">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 34 }}>No</th>
+                      <th style={{ width: 92 }}>Budget</th>
+                      <th>Deskripsi</th>
+                      <th className="num" style={{ width: 124 }}>
+                        Nominal Budget
+                      </th>
+                      <th className="num" style={{ width: 124 }}>
+                        Outstanding
+                      </th>
+                      <th className="num" style={{ width: editing ? 164 : 150 }}>
+                        Realisasi Dokumen
+                      </th>
+                      <th style={{ width: 44 }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {editing
+                      ? draftLines.map((l, i) => {
+                          const over = l.amount > l.outstanding;
+                          const full = l.amount >= l.outstanding;
+                          const planned =
+                            pool.find((b) => b.id === l.budget_id)?.budget_amount ??
+                            null;
+                          return (
+                            <tr key={l.budget_id} className={over ? "overrow" : undefined}>
+                              <td className="no">{i + 1}</td>
+                              <td>
+                                <span className="lab">{l.budget_no}</span>
+                              </td>
+                              <td className="pri">
+                                <span className="dstack">
+                                  <span className="d1">{l.description}</span>
+                                  <span className="d2">
+                                    {formatDate(l.budget_date)}
+                                  </span>
+                                </span>
+                              </td>
+                              <td className="num">
+                                <span className="mny">
+                                  {planned == null
+                                    ? "—"
+                                    : formatMoney(planned, currencyLabel)}
+                                </span>
+                              </td>
+                              <td className="num">
+                                <span className={`mny${l.outstanding ? "" : " z"}`}>
+                                  {formatMoney(l.outstanding, currencyLabel)}
+                                </span>
+                              </td>
+                              <td className="num">
+                                <input
+                                  className={`inp lmny${over ? " over" : ""}`}
+                                  inputMode="numeric"
+                                  autoComplete="off"
+                                  value={formatNumber(l.amount)}
+                                  onChange={(e) => {
+                                    const raw = e.target.value.replace(/[^0-9]/g, "");
+                                    setDraftLines((rows) =>
+                                      rows.map((r) =>
+                                        r.budget_id === l.budget_id
+                                          ? { ...r, amount: raw ? Number(raw) : 0 }
+                                          : r
+                                      )
+                                    );
+                                    setDirty(true);
+                                  }}
+                                />
+                                {over ? (
+                                  <span
+                                    className="overtag"
+                                    title="Realisasi melebihi outstanding"
+                                  >
+                                    Over{" "}
+                                    {formatMoney(
+                                      l.amount - l.outstanding,
+                                      currencyLabel
+                                    )}
+                                  </span>
+                                ) : full ? (
+                                  <span className="fulltag">Menutup budget</span>
+                                ) : null}
+                              </td>
+                              <td className="acts">
+                                <button
+                                  className="iact del"
+                                  title="Keluarkan dari dokumen"
+                                  onClick={() => {
+                                    setDraftLines((rows) =>
+                                      rows.filter((r) => r.budget_id !== l.budget_id)
+                                    );
+                                    setDirty(true);
+                                  }}
+                                >
+                                  <Icon name="trash" size={14} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      : lines.map((l, i) => {
+                          const over = l.settlement_amount > l.outstanding_amount;
+                          return (
+                            <tr key={l.id} className={over ? "overrow" : undefined}>
+                              <td className="no">{i + 1}</td>
+                              <td>
+                                <span className="lab">{l.budget_no}</span>
+                              </td>
+                              <td className="pri">
+                                <span className="dstack">
+                                  <span className="d1">{l.description}</span>
+                                  <span className="d2">
+                                    {formatDate(l.budget_date)} ·{" "}
+                                    {STATUS_TEXT[l.budget_status] ?? l.budget_status}
+                                  </span>
+                                </span>
+                              </td>
+                              <td className="num">
+                                <span className="mny">
+                                  {formatMoney(l.budget_amount, currencyLabel)}
+                                </span>
+                              </td>
+                              <td className="num">
+                                <span
+                                  className={`mny${l.outstanding_amount ? "" : " z"}`}
+                                >
+                                  {formatMoney(l.outstanding_amount, currencyLabel)}
+                                </span>
+                              </td>
+                              <td className="num">
+                                <span className={`mny${over ? " over" : ""}`}>
+                                  {formatMoney(l.settlement_amount, currencyLabel)}
+                                </span>
+                              </td>
+                              <td className="acts">
+                                <Link
+                                  className="iact"
+                                  href={`/budget/budget/${l.budget_id}`}
+                                  title="Buka Budget"
+                                >
+                                  <Icon name="eye" size={14} />
+                                </Link>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="totrow">
+                      <td colSpan={5} style={{ textAlign: "right" }}>
+                        Total Realisasi Dokumen
+                      </td>
+                      <td className="num">
+                        <span className="mny big">
+                          {formatMoney(total, currencyLabel)}
+                        </span>
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : (
+              <div className="empty sm">
+                <div className="ic">
+                  <Icon name="clip" size={18} />
+                </div>
+                <h4>
+                  {editing
+                    ? headerReady
+                      ? "Belum ada Budget dipilih"
+                      : "Lengkapi header dokumen"
+                    : "Dokumen tanpa Budget"}
+                </h4>
+                <p>
+                  {editing
+                    ? headerReady
+                      ? "Tekan Tambah Budget untuk melihat Budget yang memenuhi kriteria header dokumen ini."
+                      : "Pilih Transaction Purpose, Partner (bila diperlukan), dan Cash & Bank terlebih dahulu."
+                    : "Tidak ada line pada dokumen ini."}
+                </p>
+              </div>
+            )}
+
+            {cashBank && total > 0 && (
+              <div className="cardfoot">
+                <div className="impact">
+                  <div className="ttl">Dampak Transaksi</div>
+                  <div className="ir">
+                    <span>Arah kas</span>
+                    <b>{inn ? "Penerimaan" : "Pengeluaran"}</b>
+                  </div>
+                  <div className="ir">
+                    <span>Cash &amp; Bank</span>
+                    <b>{cashBank.label}</b>
+                  </div>
+                  <div className="ir">
+                    <span>Account tujuan</span>
+                    <b>{account ? account.accountLabel : "belum dipetakan"}</b>
+                  </div>
+                  <div className="ir">
+                    <span>
+                      {transaction?.status === "Posted"
+                        ? `Saldo ${cashBank.label} kini`
+                        : transaction?.status === "Cancelled"
+                          ? "Saldo tidak berubah"
+                          : "Saldo setelah posting"}
+                    </span>
+                    <b>{formatMoney(balanceAfter, currencyLabel)}</b>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <div className="card side">
+            <div className="card-h">
+              <span className="ci">
+                <Icon name="file" size={15} />
+              </span>
+              <div className="ct">
+                <h3>Ringkasan</h3>
+              </div>
+            </div>
+            <div className="card-b">
+              <div style={{ padding: "5px 0" }}>
+                {mode === "new" ? (
+                  <>
+                    <div className="mrow">
+                      <span className="k">Nomor</span>
+                      <span className="v">
+                        <span className="dash">dibuat otomatis</span>
+                      </span>
+                    </div>
+                    <div className="mrow">
+                      <span className="k">Status</span>
+                      <span className="v">Akan tersimpan sebagai Draft</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mrow">
+                      <span className="k">Nomor</span>
+                      <span className="v mono">{transaction!.transaction_no}</span>
+                    </div>
+                    <div className="mrow">
+                      <span className="k">Status</span>
+                      <span className="v">
+                        <span
+                          className={`bdg ${STATUS_CLASS[transaction!.status] ?? "s-mute"}`}
+                        >
+                          {STATUS_TEXT[transaction!.status] ?? transaction!.status}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="mrow">
+                      <span className="k">Posting</span>
+                      <span className="v">
+                        {transaction!.posting_date ? (
+                          formatTimestamp(transaction!.posting_date)
+                        ) : (
+                          <span className="dash">belum diposting</span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="mrow">
+                      <span className="k">Dibuat</span>
+                      <span className="v">
+                        {formatTimestamp(transaction!.created_at)}
+                        <small>{createdByEmail ?? ""}</small>
+                      </span>
+                    </div>
+                    <div className="mrow">
+                      <span className="k">Diubah</span>
+                      <span className="v">
+                        {transaction!.updated_by ? (
+                          <>
+                            {formatTimestamp(transaction!.updated_at)}
+                            <small>{updatedByEmail ?? ""}</small>
+                          </>
+                        ) : (
+                          <span className="dash">Belum pernah diubah</span>
+                        )}
+                      </span>
+                    </div>
+                  </>
+                )}
+                <div className="mrow">
+                  <span className="k">Purpose</span>
+                  <span className="v">
+                    {purpose ? (
+                      <>
+                        {purpose.label}
+                        <small className="mono">{purpose.key}</small>
+                      </>
+                    ) : (
+                      <span className="dash">belum dipilih</span>
+                    )}
+                  </span>
+                </div>
+                <div className="mrow">
+                  <span className="k">Klasifikasi</span>
+                  <span className="v">
+                    {purpose ? (
+                      <>
+                        {purpose.budgetCategory}
+                        {purpose.partnerCategory ? (
+                          <span className="lab">{purpose.partnerCategory}</span>
+                        ) : (
+                          <small>tanpa Partner</small>
+                        )}
+                      </>
+                    ) : (
+                      <span className="dash">—</span>
+                    )}
+                  </span>
+                </div>
+                <div className="mrow">
+                  <span className="k">Account</span>
+                  <span className="v">
+                    {account ? (
+                      <>
+                        <span className="lab">{account.accountLabel}</span>{" "}
+                        {account.accountName}
+                      </>
+                    ) : (
+                      <span className="dash">
+                        {purpose ? "belum dipetakan" : "menunggu Purpose"}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {mode === "view" && (
+              <div
+                className="card-b"
+                style={{ borderTop: "1px solid var(--line-2)" }}
+              >
+                <p className="sidenote">
+                  {transaction!.status === "Posted"
+                    ? "Dokumen sudah menjadi transaksi aktual: realisasi Budget dan saldo Cash & Bank sudah bergerak, dan entri Cash Bank Book sudah tercatat. Historical record bersifat append-only — koreksi dilakukan sebagai dokumen baru."
+                    : transaction!.status === "Draft"
+                      ? "Dokumen masih Draft. Budget dan saldo Cash & Bank belum bergerak, dan Tanggal Dokumen belum dicatat."
+                      : "Dokumen dibatalkan sebelum Post, sehingga tidak pernah menyentuh Budget maupun saldo."}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {picking && (
+        <BudgetPicker
+          pool={pickable}
+          currencyLabel={currencyLabel}
+          criteria={[
+            { label: "Purpose", value: purpose?.label ?? "—" },
+            { label: "Company", value: company?.label ?? "—" },
+            {
+              label: "Tipe Budget",
+              value: purpose ? TRANSACTION_TYPE_TEXT[purpose.direction] : "—",
+            },
+            { label: "Category", value: purpose?.budgetCategory ?? "—" },
+            ...(purpose?.partnerCategory
+              ? [
+                  {
+                    label: "Partner",
+                    value: partner?.label ?? "—",
+                    hint: purpose.partnerCategory,
+                  },
+                ]
+              : []),
+            { label: "Currency", value: currencyLabel },
+          ]}
+          onAdd={addLines}
+          onClose={() => setPicking(false)}
+        />
+      )}
+
+      {confirm && transaction && (
+        <ConfirmDialog
+          open
+          icon={TRANSACTION_TRANSITIONS[confirm].icon}
+          tone={TRANSACTION_TRANSITIONS[confirm].danger ? "danger" : "ok"}
+          title={TRANSACTION_TRANSITIONS[confirm].title}
+          subject={`${transaction.transaction_no} – ${formatMoney(total, currencyLabel)}`}
+          body={TRANSACTION_TRANSITIONS[confirm].body}
+          confirmLabel={TRANSACTION_TRANSITIONS[confirm].confirmLabel}
+          confirmTone={
+            TRANSACTION_TRANSITIONS[confirm].danger ? "solid-danger" : "primary"
+          }
+          busy={busy}
+          onConfirm={() => run(confirm)}
+          onCancel={() => setConfirm(null)}
+        >
+          {confirm === "post" && (
+            <div className="apsum" style={{ marginTop: 14, textAlign: "left" }}>
+              <div>
+                <span>Budget direalisasi</span>
+                <b>{lines.length} budget</b>
+              </div>
+              <div className="amt">
+                <span>Nominal</span>
+                <b>{formatMoney(total, currencyLabel)}</b>
+              </div>
+              {cashBank && (
+                <div>
+                  <span>{cashBank.label} sesudah</span>
+                  <b>{formatMoney(balanceAfter, currencyLabel)}</b>
+                </div>
+              )}
+            </div>
+          )}
+        </ConfirmDialog>
+      )}
+    </>
+  );
+}
+
+function Foot({ error, help }: { error?: string; help?: string }) {
+  if (error) {
+    return (
+      <div className="err">
+        <Icon name="warn" size={11} />
+        {error}
+      </div>
+    );
+  }
+  return help ? <div className="help">{help}</div> : null;
+}
+
+function initialValues(
+  transaction: TransactionRow | null,
+  refs: FinanceRefs
+): TransactionValues {
+  if (!transaction) {
+    return {
+      purpose: "",
+      // The induk is the only Company this document may name, so it is filled
+      // in rather than asked for — see `transactingCompany` in `finance.ts`.
+      company_id: refs.transactingCompanyId
+        ? String(refs.transactingCompanyId)
+        : "",
+      partner_id: "",
+      cash_bank_id: "",
+      note: "",
+    };
+  }
+  return {
+    purpose: transaction.purpose,
+    company_id: String(transaction.company_id),
+    partner_id: transaction.partner_id ? String(transaction.partner_id) : "",
+    cash_bank_id: transaction.cash_bank_id
+      ? String(transaction.cash_bank_id)
+      : "",
+    note: transaction.note ?? "",
+  };
+}

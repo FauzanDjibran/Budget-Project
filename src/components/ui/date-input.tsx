@@ -62,10 +62,16 @@ export function DateInput({
   /** The month the calendar is showing — the selected date, else today. */
   const [cursor, setCursor] = useState(() => monthOf(value));
 
+  /** Opening re-centres the calendar on whatever is currently selected. */
+  const show = () => {
+    if (open) return;
+    setCursor(monthOf(value));
+    setOpen(true);
+  };
+
   const toggle = () => {
-    // Opening re-centres the calendar on whatever is currently selected.
-    if (!open) setCursor(monthOf(value));
-    setOpen((o) => !o);
+    if (open) setOpen(false);
+    else show();
   };
 
   const commit = (raw: string) => {
@@ -94,6 +100,11 @@ export function DateInput({
         disabled={disabled}
         inputMode="numeric"
         autoComplete="off"
+        // The calendar is the point of the field, so reaching the field opens
+        // it. Typing still works over the top: the calendar sits below the box
+        // and follows what is typed rather than competing with it.
+        onFocus={show}
+        onClick={show}
         onChange={(e) => setDraft(mask(e.target.value))}
         onBlur={(e) => commit(e.target.value)}
         onKeyDown={(e) => {

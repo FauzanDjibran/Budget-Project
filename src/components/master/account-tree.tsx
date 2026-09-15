@@ -214,8 +214,8 @@ export function AccountTree({
                     <Icon name="chev" size={12} />
                   </span>
                 </span>
-                <span className="bdg t-acc">Kelompok</span>
-                <span className="tname">{sub.label}</span>
+                <span className="lab">{sub.label}</span>
+                <span className="tname">{sub.name}</span>
                 <span className="tright">
                   <span className="tcount">{all.length} account</span>
                 </span>
@@ -250,10 +250,12 @@ export function AccountTree({
                 <Icon name="chev" size={12} />
               </span>
             </span>
-            <span className="bdg s-mute">Kategori</span>
-            <span className="tname">{category.label}</span>
+            <span className="lab">{category.label}</span>
+            <span className="tname">{category.name}</span>
             <span className="tright">
-              <span className="bdg t-slate">{category.typeLabel}</span>
+              <span className="bdg t-slate">
+                {category.typeLabel} {category.typeName}
+              </span>
               <span className="tcount">{count} account</span>
             </span>
           </div>
@@ -327,8 +329,10 @@ export function AccountTree({
           <div className="ct">
             <h3>Struktur Bagan Akun</h3>
             <p>
-              Kategori dan kelompok adalah pengelompokan struktur, bukan account. Hanya
-              baris ber-nomor yang dapat menerima Journal Line.
+              Nomor diwariskan ke bawah: Kategori melanjutkan nomor Type, Kelompok
+              melanjutkan Kategori, dan setiap account melanjutkan induknya. Kategori
+              dan kelompok adalah struktur, bukan account — hanya account yang dapat
+              menerima Journal Line.
             </p>
           </div>
           <span className="hint">Klik baris account untuk membuka detail</span>

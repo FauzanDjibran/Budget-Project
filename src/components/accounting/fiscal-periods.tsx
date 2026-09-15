@@ -100,8 +100,8 @@ export function FiscalPeriods({
           <h4>Belum ada Fiscal Period</h4>
           <p>
             {yearStatus === "Open"
-              ? "Tahun buku ini sudah Open tetapi belum memiliki periode. Simpan ulang tahun buku untuk membuatnya."
-              : "Ubah status tahun buku menjadi Open. 12 periode bulanan — Januari sampai Desember — akan dibuat otomatis."}
+              ? "Tahun buku ini sudah Open tetapi belum memiliki periode."
+              : "Tekan Aktifkan Tahun Buku di bagian atas halaman. 12 periode bulanan — Januari sampai Desember — dibuat otomatis saat itu juga."}
           </p>
         </div>
       )}

@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
-import { formatDate, formatTotals } from "@/lib/format";
+import { formatDate } from "@/lib/format";
 import type { BudgetMonth } from "@/lib/siba/budget";
 
 /**
@@ -16,8 +17,13 @@ import type { BudgetMonth } from "@/lib/siba/budget";
  *
  * Periods with no budgets are listed too — the month you have planned nothing
  * for is the one worth noticing.
+ *
+ * The table says what a container can say: when the month runs, and how many
+ * budgets are in it. Amounts and statuses belong to the budgets and are read
+ * inside the month, where they can be acted on.
  */
 export function BudgetMonthList({ months }: { months: BudgetMonth[] }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
 
   const rows = useMemo(() => {
@@ -89,21 +95,22 @@ export function BudgetMonthList({ months }: { months: BudgetMonth[] }) {
                   <th style={{ width: 38 }}>No</th>
                   <th style={{ width: 104 }}>Bulan</th>
                   <th>Nama Period</th>
-                  <th style={{ width: 150 }}>Rentang Tanggal</th>
-                  <th className="num" style={{ width: 74 }}>
+                  <th style={{ width: 196 }}>Rentang Tanggal</th>
+                  <th className="num" style={{ width: 96 }}>
                     Budget
                   </th>
-                  <th style={{ width: 200 }}>Progres</th>
-                  <th className="num" style={{ width: 150 }}>
-                    Total Rencana
-                  </th>
-                  <th style={{ width: 90 }}>Period</th>
+                  <th style={{ width: 96 }}>Period</th>
                   <th style={{ width: 44 }} />
                 </tr>
               </thead>
               <tbody>
                 {rows.map((m, i) => (
-                  <MonthRow key={m.periodId} month={m} index={i + 1} />
+                  <MonthRow
+                    key={m.periodId}
+                    month={m}
+                    index={i + 1}
+                    onOpen={() => router.push(`/budget/budget/month/${m.periodId}`)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -127,10 +134,19 @@ export function BudgetMonthList({ months }: { months: BudgetMonth[] }) {
   );
 }
 
-function MonthRow({ month, index }: { month: BudgetMonth; index: number }) {
+function MonthRow({
+  month,
+  index,
+  onOpen,
+}: {
+  month: BudgetMonth;
+  index: number;
+  /** The whole row opens the month — the chevron is a hint, not the only way. */
+  onOpen: () => void;
+}) {
   const href = `/budget/budget/month/${month.periodId}`;
   return (
-    <tr className={month.current ? "nowrow" : undefined}>
+    <tr className={month.current ? "nowrow" : undefined} onClick={onOpen}>
       <td className="no">{index}</td>
       <td>
         <Link href={href}>
@@ -151,28 +167,6 @@ function MonthRow({ month, index }: { month: BudgetMonth; index: number }) {
       </td>
       <td className="num">
         {month.count || <span className="dash">0</span>}
-      </td>
-      <td>
-        {month.count ? (
-          <span className="pgrp">
-            {month.draft > 0 && (
-              <span className="bdg s-warn">{month.draft} Draft</span>
-            )}
-            {month.submitted > 0 && (
-              <span className="bdg s-info">{month.submitted} Diajukan</span>
-            )}
-            {month.open > 0 && (
-              <span className="bdg s-ok">{month.open} Disetujui</span>
-            )}
-          </span>
-        ) : (
-          <span className="dash">—</span>
-        )}
-      </td>
-      <td className="num">
-        <span className={`mny${month.totals.length ? "" : " z"}`}>
-          {formatTotals(month.totals, "0")}
-        </span>
       </td>
       <td>
         <span className={`bdg ${PERIOD_CLASS[month.status] ?? "s-mute"}`}>

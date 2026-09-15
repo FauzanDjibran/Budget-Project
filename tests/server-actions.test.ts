@@ -165,9 +165,9 @@ describe("workflow permissions", () => {
   });
 
   /**
-   * Budget and Finance have no pages yet (V1 scope, CLAUDE.md §12), but their
-   * permissions exist so the modules land on a settled model. These assert the
-   * question the future pages and actions will ask.
+   * These assert the shape of the model rather than any one page: a capability
+   * is never implied by another. Seeing a module grants nothing inside it, and
+   * creating a document is not permission to post it.
    */
   test("viewing a budget does not allow approving, rejecting or posting", async () => {
     const viewer = await makeUser({
