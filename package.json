@@ -10,7 +10,9 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:sample": "tsx scripts/sample-data.ts",
     "db:reset": "prisma migrate reset --force",
-    "test": "node --env-file-if-exists=.env --conditions=react-server --import tsx --test --test-concurrency=1 tests/*.test.ts"
+    "test": "node --env-file-if-exists=.env --conditions=react-server --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "build:standalone": "next build && tsx scripts/standalone.ts",
+    "start:standalone": "node .next/standalone/server.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

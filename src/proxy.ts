@@ -17,7 +17,13 @@ import { SESSION_COOKIE } from "@/lib/siba/session";
  * `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md`.)
  */
 
-const PUBLIC_PATHS = ["/login"];
+/**
+ * `/api/health` is here because whatever polls it — an uptime monitor, a
+ * reverse proxy, a deploy script waiting for the new process — has no session
+ * cookie, and a 302 to the login page reads as "alive" to most of them. The
+ * route itself reports only up/down and never describes the system.
+ */
+const PUBLIC_PATHS = ["/login", "/api/health"];
 
 export default function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

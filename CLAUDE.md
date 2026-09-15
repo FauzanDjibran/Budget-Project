@@ -146,6 +146,7 @@ of its own.
 | Audit reading | `src/lib/siba/audit.ts` | `entity_key` -> subject, `row_id` -> title, each resolved by the owning module; `server-only` |
 | Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, and reading them back; `server-only` |
 | Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open, its permission, and why Closed is not reachable; client-safe |
+| Startup check | `src/lib/siba/startup-check.ts` | Is the database the one this build expects; read at boot by `instrumentation.ts`; `server-only` |
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
 | System Default store | `src/lib/siba/system-settings.ts` | Reads and writes `sys_setting`, resolves a default against its master; `server-only` |
 | Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
@@ -260,7 +261,12 @@ scripts/
                          seeder — ordinary inserts, run by hand, never by
                          install/migrate/reset/CI
 src/
-  proxy.ts               Optimistic redirect to /login (NOT a security boundary)
+  proxy.ts               Optimistic redirect to /login (NOT a security boundary);
+                         lets /login and /api/health through without a cookie
+  instrumentation.ts     Runs once before the server serves. In production a
+                         schema behind the build exits the process rather than
+                         throwing — a thrown `register` leaves Next listening and
+                         answering 500, which a supervisor reads as healthy
   app/
     layout.tsx           Root layout: fonts, metadata
     page.tsx             Sends a signed-in user to their first permitted page
@@ -341,6 +347,8 @@ npm install                  # install
 npm run dev                  # dev server → http://localhost:3000
 npm run build                # production build (also typechecks)
 npm start                    # run the production build
+npm run build:standalone     # build + assemble .next/standalone (the deploy artifact)
+npm run start:standalone     # run that artifact exactly as a server would
 npm run lint                 # ESLint
 npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
@@ -1189,10 +1197,25 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Impact:** Applies to every FK picker.
 - **Do not change unless:** the user decides otherwise.
 
-### No API layer
-- **Decision:** Server Components read; Server Actions write. No REST/GraphQL.
-- **Reason:** No external consumer exists; an API layer for ~15 CRUD entities is overhead.
-- **Do not change unless:** an external consumer appears.
+### No API layer, with one deliberate exception
+- **Decision:** Server Components read; Server Actions write. No REST/GraphQL for
+  business data. **The one Route Handler in the application is `/api/health`**, which
+  reports whether the process is up and whether the database answers.
+- **Reason:** No external consumer exists for business data, and an API layer for ~15
+  CRUD entities is overhead. A health endpoint is the case the original rule reserved:
+  its consumer *is* external and has no session — a process supervisor, a reverse proxy,
+  or a deploy script waiting for the new process. A Server Action cannot serve it.
+- **Impact:** `/api/health` is the only path besides `/login` that `src/proxy.ts` lets
+  through without a session cookie, because a 302 to the login page reads as "alive" to
+  most monitors. It returns `{status, database}` and nothing else — no version, no schema
+  detail, no error text. A public endpoint that describes the inside of the system is a
+  reconnaissance tool; the real reason goes to the server log.
+- **The other legitimate Route Handler is a file download.** Report export (§13) cannot
+  be a Server Action, which returns serializable data rather than a `Response` with
+  `Content-Disposition`. That is a second instance of the same exception, not a new rule.
+- **Do not change unless:** an external consumer appears. **Adding a Route Handler for
+  business CRUD is still the thing this decision forbids** — and if one ever lands, the
+  authorization gate must stay `auth.ts`, never a second model (§11).
 
 ### Two-company structure is foundational (FROZEN — architectural bedrock)
 - **Decision:** The application is built around exactly **two permanent companies**: one
