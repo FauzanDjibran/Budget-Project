@@ -59,15 +59,13 @@ const ENTITY_PERMISSIONS: Record<string, EntityPermissions> = {
     create: "MAPPING_CREATE",
     edit: "MAPPING_EDIT",
   },
+  // Fiscal Period has no row because it has no screen: periods are generated
+  // when a Fiscal Year is opened and read from inside it, so the year's
+  // permissions are the only ones at stake.
   acc_fiscal_year: {
     view: "FISCAL_YEAR_VIEW",
     create: "FISCAL_YEAR_CREATE",
     edit: "FISCAL_YEAR_EDIT",
-  },
-  acc_fiscal_period: {
-    view: "FISCAL_PERIOD_VIEW",
-    create: "FISCAL_PERIOD_CREATE",
-    edit: "FISCAL_PERIOD_EDIT",
   },
 };
 

@@ -13,6 +13,7 @@ import {
 } from "@/lib/siba/company";
 import { type Entity, type Field } from "@/lib/siba/entities";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
+import { ensureFiscalPeriods, fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
 import {
   CASH_BANK_SUBCATEGORIES,
   accountDescendants,
@@ -105,10 +106,29 @@ const refValue = numberValue;
 const boolValue = (values: FormValues, name: string): boolean =>
   values[name] === true || values[name] === "true";
 
-const dateValue = (values: FormValues, name: string): string | null => {
-  const raw = values[name];
-  return typeof raw === "string" && raw !== "" ? raw : null;
-};
+
+/**
+ * Fills in the fields nobody types.
+ *
+ * A Fiscal Year is chosen by year alone; its name and its 01/01–31/12 range
+ * follow from that and are written here rather than submitted, so a crafted
+ * request cannot put a fiscal year's dates out of step with the year it claims
+ * to be. Runs before validation, so the derived values are what gets checked.
+ */
+function derive(entity: Entity, values: FormValues): FormValues {
+  if (entity.key !== "acc_fiscal_year") return values;
+
+  const year = parseYear(String(values.year_label ?? ""));
+  if (!year) return values;
+
+  const shape = fiscalYearShape(year);
+  return {
+    ...values,
+    year_name: shape.year_name,
+    start_date: shape.start_date.toISOString().slice(0, 10),
+    end_date: shape.end_date.toISOString().slice(0, 10),
+  };
+}
 
 /**
  * Which fields apply given what has been entered. A field that does not apply
@@ -199,11 +219,10 @@ async function validate(
   if (entity.key === "acc_budget_category_account") {
     Object.assign(errors, await validateMapping(values, currentId, errors, applies));
   }
-  if (entity.key === "acc_fiscal_year") {
-    Object.assign(errors, validateFiscalYear(values));
-  }
-  if (entity.key === "acc_fiscal_period") {
-    Object.assign(errors, await validateFiscalPeriod(values, currentId));
+  if (entity.key === "acc_fiscal_year" && !parseYear(String(values.year_label ?? ""))) {
+    // Everything else about a fiscal year is derived from this, so a value the
+    // picker could not have produced has to stop here.
+    errors.year_label = "Pilih tahun buku yang valid.";
   }
 
   return errors;
@@ -354,68 +373,6 @@ async function validateMapping(
   return errors;
 }
 
-function validateFiscalYear(values: FormValues): Record<string, string> {
-  const start = dateValue(values, "start_date");
-  const end = dateValue(values, "end_date");
-  if (start && end && end <= start) {
-    return { end_date: "Tanggal selesai harus setelah tanggal mulai." };
-  }
-  return {};
-}
-
-async function validateFiscalPeriod(
-  values: FormValues,
-  currentId: number | null
-): Promise<Record<string, string>> {
-  const errors: Record<string, string> = {};
-  const start = dateValue(values, "start_date");
-  const end = dateValue(values, "end_date");
-  if (start && end && end < start) {
-    errors.end_date = "Tanggal selesai tidak boleh sebelum tanggal mulai.";
-  }
-
-  const yearId = refValue(values, "fiscal_year_id");
-  if (yearId) {
-    const year = await prisma.accFiscalYear.findUnique({
-      where: { id: yearId },
-      select: { start_date: true, end_date: true, year_label: true },
-    });
-    if (year) {
-      const from = year.start_date.toISOString().slice(0, 10);
-      const to = year.end_date.toISOString().slice(0, 10);
-      // A period that falls outside its own fiscal year would let a posting
-      // date belong to two different books, or to none.
-      if (start && (start < from || start > to)) {
-        errors.start_date = `Tanggal mulai harus berada dalam Fiscal Year ${year.year_label}.`;
-      }
-      if (end && (end < from || end > to)) {
-        errors.end_date = `Tanggal selesai harus berada dalam Fiscal Year ${year.year_label}.`;
-      }
-    }
-
-    const sequence = refValue(values, "sequence_no");
-    if (sequence != null) {
-      if (sequence < 1) {
-        errors.sequence_no = "Urutan harus 1 atau lebih.";
-      } else {
-        const clash = await prisma.accFiscalPeriod.findFirst({
-          where: {
-            fiscal_year_id: yearId,
-            sequence_no: sequence,
-            ...(currentId ? { id: { not: currentId } } : {}),
-          },
-          select: { id: true },
-        });
-        if (clash) {
-          errors.sequence_no = "Urutan ini sudah dipakai pada Fiscal Year yang sama.";
-        }
-      }
-    }
-  }
-
-  return errors;
-}
-
 function buildData(entity: Entity, values: FormValues, applies: Set<string>) {
   const data: Record<string, unknown> = {};
   for (const field of entity.fields) {
@@ -445,6 +402,7 @@ export async function createRecord(
   if (!guard.ok) return guard.denial;
   const actor = guard.actor;
 
+  values = derive(entity, values);
   const applies = await applicableFields(entity, values, false);
   const errors = await validate(entity, values, null, applies);
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -459,6 +417,16 @@ export async function createRecord(
         updated_by: null,
       },
     });
+
+    // A Fiscal Year opened straight away gets its twelve months now; one saved
+    // as Draft gets them when it is opened. Either way nobody types a month.
+    if (entity.key === "acc_fiscal_year" && values.status === "Open") {
+      await ensureFiscalPeriods(tx, {
+        fiscalYearId: row.id,
+        year: parseYear(String(values.year_label ?? ""))!,
+        actorId: actor.user.id,
+      });
+    }
 
     // A Cash & Bank resource gets its book in the same transaction it is
     // registered in, so no resource can ever exist without one. A non-zero
@@ -501,6 +469,7 @@ export async function updateRecord(
   if (!guard.ok) return guard.denial;
   const actor = guard.actor;
 
+  values = derive(entity, values);
   const applies = await applicableFields(entity, values, true);
   const errors = await validate(entity, values, id, applies);
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -511,9 +480,29 @@ export async function updateRecord(
     if (field.locked) delete data[field.name];
   }
 
-  await delegate(entity.key).update({
-    where: { id },
-    data: { ...data, updated_by: actor.user.id },
+  await prisma.$transaction(async (tx) => {
+    await delegate(entity.key, tx).update({
+      where: { id },
+      data: { ...data, updated_by: actor.user.id },
+    });
+
+    // Opening a Fiscal Year is what creates its calendar. The year comes from
+    // the stored row, not the submission: `year_label` is locked, so an edit
+    // never carries one.
+    if (entity.key === "acc_fiscal_year" && values.status === "Open") {
+      const row = await tx.accFiscalYear.findUniqueOrThrow({
+        where: { id },
+        select: { year_label: true },
+      });
+      const year = parseYear(row.year_label);
+      if (year) {
+        await ensureFiscalPeriods(tx, {
+          fiscalYearId: id,
+          year,
+          actorId: actor.user.id,
+        });
+      }
+    }
   });
 
   await prisma.auditLog.create({

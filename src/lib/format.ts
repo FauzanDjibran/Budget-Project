@@ -1,32 +1,64 @@
 /**
  * Display formatting for dates, numbers and money.
  *
+ * **Dates are `dd/mm/yyyy` everywhere** — displays, tables, inputs, filters and
+ * reports alike. `formatDate` is the single place that decides that, so the
+ * format cannot drift between one screen and the next; nothing else in the
+ * application formats a date by hand, and no native `<input type="date">`
+ * survives (it renders in the browser's own locale — see `ui/date-input.tsx`).
+ *
  * Dates are formatted from their UTC parts. Every date in this system is a
  * calendar date stored at UTC midnight, so reading local parts would shift some
  * of them to the previous day in negative-offset timezones.
  */
 
-const MONTHS_SHORT = [
-  "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
-  "Jul", "Agu", "Sep", "Okt", "Nov", "Des",
+/** Month names, used by the calendar and by generated period names. */
+export const MONTHS_LONG = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
 ];
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-/** `2026-09-02` -> `02 Sep 2026` */
+/** `2026-09-02` -> `02/09/2026` */
 export function formatDate(value: Date | string | null | undefined): string {
   if (!value) return "";
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
-  return `${pad2(d.getUTCDate())} ${MONTHS_SHORT[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  return `${pad2(d.getUTCDate())}/${pad2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
 }
 
-/** `2026-09-02 14:05` -> `02 Sep 2026 • 14:05` */
+/** `2026-09-02 14:05` -> `02/09/2026 • 14:05` */
 export function formatTimestamp(value: Date | string | null | undefined): string {
   if (!value) return "";
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
   return `${formatDate(d)} • ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+}
+
+/** `2026-09-02` -> `02/09/2026`, for a date field's editable text. */
+export function toDisplayDate(iso: string | null | undefined): string {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return "";
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}/${m}/${y}`;
+}
+
+/**
+ * `02/09/2026` -> `2026-09-02`, or `""` when the text is not a real date.
+ *
+ * The calendar check matters: `31/02/2026` parses arithmetically as 3 March and
+ * would silently save a date nobody typed.
+ */
+export function toIsoDate(display: string | null | undefined): string {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((display ?? "").trim());
+  if (!m) return "";
+  const [, dd, mm, yyyy] = m;
+  const day = Number(dd);
+  const month = Number(mm);
+  const year = Number(yyyy);
+  if (month < 1 || month > 12 || day < 1) return "";
+  if (day > new Date(Date.UTC(year, month, 0)).getUTCDate()) return "";
+  return `${yyyy}-${pad2(month)}-${pad2(day)}`;
 }
 
 export function formatNumber(

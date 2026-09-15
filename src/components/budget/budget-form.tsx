@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DateInput } from "@/components/ui/date-input";
+import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
@@ -246,11 +248,10 @@ export function BudgetForm({
                       Tanggal Budget{editing && <span className="req">*</span>}
                     </label>
                     {editing ? (
-                      <input
-                        type="date"
-                        className={errors.budget_date ? "bad" : undefined}
+                      <DateInput
                         value={values.budget_date}
-                        onChange={(e) => set("budget_date", e.target.value)}
+                        invalid={Boolean(errors.budget_date)}
+                        onChange={(v) => set("budget_date", v)}
                       />
                     ) : (
                       <div className="ro">{formatDate(budget!.budget_date)}</div>
@@ -301,14 +302,15 @@ export function BudgetForm({
                       Tipe{editing && <span className="req">*</span>}
                     </label>
                     {editing ? (
-                      <select
-                        className={`slc${errors.budget_type ? " bad" : ""}`}
+                      <Select
                         value={values.budget_type}
-                        onChange={(e) => set("budget_type", e.target.value)}
-                      >
-                        <option value="Out">Pengeluaran</option>
-                        <option value="In">Penerimaan</option>
-                      </select>
+                        invalid={Boolean(errors.budget_type)}
+                        options={[
+                          { value: "Out", label: "Pengeluaran" },
+                          { value: "In", label: "Penerimaan" },
+                        ]}
+                        onChange={(v) => set("budget_type", v)}
+                      />
                     ) : (
                       <div className="ro">
                         <span

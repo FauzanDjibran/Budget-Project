@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toggleStatus } from "@/app/actions/master";
@@ -306,21 +307,23 @@ export function EntityList({
           </div>
 
           {status && (
-            <select
-              className="psel"
+            <Select
+              variant="compact"
               value={filters[status.field] ?? ""}
-              onChange={(e) => {
-                setFilters((f) => ({ ...f, [status.field]: e.target.value }));
+              set={Boolean(filters[status.field])}
+              ariaLabel="Filter status"
+              options={[
+                { value: "", label: "Semua status" },
+                ...status.options.map((o) => ({
+                  value: o,
+                  label: STATUS_TEXT[o] ?? o,
+                })),
+              ]}
+              onChange={(v) => {
+                setFilters((f) => ({ ...f, [status.field]: v }));
                 setPage(1);
               }}
-            >
-              <option value="">Semua status</option>
-              {status.options.map((o) => (
-                <option key={o} value={o}>
-                  {STATUS_TEXT[o] ?? o}
-                </option>
-              ))}
-            </select>
+            />
           )}
 
           {activeFilters > 0 && (
@@ -406,20 +409,19 @@ export function EntityList({
               <span className="inf">
                 Halaman <b>{current}</b> dari <b>{pages}</b> ({filtered.length} total)
               </span>
-              <select
-                className="psel"
-                value={perPage}
-                onChange={(e) => {
-                  setPerPage(Number(e.target.value));
+              <Select
+                variant="compact"
+                value={String(perPage)}
+                ariaLabel="Baris per halaman"
+                options={[10, 25, 50, 100].map((n) => ({
+                  value: String(n),
+                  label: `Tampil ${n}`,
+                }))}
+                onChange={(v) => {
+                  setPerPage(Number(v));
                   setPage(1);
                 }}
-              >
-                {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={n}>
-                    Tampil {n}
-                  </option>
-                ))}
-              </select>
+              />
               <div className="pgs">
                 <button className="pg" disabled={current <= 1} onClick={() => setPage(1)}>
                   «

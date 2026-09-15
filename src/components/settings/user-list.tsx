@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { setUserStatusAction } from "@/app/actions/users";
@@ -119,15 +120,18 @@ export function UserList({
             </button>
           </div>
 
-          <select
-            className="psel"
+          <Select
+            variant="compact"
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="">Semua status</option>
-            <option value="Active">Aktif</option>
-            <option value="Inactive">Non Aktif</option>
-          </select>
+            set={Boolean(status)}
+            onChange={setStatus}
+            ariaLabel="Filter status"
+            options={[
+              { value: "", label: "Semua status" },
+              { value: "Active", label: "Aktif" },
+              { value: "Inactive", label: "Non Aktif" },
+            ]}
+          />
 
           <div className="tspace" />
           <span className="count">

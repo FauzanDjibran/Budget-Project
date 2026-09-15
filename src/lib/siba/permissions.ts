@@ -77,13 +77,12 @@ export const PERMISSIONS = [
   { code: "MAPPING_CREATE", name: "Tambah Mapping", module: "accounting" },
   { code: "MAPPING_EDIT", name: "Ubah Mapping", module: "accounting" },
 
-  { code: "FISCAL_YEAR_VIEW", name: "Lihat Fiscal Year", module: "accounting" },
+  // Fiscal Period carries no permissions of its own: it has no menu and no
+  // form. Periods are generated when a Fiscal Year is opened and are read from
+  // inside it, so seeing and opening a year is the whole capability.
+  { code: "FISCAL_YEAR_VIEW", name: "Lihat Fiscal Year", module: "accounting", description: "Termasuk Fiscal Period di dalamnya." },
   { code: "FISCAL_YEAR_CREATE", name: "Tambah Fiscal Year", module: "accounting" },
-  { code: "FISCAL_YEAR_EDIT", name: "Ubah Fiscal Year", module: "accounting" },
-
-  { code: "FISCAL_PERIOD_VIEW", name: "Lihat Fiscal Period", module: "accounting" },
-  { code: "FISCAL_PERIOD_CREATE", name: "Tambah Fiscal Period", module: "accounting" },
-  { code: "FISCAL_PERIOD_EDIT", name: "Ubah Fiscal Period", module: "accounting" },
+  { code: "FISCAL_YEAR_EDIT", name: "Ubah Fiscal Year", module: "accounting", description: "Termasuk mengaktifkan tahun buku, yang membuat 12 Fiscal Period." },
 
   // ---------------------------------------------------------------- budget
   { code: "MENU_BUDGET_ACCESS", name: "Akses menu Budget", module: "budget" },

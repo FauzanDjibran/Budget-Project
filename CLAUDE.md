@@ -54,12 +54,12 @@ or invariants that assume a particular row exists.
 | Scaffold, DB, migration | Done |
 | Seed | Done — **system data only**, idempotent, destroys nothing (§12) |
 | Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; opening balance entered when a resource is registered |
-| Design system port | Done |
+| Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
-| Accounting module (COA tree, mapping, fiscal year/period) | Done — registry-driven, with Chart of Accounts rendered as a tree |
+| Accounting module (COA tree, mapping, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree. Fiscal Year is the only fiscal menu entry; its twelve periods are generated when it is opened. |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Not started |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
@@ -134,6 +134,7 @@ of its own.
 | Own account | `src/lib/siba/profile.ts` | Profile read/edit, own password change |
 | Entity permissions | `src/lib/siba/entity-access.ts` | Registry entity -> permission per operation |
 | Data access | `src/lib/siba/records.ts` | Generic list/get/options/computed, COA tree, the account rules the actions enforce; `server-only` |
+| Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, and reading them back; `server-only` |
 | Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
 | Budget data | `src/lib/siba/budget.ts` | Month rollups, budget reads, classification enforcement, `BGT-` numbering; `server-only` |
 | Cash Bank Book | `src/lib/siba/cash-bank.ts` | Append-only ledger writes, the materialised balance, `CBL-` numbering, per-currency summary; `server-only` |
@@ -206,7 +207,7 @@ src/
       error.tsx          Generic failure screen (authz never lands here)
       dashboard/
       master/[entity]/   Dynamic: list, /new, /[id], /[id]/edit
-      accounting/[entity]/ The same four registry pages — COA, mapping, fiscal
+      accounting/[entity]/ The same four registry pages — COA, mapping, Fiscal Year
       budget/budget/     Bespoke, not registry: month list, /month/[period],
                          /new, /[id], /[id]/edit
       settings/user/     Admin-only user management (bespoke, not registry)
@@ -228,13 +229,14 @@ src/
                          ApproveDialog, ReportPicker, CashBalanceDialog
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
-    ui/                  Combobox, ConfirmDialog, ToastProvider
+    accounting/          FiscalPeriods (shown inside a Fiscal Year)
+    ui/                  Combobox, Select, DateInput, ConfirmDialog, ToastProvider
   lib/
     prisma.ts            Client singleton with adapter + dev hot-reload guard
     format.ts            Date/number/money formatting (UTC-based)
     siba/                entities, nav, rules, records, users,
                          permissions, roles, access, auth, auth-errors,
-                         session, login, user-admin, profile, entity-access,
+                         session, login, user-admin, profile, entity-access, fiscal,
                          budget, budget-workflow, cash-bank
   generated/prisma/      Prisma client output — gitignored, never edit
 tests/                   Security, Accounting, Budget and Cash Bank Book suites (node:test);
@@ -355,6 +357,8 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Forms | `.fgrid` (form + summary side card) → `.fsec` → `.sec-t` → `.frow` → `.fld` |
 | Read-only fields | `.ro` — presented as text, **never disabled inputs** |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options |
+| Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`) |
+| Dates | `DateInput` — **never `<input type="date">`**; types and shows `dd/mm/yyyy`, opens the app's own calendar |
 | Validation | Inline `.err` under the field + `.bad` on the control + error toast |
 | Unsaved changes | Sticky `.dirty` bar with pulse indicator |
 | Confirmations | `ConfirmDialog` — tinted icon, subject chip, **consequence copy** |
@@ -383,7 +387,7 @@ so `globals.css` ends with an anchor reset. Keep shared classes working for both
 | Authorship | `created_by Int`, `updated_by Int?` — plain Ints with **no FK**, exactly as the DBML declares |
 | Money | `Decimal @db.Decimal(18, 2)` |
 | Exchange rates | `Decimal @db.Decimal(18, 6)` |
-| Calendar dates | `@db.Date`, stored at UTC midnight — format via `src/lib/format.ts`, which reads UTC parts |
+| Calendar dates | `@db.Date`, stored at UTC midnight. **Displayed `dd/mm/yyyy` everywhere** — always via `formatDate` in `src/lib/format.ts`, which reads UTC parts. ISO stays the wire and storage form |
 | Status | Enum `ActiveStatus` (`Active` / `Inactive`) on master tables |
 | Deletion | **None.** Master data is deactivated, never hard-deleted. Do not add delete actions or `onDelete: Cascade` to master tables. |
 | System codes | `<prefix>.<4 digits>` — `comp.0001`, `part.0011`. Generated by `nextCode()`, never user-entered. |
@@ -486,9 +490,11 @@ Implemented and enforced:
    resolves to exactly one postable, active account of that same company. The Partner
    Category applies only where `rules.ts` says the Budget Category takes one, and must
    be one it accepts.
-17. **A fiscal period lives inside its year.** Both dates fall within the Fiscal Year's
-   range, the end is not before the start, and the sequence number is unique within the
-   year — otherwise a posting date could belong to two books, or to none.
+17. **A fiscal period is generated, never authored.** A Fiscal Year is created by
+   choosing a year; its name, 01/01 start and 31/12 end all follow. Opening it
+   generates exactly twelve periods, one per calendar month, and they are read from
+   inside the year that owns them. Fiscal Period has no menu, no route and no
+   permissions of its own — see §12.
 
 18. **Budget category → partner category → account.** Each budget category declares
    which partner categories are valid and which directions (In/Out) make sense.
@@ -767,6 +773,49 @@ they relate. Keep the table; keep it out of the UI's write path.
   table, and never make `cash_bank_ledger` editable.**
 - **Status:** Frozen, current.
 
+### Fiscal Year is the only fiscal entity; its periods are generated (FROZEN)
+- **Decision:** Fiscal Year is a top-level menu entry. **Fiscal Period is not** — no
+  menu, no route, no form, no permissions of its own. A Fiscal Year is created by
+  choosing a year from a list; `year_name`, `start_date` (01/01) and `end_date`
+  (31/12) are `derived` fields the Server Action writes. Saving a year as `Open`
+  generates exactly twelve periods, one per calendar month, via
+  `ensureFiscalPeriods` in `src/lib/siba/fiscal.ts`. They are shown on the Fiscal
+  Year's detail page and nowhere else.
+- **Reason:** A calendar month is not a judgement call. Every field a period needs
+  follows from the year and the month number, so a form for it could only introduce
+  errors — a period ending on 30 February, two periods overlapping, a thirteenth
+  month — and Budget Month reads these ranges directly (rule 20), so a wrong one
+  silently strands budgets between months or in none.
+- **Impact:** `generation is idempotent on the count`: a year that already has periods
+  is left untouched, so re-opening a closed year never duplicates or rewrites a month
+  that has been posted into. `year_label` is `locked`, so the year cannot be changed
+  out from under periods that already exist. Adding `derived` to a field means the
+  action must fill it — see `derive()` in `app/actions/master.ts`.
+- **Do not change unless:** explicitly instructed. **Do not give Fiscal Period a menu
+  entry, a route, a registry config, or permissions**, and do not let a period's dates
+  be edited by hand.
+- **Status:** Frozen, current.
+
+### Every date reads `dd/mm/yyyy`, and the app draws its own controls (FROZEN)
+- **Decision:** Dates are displayed `dd/mm/yyyy` everywhere — lists, details, forms,
+  filters, reports — through `formatDate` in `src/lib/format.ts`, the only function
+  that decides the format. Date entry goes through `components/ui/date-input.tsx`, and
+  every dropdown through `components/ui/select.tsx`. **No native `<select>` and no
+  native `<input type="date">` anywhere in the application.**
+- **Reason:** Both native controls are drawn by the operating system, in the *user's*
+  locale and the OS's own typography: the same form showed `mm/dd/yyyy` to one person
+  and `dd/mm/yyyy` to another, and the company picker dropped a blue Windows list over
+  a finished interface. Neither is stylable, and a date format that varies by browser
+  is a data-entry hazard, not a cosmetic one.
+- **Impact:** `Select` reuses the combobox popup (`.cbpop` / `.cbo`) so every dropdown
+  in the app behaves alike; `variant` maps to the trigger class the surrounding layout
+  already expects, so swapping one in changes no spacing. `DateInput` keeps ISO
+  (`yyyy-mm-dd`) as its value and masks typing onto `dd/mm/yyyy` rails; a date that
+  does not exist (31/02) is refused rather than rolled forward.
+- **Do not change unless:** explicitly instructed. **Never reintroduce a native
+  `<select>` or date input, and never format a date outside `formatDate`.**
+- **Status:** Frozen, current.
+
 ### Amounts are never converted between currencies (FROZEN)
 - **Decision:** There is no exchange rate anywhere in the application. The hardcoded
   `RATES` constant is gone. Money is totalled per currency — `MoneyTotal[]` and
@@ -795,7 +844,7 @@ they relate. Keep the table; keep it out of the UI's write path.
   container may exist in the UI, but it reads fiscal periods.
 - **Reason:** It has no independent lifecycle or business purpose — it is purely a
   grouping concept.
-- **Impact:** Matches the mockup, which treats Budget Month as virtual. Implemented as
+- **Impact:** Implemented as
   a date-range query in `budgetMonths()` / `listBudgets()`: a budget belongs to the
   period its `budget_date` falls inside, so it changes month by changing its date and
   nothing else needs updating. `tests/budget.test.ts` asserts there is no
@@ -1041,6 +1090,12 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   currencies. Totals are reported per currency until a real rate source exists (§12).
 - Do **not** put business data in `prisma/seed.ts`, and do **not** add a delete step to
   it. It syncs system data and nothing else (§12).
+- Do **not** use a native `<select>` or `<input type="date">`. Use `Select` and
+  `DateInput` from `components/ui/` — the OS draws neither of those (§12).
+- Do **not** format a date anywhere but `formatDate`. Every date reads `dd/mm/yyyy`.
+- Do **not** give Fiscal Period a menu entry, a route, a registry config, or
+  permissions, and do **not** let a period's dates be edited by hand. Periods are
+  generated when a Fiscal Year is opened (§12).
 - Do **not** add a `sys_user_permission` table or any second path to a permission —
   roles are the only one.
 - Do **not** add permission inheritance, ABAC, per-record ACLs, a policy engine, or a
@@ -1126,9 +1181,8 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | Budget realization is inert | Nothing writes `realized_amount` until the Finance module exists, so the "Belum Direalisasi" KPI reads as the full amount of every approved budget. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, and — once Finance exists — by posting. There is deliberately no manual entry form yet. |
-| No fiscal-period generator | A fiscal year's twelve periods are created one at a time through the registry form. Workable but tedious on a fresh install. |
 | `zod` unused | Installed; validation is hand-written in the services. |
-| Tests cover security, Accounting, Budget and the Cash Bank Book | No tests for the Master module's own write path or the registry forms. |
+| Tests cover security, Accounting, Budget, the Cash Bank Book and the fiscal calendar | No tests for the Master module's own write path or the registry forms. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |
 

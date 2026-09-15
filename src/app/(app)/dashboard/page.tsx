@@ -121,13 +121,13 @@ export default async function DashboardPage() {
     });
   }
 
-  if (!fiscalPeriods && can("FISCAL_PERIOD_VIEW")) {
+  if (!fiscalPeriods && can("FISCAL_YEAR_VIEW")) {
     attention.push({
-      href: "/accounting/fiscal-period",
+      href: "/accounting/fiscal-year",
       title: "Belum ada Fiscal Period",
       detail:
-        "Budget Month mengikuti Fiscal Period. Tanpa satu pun periode, Budget yang " +
-        "dibuat tidak akan muncul pada bulan mana pun.",
+        "Budget Month mengikuti Fiscal Period. Buat Fiscal Year lalu ubah statusnya " +
+        "menjadi Open — 12 periode bulanan akan dibuat otomatis.",
     });
   }
 

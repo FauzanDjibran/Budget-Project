@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionBudget } from "@/app/actions/budget";
@@ -368,52 +369,57 @@ export function BudgetList({
             </button>
           </div>
 
-          <select
-            className={`tsel${status ? " set" : ""}`}
+          <Select
+            variant="toolbar"
             value={status}
-            onChange={(e) => {
-              setStatus(e.target.value);
+            set={Boolean(status)}
+            ariaLabel="Filter status"
+            options={[
+              { value: "", label: "Status: semua" },
+              ...["Draft", "Submitted", "Rejected", "Open", "Closed", "Cancelled"].map(
+                (s) => ({ value: s, label: STATUS_TEXT[s] ?? s })
+              ),
+            ]}
+            onChange={(v) => {
+              setStatus(v);
               setPage(1);
             }}
-          >
-            <option value="">Status: semua</option>
-            {["Draft", "Submitted", "Rejected", "Open", "Closed", "Cancelled"].map(
-              (s) => (
-                <option key={s} value={s}>
-                  {STATUS_TEXT[s] ?? s}
-                </option>
-              )
-            )}
-          </select>
+          />
 
-          <select
-            className={`tsel${type ? " set" : ""}`}
+          <Select
+            variant="toolbar"
             value={type}
-            onChange={(e) => {
-              setType(e.target.value);
+            set={Boolean(type)}
+            ariaLabel="Filter tipe"
+            options={[
+              { value: "", label: "Tipe: semua" },
+              { value: "In", label: "Penerimaan" },
+              { value: "Out", label: "Pengeluaran" },
+            ]}
+            onChange={(v) => {
+              setType(v);
               setPage(1);
             }}
-          >
-            <option value="">Tipe: semua</option>
-            <option value="In">Penerimaan</option>
-            <option value="Out">Pengeluaran</option>
-          </select>
+          />
 
-          <select
-            className={`tsel${company ? " set" : ""}`}
+          <Select
+            variant="toolbar"
             value={company}
-            onChange={(e) => {
-              setCompany(e.target.value);
+            set={Boolean(company)}
+            ariaLabel="Filter Company"
+            options={[
+              { value: "", label: "Company: semua" },
+              ...refs.companies.map((c) => ({
+                value: String(c.id),
+                label: c.label,
+                hint: c.name,
+              })),
+            ]}
+            onChange={(v) => {
+              setCompany(v);
               setPage(1);
             }}
-          >
-            <option value="">Company: semua</option>
-            {refs.companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+          />
 
           {month && (
             <span className="mchip">
@@ -555,20 +561,19 @@ export function BudgetList({
               <span className="inf">
                 Halaman <b>{current}</b> dari <b>{pages}</b> ({filtered.length} total)
               </span>
-              <select
-                className="psel"
-                value={perPage}
-                onChange={(e) => {
-                  setPerPage(Number(e.target.value));
+              <Select
+                variant="compact"
+                value={String(perPage)}
+                ariaLabel="Baris per halaman"
+                options={[10, 25, 50, 100].map((n) => ({
+                  value: String(n),
+                  label: `Tampil ${n}`,
+                }))}
+                onChange={(v) => {
+                  setPerPage(Number(v));
                   setPage(1);
                 }}
-              >
-                {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={n}>
-                    Tampil {n}
-                  </option>
-                ))}
-              </select>
+              />
               <div className="pgs">
                 <button className="pg" disabled={current <= 1} onClick={() => setPage(1)}>
                   «

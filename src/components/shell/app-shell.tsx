@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/ui/select";
 import { logout } from "@/app/actions/auth";
 import { type NavModule, resolvePath, entityHref } from "@/lib/siba/nav";
 
@@ -68,18 +69,20 @@ export function AppShell({
 
         <div className="ctx">
           <span>Company</span>
-          <select
-            value={companyId}
-            onChange={(e) => setCompanyId(Number(e.target.value))}
+          <Select
+            variant="ctx"
+            value={String(companyId)}
+            onChange={(v) => setCompanyId(Number(v))}
             title="Konteks Company"
-          >
-            <option value={0}>Semua Company</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label} - {c.name}
-              </option>
-            ))}
-          </select>
+            ariaLabel="Konteks Company"
+            options={[
+              { value: "0", label: "Semua Company" },
+              ...companies.map((c) => ({
+                value: String(c.id),
+                label: `${c.label} - ${c.name}`,
+              })),
+            ]}
+          />
         </div>
 
         <div className="tb-spacer" />

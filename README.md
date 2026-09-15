@@ -93,10 +93,15 @@ skeleton), and the base reporting currency.
 | `sistem@siba.app` | — | Owns seeded rows. Seeded **inactive** with an unusable password hash, so it can never sign in. |
 
 Everything else — partners, cash & bank resources, currencies beyond the base,
-the chart of accounts, budget-category mappings, fiscal years and periods,
-budgets — is business data you create through the application. A fresh
-installation therefore starts empty, and the dashboard's **Perlu Perhatian**
-card lists what to set up first, in the order the modules depend on each other.
+the chart of accounts, budget-category mappings, fiscal years, budgets — is
+business data you create through the application. A fresh installation therefore
+starts empty, and the dashboard's **Perlu Perhatian** card lists what to set up
+first, in the order the modules depend on each other.
+
+A **Fiscal Year** is the exception to "you create it": you choose a year, and the
+name, the 01/01 start and the 31/12 end follow. Setting its status to `Open`
+generates its twelve monthly periods, which are shown inside the year and are not
+editable one by one — a calendar month is not a judgement call.
 
 The seed is idempotent and deletes nothing: run it again after any release that
 adds a permission. To start over from scratch, `npm run db:reset` drops the
@@ -183,3 +188,10 @@ becomes the first entry in its book.
 reported per currency throughout, because the system has no authoritative
 exchange-rate source yet and a combined figure would be a guess presented as a
 fact.
+
+**Dates are `dd/mm/yyyy` everywhere**, and the application draws its own date
+field and dropdowns rather than using `<input type="date">` or `<select>`. Both
+of those are rendered by the operating system, in the viewer's locale and the
+OS's own styling — which meant the same form read `mm/dd/yyyy` to one person and
+`dd/mm/yyyy` to another. ISO (`yyyy-mm-dd`) remains the storage and wire format;
+only the display is Indonesian.

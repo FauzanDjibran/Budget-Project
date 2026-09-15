@@ -32,7 +32,6 @@ const DELEGATES = {
   acc_account_subcategory: (db: Client) => db.accAccountSubcategory,
   acc_budget_category_account: (db: Client) => db.accBudgetCategoryAccount,
   acc_fiscal_year: (db: Client) => db.accFiscalYear,
-  acc_fiscal_period: (db: Client) => db.accFiscalPeriod,
 } as const;
 
 export type EntityKey = keyof typeof DELEGATES;
@@ -166,15 +165,6 @@ export async function optionsFor(
         label: r.subcategory_label,
         name: r.subcategory_name,
         active: r.status === "Active",
-      }));
-    }
-    case "acc_fiscal_year": {
-      const rows = await prisma.accFiscalYear.findMany({ orderBy: { id: "asc" } });
-      return rows.map((r) => ({
-        id: r.id,
-        label: r.year_label,
-        name: r.year_name,
-        active: r.status !== "Closed",
       }));
     }
     case "acc_account": {

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { AccountTree } from "@/components/master/account-tree";
+import { FiscalPeriods } from "@/components/accounting/fiscal-periods";
 import { CashBankBook } from "@/components/master/cash-bank-book";
 import { EntityForm } from "@/components/master/entity-form";
 import { EntityLocked } from "@/components/master/entity-locked";
@@ -16,6 +17,7 @@ import {
   refOptions,
 } from "@/lib/siba/records";
 import { cashBankBalanceMap, cashBankLedger } from "@/lib/siba/cash-bank";
+import { fiscalYearPeriods } from "@/lib/siba/fiscal";
 import { userEmails } from "@/lib/siba/users";
 import { EntityList } from "@/components/master/entity-list";
 
@@ -152,6 +154,21 @@ export async function EntityDetailPage({
       can={abilitiesFor(entity.key, actor.permissions)}
     />
   );
+
+  // A Fiscal Year owns its twelve months, and they are visible nowhere else —
+  // Fiscal Period has no menu and no form of its own.
+  if (entity.key === "acc_fiscal_year") {
+    return (
+      <>
+        {form}
+        <FiscalPeriods
+          periods={await fiscalYearPeriods(row.id)}
+          yearLabel={String(row.year_label ?? "")}
+          yearStatus={String(row.status ?? "")}
+        />
+      </>
+    );
+  }
 
   // A Cash & Bank resource is the one master with a book behind it, so its
   // detail shows that book. The registry describes fields; it does not describe

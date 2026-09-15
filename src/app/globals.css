@@ -883,3 +883,43 @@ a{color:inherit;text-decoration:none}
 /* ---------- confirm dialog that needs one input of its own ---------- */
 .modal .mbody{margin-top:16px;text-align:left}
 .modal .mbody .fld{padding:0}
+
+/* ============================================================ date field
+   `dd/mm/yyyy` text input plus its own calendar. A native date input renders
+   in the browser's locale and opens an OS picker, neither of which this
+   application controls — see `components/ui/date-input.tsx`. */
+.dtf{position:relative;display:block}
+.dtf .dti{padding-right:34px;font-variant-numeric:tabular-nums}
+.dtb{position:absolute;right:5px;top:50%;transform:translateY(-50%);width:26px;height:26px;border:0;
+  background:transparent;border-radius:var(--r-sm);display:grid;place-items:center;color:var(--muted-2);cursor:pointer}
+.dtb:hover{background:var(--line-2);color:var(--ink-2)}
+.dtb[disabled]{opacity:.4;cursor:not-allowed}
+
+.cal{position:absolute;top:calc(100% + 4px);left:0;z-index:96;width:258px;padding:9px;gap:8px}
+.cal-h{display:flex;align-items:center;gap:3px}
+.cal-h .cal-t{flex:1 1 auto;text-align:center;font-size:12px;font-weight:800;color:var(--brand)}
+.cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.cal-d{display:grid;place-items:center;height:22px;font-size:9px;font-weight:800;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--muted-3)}
+.cal-c{height:29px;border:1px solid transparent;background:transparent;border-radius:var(--r-sm);cursor:pointer;
+  font-size:12px;font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.cal-c:hover{background:var(--brand-50)}
+.cal-c.now{border-color:var(--accent-s)}
+.cal-c.sel{background:var(--accent);border-color:var(--accent);color:#3B2F06;font-weight:800}
+.cal-f{display:flex;gap:6px;padding-top:7px;border-top:1px solid var(--line-2)}
+.cal-f .btn{flex:1 1 auto;justify-content:center}
+
+/* ---------- dropdown rendered by the app, not by the OS ---------- */
+.ctxsel{border:0;background:transparent;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;
+  padding:0 22px 0 0;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='3' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat:no-repeat;background-position:right 6px center}
+.tsel,.psel{text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tsel.open,.psel.open,.ctxsel.open{border-color:var(--accent-s)}
+.cbx.ph .nm,.cbx .ph{color:var(--muted-3)}
+.cbo.off{opacity:.45;cursor:not-allowed}
+.cbo.off:hover{background:transparent}
+.cbo .lab{margin-left:auto}
+.cbx:disabled,.tsel:disabled,.psel:disabled,.ctxsel:disabled{background-color:var(--line-3);color:var(--muted-2);
+  cursor:not-allowed;border-color:var(--line)}
+.cbx:disabled .cv{opacity:.5}

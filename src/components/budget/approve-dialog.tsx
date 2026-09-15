@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
+import { Select } from "@/components/ui/select";
 import { formatDate, formatMoney } from "@/lib/format";
 import type {
   BudgetMapping,
@@ -173,23 +174,21 @@ export function ApproveDialog({
               <label>
                 Budget Category <span className="req">*</span>
               </label>
-              <select
-                className={`slc${errors.category_id ? " bad" : ""}`}
+              <Select
                 value={categoryId}
+                invalid={Boolean(errors.category_id)}
                 disabled={busy}
-                onChange={(e) => {
-                  setCategoryId(e.target.value);
+                placeholder="— pilih Category —"
+                options={categories.map((c) => ({
+                  value: String(c.id),
+                  label: c.label,
+                }))}
+                onChange={(v) => {
+                  setCategoryId(v);
                   // A category change invalidates any partner already chosen.
                   setPartnerId("");
                 }}
-              >
-                <option value="">— pilih Category —</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
+              />
               {errors.category_id ? (
                 <div className="err">
                   <Icon name="warn" size={11} />
@@ -207,25 +206,24 @@ export function ApproveDialog({
               <label>
                 Partner {needsPartner && <span className="req">*</span>}
               </label>
-              <select
-                className={`slc${errors.partner_id ? " bad" : ""}`}
+              <Select
                 value={partnerId}
+                invalid={Boolean(errors.partner_id)}
                 disabled={busy || !needsPartner}
-                onChange={(e) => setPartnerId(e.target.value)}
-              >
-                <option value="">
-                  {needsPartner
+                placeholder={
+                  needsPartner
                     ? "— pilih Partner —"
                     : categoryId
                       ? "tidak diperlukan"
-                      : "pilih Category dulu"}
-                </option>
-                {partners.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label} - {p.name} ({p.categoryLabel})
-                  </option>
-                ))}
-              </select>
+                      : "pilih Category dulu"
+                }
+                options={partners.map((p) => ({
+                  value: String(p.id),
+                  label: `${p.label} - ${p.name}`,
+                  hint: p.categoryLabel,
+                }))}
+                onChange={setPartnerId}
+              />
               {errors.partner_id ? (
                 <div className="err">
                   <Icon name="warn" size={11} />

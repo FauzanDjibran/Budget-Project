@@ -44,6 +44,12 @@ export type Field = {
   createOnly?: boolean;
   /** Not a column on this table; `buildData` leaves it out entirely. */
   virtual?: boolean;
+  /**
+   * Written by the Server Action rather than typed: never offered on a form,
+   * never `required`-checked, but still shown read-only on the detail view. A
+   * Fiscal Year's name and date range are derived from the year it is for.
+   */
+  derived?: boolean;
   placeholder?: string;
   help?: string;
   /** `select` options. */
@@ -188,6 +194,17 @@ const NOTE_FIELD: Field = {
 
 const identHelp =
   "Identitas ringkas yang dipakai di seluruh dropdown dan laporan.";
+
+/**
+ * The years a Fiscal Year may be opened for: a decade around the current one.
+ *
+ * Creating a fiscal year is choosing a year and nothing else — everything the
+ * table needs follows from it — so the field is a list rather than free text,
+ * which also rules out a typo producing a "year" nobody can post into.
+ */
+export const YEAR_OPTIONS: string[] = Array.from({ length: 11 }, (_, i) =>
+  String(new Date().getUTCFullYear() - 5 + i)
+);
 
 export const ENTITIES: Entity[] = [
   {
@@ -639,7 +656,7 @@ export const ENTITIES: Entity[] = [
     module: "accounting",
     name: "Fiscal Year",
     icon: "cal",
-    desc: "Tahun buku, menjadi payung Fiscal Period dan Opening Balance.",
+    desc: "Tahun buku. Periode bulanan di dalamnya dibuat otomatis saat tahun buku diaktifkan.",
     codeField: "year_code",
     codePrefix: "fyr",
     labelField: "year_label",
@@ -648,97 +665,34 @@ export const ENTITIES: Entity[] = [
     fields: [
       {
         name: "year_label",
-        label: "Label",
-        type: "text",
+        label: "Tahun",
+        type: "select",
+        options: YEAR_OPTIONS,
         required: true,
         unique: true,
         ident: true,
-        placeholder: "2028",
-        help: identHelp,
-      },
-      {
-        name: "year_name",
-        label: "Nama Tahun Buku",
-        type: "text",
-        required: true,
-        placeholder: "Tahun Buku 2028",
-        help: "Nama lengkap entitas.",
-      },
-      { name: "start_date", label: "Tanggal Mulai", type: "date", required: true },
-      { name: "end_date", label: "Tanggal Selesai", type: "date", required: true },
-      FISCAL_STATUS_FIELD,
-      NOTE_FIELD,
-    ],
-    columns: [
-      { field: "year_label", label: "Label", isLabel: true, width: "118px", filter: "text" },
-      { field: "year_name", label: "Nama Tahun Buku", primary: true, filter: "text" },
-      { field: "start_date", label: "Mulai", isDate: true, width: "132px" },
-      { field: "end_date", label: "Selesai", isDate: true, width: "132px" },
-      { field: "period_count", label: "Period", computed: true, numeric: true, width: "94px" },
-      { field: "status", label: "Status", isStatus: true, width: "118px", filter: "enum" },
-    ],
-  },
-
-  {
-    key: "acc_fiscal_period",
-    slug: "fiscal-period",
-    module: "accounting",
-    name: "Fiscal Period",
-    icon: "clock",
-    desc: "Period control untuk Budget Month dan posting accounting.",
-    codeField: "period_code",
-    codePrefix: "fprd",
-    labelField: "period_label",
-    nameField: "period_name",
-    statusModel: FISCAL_STATUS,
-    fields: [
-      {
-        name: "period_label",
-        label: "Label",
-        type: "text",
-        required: true,
-        unique: true,
-        ident: true,
-        placeholder: "2027-01",
-        help: identHelp,
-      },
-      {
-        name: "period_name",
-        label: "Nama Period",
-        type: "text",
-        required: true,
-        placeholder: "Januari 2027",
-        help: "Nama lengkap entitas.",
-      },
-      {
-        name: "fiscal_year_id",
-        label: "Fiscal Year",
-        type: "ref",
-        ref: "acc_fiscal_year",
-        required: true,
         locked: true,
-        help: "Period tidak dapat dipindah ke tahun buku lain setelah dibuat.",
+        help:
+          "Cukup pilih tahunnya. Nama, tanggal mulai 01/01, dan tanggal selesai " +
+          "31/12 mengikuti otomatis dan tidak dapat diubah terpisah.",
       },
+      { name: "year_name", label: "Nama Tahun Buku", type: "text", derived: true },
+      { name: "start_date", label: "Tanggal Mulai", type: "date", derived: true },
+      { name: "end_date", label: "Tanggal Selesai", type: "date", derived: true },
       {
-        name: "sequence_no",
-        label: "Urutan",
-        type: "number",
-        required: true,
-        defaultValue: 1,
-        help: "Urutan periode dalam satu tahun buku.",
+        ...FISCAL_STATUS_FIELD,
+        help:
+          "Draft belum dipakai · Open menerima posting dan otomatis membuat 12 " +
+          "Fiscal Period · Closed terkunci.",
       },
-      { name: "start_date", label: "Tanggal Mulai", type: "date", required: true },
-      { name: "end_date", label: "Tanggal Selesai", type: "date", required: true },
-      FISCAL_STATUS_FIELD,
       NOTE_FIELD,
     ],
     columns: [
-      { field: "period_label", label: "Label", isLabel: true, width: "126px", filter: "text" },
-      { field: "period_name", label: "Nama Period", primary: true, filter: "text" },
-      { field: "fiscal_year_id", label: "Fiscal Year", isRef: true, width: "214px", filter: "ref" },
-      { field: "sequence_no", label: "Urutan", numeric: true, width: "86px" },
-      { field: "start_date", label: "Mulai", isDate: true, width: "132px" },
-      { field: "end_date", label: "Selesai", isDate: true, width: "132px" },
+      { field: "year_label", label: "Tahun", isLabel: true, width: "108px", filter: "text" },
+      { field: "year_name", label: "Nama Tahun Buku", primary: true, filter: "text" },
+      { field: "start_date", label: "Mulai", isDate: true, width: "126px" },
+      { field: "end_date", label: "Selesai", isDate: true, width: "126px" },
+      { field: "period_count", label: "Period", computed: true, numeric: true, width: "94px" },
       { field: "status", label: "Status", isStatus: true, width: "118px", filter: "enum" },
     ],
   },

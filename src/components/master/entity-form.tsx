@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Combobox } from "@/components/ui/combobox";
+import { DateInput } from "@/components/ui/date-input";
+import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { createRecord, updateRecord, toggleStatus, type FormValues } from "@/app/actions/master";
@@ -181,9 +183,14 @@ export function EntityForm({
   const statusValue = statusModel ? String(row?.[statusModel.field] ?? "") : "";
 
   // A create-only field has nowhere to read a value back from — it was never a
-  // column on this table — so it exists on the create form and nowhere else.
+  // column on this table — so it exists on the create form and nowhere else. A
+  // derived field is the mirror image: never typed, but worth showing once it
+  // has a value, so it appears read-only on the detail and not on either form.
   const visible = entity.fields.filter(
-    (f) => applies(f) && !(f.createOnly && mode !== "new")
+    (f) =>
+      applies(f) &&
+      !(f.createOnly && mode !== "new") &&
+      !(f.derived && editing)
   );
   const statusFieldName = statusModel?.field;
   const businessFields = visible.filter(
@@ -453,8 +460,9 @@ function initialValues(entity: Entity, row: Row | null): FormValues {
     if (row) {
       const v = row[f.name];
       if (f.type === "bool") out[f.name] = Boolean(v);
-      // Dates arrive as full ISO timestamps; `<input type="date">` wants the
-      // calendar part only, and the Server Action parses it back at UTC midnight.
+      // Dates arrive as full ISO timestamps; `DateInput` works in `yyyy-mm-dd`
+      // and shows `dd/mm/yyyy`, and the Server Action parses the ISO form back
+      // at UTC midnight.
       else if (f.type === "date") out[f.name] = v == null ? null : String(v).slice(0, 10);
       else out[f.name] = v == null ? null : String(v);
     } else {
@@ -617,24 +625,29 @@ function FieldControl({
     );
   } else if (field.type === "select") {
     control = (
-      <select
-        className={`slc${error ? " bad" : ""}`}
+      <Select
         value={value == null ? "" : String(value)}
+        options={[
+          ...(field.required ? [] : [{ value: "", label: "— tidak diisi —" }]),
+          ...(field.options ?? []).map((o) => ({
+            value: o,
+            label: field.optionLabels?.[o] ?? o,
+          })),
+        ]}
+        placeholder={`Pilih ${field.label}…`}
+        invalid={Boolean(error)}
         disabled={locked}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {!field.required && <option value="">— tidak diisi —</option>}
-        {field.required && (value == null || value === "") && (
-          <option value="" disabled>
-            — pilih {field.label} —
-          </option>
-        )}
-        {(field.options ?? []).map((o) => (
-          <option key={o} value={o}>
-            {field.optionLabels?.[o] ?? o}
-          </option>
-        ))}
-      </select>
+        onChange={onChange}
+      />
+    );
+  } else if (field.type === "date") {
+    control = (
+      <DateInput
+        value={value == null ? "" : String(value)}
+        invalid={Boolean(error)}
+        disabled={locked}
+        onChange={onChange}
+      />
     );
   } else if (field.type === "textarea") {
     control = (
@@ -649,7 +662,7 @@ function FieldControl({
     control = (
       <input
         className={`inp${field.ident ? " idf" : ""}${error ? " bad" : ""}`}
-        type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+        type={field.type === "number" ? "number" : "text"}
         value={value == null ? "" : String(value)}
         placeholder={field.placeholder}
         disabled={locked}
