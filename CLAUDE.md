@@ -142,6 +142,8 @@ of its own.
 | Own account | `src/lib/siba/profile.ts` | Profile read/edit, own password change |
 | Entity permissions | `src/lib/siba/entity-access.ts` | Registry entity -> permission per operation |
 | Data access | `src/lib/siba/records.ts` | Generic list/get/options/computed, COA tree, the account rules the actions enforce; `server-only` |
+| Record naming | `src/lib/siba/record-title.ts` | How a record names itself, for forms, lists and the audit log; client-safe |
+| Audit reading | `src/lib/siba/audit.ts` | `entity_key` -> subject, `row_id` -> title, each resolved by the owning module; `server-only` |
 | Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, and reading them back; `server-only` |
 | Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open, its permission, and why Closed is not reachable; client-safe |
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
@@ -1996,7 +1998,7 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 
 | Issue | Detail |
 | --- | --- |
-| Audit log shows raw table keys | Dashboard renders `m_partner` rather than `Partner / Cabang Medan`; needs entity display names + record lookup. (The author column resolves correctly.) |
+| An audit entry names a record by its current name | `audit_log` stores no snapshot, so a record renamed since it changed reads under the name it has now. Inventing a snapshot would be worse than saying nothing, but it does mean the panel is not a record of what a thing was called at the time. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
