@@ -1147,8 +1147,17 @@ describe("posting writes a balanced journal alongside the book", () => {
         "and moves no money"
       );
     } finally {
-      const { id: _id, created_at: _c, updated_at: _u, ...row } = mapping;
-      await prisma.accBudgetCategoryAccount.create({ data: row });
+      await prisma.accBudgetCategoryAccount.create({
+        data: {
+          bca_code: mapping.bca_code,
+          company_id: mapping.company_id,
+          budget_category_id: mapping.budget_category_id,
+          partner_category_id: mapping.partner_category_id,
+          account_id: mapping.account_id,
+          created_by: mapping.created_by,
+          updated_by: mapping.updated_by,
+        },
+      });
     }
   });
 });
