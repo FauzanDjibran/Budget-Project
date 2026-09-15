@@ -29,7 +29,7 @@ import { formatDate } from "@/lib/format";
 import type { Company } from "@/lib/siba/company-access";
 import type { RefOption, Row } from "@/lib/siba/records";
 import { CompanyFilter, NoCompanyAccess } from "./company-filter";
-import { recordTitle } from "./title";
+import { recordTitle } from "@/lib/siba/record-title";
 
 type Computed = Record<number, Record<string, string | number>>;
 

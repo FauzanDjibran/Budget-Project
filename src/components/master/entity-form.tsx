@@ -31,7 +31,7 @@ import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
 import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
 import { formatDate, formatMoney, formatTimestamp, todayIso } from "@/lib/format";
-import { recordTitle } from "./title";
+import { recordTitle } from "@/lib/siba/record-title";
 
 export type FormMode = "new" | "view" | "edit";
 

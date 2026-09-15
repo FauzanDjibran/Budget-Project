@@ -5,6 +5,7 @@ import { actorCan } from "@/lib/siba/access";
 import { requirePermission } from "@/lib/siba/auth";
 import { companyStructure } from "@/lib/siba/records";
 import { userEmails } from "@/lib/siba/users";
+import { recentActivity } from "@/lib/siba/audit";
 import { formatTimestamp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +69,7 @@ export default async function DashboardPage() {
     prisma.budBudget.count(),
     prisma.sysBudgetCategory.findMany({ select: { id: true, category_label: true } }),
     prisma.accFiscalPeriod.count(),
-    prisma.auditLog.findMany({ orderBy: { at: "desc" }, take: 6 }),
+    recentActivity(6),
     companyStructure(),
   ]);
 
@@ -336,7 +337,10 @@ export default async function DashboardPage() {
                   <div className="atime">{formatTimestamp(l.at)}</div>
                   <div className="aact">
                     <span className="adot" />
-                    <span className="aent">{l.entity_key}</span>
+                    <span className="aent">
+                      {l.subject}
+                      {l.title ? <em className="asub">{l.title}</em> : null}
+                    </span>
                     <span className={`bdg ${ACTION_CLASS[l.action] ?? "s-mute"}`}>
                       {l.action}
                     </span>

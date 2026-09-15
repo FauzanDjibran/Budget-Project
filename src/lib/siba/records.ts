@@ -104,6 +104,23 @@ export async function getRow(entity: Entity, id: number): Promise<Row | null> {
 }
 
 /**
+ * Several rows of one entity by id, in one query.
+ *
+ * The audit log resolves a batch of `(entity_key, row_id)` pairs at a time and
+ * would otherwise issue a query per entry. Deliberately unscoped by Company:
+ * this names a record that has already been recorded as changed, and hiding the
+ * name would leave an entry no one could interpret rather than protecting
+ * anything.
+ */
+export async function rowsByIds(entity: Entity, ids: number[]): Promise<Row[]> {
+  if (!ids.length) return [];
+  const rows = await delegate(entity.key).findMany({
+    where: { id: { in: ids } },
+  });
+  return rows.map(serialize);
+}
+
+/**
  * Ref options for every `ref` field on an entity, keyed by FIELD name.
  *
  * Keying by field rather than by target matters: two fields can point at the

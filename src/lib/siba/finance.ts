@@ -945,6 +945,21 @@ export async function applyPosting(
 
 // --------------------------------------------------------------- numbering
 
+/**
+ * Document numbers for a set of ids — how another module names a transaction
+ * it holds a reference to, without reading `fin_cash_bank_transaction` itself.
+ */
+export async function transactionNumbersByIds(
+  ids: number[]
+): Promise<Map<number, string>> {
+  if (!ids.length) return new Map();
+  const rows = await prisma.finCashBankTransaction.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, transaction_no: true },
+  });
+  return new Map(rows.map((r) => [r.id, r.transaction_no]));
+}
+
 /** Next document number, `CBT-0001`. The format lives in `document-number.ts`. */
 export async function nextTransactionNo(): Promise<string> {
   return nextDocumentNumber("CBT", async () => {

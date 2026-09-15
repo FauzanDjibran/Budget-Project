@@ -150,6 +150,21 @@ export async function postJournal(
   return { id: journal.id, journalNo: journal.journal_no };
 }
 
+/**
+ * Journal numbers for a set of ids — how another module names a journal it
+ * holds a reference to, without reading `acc_journal` itself.
+ */
+export async function journalNumbersByIds(
+  ids: number[]
+): Promise<Map<number, string>> {
+  if (!ids.length) return new Map();
+  const rows = await prisma.accJournal.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, journal_no: true },
+  });
+  return new Map(rows.map((r) => [r.id, r.journal_no]));
+}
+
 /** `JRN-0001` — the document-number form, not a `<prefix>.<4 digits>` code. */
 async function nextJournalNo(tx: Client): Promise<string> {
   return nextDocumentNumber("JRN", async () => {

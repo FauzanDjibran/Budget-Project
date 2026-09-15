@@ -1,5 +1,5 @@
-import type { Entity } from "@/lib/siba/entities";
-import type { RefOption, Row } from "@/lib/siba/records";
+import type { Entity } from "./entities";
+import type { RefOption, Row } from "./records";
 
 /**
  * How a record names itself in headers, breadcrumbs and confirmations.

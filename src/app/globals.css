@@ -463,7 +463,14 @@ td.acts{width:88px;padding-right:7px}
 .atime{font-size:11.5px;color:var(--muted-2);margin-top:1px;font-variant-numeric:tabular-nums}
 .aact{display:flex;align-items:center;gap:9px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line-2);flex-wrap:wrap}
 .adot{width:7px;height:7px;border-radius:50%;background:var(--brand);flex:0 0 auto}
-.aent{font-size:12px;font-weight:600;color:var(--ink-2)}
+.aent{font-size:12px;font-weight:600;color:var(--ink-2);min-width:0}
+/* The record's own name, after the kind of record it is. Muted and not bold,
+   so "Partner" and "PRT.0011 – Cabang Medan" read as one phrase rather than
+   two competing labels, and a long name truncates instead of wrapping the
+   badge onto its own line. */
+.aent .asub{font-style:normal;font-weight:500;color:var(--ink-3);margin-left:6px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;
+  max-width:220px;vertical-align:bottom}
 
 /* ============================================================ dashboard */
 .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:12px;margin-bottom:14px}
