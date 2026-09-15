@@ -268,6 +268,53 @@ const PARTNERS: [label: string, name: string, category: string][] = [
 
 const PARTNER_NOTE = "Data contoh untuk pengujian.";
 
+/**
+ * Budget Category x Partner Category -> the account a posting journals against.
+ *
+ * Every combination `lib/siba/rules.ts` declares, and only those: a Budget
+ * Category that takes no Partner gets one mapping with no Partner Category, and
+ * one that takes several gets one per category it admits. The accounts are the
+ * subledger accounts `CHART` puts there for exactly this purpose, named rather
+ * than numbered because a chart's numbers depend on what was already in it.
+ *
+ * Posting needs these. A document whose Purpose resolves to no account cannot
+ * be journalled, so the post is refused — while approval still tolerates the
+ * gap (CLAUDE.md §10 rules 28 and 50).
+ *
+ * Two of them are judgement calls rather than a single obvious account, and
+ * both are the general case of their kind:
+ *
+ *   - **Asset** buys fixed assets, and the chart has four kinds. Inventaris
+ *     Kantor is the catch-all; a purchase of land or a building is worth
+ *     re-pointing by hand.
+ *   - **Biaya** is general expenditure, so it lands on Biaya Umum Lain-lain
+ *     rather than on one of the named expense accounts.
+ */
+const MAPPINGS: [
+  budgetCategory: string,
+  partnerCategory: string | null,
+  accountName: string,
+][] = [
+  ["Titipan", "Cabang", "Titipan dari Cabang"],
+  ["Titipan", "Stakeholder", "Titipan dari Stakeholder"],
+
+  ["Hutang", "Cabang", "Hutang kepada Cabang"],
+  ["Hutang", "Karyawan", "Hutang kepada Karyawan"],
+  ["Hutang", "Stakeholder", "Hutang kepada Stakeholder"],
+
+  ["Piutang", "Cabang", "Piutang Cabang"],
+  ["Piutang", "Karyawan", "Piutang Karyawan"],
+  ["Piutang", "Stakeholder", "Piutang Stakeholder"],
+
+  ["Prive", "Stakeholder", "Prive Stakeholder"],
+
+  ["Investasi", "Cabang", "Investasi pada Cabang"],
+  ["Hasil Investasi", "Cabang", "Hasil Investasi dari Cabang"],
+
+  ["Asset", null, "Inventaris Kantor"],
+  ["Biaya", null, "Biaya Umum Lain-lain"],
+];
+
 const made: Record<string, number> = {};
 const tally = (what: string, n = 1) => {
   if (n) made[what] = (made[what] ?? 0) + n;
@@ -298,6 +345,11 @@ async function main() {
   // on a different Company are different records.
   for (const company of companies) {
     await insertChart(company.id, company.company_label, actor);
+  }
+
+  // After the chart, because a mapping points at an account in it.
+  for (const company of companies) {
+    await insertMappings(company.id, company.company_label, actor);
   }
 
   report();
@@ -376,6 +428,89 @@ async function insertPartners(companyId: number, actor: number) {
     });
     await audit("m_partner", row.id, actor);
     tally("partners");
+  }
+}
+
+// ----------------------------------------------------------------- mappings
+
+async function insertMappings(companyId: number, companyLabel: string, actor: number) {
+  const budgetCategories = new Map(
+    (
+      await prisma.sysBudgetCategory.findMany({
+        select: { id: true, category_label: true },
+      })
+    ).map((c) => [c.category_label, c.id])
+  );
+  const partnerCategories = new Map(
+    (
+      await prisma.sysPartnerCategory.findMany({
+        select: { id: true, category_label: true },
+      })
+    ).map((c) => [c.category_label, c.id])
+  );
+  const accounts = new Map(
+    (
+      await prisma.accAccount.findMany({
+        where: { company_id: companyId },
+        select: { id: true, account_name: true, is_postable: true, is_active: true },
+      })
+    ).map((a) => [a.account_name.toLowerCase(), a])
+  );
+
+  for (const [budgetLabel, partnerLabel, accountName] of MAPPINGS) {
+    const budgetCategoryId = budgetCategories.get(budgetLabel);
+    if (!budgetCategoryId) {
+      throw new Error(`Budget Category "${budgetLabel}" is not seeded.`);
+    }
+    const partnerCategoryId = partnerLabel
+      ? partnerCategories.get(partnerLabel) ?? null
+      : null;
+    if (partnerLabel && !partnerCategoryId) {
+      throw new Error(`Partner Category "${partnerLabel}" is not seeded.`);
+    }
+
+    const account = accounts.get(accountName.toLowerCase());
+    if (!account) {
+      // The chart above creates every account named here, so a miss means the
+      // two lists have drifted apart rather than that the database is short.
+      throw new Error(
+        `${companyLabel}: no account named "${accountName}". MAPPINGS and CHART disagree.`
+      );
+    }
+    // The same rule the Server Action enforces: a mapping resolves to exactly
+    // one postable, active account of that Company.
+    if (!account.is_postable || !account.is_active) {
+      throw new Error(
+        `${companyLabel}: "${accountName}" is not a postable, active account.`
+      );
+    }
+
+    const existing = await prisma.accBudgetCategoryAccount.findFirst({
+      where: {
+        company_id: companyId,
+        budget_category_id: budgetCategoryId,
+        partner_category_id: partnerCategoryId,
+      },
+      select: { id: true },
+    });
+    if (existing) continue;
+
+    const codes = await prisma.accBudgetCategoryAccount.findMany({
+      select: { bca_code: true },
+    });
+    const row = await prisma.accBudgetCategoryAccount.create({
+      data: {
+        bca_code: await nextCode("bcam", codes.map((c) => c.bca_code)),
+        company_id: companyId,
+        budget_category_id: budgetCategoryId,
+        partner_category_id: partnerCategoryId,
+        account_id: account.id,
+        created_by: actor,
+      },
+      select: { id: true },
+    });
+    await audit("acc_budget_category_account", row.id, actor);
+    tally(`mappings (${companyLabel})`);
   }
 }
 

@@ -209,9 +209,10 @@ prisma/
   migrations/            Applied migrations
   seed.ts                System data only — idempotent, never touches business data
 scripts/
-  sample-data.ts         Dev convenience: plausible Partners and a Chart of Accounts
-                         to test against. **Not** the seeder — ordinary inserts,
-                         run by hand, never by install/migrate/reset/CI
+  sample-data.ts         Dev convenience: plausible Partners, a Chart of Accounts
+                         and the account mappings to test against. **Not** the
+                         seeder — ordinary inserts, run by hand, never by
+                         install/migrate/reset/CI
 src/
   proxy.ts               Optimistic redirect to /login (NOT a security boundary)
   app/
@@ -772,9 +773,10 @@ Specified in the concept doc, **not yet implemented** (see §13):
   fiscal calendar, the mappings and the missing cash resources in dependency order.
   Tests build their own business fixtures (`tests/helpers.ts`) and clean them up.
 - **Sample business data has its own script, outside the seed.**
-  `scripts/sample-data.ts` (`npm run db:sample`) inserts six generic Partners
-  and a full Chart of Accounts for both Companies, so a developer has something
-  to test against. It is deliberately *not* part of the seed, is never run by
+  `scripts/sample-data.ts` (`npm run db:sample`) inserts six generic Partners, a
+  full Chart of Accounts for both Companies, and the Budget Category × Partner
+  Category → account mappings every Purpose in `rules.ts` needs, so a developer
+  has something to post against. It is deliberately *not* part of the seed, is never run by
   install, migrate, reset or CI, and writes ordinary records — composed account
   numbers, audit entries, editable through the GUI. It reuses anything already
   present rather than overwriting it, and deletes nothing.

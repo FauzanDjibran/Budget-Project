@@ -1110,9 +1110,12 @@ describe("posting writes a balanced journal alongside the book", () => {
     // Approval tolerates a missing mapping (§10 rule 28) because that gap
     // belongs to Accounting. Posting cannot: there is no account to journal
     // against, and money must not move unaccounted for.
+    // Taken whole and put back whole. This row may be one a real user created
+    // through the application, and restoring it through the fixture helper
+    // would hand it a fixture code that `cleanupFixtures` then deletes — the
+    // suite would quietly destroy a mapping it only meant to borrow.
     const mapping = await prisma.accBudgetCategoryAccount.findFirstOrThrow({
       where: { company_id: induk, budget_category: { category_label: "Asset" } },
-      select: { id: true, account_id: true },
     });
     await prisma.accBudgetCategoryAccount.delete({ where: { id: mapping.id } });
 
@@ -1144,12 +1147,8 @@ describe("posting writes a balanced journal alongside the book", () => {
         "and moves no money"
       );
     } finally {
-      await makeMapping({
-        companyId: induk,
-        budgetCategoryLabel: "Asset",
-        partnerCategoryLabel: null,
-        accountId: mapping.account_id,
-      });
+      const { id: _id, created_at: _c, updated_at: _u, ...row } = mapping;
+      await prisma.accBudgetCategoryAccount.create({ data: row });
     }
   });
 });
