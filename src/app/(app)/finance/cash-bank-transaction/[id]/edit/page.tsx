@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { TransactionForm } from "@/components/finance/transaction-form";
 import { requirePermission } from "@/lib/siba/auth";
 import { budgetMappings } from "@/lib/siba/budget";
+import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import {
   financeRefs,
   getTransaction,
@@ -37,7 +38,7 @@ export default async function Page({
 
   const [lines, refs, mappings] = await Promise.all([
     transactionLines(transaction.id),
-    financeRefs(),
+    financeRefs(await accessibleCompanyIds(actor.permissions)),
     budgetMappings(),
   ]);
 

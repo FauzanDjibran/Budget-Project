@@ -3,13 +3,19 @@ import { prisma } from "@/lib/prisma";
 import { actorCan } from "@/lib/siba/access";
 import { requirePermission } from "@/lib/siba/auth";
 import type { RefOption } from "@/lib/siba/records";
-import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
+import {
+  SYSTEM_DEFAULTS,
+  type SystemDefaultDef,
+  type SystemDefaultKey,
+  type SystemDefaultValues,
+} from "@/lib/siba/system-defaults";
 import { systemDefaults } from "@/lib/siba/system-settings";
 
 export const dynamic = "force-dynamic";
 
 /**
- * System Default — the values the application prefills with.
+ * System Default — the values the application prefills with, plus the
+ * intercompany bridge each Company posts its side of a Funding Request to.
  *
  * Reaching the menu and reading the values are separate permissions, the same
  * split every other module uses, and editing is a third.
@@ -23,26 +29,16 @@ export default async function SystemDefaultPage() {
 
   const values = await systemDefaults();
 
-  // A default may only point at something a user could have chosen anyway, so
-  // the options are exactly what the pickers themselves offer: active records,
-  // plus whatever is already set even if it has since been deactivated.
-  const currencies = await prisma.refCurrency.findMany({
-    orderBy: { currency_label: "asc" },
+  const companies = await prisma.sysCompany.findMany({
+    select: { id: true, is_parent: true },
   });
-  const currencyOptions: RefOption[] = currencies
-    .filter(
-      (c) => c.status === "Active" || String(c.id) === values.default_currency
-    )
-    .map((c) => ({
-      id: c.id,
-      label: c.currency_label,
-      name: c.currency_name,
-      active: c.status === "Active",
-    }));
+  const companyId = (which: "induk" | "anak") =>
+    companies.find((c) => c.is_parent === (which === "induk"))?.id ?? 0;
 
-  const options: Record<SystemDefaultKey, RefOption[]> = {
-    default_currency: currencyOptions,
-  };
+  const options = {} as Record<SystemDefaultKey, RefOption[]>;
+  for (const def of SYSTEM_DEFAULTS) {
+    options[def.key] = await optionsFor(def, values);
+  }
 
   return (
     <SystemDefaultForm
@@ -51,4 +47,60 @@ export default async function SystemDefaultPage() {
       canEdit={actorCan(actor, "SYSTEM_DEFAULT_EDIT")}
     />
   );
+
+  /**
+   * Exactly what the setting's own rules admit — active records of the right
+   * Company, plus whatever is already stored even if it has since been
+   * deactivated, so a page that opens on a stale value still shows what it is
+   * rather than an empty box.
+   */
+  async function optionsFor(
+    def: SystemDefaultDef,
+    current: SystemDefaultValues
+  ): Promise<RefOption[]> {
+    const chosen = Number(current[def.key] ?? "");
+    const keep = (id: number, active: boolean) => active || id === chosen;
+
+    if (def.ref === "ref_currency") {
+      const rows = await prisma.refCurrency.findMany({
+        orderBy: { currency_label: "asc" },
+      });
+      return rows
+        .filter((c) => keep(c.id, c.status === "Active"))
+        .map((c) => ({
+          id: c.id,
+          label: c.currency_label,
+          name: c.currency_name,
+          active: c.status === "Active",
+        }));
+    }
+
+    if (def.ref === "acc_account") {
+      const rows = await prisma.accAccount.findMany({
+        where: { company_id: companyId(def.company!), is_postable: true },
+        orderBy: { account_label: "asc" },
+      });
+      return rows
+        .filter((a) => keep(a.id, a.is_active))
+        .map((a) => ({
+          id: a.id,
+          label: a.account_label,
+          name: a.account_name,
+          active: a.is_active,
+        }));
+    }
+
+    const rows = await prisma.mPartner.findMany({
+      where: { company_id: companyId(def.company!) },
+      orderBy: { partner_label: "asc" },
+    });
+    return rows
+      .filter((p) => keep(p.id, p.status === "Active"))
+      .map((p) => ({
+        id: p.id,
+        label: p.partner_label,
+        name: p.partner_name,
+        active: p.status === "Active",
+      }));
+  }
 }

@@ -31,6 +31,11 @@ import {
   type BudgetAbilities,
   type BudgetAction,
 } from "@/lib/siba/budget-workflow";
+import {
+  headerButtonClass,
+  orderForHeader,
+  type ActionTone,
+} from "@/lib/siba/header-actions";
 import type { budgetRealizations } from "@/lib/siba/finance";
 import { ApproveDialog } from "./approve-dialog";
 import { RealizationCard } from "./realization-card";
@@ -168,6 +173,56 @@ export function BudgetForm({
   };
 
   const actions = budget ? availableActions(budget.status, can) : [];
+
+  /**
+   * The view-mode header, in header order: danger, then neutral, then the one
+   * primary. `availableActions` returns menu order — safe first — which is the
+   * opposite arrangement and the right one for the vertical row menu only.
+   */
+  const viewActions: { key: string; tone: ActionTone; node: React.ReactNode }[] =
+    budget
+      ? orderForHeader(
+          [
+            ...(can.edit && budgetIsEditable(budget.status)
+              ? [
+                  {
+                    key: "edit",
+                    tone: "neutral" as ActionTone,
+                    node: (
+                      <Link
+                        key="edit"
+                        className="btn"
+                        href={`/budget/budget/${budget.id}/edit`}
+                      >
+                        <Icon name="pen" size={15} /> Ubah
+                      </Link>
+                    ),
+                  },
+                ]
+              : []),
+            ...actions.map((a) => {
+              const t = BUDGET_TRANSITIONS[a];
+              return {
+                key: a,
+                tone: t.tone,
+                node: (
+                  <button
+                    key={a}
+                    className={headerButtonClass(t.tone)}
+                    disabled={busy}
+                    onClick={() =>
+                      a === "approve" ? setApproving(true) : setConfirm(a)
+                    }
+                  >
+                    <Icon name={t.icon} size={15} /> {t.label}
+                  </button>
+                ),
+              };
+            }),
+          ],
+          (i) => i.tone
+        )
+      : [];
   const title =
     mode === "new"
       ? "Tambah Budget"
@@ -198,30 +253,7 @@ export function BudgetForm({
                 <span className="pulse" /> Belum disimpan
               </span>
             )}
-            {mode === "view" && budget && (
-              <>
-                {can.edit && budgetIsEditable(budget.status) && (
-                  <Link className="btn" href={`/budget/budget/${budget.id}/edit`}>
-                    <Icon name="pen" size={15} /> Ubah
-                  </Link>
-                )}
-                {actions.map((a) => {
-                  const t = BUDGET_TRANSITIONS[a];
-                  return (
-                    <button
-                      key={a}
-                      className={`btn${t.danger ? " danger" : a === "approve" ? " primary" : ""}`}
-                      disabled={busy}
-                      onClick={() =>
-                        a === "approve" ? setApproving(true) : setConfirm(a)
-                      }
-                    >
-                      <Icon name={t.icon} size={15} /> {t.label}
-                    </button>
-                  );
-                })}
-              </>
-            )}
+            {mode === "view" && budget && viewActions.map((i) => i.node)}
             {editing && (
               <>
                 <Link className="btn" href={backHref}>
@@ -593,13 +625,13 @@ export function BudgetForm({
         <ConfirmDialog
           open
           icon={BUDGET_TRANSITIONS[confirm].icon}
-          tone={BUDGET_TRANSITIONS[confirm].danger ? "danger" : "brand"}
+          tone={BUDGET_TRANSITIONS[confirm].tone === "danger" ? "danger" : "brand"}
           title={BUDGET_TRANSITIONS[confirm].title}
           subject={`${budget.budget_no} – ${budget.description}`}
           body={BUDGET_TRANSITIONS[confirm].body}
           confirmLabel={BUDGET_TRANSITIONS[confirm].confirmLabel}
           confirmTone={
-            BUDGET_TRANSITIONS[confirm].danger ? "solid-danger" : "primary"
+            BUDGET_TRANSITIONS[confirm].tone === "danger" ? "solid-danger" : "primary"
           }
           busy={busy}
           onConfirm={() => run(confirm)}

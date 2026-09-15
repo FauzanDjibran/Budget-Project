@@ -26,6 +26,7 @@ import {
   type BudgetAbilities,
   type BudgetAction,
 } from "@/lib/siba/budget-workflow";
+import { menuButtonClass } from "@/lib/siba/header-actions";
 import { ApproveDialog } from "./approve-dialog";
 import { CashBalanceDialog } from "./cash-balance-dialog";
 import { ReportPicker } from "./report-picker";
@@ -652,13 +653,13 @@ export function BudgetList({
         <ConfirmDialog
           open
           icon={BUDGET_TRANSITIONS[confirm.action].icon}
-          tone={BUDGET_TRANSITIONS[confirm.action].danger ? "danger" : "brand"}
+          tone={BUDGET_TRANSITIONS[confirm.action].tone === "danger" ? "danger" : "brand"}
           title={BUDGET_TRANSITIONS[confirm.action].title}
           subject={`${confirm.row.budget_no} – ${confirm.row.description}`}
           body={BUDGET_TRANSITIONS[confirm.action].body}
           confirmLabel={BUDGET_TRANSITIONS[confirm.action].confirmLabel}
           confirmTone={
-            BUDGET_TRANSITIONS[confirm.action].danger ? "solid-danger" : "primary"
+            BUDGET_TRANSITIONS[confirm.action].tone === "danger" ? "solid-danger" : "primary"
           }
           busy={busy}
           onConfirm={() => run(confirm.row, confirm.action)}
@@ -758,7 +759,7 @@ function RowMenu({
         return (
           <button
             key={a}
-            className={t.danger ? "dg" : undefined}
+            className={menuButtonClass(t.tone)}
             onClick={() => onPick(a)}
           >
             <Icon name={t.icon} size={14} /> {t.label}

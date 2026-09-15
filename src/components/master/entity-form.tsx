@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { headerButtonClass, type ActionTone } from "@/lib/siba/header-actions";
 import { Combobox } from "@/components/ui/combobox";
 import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
@@ -44,6 +45,7 @@ export function EntityForm({
   updatedByEmail,
   can,
   headerActions,
+  editTone = "primary",
   defaults,
 }: {
   entity: Entity;
@@ -62,6 +64,13 @@ export function EntityForm({
    * than another config key nothing else would use.
    */
   headerActions?: React.ReactNode;
+  /**
+   * How prominent Ubah is, and therefore where it sits. A header carries one
+   * primary and it is the rightmost button, so when `headerActions` supplies
+   * the screen's chief action — activating a Fiscal Year — Ubah steps down to
+   * neutral and moves to its left. See `lib/siba/header-actions.ts`.
+   */
+  editTone?: ActionTone;
   /**
    * System Defaults, already resolved against their masters, used to fill a
    * create form in. Absent on view and edit: a default is a starting point for
@@ -293,7 +302,7 @@ export function EntityForm({
                 <span className="pulse" /> Belum disimpan
               </span>
             )}
-            {mode === "view" && headerActions}
+            {mode === "view" && editTone === "primary" && headerActions}
             {editing ? (
               <>
                 <Link
@@ -311,10 +320,14 @@ export function EntityForm({
                 <Icon name="lock" size={11} /> {COMPANY_LOCK_BADGE}
               </span>
             ) : canEdit ? (
-              <Link className="btn primary" href={`${basePath}/${row!.id}/edit`}>
+              <Link
+                className={headerButtonClass(editTone)}
+                href={`${basePath}/${row!.id}/edit`}
+              >
                 <Icon name="pen" size={15} /> Ubah
               </Link>
             ) : null}
+            {mode === "view" && editTone !== "primary" && headerActions}
           </div>
         </div>
         <p className="ph-sub">{entity.desc}</p>

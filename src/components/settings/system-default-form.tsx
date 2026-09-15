@@ -7,7 +7,8 @@ import { useToast } from "@/components/ui/toast";
 import { saveSystemDefaults } from "@/app/actions/settings";
 import type { RefOption } from "@/lib/siba/records";
 import {
-  SYSTEM_DEFAULTS,
+  SYSTEM_DEFAULT_GROUPS,
+  systemDefaultsIn,
   type SystemDefaultKey,
   type SystemDefaultValues,
 } from "@/lib/siba/system-defaults";
@@ -129,58 +130,65 @@ export function SystemDefaultForm({
         </div>
       )}
 
-      <div className="card">
-        <div className="card-h">
-          <span className="ci">
-            <Icon name="gear" size={15} />
-          </span>
-          <div className="ct">
-            <h3>Default Aplikasi</h3>
-            <p>Berlaku untuk seluruh Company dan seluruh pengguna.</p>
+      {SYSTEM_DEFAULT_GROUPS.map((group) => (
+        <div className="card" key={group.key} style={{ marginBottom: 14 }}>
+          <div className="card-h">
+            <span className="ci">
+              <Icon name={group.icon} size={15} />
+            </span>
+            <div className="ct">
+              <h3>{group.name}</h3>
+              <p>{group.desc}</p>
+            </div>
           </div>
-        </div>
 
-        <div className="card-b">
-          <div className="fsec">
-            <div className="frow">
-              {SYSTEM_DEFAULTS.map((def) => {
-                const value = values[def.key];
-                const list = options[def.key] ?? [];
-                return (
-                  <div className="fld" key={def.key}>
-                    <label>{def.name}</label>
-                    {canEdit ? (
-                      <Combobox
-                        value={value ? Number(value) : null}
-                        options={list}
-                        placeholder={`Pilih ${def.name}…`}
-                        invalid={Boolean(errors[def.key])}
-                        onChange={(v) => set(def.key, v == null ? null : String(v))}
-                      />
-                    ) : (
-                      <ReadOnly
-                        option={list.find((o) => o.id === Number(value)) ?? null}
-                      />
-                    )}
-                    {errors[def.key] ? (
-                      <div className="err">
-                        <Icon name="warn" size={11} />
-                        {errors[def.key]}
-                      </div>
-                    ) : (
-                      <div className="help">{def.help}</div>
-                    )}
-                  </div>
-                );
-              })}
+          <div className="card-b">
+            <div className="fsec">
+              <div className="frow">
+                {systemDefaultsIn(group.key).map((def) => {
+                  const value = values[def.key];
+                  const list = options[def.key] ?? [];
+                  return (
+                    <div className="fld" key={def.key}>
+                      <label>{def.name}</label>
+                      {canEdit ? (
+                        <Combobox
+                          value={value ? Number(value) : null}
+                          options={list}
+                          placeholder={`Pilih ${def.name}…`}
+                          invalid={Boolean(errors[def.key])}
+                          onChange={(v) =>
+                            set(def.key, v == null ? null : String(v))
+                          }
+                        />
+                      ) : (
+                        <ReadOnly
+                          option={list.find((o) => o.id === Number(value)) ?? null}
+                        />
+                      )}
+                      {errors[def.key] ? (
+                        <div className="err">
+                          <Icon name="warn" size={11} />
+                          {errors[def.key]}
+                        </div>
+                      ) : (
+                        <div className="help">{def.help}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      ))}
 
       <p className="foot-note">
         Mengubah default tidak mengubah data yang sudah tersimpan — hanya isian
-        awal pada form berikutnya.
+        awal pada form berikutnya. Pengaturan bridge intercompany adalah
+        pengecualian: ia menentukan account dan Partner yang dipakai saat Funding
+        Request dikonfirmasi, dan konfirmasi ditolak selama salah satunya belum
+        diisi.
       </p>
     </>
   );

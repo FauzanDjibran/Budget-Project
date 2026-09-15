@@ -9,6 +9,7 @@ import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionTransaction } from "@/app/actions/finance";
+import { requestFunding, withdrawFunding } from "@/app/actions/funding";
 import { formatDate, formatMoney, formatTotals } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { CashBookSummary } from "@/lib/siba/cash-bank";
@@ -26,6 +27,7 @@ import {
   type TransactionAbilities,
   type TransactionAction,
 } from "@/lib/siba/transaction-workflow";
+import { menuButtonClass } from "@/lib/siba/header-actions";
 import { CashBalanceDialog } from "@/components/budget/cash-balance-dialog";
 
 /**
@@ -87,6 +89,15 @@ export function TransactionList({
     return (id: number | null) => (id == null ? "—" : byId.get(id) ?? "—");
   }, [refs.cashBanks]);
 
+  /**
+   * The anak funds nothing itself, so its documents offer Ajukan Dana where the
+   * induk's offer Post. Decided per row, because the register shows both.
+   */
+  const fundedOf = useMemo(() => {
+    const parent = new Map(refs.companies.map((c) => [c.id, c.isParent]));
+    return (companyId: number) => parent.get(companyId) === false;
+  }, [refs.companies]);
+
   const filtered = useMemo(() => {
     let out = transactions.slice();
     if (status) out = out.filter((t) => t.status === status);
@@ -119,7 +130,14 @@ export function TransactionList({
 
   const run = async (row: TransactionRow, action: TransactionAction) => {
     setBusy(true);
-    const result = await transitionTransaction(row.id, action);
+    // Submitting opens a Funding Request and withdrawing a Pending document
+    // closes one, so both go through the module that owns that state.
+    const result =
+      action === "submit"
+        ? await requestFunding(row.id)
+        : action === "cancel" && row.status === "Pending"
+          ? await withdrawFunding(row.id)
+          : await transitionTransaction(row.id, action);
     setBusy(false);
     setConfirm(null);
     if (result.ok) {
@@ -270,7 +288,7 @@ export function TransactionList({
             ariaLabel="Filter status"
             options={[
               { value: "", label: "Status: semua" },
-              ...["Draft", "Posted", "Cancelled"].map((s) => ({
+              ...["Draft", "Pending", "Posted", "Cancelled"].map((s) => ({
                 value: s,
                 label: STATUS_TEXT[s] ?? s,
               })),
@@ -331,7 +349,9 @@ export function TransactionList({
                   {pageRows.map((t, i) => {
                     const inn = t.transaction_type === "In";
                     const currency = currencyOf(t.currency_id);
-                    const actions = availableTransactionActions(t.status, can);
+                    const actions = availableTransactionActions(t.status, can, {
+                      funded: fundedOf(t.company_id),
+                    });
                     const href = `/finance/cash-bank-transaction/${t.id}`;
                     return (
                       <tr key={t.id} onClick={() => router.push(href)}>
@@ -355,7 +375,9 @@ export function TransactionList({
                                 {purposeLabelOf(t.purpose)}
                               </span>
                               <span className="d2">
-                                {cashBankOf(t.cash_bank_id)}
+                                {t.cash_bank_id
+                                  ? cashBankOf(t.cash_bank_id)
+                                  : "Melalui Funding Request"}
                               </span>
                             </span>
                           </Link>
@@ -523,6 +545,7 @@ export function TransactionList({
           x={menuFor.x}
           y={menuFor.y}
           can={can}
+          funded={fundedOf(menuFor.row.company_id)}
           onPick={(action) => {
             setMenuFor(null);
             setConfirm({ row: menuFor.row, action });
@@ -535,7 +558,7 @@ export function TransactionList({
         <ConfirmDialog
           open
           icon={TRANSACTION_TRANSITIONS[confirm.action].icon}
-          tone={TRANSACTION_TRANSITIONS[confirm.action].danger ? "danger" : "ok"}
+          tone={TRANSACTION_TRANSITIONS[confirm.action].tone === "danger" ? "danger" : "ok"}
           title={TRANSACTION_TRANSITIONS[confirm.action].title}
           subject={`${confirm.row.transaction_no} – ${formatMoney(
             confirm.row.transaction_amount,
@@ -544,7 +567,7 @@ export function TransactionList({
           body={TRANSACTION_TRANSITIONS[confirm.action].body}
           confirmLabel={TRANSACTION_TRANSITIONS[confirm.action].confirmLabel}
           confirmTone={
-            TRANSACTION_TRANSITIONS[confirm.action].danger
+            TRANSACTION_TRANSITIONS[confirm.action].tone === "danger"
               ? "solid-danger"
               : "primary"
           }
@@ -567,6 +590,7 @@ function RowMenu({
   x,
   y,
   can,
+  funded,
   onPick,
   onClose,
 }: {
@@ -574,6 +598,7 @@ function RowMenu({
   x: number;
   y: number;
   can: TransactionAbilities;
+  funded: boolean;
   onPick: (action: TransactionAction) => void;
   onClose: () => void;
 }) {
@@ -594,7 +619,7 @@ function RowMenu({
     };
   }, [onClose]);
 
-  const actions = availableTransactionActions(row.status, can);
+  const actions = availableTransactionActions(row.status, can, { funded });
 
   return (
     <div className="menu" ref={ref} style={{ left: Math.max(8, x), top: y }}>
@@ -608,7 +633,7 @@ function RowMenu({
         return (
           <button
             key={a}
-            className={t.danger ? "dg" : undefined}
+            className={menuButtonClass(t.tone)}
             onClick={() => onPick(a)}
           >
             <Icon name={t.icon} size={14} /> {t.label}

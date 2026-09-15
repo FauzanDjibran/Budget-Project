@@ -8,7 +8,10 @@ import {
   isSystemDefaultKey,
   type SystemDefaultKey,
 } from "@/lib/siba/system-defaults";
-import { writeSystemDefaults } from "@/lib/siba/system-settings";
+import {
+  checkSystemDefaultValue,
+  writeSystemDefaults,
+} from "@/lib/siba/system-settings";
 
 /**
  * The System Defaults' one write path.
@@ -53,6 +56,14 @@ export async function saveSystemDefaults(
     const n = Number(value);
     if (!Number.isInteger(n) || n <= 0) {
       errors[key] = "Pilihan tidak dikenali.";
+      continue;
+    }
+    // A Company-scoped setting is checked here as well as when it is read: the
+    // bridge settings decide which account a posting lands in, so storing one
+    // that points at another Company's chart would be storing a fault.
+    const refused = await checkSystemDefaultValue(key, n);
+    if (refused) {
+      errors[key] = refused;
       continue;
     }
     clean[key] = String(n);

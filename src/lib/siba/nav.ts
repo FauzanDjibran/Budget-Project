@@ -145,6 +145,14 @@ export const MODULES: NavModule[] = [
             desc: "Layer eksekusi. Satu dokumen kas/bank dapat merealisasikan beberapa Budget yang sudah disetujui.",
             permission: "CASH_BANK_TRANSACTION_VIEW",
           },
+          {
+            key: "fin_funding_request",
+            slug: "funding-request",
+            name: "Funding Request",
+            icon: "link",
+            desc: "Permintaan dana Company anak yang menunggu konfirmasi induk. Konfirmasi memposting dokumen dan menulis journal kedua Company sekaligus.",
+            permission: "FUNDING_REQUEST_VIEW",
+          },
         ],
       },
       {

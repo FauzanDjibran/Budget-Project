@@ -2,6 +2,19 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import {
+  orderForHeader,
+  type ActionTone,
+} from "../src/lib/siba/header-actions";
+import {
+  BUDGET_TRANSITIONS,
+  availableActions,
+  type BudgetStatus,
+} from "../src/lib/siba/budget-workflow";
+import {
+  TRANSACTION_TRANSITIONS,
+  availableTransactionActions,
+} from "../src/lib/siba/transaction-workflow";
 
 /**
  * The design system holds together, checked mechanically.
@@ -144,6 +157,218 @@ describe("dates and money are formatted in one place", () => {
       bad.map((f) => f.rel),
       [],
       "Use `formatDate`, `formatNumber` and `formatMoney` — they are what keep every date dd/mm/yyyy and every amount grouped."
+    );
+  });
+});
+
+describe("a header's buttons sit where the user last left them", () => {
+  /** The `.ph-act` blocks in a file, as raw JSX text. */
+  function headerBlocks(text: string): string[] {
+    const out: string[] = [];
+    const src = code(text);
+    for (const m of src.matchAll(/<div className="ph-act"\s*>/g)) {
+      // Balance the div nesting rather than matching the first </div>: the
+      // blocks hold conditional fragments several levels deep.
+      let depth = 1;
+      let i = m.index! + m[0].length;
+      const start = i;
+      while (depth > 0 && i < src.length) {
+        const open = src.indexOf("<div", i);
+        const close = src.indexOf("</div>", i);
+        if (close === -1) break;
+        if (open !== -1 && open < close) {
+          depth += 1;
+          i = open + 4;
+        } else {
+          depth -= 1;
+          i = close + 6;
+        }
+      }
+      out.push(src.slice(start, i));
+    }
+    return out;
+  }
+
+  test("no page header writes a danger button after its primary", () => {
+    const bad: string[] = [];
+    for (const f of files) {
+      for (const block of headerBlocks(f.text)) {
+        const primary = block.indexOf("btn primary");
+        const danger = block.lastIndexOf("btn danger");
+        if (primary !== -1 && danger > primary) bad.push(f.rel);
+      }
+    }
+    assert.deepEqual(
+      [...new Set(bad)],
+      [],
+      "In `.ph-act` the order is danger, then neutral, then the one primary — " +
+        "so what refuses is on the left and what completes is on the right. " +
+        "Order the markup, not with CSS `order`: `order` moves a button on " +
+        "screen without moving it in the document, and the tab order would " +
+        "stop matching what a keyboard user sees."
+    );
+  });
+
+  test("a lifecycle button's tone comes from its transition table", () => {
+    const bad = files.filter((f) =>
+      /btn\$\{[^}]*\bdanger\b/.test(code(f.text))
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Use `headerButtonClass(t.tone)` from `lib/siba/header-actions.ts`. " +
+        "Deciding a button's weight inline — `t.danger ? \" danger\" : a === \"approve\" ? \" primary\" : \"\"` — " +
+        "is how the primary ended up left of the danger on one status and right of it on the next."
+    );
+  });
+
+  test("every lifecycle transition declares a tone", () => {
+    for (const rel of [
+      "src/lib/siba/budget-workflow.ts",
+      "src/lib/siba/transaction-workflow.ts",
+      "src/lib/siba/fiscal-workflow.ts",
+    ]) {
+      const text = code(files.find((f) => f.rel === rel)!.text);
+      const labels = [...text.matchAll(/^\s{4}label:/gm)].length;
+      const tones = [...text.matchAll(/^\s{4}tone:/gm)].length;
+      assert.equal(
+        tones,
+        labels,
+        `${rel}: every transition needs a \`tone\`, which is what decides both ` +
+          "where its button sits in `.ph-act` and how it is drawn."
+      );
+    }
+  });
+
+  test("a header that mixes tones orders them through `orderForHeader`", () => {
+    // These two render Ubah beside the lifecycle actions, so the order is a
+    // sort rather than the order the transition table happens to be read in.
+    for (const rel of [
+      "src/components/budget/budget-form.tsx",
+      "src/components/finance/transaction-form.tsx",
+    ]) {
+      const text = code(files.find((f) => f.rel === rel)!.text);
+      assert.ok(
+        text.includes("orderForHeader("),
+        `${rel}: order the header with \`orderForHeader\`. \`availableActions\` ` +
+          "returns menu order — safe first, danger last — which is the right " +
+          "arrangement for the vertical row menu and the wrong one here."
+      );
+    }
+  });
+});
+
+describe("the header order each status actually produces", () => {
+  /**
+   * The statuses a browser cannot be walked through without creating records
+   * in a live database — the application has no delete, so a Draft made to
+   * look at is a Draft that stays. Pinned here instead: the tones are what
+   * `orderForHeader` sorts on, so this is the same decision the header makes.
+   *
+   * Ubah is neutral wherever a lifecycle action is offered beside it, which is
+   * why it lands between what refuses and what completes.
+   */
+  const ubah = { key: "edit", tone: "neutral" as ActionTone };
+
+  /** Holding everything, so the order is the table's and not a permission's. */
+  const EVERY_TRANSACTION_ABILITY = {
+    create: true,
+    edit: true,
+    submit: true,
+    post: true,
+    cancel: true,
+  };
+
+  const budgetHeader = (status: BudgetStatus, editable: boolean) =>
+    orderForHeader(
+      [
+        ...(editable ? [ubah] : []),
+        ...availableActions(status, {
+          create: true,
+          edit: true,
+          submit: true,
+          approve: true,
+          reject: true,
+          cancel: true,
+        }).map((a) => ({ key: a, tone: BUDGET_TRANSITIONS[a].tone })),
+      ],
+      (i) => i.tone
+    ).map((i) => i.key);
+
+  test("a Draft budget reads Batalkan · Ubah · Ajukan", () => {
+    assert.deepEqual(budgetHeader("Draft", true), ["cancel", "edit", "submit"]);
+  });
+
+  test("a Rejected budget reads Batalkan · Ubah · Ajukan", () => {
+    assert.deepEqual(budgetHeader("Rejected", true), [
+      "cancel",
+      "edit",
+      "submit",
+    ]);
+  });
+
+  test("a Submitted budget reads Tolak · Batalkan · Setujui", () => {
+    assert.deepEqual(budgetHeader("Submitted", false), [
+      "reject",
+      "cancel",
+      "approve",
+    ]);
+  });
+
+  test("an Open budget offers nothing, and so shows nothing", () => {
+    assert.deepEqual(budgetHeader("Open", false), []);
+  });
+
+  test("a Draft document reads Batalkan · Ubah · Post", () => {
+    const order = orderForHeader(
+      [
+        ubah,
+        ...availableTransactionActions("Draft", EVERY_TRANSACTION_ABILITY).map(
+          (a) => ({ key: a, tone: TRANSACTION_TRANSITIONS[a].tone })
+        ),
+      ],
+      (i) => i.tone
+    ).map((i) => i.key);
+    assert.deepEqual(order, ["cancel", "edit", "post"]);
+  });
+
+  test("a Draft anak document reads Batalkan · Ubah · Ajukan Dana", () => {
+    const order = orderForHeader(
+      [
+        ubah,
+        ...availableTransactionActions("Draft", EVERY_TRANSACTION_ABILITY, {
+          funded: true,
+        }).map((a) => ({ key: a, tone: TRANSACTION_TRANSITIONS[a].tone })),
+      ],
+      (i) => i.tone
+    ).map((i) => i.key);
+    assert.deepEqual(order, ["cancel", "edit", "submit"]);
+  });
+
+  test("a Pending document offers only the withdrawal", () => {
+    // The induk never rejects (concept doc §29), so Post is not on this screen
+    // at all — it is reached by confirming the Funding Request.
+    assert.deepEqual(
+      availableTransactionActions("Pending", EVERY_TRANSACTION_ABILITY, {
+        funded: true,
+      }),
+      ["cancel"]
+    );
+  });
+
+  test("two buttons of one tone keep the order their table declares", () => {
+    // Tolak before Batalkan because `availableActions` reads them that way —
+    // a stable sort, so equal tones are never shuffled between renders.
+    assert.deepEqual(
+      orderForHeader(
+        [
+          { key: "approve", tone: "primary" as ActionTone },
+          { key: "reject", tone: "danger" as ActionTone },
+          { key: "cancel", tone: "danger" as ActionTone },
+        ],
+        (i) => i.tone
+      ).map((i) => i.key),
+      ["reject", "cancel", "approve"]
     );
   });
 });

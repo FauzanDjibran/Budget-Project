@@ -22,6 +22,7 @@
  * Client-safe on purpose — no `server-only`, no database import.
  */
 import type { IconName } from "@/components/icon";
+import type { ActionTone } from "./header-actions";
 import type { PermissionCode } from "./permissions";
 
 export type FiscalYearStatus = "Draft" | "Open" | "Closed";
@@ -35,6 +36,8 @@ export type FiscalYearTransition = {
   from: FiscalYearStatus[];
   to: FiscalYearStatus;
   icon: IconName;
+  /** Decides both where the button sits in `.ph-act` and how it is drawn. */
+  tone: ActionTone;
   /** Confirmation copy — states the consequence, never just "are you sure?". */
   title: string;
   body: string;
@@ -53,6 +56,7 @@ export const FISCAL_YEAR_TRANSITIONS: Record<
     from: ["Draft"],
     to: "Open",
     icon: "check",
+    tone: "primary",
     title: "Aktifkan tahun buku?",
     body:
       "12 Fiscal Period — Januari sampai Desember — dibuat sekarang dan " +

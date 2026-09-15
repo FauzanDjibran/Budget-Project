@@ -45,10 +45,11 @@ or invariants that assume a particular row exists.
   the Cash Bank Book (`cash_bank_ledger` / `cash_bank_balance`), the six **subject
   books** (`sub_ledger` / `sub_ledger_balance`), Finance's Cash Bank Transaction —
   draft, edit, cancel and Post, which realizes approved Budgets and writes all three
-  stores, induk only — and the **Report Views** over them.
+  stores — the **Funding Request** flow that carries the anak's realization across to
+  the induk, and the **Report Views** over all of it.
 - **Not yet built** — Opening Balance, Fiscal Year closing, report output (print and
-  export), and the intercompany Funding Request flow that carries the anak's
-  realization. Full list in §13.
+  export), and intercompany settlement (the anak paying the induk back). Full list
+  in §13.
 
 ### Current status
 
@@ -65,13 +66,14 @@ or invariants that assume a particular row exists.
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
-| Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal and `realized_amount` in one transaction. Induk only; the anak's realization waits on Funding Request. Bespoke, not registry-driven. |
+| Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal and `realized_amount` in one transaction. Bespoke, not registry-driven. |
+| Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, both Companies' positions against each other, a journal each, every Budget's realization, the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
 | Report Views | Done — the screen type plus eight reports: `Buku Kas & Bank`, `Saldo Kas & Bank` and the six subject books under Finance › Laporan, and General Ledger + Trial Balance under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Currently one entry: default Currency |
-| Tests | Security suite plus the Accounting, Budget, Finance, Cash Bank Book, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted. |
+| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Cash Bank Book, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted. |
 
 ---
 
@@ -151,17 +153,20 @@ of its own.
 | Startup check | `src/lib/siba/startup-check.ts` | Is the database the one this build expects; read at boot by `instrumentation.ts`; `server-only` |
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
 | System Default store | `src/lib/siba/system-settings.ts` | Reads and writes `sys_setting`, resolves a default against its master; `server-only` |
+| Header button order | `src/lib/siba/header-actions.ts` | Where a button sits in `.ph-act` and how it is drawn — one tone, read by every lifecycle table; client-safe |
 | Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
 | Budget data | `src/lib/siba/budget.ts` | Month rollups, budget reads, classification enforcement, `BGT-` numbering; `server-only` |
 | Cash Bank Book | `src/lib/siba/cash-bank.ts` | Append-only ledger writes, the materialised balance, `CBL-` numbering, per-currency summary; `server-only` |
 | Subledger catalogue | `src/lib/siba/subledger-catalogue.ts` | Which categories keep a subject book, which way each one moves; client-safe |
 | Subject books | `src/lib/siba/subledger.ts` | Append-only `sub_ledger` writes, the materialised position, `SBL-` numbering, the six reports; `server-only` |
 | Transaction lifecycle | `src/lib/siba/transaction-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
-| Finance data | `src/lib/siba/finance.ts` | Header and line enforcement, Budget eligibility, `applyPosting`, `CBT-` numbering, realization trace; `server-only` |
+| Finance data | `src/lib/siba/finance.ts` | Header and line enforcement, Budget eligibility, `applyPosting`, the funded posting both Companies share, `CBT-` numbering, realization trace; `server-only` |
+| Funding Request | `src/lib/siba/funding.ts` | Raising, withdrawing and confirming a request, `FR-` numbering; depends on Finance and never the reverse; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Budget writes | `src/app/actions/budget.ts` | Create, edit, and the lifecycle transitions |
 | Finance writes | `src/app/actions/finance.ts` | Create, edit, the eligible-Budget query, and Post / Cancel |
+| Funding writes | `src/app/actions/funding.ts` | Ajukan Dana, withdraw, and the induk's confirmation |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
 | Registry pages | `src/components/master/entity-pages.tsx` | The four registry pages, mounted under each owning module |
 | Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast |
@@ -179,6 +184,7 @@ source scan and needs no database.
 | --- | --- | --- |
 | Budget | `bud_budget` | `lib/siba/budget.ts`, `app/actions/budget.ts` |
 | Finance | `fin_cash_bank_transaction(_line)` | `lib/siba/finance.ts`, `app/actions/finance.ts` |
+| Funding | `fin_funding_request` | `lib/siba/funding.ts`, `app/actions/funding.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance` | `lib/siba/cash-bank.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22) |
@@ -191,8 +197,11 @@ Three rules, in force:
    Action count as one block, because they are two layers of the same thing.
 2. **Dependencies point one way.** Finance executes what Budget plans, so Finance may
    depend on Budget and never the reverse: a plan is complete without an execution.
-   The same applies to the UI — `components/finance` may reuse `components/budget`, not
-   the other way round.
+   Funding sits above Finance on the same reasoning — a realization is complete
+   without a funding, which is only how the cash reached it — so `funding.ts` reads
+   documents and moves their status through functions `finance.ts` exports, and
+   `finance.ts` names nothing in Funding. The same applies to the UI —
+   `components/finance` may reuse `components/budget`, not the other way round.
 3. **The books depend on nothing.** `cash-bank.ts`, `journal.ts` and `subledger.ts`
    import only the shared kernel (`document-number`, `period`, `account-code`,
    `permissions`) and, for the subledgers, their own client-safe catalogue. They are
@@ -292,6 +301,7 @@ src/
       budget/budget/     Bespoke, not registry: month list, /month/[period],
                          /new, /[id], /[id]/edit
       finance/cash-bank-transaction/  Bespoke: list, /new, /[id], /[id]/edit
+      finance/funding-request/  The induk's queue: list and /[id] (confirm)
       finance/report/[report]/  Every Report View, driven by `reports.ts`
       settings/user/     Admin-only user management (bespoke, not registry)
       settings/role/     Admin-only roles + permission matrix
@@ -301,6 +311,7 @@ src/
       master.ts          Master module writes
       budget.ts          Budget writes: create, edit, lifecycle transitions
       finance.ts         Cash Bank Transaction writes, plus Post
+      funding.ts         Ajukan Dana, withdraw, and Confirm Funding
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
       settings.ts        System Default writes
       auth.ts            login / logout
@@ -315,7 +326,8 @@ src/
     budget/              BudgetMonthList, BudgetList, BudgetForm,
                          ApproveDialog, ReportPicker, CashBalanceDialog,
                          RealizationCard
-    finance/             TransactionList, TransactionForm, BudgetPicker
+    finance/             TransactionList, TransactionForm, BudgetPicker,
+                         FundingList, FundingDetail
     report/              ReportView chrome, its two filter bars (ReportParams for
                          one subject, SubjectParams for several), and the report
                          bodies: Cash Bank Ledger, Cash Bank Balance, General
@@ -330,16 +342,17 @@ src/
                          generated class, so `prisma generate` retires it (§12)
     format.ts            Date/number/money formatting (UTC-based)
     siba/                entities, nav, rules, records, users, account-code,
+                         header-actions,
                          company-access, journal, ledger,
                          permissions, roles, access, auth, auth-errors,
                          session, login, user-admin, profile, entity-access, fiscal,
                          fiscal-workflow, budget, budget-workflow, cash-bank,
                          subledger, subledger-catalogue,
-                         finance, transaction-workflow, reports,
+                         finance, transaction-workflow, funding, reports,
                          system-defaults, system-settings
   generated/prisma/      Prisma client output — gitignored, never edit
-tests/                   Security, Accounting, Budget, Finance, the books, reports,
-                         fiscal, settings, schema and design-system suites
+tests/                   Security, Accounting, Budget, Finance, Funding, the books,
+                         reports, fiscal, settings, schema and design-system suites
                          (node:test); helpers.ts builds and cleans up its own
                          business fixtures
 .claude/skills/          Project skills — `run-siba` brings the app up locally (§6)
@@ -398,6 +411,13 @@ currency, still outstanding — that a line naming anything else is refused even
 submitted directly, that a Draft moves neither the book nor `realized_amount`, and that
 Post writes the ledger entry, the balance and every Budget's realization together, is
 refused when a Budget has since closed, and leaves nothing behind when it refuses.
+The funding suite holds the intercompany bridge: that the route is decided by the
+Company rather than by a setting, that submitting freezes the document and moves
+nothing, that the induk's confirmation writes one cash entry, both Companies'
+positions, a balanced journal each, the realization and the request's closure
+together — in both directions, since an anak receipt mirrors an anak payment — and
+that an unfinished bridge, a resource in the wrong currency, an anak resource and a
+Budget closed since each refuse before anything is written.
 The reports suite holds the one property a money report lives or dies by —
 `opening + in − out = closing` — pushed at from the edges: entries dated exactly on each
 boundary, entries before the period folding into the opening rather than appearing as
@@ -410,8 +430,9 @@ that `status` is not an isian, that Draft is the only status a year opens from, 
 that nothing writes Draft or Closed — and the settings suite holds what a System
 Default may do: a key outside the catalogue is never written, and a deactivated
 Currency is stored but never prefilled. A design-system suite guards the UI conventions that had already
-drifted once — that no native `<select>`, date input or number input is rendered
-anywhere, that `globals.css` declares no bare `.ph` rule (it is the placeholder class
+drifted once — that a page header runs danger → neutral → primary so a
+destructive button never lands where a confirming one just was, that no native
+`<select>`, date input or number input is rendered anywhere, that `globals.css` declares no bare `.ph` rule (it is the placeholder class
 as well as the page header, and a bare one silently misaligned every dropdown
 placeholder in the application), that the search box, the dialog chrome and a tinted
 dialog icon each have exactly one implementation, and that nothing formats a date or a
@@ -484,6 +505,8 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | --- | --- |
 | Layout | Topbar → icon rail → collapsible submenu → content. Shell owns it. |
 | Page header | `.ph` → `.crumb`, `.ph-row` (h1 + `.ph-act`), `.ph-sub`. **Sticky**, and `.ph-act` is where every action on the page lives |
+| Button order | Inside `.ph-act`, left to right: **danger → neutral → primary**, one primary and it is rightmost. `headerButtonClass` draws it, `orderForHeader` places it — both in `lib/siba/header-actions.ts` |
+| Row menus | A vertical menu is the opposite arrangement: **safe first, danger last**. `availableActions` returns that order |
 | Cards | `.card` + `.card-h` (icon `.ci`, title `.ct`) |
 | Tables | `.tw` wrapper → `table.grid`; sortable `th.srt`; `.pri` `.mut` `.num` cells |
 | Identity cells | `.idc` = `.lab` code chip + `.nm` name |
@@ -778,9 +801,43 @@ Implemented and enforced:
 37. **A posted document is permanent.** Draft is editable; Posted and Cancelled are
     final, and neither can be edited, deleted or reversed. A correction is a new
     business transaction (concept doc §15). There is no delete anywhere in Finance.
-38. **Cash Bank Transaction is induk-only, for now.** The header is pinned to the
-    `is_parent = true` company and the Server Action refuses any other. The anak's
-    realization goes through the Funding Request flow, which is not built — §12, §13.
+38. **Which Company a document belongs to decides how it reaches money.** The induk
+    holds the cash, so its documents name a Cash & Bank and post directly. The anak
+    holds none by design (concept doc §25, §32), so its documents name a **Currency**
+    instead, are refused if they name a resource at all, and are executed by the
+    induk confirming their Funding Request. `checkHeader` enforces both shapes and
+    `fundingRoute` is the one place the question is asked — keyed on `is_parent`,
+    never on a setting.
+57. **A Funding Request is raised by submitting, and answered by confirming.** The
+    anak's document leaves Draft as **Pending** and opens one request carrying the
+    document's whole amount: there is no partial funding (§28) and no rejection, since
+    the induk always complies (§29) — its action is a confirmation, and the only
+    refusals are mechanical. The requester may withdraw while the request is still
+    open, which cancels document and request together.
+58. **Pending is exactly as inert as Draft.** No cash entry, no subject book, no
+    journal, no `realized_amount`, no document date. Confirmation is the actual
+    boundary, for **both** Companies at once (§30).
+59. **One confirmation, one transaction, two Companies.** `writeFundedPosting` writes
+    the induk's cash entry and balance, each Company's position against the other, the
+    anak's own subject book where its Purpose keeps one, every Budget's realization,
+    a journal each and the document's Posted status; `confirmFundingRequest` closes
+    the request in the same transaction. Either all of it happened or none of it did.
+60. **Each journal points at its own Company's document.** The induk's names the
+    Funding Request it confirmed; the anak's names its own Cash Bank Transaction,
+    because that document is an ordinary realization that happened to be funded.
+    Neither journal is the source of the other, which is what concept doc §31's
+    Intercompany Event exists to guarantee — the request is that identifier, so there
+    is no separate ICE table.
+61. **Money out of the induk is a claim on the anak; money in is a debt to it.** An
+    anak payment raises the induk's Piutang and the anak's Hutang; an anak receipt
+    raises the induk's Hutang and the anak's Piutang (§34, §37). The subject books
+    sign themselves from the cash direction as always — the anak's intercompany leg
+    simply carries the *opposite* direction to the document's, because the money
+    passed through the induk on its way.
+62. **The bridge is six System Defaults, and nothing guesses them.** Each Company
+    names the account for what it is owed, the account for what it owes, and the
+    Partner that *is* the other Company. A confirmation is refused, by name, until
+    every one is set — see §12.
 39. **A report states what it was run for.** Every Report View restates its subject,
     its period and when it was produced, on the output itself. A page of figures that
     does not say what it covers cannot be checked by anyone who did not run it, and a
@@ -816,9 +873,10 @@ Implemented and enforced:
 
 Specified in the concept doc, **not yet implemented** (see §13):
 
-23. The child company's realization emits a Funding Request; the parent confirms it and
-    one atomic event produces two journals linked by an Intercompany Event.
-24. No partial funding: realization = request = funding amount.
+23. **Intercompany settlement** (§36). Funding leaves the induk holding a Piutang and
+    the anak a Hutang of the same size; handing the money back clears both. Both
+    positions are already kept in the subject books — what is missing is the document
+    that settles them.
 
 ---
 
@@ -900,7 +958,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
   `tests/design-system.test.ts` enforces the ones that had already drifted —
   no native `<select>`, date or number input; no bare `.ph` rule; no `.srch`
   markup outside `SearchField`; no `.ovl` outside the two dialog components; no
-  `.mi` tinted inline; no date or number formatted outside `lib/format.ts`.
+  `.mi` tinted inline; no date or number formatted outside `lib/format.ts`; and
+  no `.ph-act` block writing a danger button after its primary.
 - **Reason:** A CLAUDE.md line cannot enforce a convention, because none of these
   mistakes breaks a build, fails a type check or throws at runtime. They just make
   one screen behave unlike the rest, and the drift is only visible to whoever holds
@@ -1000,6 +1059,49 @@ Specified in the concept doc, **not yet implemented** (see §13):
   the bottom of a form**, and **never write a bare `.ph` rule** — not the sticky
   one, not a margin, not anything. `.pad > .ph` and `.cbx .ph` both say which
   `.ph` they mean, and that is the only acceptable shape.
+- **Status:** Frozen, current.
+
+### A header's buttons are ordered danger → neutral → primary (FROZEN)
+- **Decision:** Inside `.ph-act` the order, left to right, is **what refuses,
+  then what is merely another step, then the one thing the screen is chiefly
+  for**. There is exactly one primary per header and it is the **rightmost**
+  button. `src/lib/siba/header-actions.ts` is the single implementation:
+  `ActionTone` (`danger` / `neutral` / `primary`), `orderForHeader` for the
+  placement, `headerButtonClass` for the weight. Every lifecycle transition
+  declares its own `tone`, so the table that says what an action *is* is also
+  what says how it is drawn and where it sits. A **vertical row menu keeps the
+  opposite arrangement** — safe first, danger last — which is what
+  `availableActions` returns.
+- **Reason:** The three lifecycle headers each mapped their module's
+  `availableActions()` straight into `.ph-act`, and that order — submit,
+  approve, reject, cancel — was written for the row menu. Reused horizontally
+  it put **Setujui** to the left of **Tolak** on a Submitted budget and
+  **Ajukan** to the right of **Ubah** on a Draft one, so the same click landed
+  on a different word depending which status the record happened to be in.
+  Nothing was broken; the buttons simply moved around under the user's cursor,
+  and a destructive one kept arriving where a confirming one had just been.
+  Fiscal Year drew two primaries side by side for the same reason — the weight
+  was decided by a string comparison in the component (`a === "approve"`)
+  rather than by the table.
+- **Impact:** `Draft` reads `Batalkan · Ubah · Ajukan`, `Submitted` reads
+  `Tolak · Batalkan · Setujui`, a Draft document reads `Batalkan · Ubah · Post`,
+  and a Draft Fiscal Year reads `Ubah · Aktifkan Tahun Buku` — Ubah steps down
+  to neutral wherever a lifecycle action is offered beside it, which is what
+  `EntityForm`'s `editTone` prop carries. Two buttons of one tone keep the
+  order their transition table declares, because the sort is stable.
+- **Ordered in the markup, never with CSS `order`.** `order` moves a button on
+  screen without moving it in the document, so the tab order would stop
+  matching what a keyboard user is looking at. A one-line stylesheet rule was
+  the tempting version of this and is the wrong one.
+- **`tests/design-system.test.ts` holds it**: no `.ph-act` block may write a
+  danger button after its primary, no component may decide a lifecycle button's
+  weight inline, every transition must carry a `tone`, and the resulting order
+  for each status is pinned outright — the application has no delete, so those
+  statuses cannot be walked through in a browser without leaving records behind.
+- **Do not change unless:** explicitly instructed. **Never put a destructive
+  action to the right of the primary**, never give one header two primaries,
+  never decide a button's weight inline where `headerButtonClass` exists, and
+  do not reorder `.ph-act` with CSS.
 - **Status:** Frozen, current.
 
 ### The Journal is written by posting, balances, and never changes (FROZEN)
@@ -1436,9 +1538,20 @@ they relate. Keep the table; keep it out of the UI's write path.
   the picker would not offer it either. The Server Action validates the saved record
   exactly as it would a value the user picked. A registry field opts in with
   `systemDefault: "default_currency"`; Budget takes it as a prop.
-- **Do not change unless:** explicitly instructed. **Never let a default decide what is
-  valid, never apply one to an existing record, and do not add a UI for creating
-  setting keys** — the catalogue is code.
+- **The intercompany bridge is the one group that does more.** Six settings — for
+  each Company, the account for what it is owed, the account for what it owes, and the
+  Partner that *is* the other Company — do not prefill a control: they are where a
+  confirmed Funding Request posts. They are still settings rather than a table because
+  there are exactly two permanent Companies and a company-relationship table is what
+  §14 forbids. Because they decide rather than suggest, they are checked **when they
+  are stored** as well as when they are read (`checkSystemDefaultValue`: the right
+  Company, postable, active), and a confirmation is **refused by name** until all six
+  are set rather than falling back to anything. The dashboard's "Perlu Perhatian" card
+  lists what is missing.
+- **Do not change unless:** explicitly instructed. **Never let an ordinary default
+  decide what is valid, never apply one to an existing record, and do not add a UI for
+  creating setting keys** — the catalogue is code. Do not give the bridge settings a
+  silent fallback.
 - **Status:** Frozen, current.
 
 ### Every date reads `dd/mm/yyyy`, and the app draws its own controls (FROZEN)
@@ -1705,23 +1818,69 @@ they relate. Keep the table; keep it out of the UI's write path.
   or any path back to Draft.**
 - **Status:** Frozen, current.
 
-### Cash Bank Transaction is induk-only until Funding Request exists
-- **Decision:** The document's Company is pinned to the induk — resolved at runtime
-  from `is_parent = true` by `transactingCompany()` — shown as a locked field, and
-  `checkHeader` refuses any other Company outright. The refusal says where the anak's
-  realization actually goes.
-- **Reason:** In this model the anak does not spend directly: it raises a **Funding
-  Request** against the induk, and the induk's confirmation produces the two linked
-  journals (concept doc §23–§24). That flow is the next scope. Until it exists, a
-  document naming the anak would be a way to spend money the model says the anak cannot
-  spend, so the scope is imposed rather than left to the user.
-- **Impact:** One named check, in one place, so lifting it when Funding Request lands is
-  a single change rather than a hunt. The company picker is not a picker at all, which
-  also removes a choice that currently has exactly one answer.
-- **Do not change unless:** the Funding Request flow is built (§13) — and then the anak
-  reaches Finance **through that flow**, not by unpinning this field. **Do not**
-  generalise this into a configurable per-company switch (§12, two-company structure).
-- **Status:** Current, scoped.
+### The anak has no cash, and that is the whole of the funded route (FROZEN)
+- **Decision:** A Cash Bank Transaction's Company decides how it reaches money.
+  The **induk** holds every Cash & Bank resource, so its documents name one and post
+  directly. The **anak** holds none — by design, not by configuration (concept doc
+  §25, §32) — so its documents name a **Currency** instead, are refused outright if
+  they name a resource at all, and leave Draft by **Ajukan Dana**: the document
+  freezes at `Pending` and a `fin_funding_request` opens. The induk answers it from
+  `Finance › Funding Request`, and that confirmation posts the document.
+  `fundingRoute()` in `finance.ts` is the one place the question is asked, keyed on
+  `is_parent` and never on a setting.
+- **Reason:** This is the business: whatever the anak spends or receives moves through
+  an induk resource, and the two Companies then hold mirrored positions against each
+  other until they settle (concept doc §34, §36, §37). Modelling it as "the anak has
+  a resource somewhere" would make the intercompany position invisible and let the
+  anak spend money the model says it cannot.
+- **Impact:** This **supersedes** the earlier decision that pinned the document to the
+  induk, which existed only until this flow was built. The Company field is a real
+  picker on a new document (narrowed to the Companies the reader's permissions open,
+  and checked again by the Server Action), locked once the document exists.
+  `Pending` joins the `TransactionStatus` enum and is exactly as inert as `Draft`.
+- **No rejection, ever.** The induk always complies (§29), so `Konfirmasi Funding`
+  asks one question — which resource — and every refusal is mechanical: an unfinished
+  bridge, a resource in the wrong currency or belonging to the wrong Company, a
+  request already answered, a Budget closed since. There is no `FUNDING_REQUEST_REJECT`
+  and there is no partial funding: request amount = document amount, always.
+- **Withdrawal is the requester's, not the provider's.** A Pending document may be
+  cancelled by the Company that raised it, which closes its request with it. That is
+  why `transitionTransaction` refuses `cancel` on a Pending document and points at
+  the Funding action: the request's own state belongs to the module that owns it, and
+  a document cancelled behind its back would leave an open request against nothing.
+- **Do not change unless:** explicitly instructed. **Do not give the anak a Cash &
+  Bank resource**, do not add a rejection or a partial funding, and do not let Finance
+  import Funding to close a request.
+- **Status:** Frozen, current.
+
+### One confirmation, one transaction, two Companies (FROZEN)
+- **Decision:** `prepareFundedPosting` resolves and checks everything before anything
+  is written; `writeFundedPosting` then writes, inside the transaction `funding.ts`
+  opens: the induk's cash entry and its balance, **each Company's position against the
+  other** as a subject-book entry, the anak's own subject book where its Purpose keeps
+  one, every Budget's realization, **one journal per Company**, and the document's
+  Posted status — with the request's closure alongside. Either all of it happened or
+  none of it did (concept doc §30).
+- **Each journal points at its own Company's document.** The induk's names the Funding
+  Request; the anak's names its own Cash Bank Transaction, because that document is an
+  ordinary realization that happened to be funded. Neither is the source of the other,
+  which is exactly what §31's Intercompany Event exists to guarantee — **the Funding
+  Request is that identifier**, so there is no separate `ICE` table to keep in step.
+- **The direction is one mechanism, not two.** Money leaving the induk for the anak's
+  expense raises the induk's Piutang and the anak's Hutang; money the anak receives
+  into an induk resource raises the induk's Hutang and the anak's Piutang. Only which
+  side of each bridge is written flips. The subject books still sign themselves from
+  the cash direction (§10 rule 53) — the anak's intercompany leg simply carries the
+  *opposite* direction to the document's, because the money passed through the induk.
+- **Reason:** The posting is Finance's, written for two Companies rather than one, so
+  it lives in `finance.ts` beside `applyPosting`; the request's lifecycle is
+  Funding's. Splitting it any other way would either put a second posting engine in a
+  second module, or make Finance depend on Funding.
+- **Do not change unless:** explicitly instructed. **Never split the confirmation into
+  separate writes**, never derive one Company's journal from the other's, and do not
+  add an Intercompany Event table unless something needs an identifier the request
+  cannot carry.
+- **Status:** Frozen, current.
 
 ### Finance is bespoke, and its base-amount columns are placeholders
 - **Decision:** Cash Bank Transaction has its own routes under
@@ -1902,7 +2061,7 @@ decisions now that foreclose them.
 | `Transfer` transaction type | Extend the transaction-type enum, UI and logic. Note `transaction_type` currently shares the `FlowDirection` enum with `budget_type`, so this likely needs a separate enum rather than a third member |
 | Fiscal Year closing | The closing process that moves a year Open → Closed, locking its periods against posting. Belongs with the journal and the general ledger. **Add `FISCAL_YEAR_CLOSE` to the catalogue in the same change that builds it, never before** — §12 |
 | Opening Balance | `acc_opening_balance(_line)` tables and UI — the accounting opening balance per account, distinct from a cash resource's opening entry, which already exists |
-| Funding Request | `fin_funding_request` + the atomic two-company posting and Intercompany Event. This is how the **anak** realizes anything: Cash Bank Transaction is pinned to the induk until it exists (§12) |
+| Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept — what is missing is the document that settles them |
 
 **Exchange rate — current state.** There is none, deliberately. Every total is
 reported per currency instead (§12). When the real source arrives, conversion is
@@ -1996,8 +2155,18 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   the posting engine calls `recordCashBankEntry` alongside it (§10, §12).
 - Do **not** filter eligible Budgets by Budget Date, and do **not** treat the picker as
   the enforcement — `checkHeader` and `checkLines` are (§10).
-- Do **not** unpin the Cash Bank Transaction's Company from the induk; the anak reaches
-  Finance through Funding Request, not by widening this document (§12).
+- Do **not** give the anak a Cash & Bank resource, or let its document name one. It
+  names a Currency and reaches money through Funding Request (§10 rule 38, §12).
+- Do **not** add a rejection, a partial funding, or a second open request for one
+  document. The induk confirms; the requester may withdraw (§12).
+- Do **not** let `finance.ts` import `funding.ts`, and do **not** close a Funding
+  Request from Finance's own action — Funding depends on Finance, never the reverse
+  (§3, §12).
+- Do **not** split the funded confirmation into separate writes, derive one Company's
+  journal from the other's, or add an Intercompany Event table; the Funding Request is
+  that identifier (§10 rules 59–60, §12).
+- Do **not** give the intercompany bridge settings a fallback. A confirmation is
+  refused by name until all six are set (§12).
 - Do **not** display or populate `transaction_base_amount` / `settlement_base_amount`
   with a conversion — they are the identity until a real rate source lands (§12).
 - Do **not** add a `BUDGET_CLOSE` permission or a close action; a Budget closes when
@@ -2031,6 +2200,10 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   own Company instead of taking it as an argument (§12).
 - Do **not** put a form's buttons anywhere but `.ph-act`, and do **not**
   reintroduce a bottom action bar (§8, §12).
+- Do **not** place a destructive button to the right of a header's primary, give
+  one header two primaries, or decide a button's weight inline. `.ph-act` runs
+  danger → neutral → primary through `lib/siba/header-actions.ts`, and a
+  vertical row menu runs the other way (§8, §12).
 - Do **not** write a bare `.ph` CSS rule — it is the Combobox and Select
   placeholder class as well as the page header. Scope page-header rules to
   `.pad > .ph` (§12).
@@ -2114,7 +2287,9 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
-| Tests cover security, Accounting, Budget, Finance, the books, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
+| The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |
+| A Funding Request's bridge Partners are ordinary Partners | Each Company registers a Partner standing for the other and names it in System Default. Nothing marks such a Partner as special, so one could be deactivated or renamed like any other — the confirmation then refuses by name rather than posting somewhere wrong, which is the safe failure, but the master gives no warning. |
+| Tests cover security, Accounting, Budget, Finance, Funding, the books, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | Three module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a fourth fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) The dashboard counts rows from every module for its setup checklist — arguably fine for a cross-cutting screen, but it should ask each module for its own figure. (3) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |

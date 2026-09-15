@@ -281,10 +281,15 @@ describe("the transaction lifecycle is a closed transition table", () => {
     }
   });
 
-  test("the table holds exactly post and cancel", () => {
+  test("the table holds exactly submit, post and cancel", () => {
+    // Submit is the funded route's way out of Draft (concept doc §26.2), and
+    // there is deliberately no "reject": the induk always complies, so its side
+    // is a confirmation of the request rather than a transition of this
+    // document. Post stays the direct route's, and nothing returns to Draft.
     assert.deepEqual(Object.keys(TRANSACTION_TRANSITIONS).sort(), [
       "cancel",
       "post",
+      "submit",
     ]);
   });
 
@@ -391,19 +396,63 @@ describe("the document header is enforced, not merely narrowed", () => {
     assert.ok(result.ok === false && result.errors.purpose);
   });
 
-  test("the anak is refused — its realization is a Funding Request", async () => {
+  test("an anak document naming a Cash & Bank is refused", async () => {
+    // The anak has no resource of its own by design, and this is the
+    // submission the rule exists to stop: naming one anyway — the induk's, or
+    // a stray row of its own — would be a way to spend money directly.
     const cashBank = await makeCashBank({ companyId: anak });
     const result = await checkHeader({
       purpose: "BYA_OUT",
       company_id: anak,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.equal(result.ok, false);
     assert.ok(
-      result.ok === false && /Funding Request/.test(result.errors.company_id),
-      "the refusal must say where the anak's realization actually goes"
+      result.ok === false && /Funding Request/.test(result.errors.cash_bank_id),
+      "the refusal must say where the anak's money actually comes from"
     );
+  });
+
+  test("an anak document takes a Currency instead, and routes to treasury", async () => {
+    const result = await checkHeader({
+      purpose: "BYA_OUT",
+      company_id: anak,
+      partner_id: null,
+      cash_bank_id: null,
+      currency_id: currency,
+    });
+    assert.equal(result.ok, true);
+    assert.ok(result.ok === true && result.route === "treasury");
+    assert.equal(result.ok === true && result.cashBankId, null);
+    assert.equal(result.ok === true && result.currencyId, currency);
+  });
+
+  test("an anak document without a Currency is refused", async () => {
+    const result = await checkHeader({
+      purpose: "BYA_OUT",
+      company_id: anak,
+      partner_id: null,
+      cash_bank_id: null,
+      currency_id: null,
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.currency_id);
+  });
+
+  test("an induk document still takes its currency from the resource", async () => {
+    const result = await checkHeader({
+      purpose: "BYA_OUT",
+      company_id: induk,
+      partner_id: null,
+      cash_bank_id: await makeCashBank({}),
+      // Ignored on this route: the resource decides, not the submission.
+      currency_id: 999999,
+    });
+    assert.equal(result.ok, true);
+    assert.ok(result.ok === true && result.route === "self");
+    assert.equal(result.ok === true && result.currencyId, currency);
   });
 
   test("the transacting company is resolved from is_parent, never hardcoded", async () => {

@@ -21,6 +21,7 @@
  * carries it and the list must render it.
  */
 import type { IconName } from "@/components/icon";
+import type { ActionTone } from "./header-actions";
 import type { PermissionCode } from "./permissions";
 
 export type BudgetStatus =
@@ -39,7 +40,8 @@ export type BudgetTransition = {
   from: BudgetStatus[];
   to: BudgetStatus;
   icon: IconName;
-  danger?: boolean;
+  /** Decides both where the button sits in `.ph-act` and how it is drawn. */
+  tone: ActionTone;
   /** Confirmation copy — states the consequence, never just "are you sure?". */
   title: string;
   body: string;
@@ -55,6 +57,7 @@ export const BUDGET_TRANSITIONS: Record<BudgetAction, BudgetTransition> = {
     from: ["Draft", "Rejected"],
     to: "Submitted",
     icon: "send",
+    tone: "primary",
     title: "Ajukan Budget?",
     body:
       "Budget akan masuk daftar pengajuan dan menunggu persetujuan. Setelah " +
@@ -68,6 +71,7 @@ export const BUDGET_TRANSITIONS: Record<BudgetAction, BudgetTransition> = {
     from: ["Submitted"],
     to: "Open",
     icon: "thumb",
+    tone: "primary",
     title: "Setujui Budget",
     body:
       "Budget menjadi Open dan siap direalisasikan. Isiannya tidak dapat " +
@@ -81,7 +85,7 @@ export const BUDGET_TRANSITIONS: Record<BudgetAction, BudgetTransition> = {
     from: ["Submitted"],
     to: "Rejected",
     icon: "block",
-    danger: true,
+    tone: "danger",
     title: "Tolak Budget?",
     body:
       "Budget dikembalikan ke pembuat sebagai Ditolak, dan dapat diperbaiki " +
@@ -95,7 +99,7 @@ export const BUDGET_TRANSITIONS: Record<BudgetAction, BudgetTransition> = {
     from: ["Draft", "Rejected", "Submitted"],
     to: "Cancelled",
     icon: "block",
-    danger: true,
+    tone: "danger",
     title: "Batalkan Budget?",
     body:
       "Budget tidak akan diproses lebih lanjut. Status Dibatalkan bersifat " +

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import {
   budgetsByIds,
@@ -264,14 +265,21 @@ export type FinancePartnerOption = FinanceOption & {
   categoryLabel: string;
 };
 
+export type CompanyOption = FinanceOption & {
+  /** The induk: it holds the cash, so its documents post directly. */
+  isParent: boolean;
+  /** Whether this reader may write a document for it. */
+  selectable: boolean;
+};
+
 export type FinanceRefs = {
-  companies: FinanceOption[];
+  companies: CompanyOption[];
   currencies: FinanceOption[];
   categories: FinanceOption[];
   partnerCategories: FinanceOption[];
   partners: FinancePartnerOption[];
   cashBanks: CashBankOption[];
-  /** The induk. Every document in this scope belongs to it — see §12. */
+  /** The induk — the treasury provider every Funding Request is answered by. */
   transactingCompanyId: number | null;
 };
 
@@ -282,8 +290,13 @@ export type FinanceRefs = {
  * Balances come from `cash_bank_balance` so the form can show what a resource
  * holds before the document moves it. They are display only: the Post action
  * re-reads the book inside its own transaction.
+ *
+ * `companyIds` marks which Companies this reader may **write** a document for,
+ * without hiding the others: a list still has to name the Company of every row
+ * it shows. Omitted, every Company is selectable — which is what a test or a
+ * caller with its own scoping wants.
  */
-export async function financeRefs(): Promise<FinanceRefs> {
+export async function financeRefs(companyIds?: number[]): Promise<FinanceRefs> {
   const [companies, currencies, categories, partners, partnerCategories, cashBanks] =
     await Promise.all([
       prisma.sysCompany.findMany({ orderBy: { id: "asc" } }),
@@ -310,6 +323,8 @@ export async function financeRefs(): Promise<FinanceRefs> {
       label: c.company_label,
       name: c.company_name,
       active: true,
+      isParent: c.is_parent,
+      selectable: companyIds ? companyIds.includes(c.id) : true,
     })),
     currencies: currencies.map((c) => ({
       id: c.id,
@@ -354,14 +369,11 @@ export async function financeRefs(): Promise<FinanceRefs> {
 }
 
 /**
- * The single Company a Cash Bank Transaction may be written for: the induk.
+ * The treasury provider: the induk.
  *
- * The anak's realization does not go through this document at all — it raises a
- * **Funding Request** against the induk, which is a separate flow and a
- * separate scope (concept doc §23–§24, CLAUDE.md §13). Until that exists, a
- * document naming the anak would be a way to spend money the model says the
- * anak cannot spend directly, so the header is pinned to the induk and the
- * Server Action refuses anything else.
+ * Every Funding Request is answered by this Company, and the money always
+ * leaves one of its resources — the anak spends nothing directly, it raises a
+ * request and the induk confirms it (concept doc §25, §29).
  *
  * Resolved at runtime from `is_parent`, never hardcoded — CLAUDE.md §12(c).
  */
@@ -401,7 +413,79 @@ export type TransactionHeader = {
   company_id: number | null;
   partner_id: number | null;
   cash_bank_id: number | null;
+  /**
+   * Only read on the funded route, where there is no resource to take a
+   * currency from. On the self-funded route the Cash & Bank decides it and a
+   * submitted value is ignored.
+   */
+  currency_id?: number | null;
 };
+
+/**
+ * How a Company's documents reach actual money.
+ *
+ * `self` — the Company has Cash & Bank resources of its own and posts
+ * directly. `treasury` — it has none, so its document raises a Funding
+ * Request and the induk's confirmation posts it (concept doc §26).
+ *
+ * Keyed on `is_parent` rather than on a label or a setting: which Company
+ * holds the treasury is structural, not configuration (CLAUDE.md §12).
+ */
+export type FundingRoute = "self" | "treasury";
+
+export async function fundingRoute(
+  companyId: number
+): Promise<FundingRoute | null> {
+  const company = await prisma.sysCompany.findUnique({
+    where: { id: companyId },
+    select: { is_parent: true },
+  });
+  if (!company) return null;
+  return company.is_parent ? "self" : "treasury";
+}
+
+/**
+ * The currency a document is denominated in, and the route it will take.
+ *
+ * One resolver for both the eligibility query and the header check, so the
+ * picker and the enforcement can never disagree about which Budgets a header
+ * could settle.
+ */
+async function headerContext(header: TransactionHeader): Promise<
+  | {
+      ok: true;
+      route: FundingRoute;
+      currencyId: number;
+      cashBankId: number | null;
+    }
+  | { ok: false }
+> {
+  if (!header.company_id) return { ok: false };
+  const route = await fundingRoute(header.company_id);
+  if (!route) return { ok: false };
+
+  if (route === "treasury") {
+    if (header.cash_bank_id) return { ok: false };
+    const currencyId = header.currency_id ?? 0;
+    if (!currencyId) return { ok: false };
+    return { ok: true, route, currencyId, cashBankId: null };
+  }
+
+  if (!header.cash_bank_id) return { ok: false };
+  const cashBank = await prisma.mCashBank.findUnique({
+    where: { id: header.cash_bank_id },
+    select: { currency_id: true, company_id: true },
+  });
+  if (!cashBank || cashBank.company_id !== header.company_id) {
+    return { ok: false };
+  }
+  return {
+    ok: true,
+    route,
+    currencyId: cashBank.currency_id,
+    cashBankId: header.cash_bank_id,
+  };
+}
 
 /** The Budget Category id a purpose realizes, or null if the label is unknown. */
 async function categoryIdOf(purpose: Purpose): Promise<number | null> {
@@ -433,14 +517,11 @@ export async function eligibleBudgets(
   options: { excludeTransactionId?: number } = {}
 ): Promise<EligibleBudget[]> {
   const purpose = purposeOf(header.purpose);
-  if (!purpose || !header.company_id || !header.cash_bank_id) return [];
+  if (!purpose || !header.company_id) return [];
   if (purpose.partnerCategory && !header.partner_id) return [];
 
-  const cashBank = await prisma.mCashBank.findUnique({
-    where: { id: header.cash_bank_id },
-    select: { currency_id: true, company_id: true },
-  });
-  if (!cashBank || cashBank.company_id !== header.company_id) return [];
+  const context = await headerContext(header);
+  if (!context.ok) return [];
 
   const categoryId = await categoryIdOf(purpose);
   if (!categoryId) return [];
@@ -449,7 +530,7 @@ export async function eligibleBudgets(
     companyId: header.company_id,
     budgetType: purpose.direction,
     categoryId,
-    currencyId: cashBank.currency_id,
+    currencyId: context.currencyId,
     partnerId: purpose.partnerCategory ? header.partner_id : null,
   });
 
@@ -520,9 +601,11 @@ export type HeaderCheck =
       ok: true;
       purpose: Purpose;
       companyId: number;
-      cashBankId: number;
+      /** Null on the funded route: the anak has no resource of its own. */
+      cashBankId: number | null;
       currencyId: number;
       partnerId: number | null;
+      route: FundingRoute;
     }
   | { ok: false; errors: Record<string, string> };
 
@@ -531,8 +614,15 @@ export type HeaderCheck =
  *
  * The form narrows each picker as the user goes, but a Server Action is
  * reachable directly with any combination of ids — this is what actually
- * enforces the chain Purpose -> Company -> Partner -> Cash & Bank, and it is
- * where the induk-only scope is imposed.
+ * enforces the chain Purpose -> Company -> Partner -> Cash & Bank.
+ *
+ * **Which Company decides the shape of the rest.** The induk holds the cash, so
+ * its documents name a Cash & Bank and take their currency from it. The anak
+ * holds none by design (concept doc §25, §32), so its documents name a Currency
+ * instead and are refused if they name a resource at all — including a resource
+ * belonging to the induk, which is exactly the submission this rule exists to
+ * stop. What the anak's document then does is raise a Funding Request; the
+ * money still only ever leaves an induk resource.
  */
 export async function checkHeader(
   header: TransactionHeader
@@ -554,12 +644,13 @@ export async function checkHeader(
       errors: { _form: "Company induk belum tersedia pada master Company." },
     };
   }
+
+  let route: FundingRoute | null = null;
   if (!header.company_id) {
     errors.company_id = "Company wajib dipilih.";
-  } else if (header.company_id !== induk.id) {
-    errors.company_id =
-      "Dokumen kas/bank langsung hanya tersedia untuk Company induk. " +
-      "Kebutuhan dana Company anak dipenuhi melalui Funding Request.";
+  } else {
+    route = await fundingRoute(header.company_id);
+    if (!route) errors.company_id = "Company tidak ditemukan.";
   }
 
   let partnerId: number | null = null;
@@ -593,22 +684,47 @@ export async function checkHeader(
   }
 
   let currencyId = 0;
-  if (!header.cash_bank_id) {
-    errors.cash_bank_id = "Cash & Bank wajib dipilih.";
-  } else {
-    const cashBank = await prisma.mCashBank.findUnique({
-      where: { id: header.cash_bank_id },
-      select: { company_id: true, status: true, currency_id: true },
-    });
-    if (!cashBank) errors.cash_bank_id = "Cash & Bank tidak ditemukan.";
-    else if (cashBank.company_id !== header.company_id) {
+  let cashBankId: number | null = null;
+
+  if (route === "treasury") {
+    if (header.cash_bank_id) {
       errors.cash_bank_id =
-        "Cash & Bank harus milik Company yang sama dengan dokumen.";
-    } else if (cashBank.status !== "Active") {
-      errors.cash_bank_id =
-        "Cash & Bank tersebut non-aktif dan tidak dapat dipakai.";
+        "Company anak tidak memiliki Cash & Bank sendiri. Dana disediakan " +
+        "Company induk melalui Funding Request.";
+    }
+    if (!header.currency_id) {
+      errors.currency_id = "Currency wajib dipilih.";
     } else {
-      currencyId = cashBank.currency_id;
+      const currency = await prisma.refCurrency.findUnique({
+        where: { id: header.currency_id },
+        select: { id: true, status: true },
+      });
+      if (!currency) errors.currency_id = "Currency tidak ditemukan.";
+      else if (currency.status !== "Active") {
+        errors.currency_id = "Currency tersebut non-aktif dan tidak dapat dipakai.";
+      } else {
+        currencyId = currency.id;
+      }
+    }
+  } else if (route === "self") {
+    if (!header.cash_bank_id) {
+      errors.cash_bank_id = "Cash & Bank wajib dipilih.";
+    } else {
+      const cashBank = await prisma.mCashBank.findUnique({
+        where: { id: header.cash_bank_id },
+        select: { company_id: true, status: true, currency_id: true },
+      });
+      if (!cashBank) errors.cash_bank_id = "Cash & Bank tidak ditemukan.";
+      else if (cashBank.company_id !== header.company_id) {
+        errors.cash_bank_id =
+          "Cash & Bank harus milik Company yang sama dengan dokumen.";
+      } else if (cashBank.status !== "Active") {
+        errors.cash_bank_id =
+          "Cash & Bank tersebut non-aktif dan tidak dapat dipakai.";
+      } else {
+        currencyId = cashBank.currency_id;
+        cashBankId = cashBank ? header.cash_bank_id : null;
+      }
     }
   }
 
@@ -618,9 +734,10 @@ export async function checkHeader(
     ok: true,
     purpose,
     companyId: header.company_id!,
-    cashBankId: header.cash_bank_id!,
+    cashBankId,
     currencyId,
     partnerId,
+    route: route!,
   };
 }
 
@@ -745,6 +862,60 @@ export type PostingResult =
  * entry be read back to the plan it settled. They share an account, so the
  * journal balances either way.
  */
+/**
+ * The account a Purpose resolves to for one Company — Company × Budget Category
+ * × Partner Category, which is the whole reason a Purpose is exactly one of
+ * each (§19).
+ *
+ * Resolved **per Company**, not once per document: on the funded route the
+ * induk and the anak journal the same business event against their own charts,
+ * and only the anak's side is classified by the Purpose at all.
+ */
+async function purposeAccountId(
+  companyId: number,
+  purpose: Purpose
+): Promise<
+  { ok: true; accountId: number } | { ok: false; errors: Record<string, string> }
+> {
+  const categoryId = await categoryIdOf(purpose);
+  if (!categoryId) {
+    return { ok: false, errors: { _form: "Budget Category Purpose tidak dikenali." } };
+  }
+
+  const partnerCategoryId = purpose.partnerCategory
+    ? (
+        await prisma.sysPartnerCategory.findFirst({
+          where: { category_label: purpose.partnerCategory },
+          select: { id: true },
+        })
+      )?.id ?? null
+    : null;
+
+  const mapping = await prisma.accBudgetCategoryAccount.findFirst({
+    where: {
+      company_id: companyId,
+      budget_category_id: categoryId,
+      partner_category_id: partnerCategoryId,
+    },
+    select: { account_id: true },
+  });
+  if (!mapping) {
+    // Approval tolerates a missing mapping (§10 rule 28) because that gap
+    // belongs to Accounting. Posting cannot: without a mapping there is no
+    // account to journal against, and money must not move unaccounted for.
+    return {
+      ok: false,
+      errors: {
+        _form:
+          `Belum ada Mapping Budget ke Account untuk kombinasi ini (${purpose.label}). ` +
+          "Lengkapi mapping di Accounting sebelum dokumen diposting.",
+      },
+    };
+  }
+
+  return { ok: true, accountId: mapping.account_id };
+}
+
 async function journalEntries(doc: {
   id: number;
   transaction_no: string;
@@ -777,41 +948,9 @@ async function journalEntries(doc: {
     return { ok: false, errors: { _form: "Cash & Bank dokumen tidak ditemukan." } };
   }
 
-  const categoryId = await categoryIdOf(purpose);
-  if (!categoryId) {
-    return { ok: false, errors: { _form: "Budget Category Purpose tidak dikenali." } };
-  }
-
-  const partnerCategoryId = purpose.partnerCategory
-    ? (
-        await prisma.sysPartnerCategory.findFirst({
-          where: { category_label: purpose.partnerCategory },
-          select: { id: true },
-        })
-      )?.id ?? null
-    : null;
-
-  const mapping = await prisma.accBudgetCategoryAccount.findFirst({
-    where: {
-      company_id: doc.company_id,
-      budget_category_id: categoryId,
-      partner_category_id: partnerCategoryId,
-    },
-    select: { account_id: true },
-  });
-  if (!mapping) {
-    // Approval tolerates a missing mapping (§10 rule 28) because that gap
-    // belongs to Accounting. Posting cannot: without a mapping there is no
-    // account to journal against, and money must not move unaccounted for.
-    return {
-      ok: false,
-      errors: {
-        _form:
-          `Belum ada Mapping Budget ke Account untuk kombinasi ini (${purpose.label}). ` +
-          "Lengkapi mapping di Accounting sebelum dokumen diposting.",
-      },
-    };
-  }
+  const mapped = await purposeAccountId(doc.company_id, purpose);
+  if (!mapped.ok) return mapped;
+  const mapping = { account_id: mapped.accountId };
 
   const incoming = doc.transaction_type === "In";
   const total = doc.lines.reduce((t, l) => t + l.settlement_amount.toNumber(), 0);
@@ -850,6 +989,19 @@ export async function applyPosting(
     return {
       ok: false,
       errors: { _form: "Hanya dokumen berstatus Draft yang dapat diposting." },
+    };
+  }
+  // The funded route never comes through here. An anak document has no
+  // resource of its own to move, and its posting is the induk's confirmation
+  // of a Funding Request — which posts both Companies at once.
+  if ((await fundingRoute(doc.company_id)) !== "self") {
+    return {
+      ok: false,
+      errors: {
+        _form:
+          "Dokumen Company anak tidak diposting langsung. Ajukan dana ke induk, " +
+          "dan dokumen terposting saat induk mengonfirmasi Funding Request.",
+      },
     };
   }
   if (!doc.lines.length) {
@@ -975,6 +1127,462 @@ export async function applyPosting(
   });
 
   return { ok: true, closed };
+}
+
+// ----------------------------------------------------- funded posting (anak)
+
+/**
+ * One Company's side of the intercompany bridge: where it keeps its claim on
+ * the other, what it owes the other, and the Partner that *is* the other.
+ */
+export type BridgeSide = {
+  arAccountId: number;
+  apAccountId: number;
+  partnerId: number;
+};
+
+export type FundedPostingInput = {
+  transactionId: number;
+  /** The induk resource the money actually moves through. */
+  providerCashBankId: number;
+  bridge: { induk: BridgeSide; anak: BridgeSide };
+  /**
+   * What the **provider's** journal records as its cause — the Funding Request.
+   * Passed in rather than resolved here: the Funding Request belongs to the
+   * module that owns it, and Finance must not name its table.
+   */
+  providerSource: { docTypeId: number; docId: number };
+  /** Carried onto every book entry, so a row reads back to the request. */
+  note: string;
+};
+
+export type FundedPostingPlan = {
+  transactionId: number;
+  /** Everything below is resolved and checked; writing it cannot fail on rules. */
+  induk: {
+    companyId: number;
+    cashBankId: number;
+    cashAccountId: number;
+    bookKey: "piutang" | "hutang";
+    bridgeAccountId: number;
+    partnerId: number;
+  };
+  anak: {
+    companyId: number;
+    purposeAccountId: number;
+    /** The subject book the Purpose itself keeps, where it keeps one. */
+    purposeBook: string | null;
+    purposePartnerId: number | null;
+    interBookKey: "piutang" | "hutang";
+    /** The cash direction that *raises* the anak's position against the induk. */
+    interDirection: "In" | "Out";
+    bridgeAccountId: number;
+    partnerId: number;
+  };
+  direction: "In" | "Out";
+  currencyId: number;
+  amount: number;
+  transactionNo: string;
+  purposeLabel: string;
+  note: string;
+  providerSource: { docTypeId: number; docId: number };
+  requesterSource: { docTypeId: number; docId: number };
+  lines: { budgetId: number; amount: number }[];
+};
+
+export type FundedPostingCheck =
+  | { ok: true; plan: FundedPostingPlan }
+  | { ok: false; errors: Record<string, string> };
+
+/**
+ * Everything the funded posting needs, resolved and checked before anything is
+ * written — the atomic intercompany posting of concept doc §30, in two halves.
+ *
+ * The split exists because the Funding Request's own closure belongs to the
+ * module that owns it: `prepareFundedPosting` answers "may this be posted, and
+ * with what", `writeFundedPosting` does it inside the caller's transaction, and
+ * the caller closes its request in the same one. Either both Companies got
+ * their books and the request is closed, or nothing happened at all.
+ *
+ * **Both directions are one mechanism.** Money leaving the induk for the anak's
+ * expense raises the induk's Piutang and the anak's Hutang; money the anak
+ * receives into an induk resource raises the induk's Hutang and the anak's
+ * Piutang (§34, §37). Only which side of each bridge is written flips. The
+ * subject books still sign themselves from the cash direction exactly as they
+ * do on the direct route — the anak's intercompany leg simply carries the
+ * *opposite* direction to the document's, because the money passed through the
+ * induk on its way.
+ */
+export async function prepareFundedPosting(
+  input: FundedPostingInput
+): Promise<FundedPostingCheck> {
+  const doc = await prisma.finCashBankTransaction.findUnique({
+    where: { id: input.transactionId },
+    include: { lines: true },
+  });
+  if (!doc) return { ok: false, errors: { _form: "Dokumen tidak ditemukan." } };
+  if (doc.status !== "Pending") {
+    return {
+      ok: false,
+      errors: {
+        _form:
+          "Hanya dokumen berstatus Menunggu Funding yang dapat diposting melalui " +
+          "konfirmasi Funding Request.",
+      },
+    };
+  }
+  if (!doc.lines.length) {
+    return { ok: false, errors: { _form: "Dokumen tidak memuat Budget." } };
+  }
+  if (doc.cash_bank_id) {
+    return {
+      ok: false,
+      errors: { _form: "Dokumen Company anak tidak boleh menunjuk Cash & Bank." },
+    };
+  }
+
+  const purpose = purposeOf(doc.purpose);
+  if (!purpose) {
+    return { ok: false, errors: { _form: "Purpose dokumen tidak dikenali." } };
+  }
+
+  const induk = await transactingCompany();
+  if (!induk) {
+    return {
+      ok: false,
+      errors: { _form: "Company induk belum tersedia pada master Company." },
+    };
+  }
+  if (doc.company_id === induk.id) {
+    return {
+      ok: false,
+      errors: { _form: "Dokumen Company induk tidak melalui Funding Request." },
+    };
+  }
+
+  const cashBank = await prisma.mCashBank.findUnique({
+    where: { id: input.providerCashBankId },
+    select: {
+      company_id: true,
+      status: true,
+      currency_id: true,
+      account_id: true,
+    },
+  });
+  if (!cashBank) {
+    return { ok: false, errors: { cash_bank_id: "Cash & Bank tidak ditemukan." } };
+  }
+  if (cashBank.company_id !== induk.id) {
+    return {
+      ok: false,
+      errors: {
+        cash_bank_id: `Cash & Bank harus milik Company ${induk.label}.`,
+      },
+    };
+  }
+  if (cashBank.status !== "Active") {
+    return {
+      ok: false,
+      errors: {
+        cash_bank_id: "Cash & Bank tersebut non-aktif dan tidak dapat dipakai.",
+      },
+    };
+  }
+  if (cashBank.currency_id !== doc.currency_id) {
+    // There is no exchange rate in this system (CLAUDE.md §12), so a resource
+    // in another currency cannot answer this request without inventing one.
+    return {
+      ok: false,
+      errors: {
+        cash_bank_id:
+          "Currency Cash & Bank harus sama dengan currency permintaan dana.",
+      },
+    };
+  }
+
+  // Re-read now, not trusted from when the request was raised: another document
+  // may have closed a Budget in the meantime, and funding a plan that is no
+  // longer Open would record a realization nothing authorised.
+  const budgets = await budgetsByIds(doc.lines.map((l) => l.source_doc_id));
+  const byId = new Map(budgets.map((b) => [b.id, b]));
+  const stale = doc.lines.filter(
+    (l) => byId.get(l.source_doc_id)?.status !== "Open"
+  );
+  if (stale.length) {
+    return {
+      ok: false,
+      errors: {
+        _form:
+          `${stale.length} Budget pada dokumen ini sudah tidak berstatus Disetujui (Open), ` +
+          "kemungkinan sudah ditutup dokumen lain. Funding tidak dapat dikonfirmasi.",
+      },
+    };
+  }
+
+  // The anak journals its own side against its own chart of accounts.
+  const mapped = await purposeAccountId(doc.company_id, purpose);
+  if (!mapped.ok) return mapped;
+
+  const outgoing = doc.transaction_type === "Out";
+  const subledger = subledgerForCategory(purpose.budgetCategory);
+
+  return {
+    ok: true,
+    plan: {
+      transactionId: doc.id,
+      induk: {
+        companyId: induk.id,
+        cashBankId: input.providerCashBankId,
+        cashAccountId: cashBank.account_id,
+        // Money paid out for the anak is a claim on it; money taken in on the
+        // anak's behalf is money held for it.
+        bookKey: outgoing ? "piutang" : "hutang",
+        bridgeAccountId: outgoing
+          ? input.bridge.induk.arAccountId
+          : input.bridge.induk.apAccountId,
+        partnerId: input.bridge.induk.partnerId,
+      },
+      anak: {
+        companyId: doc.company_id,
+        purposeAccountId: mapped.accountId,
+        purposeBook: subledger?.key ?? null,
+        purposePartnerId: doc.partner_id,
+        interBookKey: outgoing ? "hutang" : "piutang",
+        interDirection: outgoing ? "In" : "Out",
+        bridgeAccountId: outgoing
+          ? input.bridge.anak.apAccountId
+          : input.bridge.anak.arAccountId,
+        partnerId: input.bridge.anak.partnerId,
+      },
+      direction: doc.transaction_type as "In" | "Out",
+      currencyId: doc.currency_id,
+      amount: doc.transaction_amount.toNumber(),
+      transactionNo: doc.transaction_no,
+      purposeLabel: purpose.label,
+      note: input.note,
+      providerSource: input.providerSource,
+      requesterSource: {
+        docTypeId: await transactionDocTypeId(),
+        docId: doc.id,
+      },
+      lines: doc.lines.map((l) => ({
+        budgetId: l.source_doc_id,
+        amount: l.settlement_amount.toNumber(),
+      })),
+    },
+  };
+}
+
+/**
+ * Writes both Companies' books, inside the caller's transaction.
+ *
+ * One business event, seven writes (§30): the induk's cash entry and its
+ * balance, one subject-book entry for each Company's position against the
+ * other, the anak's own subject book where its Purpose keeps one, every
+ * Budget's realization, a journal each, and the document itself.
+ * `postJournal` throws rather than returns, so an unbalanced journal takes the
+ * whole confirmation down — the caller's request closure included.
+ *
+ * Neither journal derives from the other, and neither derives from a book: they
+ * are two accounting representations of one business event, each pointing at
+ * the document its own Company produced (§31).
+ */
+export async function writeFundedPosting(
+  tx: Prisma.TransactionClient,
+  plan: FundedPostingPlan,
+  actorId: number
+): Promise<{ closed: number }> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { induk, anak } = plan;
+
+  await recordCashBankEntry(tx, {
+    cashBankId: induk.cashBankId,
+    date: today,
+    type: "Transaction",
+    direction: plan.direction,
+    amount: plan.amount,
+    // The realization is what caused the movement, so that is what the book
+    // names — the same weak pair the direct route writes.
+    sourceDocTypeId: plan.requesterSource.docTypeId,
+    sourceDocId: plan.requesterSource.docId,
+    note: plan.note,
+    actorId,
+  });
+
+  // The induk's position against the anak.
+  await recordSubledgerEntry(tx, {
+    book: induk.bookKey,
+    partnerId: induk.partnerId,
+    currencyId: plan.currencyId,
+    date: today,
+    type: "Transaction",
+    direction: plan.direction,
+    amount: plan.amount,
+    sourceDocTypeId: plan.requesterSource.docTypeId,
+    sourceDocId: plan.requesterSource.docId,
+    note: plan.note,
+    actorId,
+  });
+
+  // The anak's own subject book, where its Purpose keeps one — the partner it
+  // actually paid or was paid by. Unchanged from the direct route: that is the
+  // business event, and the funding is only how the cash reached it.
+  if (anak.purposeBook && anak.purposePartnerId) {
+    await recordSubledgerEntry(tx, {
+      book: anak.purposeBook,
+      partnerId: anak.purposePartnerId,
+      currencyId: plan.currencyId,
+      date: today,
+      type: "Transaction",
+      direction: plan.direction,
+      amount: plan.amount,
+      sourceDocTypeId: plan.requesterSource.docTypeId,
+      sourceDocId: plan.requesterSource.docId,
+      note: `${plan.transactionNo} — ${plan.purposeLabel}`,
+      actorId,
+    });
+  }
+
+  // The anak's position against the induk — the other half of the bridge.
+  await recordSubledgerEntry(tx, {
+    book: anak.interBookKey,
+    partnerId: anak.partnerId,
+    currencyId: plan.currencyId,
+    date: today,
+    type: "Transaction",
+    direction: anak.interDirection,
+    amount: plan.amount,
+    sourceDocTypeId: plan.requesterSource.docTypeId,
+    sourceDocId: plan.requesterSource.docId,
+    note: plan.note,
+    actorId,
+  });
+
+  const { closed } = await realizeBudgets(tx, plan.lines, actorId);
+
+  const outgoing = plan.direction === "Out";
+
+  // Journal A — the induk's. Its cause is the Funding Request it confirmed.
+  await postJournal(tx, {
+    companyId: induk.companyId,
+    description: `${plan.note} — ${plan.purposeLabel}`,
+    sourceDocTypeId: plan.providerSource.docTypeId,
+    sourceDocId: plan.providerSource.docId,
+    lines: [
+      {
+        accountId: induk.bridgeAccountId,
+        partnerId: induk.partnerId,
+        currencyId: plan.currencyId,
+        debit: outgoing ? plan.amount : 0,
+        credit: outgoing ? 0 : plan.amount,
+        description: plan.note,
+      },
+      {
+        accountId: induk.cashAccountId,
+        currencyId: plan.currencyId,
+        debit: outgoing ? 0 : plan.amount,
+        credit: outgoing ? plan.amount : 0,
+        description: plan.note,
+      },
+    ],
+    actorId,
+  });
+
+  // Journal B — the anak's. Its cause is its own realization, which is an
+  // ordinary Cash Bank Transaction that happened to be funded. One counter line
+  // per document line, as on the direct route, so a ledger entry reads back to
+  // the Budget it settled.
+  const purposeLines: JournalLineInput[] = plan.lines.map((l) => ({
+    accountId: anak.purposeAccountId,
+    partnerId: anak.purposePartnerId,
+    currencyId: plan.currencyId,
+    debit: outgoing ? l.amount : 0,
+    credit: outgoing ? 0 : l.amount,
+    description: `${plan.purposeLabel} — Budget #${l.budgetId}`,
+  }));
+  const bridgeLine: JournalLineInput = {
+    accountId: anak.bridgeAccountId,
+    partnerId: anak.partnerId,
+    currencyId: plan.currencyId,
+    debit: outgoing ? 0 : plan.amount,
+    credit: outgoing ? plan.amount : 0,
+    description: plan.note,
+  };
+
+  await postJournal(tx, {
+    companyId: anak.companyId,
+    description: `${plan.transactionNo} — ${plan.purposeLabel}`,
+    sourceDocTypeId: plan.requesterSource.docTypeId,
+    sourceDocId: plan.requesterSource.docId,
+    lines: outgoing
+      ? [...purposeLines, bridgeLine]
+      : [bridgeLine, ...purposeLines],
+    actorId,
+  });
+
+  await tx.finCashBankTransaction.update({
+    where: { id: plan.transactionId },
+    data: {
+      status: "Posted",
+      document_date: new Date(`${today}T00:00:00Z`),
+      posting_date: new Date(),
+      updated_by: actorId,
+    },
+  });
+
+  return { closed };
+}
+
+// -------------------------------------------------- status, for the funded route
+
+/**
+ * The two status writes the funded route needs, and the only way another module
+ * changes a document's status.
+ *
+ * `fin_cash_bank_transaction` is Finance's table, so Funding never writes it
+ * directly (CLAUDE.md §3, the module contract): it calls these inside its own
+ * transaction, which is what lets the document's status and the request's
+ * status move together or not at all.
+ *
+ * Neither moves money. `Pending` is exactly as inert as `Draft` — the anak's
+ * document waits for the induk's confirmation, and it is that confirmation, not
+ * this, that writes the books.
+ */
+export async function markTransactionPending(
+  tx: Prisma.TransactionClient,
+  transactionId: number,
+  actorId: number
+): Promise<void> {
+  await tx.finCashBankTransaction.update({
+    where: { id: transactionId },
+    data: { status: "Pending", updated_by: actorId },
+  });
+}
+
+export async function markTransactionCancelled(
+  tx: Prisma.TransactionClient,
+  transactionId: number,
+  actorId: number
+): Promise<void> {
+  await tx.finCashBankTransaction.update({
+    where: { id: transactionId },
+    data: { status: "Cancelled", updated_by: actorId },
+  });
+}
+
+/**
+ * Documents by id — how another module reads the realizations it points at
+ * without naming `fin_cash_bank_transaction` itself.
+ */
+export async function transactionsByIds(
+  ids: number[]
+): Promise<TransactionRow[]> {
+  if (!ids.length) return [];
+  const rows = await prisma.finCashBankTransaction.findMany({
+    where: { id: { in: ids } },
+    include: { _count: { select: { lines: true } } },
+  });
+  return rows.map(toRow);
 }
 
 // --------------------------------------------------------------- numbering

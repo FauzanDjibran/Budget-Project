@@ -82,9 +82,23 @@ enum BudgetStatus {
   Closed
 }
 
+/// `Pending` is the funded route: an anak document waits here while its
+/// Funding Request is open. Like `Draft` it has moved nothing — the induk's
+/// confirmation is what posts it (concept doc §29).
 enum TransactionStatus {
   Draft
+  Pending
   Posted
+  Cancelled
+}
+
+/// A Funding Request stays open until the treasury provider confirms it, or
+/// until the requesting Company withdraws the document that raised it. There is
+/// no rejection: the provider always complies, so its action is a confirmation
+/// rather than a decision (concept doc §29).
+enum FundingStatus {
+  Open
+  Closed
   Cancelled
 }
 
@@ -378,6 +392,7 @@ model RefCurrency {
   journal_lines      AccJournalLine[]
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
+  funding_requests   FinFundingRequest[]
 
   @@map("ref_currency")
 }
@@ -434,9 +449,10 @@ model MCashBank {
   currency RefCurrency @relation(fields: [currency_id], references: [id])
   account  AccAccount  @relation(fields: [account_id], references: [id])
 
-  transactions FinCashBankTransaction[]
-  ledger       CashBankLedger[]
-  book_balance CashBankBalance?
+  transactions     FinCashBankTransaction[]
+  ledger           CashBankLedger[]
+  book_balance     CashBankBalance?
+  funding_requests FinFundingRequest[]
 
   @@index([company_id])
   @@map("m_cash_bank")
@@ -846,7 +862,8 @@ model FinCashBankTransaction {
   cash_bank MCashBank?  @relation(fields: [cash_bank_id], references: [id])
   partner   MPartner?   @relation(fields: [partner_id], references: [id])
 
-  lines FinCashBankTransactionLine[]
+  lines            FinCashBankTransactionLine[]
+  funding_requests FinFundingRequest[]
 
   @@index([company_id])
   @@index([status])
@@ -884,6 +901,58 @@ model FinCashBankTransactionLine {
   @@unique([transaction_id, sequence_no])
   @@index([source_doc_type_id, source_doc_id])
   @@map("fin_cash_bank_transaction_line")
+}
+
+/// The intercompany bridge: what the anak needs, and which resource of the
+/// induk's answered it.
+///
+/// Raised by submitting an anak Cash Bank Transaction, which has no Cash & Bank
+/// of its own to draw on (concept doc §26.2, §27). The induk confirms — it never
+/// rejects and never funds partially, so request amount = document amount =
+/// funded amount (§28, §29) — and that confirmation is the actual boundary for
+/// **both** Companies: one atomic posting writes the induk's cash movement, both
+/// Companies' subject books, a journal each, and the Budgets' realization (§30).
+///
+/// The DBML declares `requesting_company_id` and `treasury_provider_company_id`
+/// here. Neither is stored. The requester is the document's own Company, the
+/// provider is the `is_parent` Company resolved at runtime, and CLAUDE.md §14
+/// forbids a `treasury_provider_company_id` column outright — with exactly two
+/// permanent Companies, storing either would be duplicating configuration the
+/// application already knows.
+model FinFundingRequest {
+  id                 Int    @id @default(autoincrement())
+  funding_request_no String @unique
+
+  request_date DateTime @db.Date
+
+  /// The realization that needs treasury. One request per document (§28).
+  transaction_id Int
+  currency_id    Int
+
+  /// The full amount of the document. There is no partial funding (§29).
+  request_amount Decimal @db.Decimal(18, 2)
+
+  /// Chosen by the provider at confirmation; null while the request is open.
+  provider_cash_bank_id Int?
+
+  status FundingStatus @default(Open)
+  note   String?
+
+  confirmed_at DateTime? @db.Timestamptz(6)
+  confirmed_by Int?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  transaction        FinCashBankTransaction @relation(fields: [transaction_id], references: [id])
+  currency           RefCurrency            @relation(fields: [currency_id], references: [id])
+  provider_cash_bank MCashBank?             @relation(fields: [provider_cash_bank_id], references: [id])
+
+  @@index([status])
+  @@index([transaction_id])
+  @@map("fin_funding_request")
 }
 
 // ---------------------------------------------------------------- audit

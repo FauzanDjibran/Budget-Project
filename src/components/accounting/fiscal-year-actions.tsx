@@ -14,6 +14,7 @@ import {
   type FiscalYearAction,
   type FiscalYearStatus,
 } from "@/lib/siba/fiscal-workflow";
+import { headerButtonClass } from "@/lib/siba/header-actions";
 
 /**
  * The Fiscal Year lifecycle, as buttons in the page header.
@@ -61,14 +62,23 @@ export function FiscalYearActions({
     router.refresh();
   };
 
+  // Header order — danger, then neutral, then the one primary — puts the
+  // disabled closing step to the left of anything activatable. Only one of the
+  // two ever renders, so no sort is needed here.
   return (
     <>
+      {status === "Open" && (
+        <button className="btn" disabled title={FISCAL_YEAR_CLOSING_NOTE}>
+          <Icon name="lock" size={15} /> Tutup Tahun Buku
+        </button>
+      )}
+
       {actions.map((a) => {
         const t = FISCAL_YEAR_TRANSITIONS[a];
         return (
           <button
             key={a}
-            className="btn primary"
+            className={headerButtonClass(t.tone)}
             disabled={busy}
             onClick={() => setConfirm(a)}
           >
@@ -76,12 +86,6 @@ export function FiscalYearActions({
           </button>
         );
       })}
-
-      {status === "Open" && (
-        <button className="btn" disabled title={FISCAL_YEAR_CLOSING_NOTE}>
-          <Icon name="lock" size={15} /> Tutup Tahun Buku
-        </button>
-      )}
 
       {confirm && (
         <ConfirmDialog

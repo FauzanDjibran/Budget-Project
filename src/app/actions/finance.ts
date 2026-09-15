@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { type Actor } from "@/lib/siba/access";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
+import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import {
   applyPosting,
   budgetDocTypeId,
@@ -53,6 +54,8 @@ export type TransactionValues = {
   company_id: string;
   partner_id: string;
   cash_bank_id: string;
+  /** Only read on the funded route, where there is no resource to take it from. */
+  currency_id: string;
   note: string;
 };
 
@@ -84,6 +87,37 @@ const num = (raw: string | null | undefined): number | null => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
+
+/** The submitted header, in the shape the rules read it. */
+const headerOf = (values: TransactionValues) => ({
+  purpose: String(values.purpose ?? "").trim(),
+  company_id: num(values.company_id),
+  partner_id: num(values.partner_id),
+  cash_bank_id: num(values.cash_bank_id),
+  currency_id: num(values.currency_id),
+});
+
+/**
+ * May this user write documents for that Company at all?
+ *
+ * The header rules say what a *document* may be; this says whose books the
+ * caller may touch, which is the same question the Company permissions answer
+ * everywhere else. Checked here rather than in `checkHeader` because it is
+ * about the actor, and the data module deliberately takes its scope as an
+ * argument rather than reaching into the request (CLAUDE.md §12).
+ */
+async function refuseCompany(
+  actor: Actor,
+  companyId: number | null
+): Promise<TransactionResult | null> {
+  if (!companyId) return null;
+  const allowed = await accessibleCompanyIds(actor.permissions);
+  if (allowed.includes(companyId)) return null;
+  return {
+    ok: false,
+    errors: { company_id: "Anda tidak memiliki akses ke Company tersebut." },
+  };
+}
 
 const asLines = (lines: TransactionLineValues[]): LineInput[] =>
   lines
@@ -122,15 +156,7 @@ export async function listEligibleBudgets(
   );
   if (!g.ok) return g.denial;
 
-  const budgets = await eligibleBudgets(
-    {
-      purpose: String(values.purpose ?? "").trim(),
-      company_id: num(values.company_id),
-      partner_id: num(values.partner_id),
-      cash_bank_id: num(values.cash_bank_id),
-    },
-    options
-  );
+  const budgets = await eligibleBudgets(headerOf(values), options);
   return { ok: true, budgets };
 }
 
@@ -141,12 +167,10 @@ export async function createTransaction(
   const g = await authorize("CASH_BANK_TRANSACTION_CREATE");
   if (!g.ok) return g.denial;
 
-  const header = {
-    purpose: String(values.purpose ?? "").trim(),
-    company_id: num(values.company_id),
-    partner_id: num(values.partner_id),
-    cash_bank_id: num(values.cash_bank_id),
-  };
+  const header = headerOf(values);
+
+  const refused = await refuseCompany(g.actor, header.company_id);
+  if (refused) return refused;
 
   const checked = await checkHeader(header);
   if (!checked.ok) return { ok: false, errors: checked.errors };
@@ -224,12 +248,10 @@ export async function updateTransaction(
     };
   }
 
-  const header = {
-    purpose: String(values.purpose ?? "").trim(),
-    company_id: num(values.company_id),
-    partner_id: num(values.partner_id),
-    cash_bank_id: num(values.cash_bank_id),
-  };
+  const header = headerOf(values);
+
+  const refused = await refuseCompany(g.actor, header.company_id);
+  if (refused) return refused;
 
   const checked = await checkHeader(header);
   if (!checked.ok) return { ok: false, errors: checked.errors };
@@ -324,6 +346,21 @@ export async function transitionTransaction(
   }
 
   if (action === "cancel") {
+    // A Pending document has an open Funding Request attached to it, and
+    // closing that is the Funding module's to do — cancelling the document
+    // here would leave a request open against a document that no longer
+    // exists to fund. The transition table admits both statuses; which action
+    // runs it is decided by which module owns the rest of the state.
+    if (status === "Pending") {
+      return {
+        ok: false,
+        errors: {
+          _form:
+            "Dokumen yang menunggu funding ditarik kembali melalui Funding Request, " +
+            "agar permintaan dananya ikut dibatalkan.",
+        },
+      };
+    }
     await prisma.finCashBankTransaction.update({
       where: { id },
       data: { status: "Cancelled", updated_by: g.actor.user.id },

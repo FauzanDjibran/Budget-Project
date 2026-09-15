@@ -6,6 +6,7 @@ import { requirePermission } from "@/lib/siba/auth";
 import { companyStructure } from "@/lib/siba/records";
 import { userEmails } from "@/lib/siba/users";
 import { recentActivity } from "@/lib/siba/audit";
+import { intercompanyBridge } from "@/lib/siba/system-settings";
 import { formatTimestamp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -175,7 +176,23 @@ export default async function DashboardPage() {
       href: "/master/cash-bank",
       title: `${withoutCashBank.map((c) => c.company_name).join(", ")} belum memiliki Cash & Bank`,
       detail:
-        "Company tanpa resource kas akan bergantung pada Company induk untuk setiap realisasi.",
+        "Company tanpa resource kas bergantung pada Company induk untuk setiap realisasi, melalui Funding Request.",
+    });
+  }
+
+  // The bridge the anak's realizations are posted across. Raised only once a
+  // chart of accounts exists, for the same reason the mapping check is: before
+  // that there is nothing to point these settings at, and saying so twice
+  // helps nobody.
+  const bridge = await intercompanyBridge();
+  if (accounts.length && !bridge.ok && can("SYSTEM_DEFAULT_VIEW")) {
+    attention.push({
+      href: "/settings/system-default",
+      title: "Bridge intercompany belum lengkap",
+      detail:
+        "Belum diatur: " +
+        bridge.missing.join(", ") +
+        ". Funding Request Company anak tidak dapat dikonfirmasi sebelum ini lengkap.",
     });
   }
 

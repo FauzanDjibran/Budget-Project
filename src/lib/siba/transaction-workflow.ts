@@ -1,9 +1,24 @@
 /**
  * The Cash Bank Transaction lifecycle, written once and read by both sides.
  *
+ * The induk funds itself, so its documents go straight out:
+ *
  *   Draft ──post──> Posted   (final — the money has actually moved)
  *     │
  *     └──cancel──> Cancelled (final — the money never moved)
+ *
+ * The anak has no Cash & Bank of its own, so its documents take the funded
+ * route instead (concept doc §26.2): submitting raises a Funding Request and
+ * the induk's confirmation is what posts the document.
+ *
+ *   Draft ──submit──> Pending ──(induk confirms)──> Posted
+ *     │                  │
+ *     └──cancel──────────┴──cancel──> Cancelled
+ *
+ * `Pending` has moved exactly as much as `Draft` has: nothing. The induk
+ * cannot reject — it always complies (§29) — so `Post` is not offered on a
+ * Pending document at all; it is reached only through Funding Request
+ * confirmation, which posts both Companies at once.
  *
  * Every transition names the status it may start from, the status it produces,
  * and the one permission it needs. The row menu reads this table to decide what
@@ -23,11 +38,12 @@
  * edit of the one that was wrong.
  */
 import type { IconName } from "@/components/icon";
+import type { ActionTone } from "./header-actions";
 import type { PermissionCode } from "./permissions";
 
-export type TransactionStatus = "Draft" | "Posted" | "Cancelled";
+export type TransactionStatus = "Draft" | "Pending" | "Posted" | "Cancelled";
 
-export type TransactionAction = "post" | "cancel";
+export type TransactionAction = "submit" | "post" | "cancel";
 
 export type TransactionTransition = {
   label: string;
@@ -35,7 +51,8 @@ export type TransactionTransition = {
   from: TransactionStatus[];
   to: TransactionStatus;
   icon: IconName;
-  danger?: boolean;
+  /** Decides both where the button sits in `.ph-act` and how it is drawn. */
+  tone: ActionTone;
   /** Confirmation copy — states the consequence, never just "are you sure?". */
   title: string;
   body: string;
@@ -48,12 +65,28 @@ export const TRANSACTION_TRANSITIONS: Record<
   TransactionAction,
   TransactionTransition
 > = {
+  submit: {
+    label: "Ajukan Dana",
+    permission: "CASH_BANK_TRANSACTION_SUBMIT",
+    from: ["Draft"],
+    to: "Pending",
+    icon: "send",
+    tone: "primary",
+    title: "Ajukan Dana ke Induk",
+    body:
+      "Dokumen dikirim ke Company induk sebagai Funding Request dan tidak dapat " +
+      "diubah lagi selama menunggu. Belum ada uang yang bergerak: kas, Budget, " +
+      "dan seluruh buku baru tercatat setelah induk mengonfirmasi.",
+    confirmLabel: "Ya, Ajukan",
+    done: "Funding Request dibuat",
+  },
   post: {
     label: "Post",
     permission: "CASH_BANK_TRANSACTION_POST",
     from: ["Draft"],
     to: "Posted",
     icon: "check",
+    tone: "primary",
     title: "Post Dokumen",
     body:
       "Post menjadikan dokumen ini transaksi aktual: saldo Cash & Bank bergerak " +
@@ -65,15 +98,20 @@ export const TRANSACTION_TRANSITIONS: Record<
   cancel: {
     label: "Batalkan",
     permission: "CASH_BANK_TRANSACTION_CANCEL",
-    from: ["Draft"],
+    // Also from Pending: the requesting Company may withdraw its own request
+    // while it is still open, which closes the Funding Request with it. That is
+    // not the induk rejecting — the induk never rejects (§29) — it is the
+    // requester taking back something nothing has acted on yet.
+    from: ["Draft", "Pending"],
     to: "Cancelled",
     icon: "block",
-    danger: true,
+    tone: "danger",
     title: "Batalkan Dokumen?",
     body:
       "Dokumen ditandai Dibatalkan dan tidak dapat diposting lagi. Budget dan " +
       "saldo Cash & Bank tidak terpengaruh karena dokumen belum pernah diposting. " +
-      "Status Dibatalkan bersifat final.",
+      "Funding Request yang masih terbuka ikut dibatalkan. Status Dibatalkan " +
+      "bersifat final.",
     confirmLabel: "Ya, Batalkan",
     done: "Dokumen dibatalkan",
   },
@@ -102,6 +140,7 @@ export function transactionIsEditable(status: TransactionStatus): boolean {
 export type TransactionAbilities = {
   create: boolean;
   edit: boolean;
+  submit: boolean;
   post: boolean;
   cancel: boolean;
 };
@@ -113,17 +152,31 @@ export function transactionAbilities(
   return {
     create: held.has("CASH_BANK_TRANSACTION_CREATE"),
     edit: held.has("CASH_BANK_TRANSACTION_EDIT"),
+    submit: held.has("CASH_BANK_TRANSACTION_SUBMIT"),
     post: held.has("CASH_BANK_TRANSACTION_POST"),
     cancel: held.has("CASH_BANK_TRANSACTION_CANCEL"),
   };
 }
 
-/** The transitions this user may run against a document in this status. */
+/**
+ * The transitions this user may run against a document in this status.
+ *
+ * `funded` says which route the document takes: a Company with no Cash & Bank
+ * of its own submits a Funding Request instead of posting, and a Company with
+ * one posts directly. Both are never offered together — a document has exactly
+ * one way out of Draft, decided by whose document it is.
+ *
+ * Safe first, danger last: this is the **vertical** row-menu order.
+ * `orderForHeader` is what rearranges it for `.ph-act`.
+ */
 export function availableTransactionActions(
   status: TransactionStatus,
-  can: TransactionAbilities
+  can: TransactionAbilities,
+  options: { funded?: boolean } = {}
 ): TransactionAction[] {
-  const order: TransactionAction[] = ["post", "cancel"];
+  const order: TransactionAction[] = options.funded
+    ? ["submit", "cancel"]
+    : ["post", "cancel"];
   return order.filter(
     (a) => transactionTransitionAllowed(a, status) && can[a]
   );

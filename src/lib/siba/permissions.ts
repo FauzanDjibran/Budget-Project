@@ -142,6 +142,33 @@ export const PERMISSIONS = [
   { code: "CASH_BANK_TRANSACTION_EDIT", name: "Ubah Cash Bank Transaction", module: "finance" },
   { code: "CASH_BANK_TRANSACTION_POST", name: "Post Cash Bank Transaction", module: "finance" },
   { code: "CASH_BANK_TRANSACTION_CANCEL", name: "Batalkan Cash Bank Transaction", module: "finance" },
+  {
+    code: "CASH_BANK_TRANSACTION_SUBMIT",
+    name: "Ajukan Dana Cash Bank Transaction",
+    module: "finance",
+    description:
+      "Mengajukan dokumen Company anak kepada induk sebagai Funding Request. " +
+      "Hanya berlaku bagi Company yang tidak memiliki Cash & Bank sendiri.",
+  },
+
+  // Funding is the induk's side of the same business event, and a separate
+  // capability on purpose: raising a request is the anak's clerk, confirming it
+  // releases the induk's money. Nobody should hold one because they hold the
+  // other.
+  {
+    code: "FUNDING_REQUEST_VIEW",
+    name: "Lihat Funding Request",
+    module: "finance",
+    description: "Daftar dan rincian permintaan dana dari Company anak.",
+  },
+  {
+    code: "FUNDING_REQUEST_CONFIRM",
+    name: "Konfirmasi Funding Request",
+    module: "finance",
+    description:
+      "Mengonfirmasi permintaan dana Company anak dengan kas induk. Inilah batas " +
+      "aktual: kedua Company memperoleh journal pada saat konfirmasi.",
+  },
 
   // Report Views. `REPORT_` comes first for the same reason `MENU_` does: the
   // prefix says what kind of capability this is before it says which subject.

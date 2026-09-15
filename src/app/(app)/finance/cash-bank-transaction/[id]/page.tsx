@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { TransactionForm } from "@/components/finance/transaction-form";
 import { requirePermission } from "@/lib/siba/auth";
 import { budgetMappings } from "@/lib/siba/budget";
+import { accessibleCompanyIds } from "@/lib/siba/company-access";
+import { openRequestFor } from "@/lib/siba/funding";
 import {
   financeRefs,
   getTransaction,
@@ -27,11 +29,12 @@ export default async function Page({
   const transaction = await getTransaction(Number(id));
   if (!transaction) notFound();
 
-  const [lines, refs, mappings, emails] = await Promise.all([
+  const [lines, refs, mappings, emails, request] = await Promise.all([
     transactionLines(transaction.id),
-    financeRefs(),
+    financeRefs(await accessibleCompanyIds(actor.permissions)),
     budgetMappings(),
     userEmails([transaction.created_by, transaction.updated_by]),
+    openRequestFor(transaction.id),
   ]);
 
   return (
@@ -42,6 +45,7 @@ export default async function Page({
       refs={refs}
       purposes={purposeOptions()}
       mappings={mappings}
+      fundingRequestNo={request?.funding_request_no ?? null}
       createdByEmail={emails[transaction.created_by]}
       updatedByEmail={
         transaction.updated_by ? emails[transaction.updated_by] : undefined

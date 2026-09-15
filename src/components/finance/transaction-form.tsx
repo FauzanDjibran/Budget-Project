@@ -16,6 +16,7 @@ import {
   updateTransaction,
   type TransactionValues,
 } from "@/app/actions/finance";
+import { requestFunding, withdrawFunding } from "@/app/actions/funding";
 import {
   formatDate,
   formatMoney,
@@ -39,6 +40,11 @@ import {
   type TransactionAbilities,
   type TransactionAction,
 } from "@/lib/siba/transaction-workflow";
+import {
+  headerButtonClass,
+  orderForHeader,
+  type ActionTone,
+} from "@/lib/siba/header-actions";
 import { BudgetPicker } from "./budget-picker";
 
 export type TransactionFormMode = "new" | "view" | "edit";
@@ -73,6 +79,8 @@ export function TransactionForm({
   refs,
   purposes,
   mappings,
+  defaultCurrencyId,
+  fundingRequestNo,
   createdByEmail,
   updatedByEmail,
   can,
@@ -83,6 +91,10 @@ export function TransactionForm({
   refs: FinanceRefs;
   purposes: PurposeOption[];
   mappings: BudgetMapping[];
+  /** Prefills the Currency picker on the funded route — a default, never a rule. */
+  defaultCurrencyId?: number | null;
+  /** The open request this document is waiting on, where it has one. */
+  fundingRequestNo?: string | null;
   createdByEmail?: string;
   updatedByEmail?: string;
   can: TransactionAbilities;
@@ -92,7 +104,7 @@ export function TransactionForm({
   const editing = mode === "new" || mode === "edit";
 
   const [values, setValues] = useState<TransactionValues>(() =>
-    initialValues(transaction, refs)
+    initialValues(transaction, refs, defaultCurrencyId ?? null)
   );
   const [draftLines, setDraftLines] = useState<DraftLine[]>(() =>
     lines.map((l) => ({
@@ -120,15 +132,30 @@ export function TransactionForm({
   const companyId = values.company_id ? Number(values.company_id) : null;
   const cashBank =
     refs.cashBanks.find((c) => String(c.id) === values.cash_bank_id) ?? null;
+
+  /**
+   * Which route this document takes, decided by whose document it is.
+   *
+   * The induk holds the cash and posts directly. The anak holds none by design
+   * (concept doc §25, §32), so it names a Currency instead of a resource and
+   * its document is posted by the induk confirming its Funding Request.
+   */
+  const funded = Boolean(
+    companyId && !refs.companies.find((c) => c.id === companyId)?.isParent
+  );
+
   const currencyLabel = editing
-    ? cashBank?.currencyLabel ?? "—"
+    ? funded
+      ? refs.currencies.find((c) => String(c.id) === values.currency_id)?.label ??
+        "—"
+      : cashBank?.currencyLabel ?? "—"
     : refs.currencies.find((c) => c.id === transaction?.currency_id)?.label ??
       "IDR";
 
   const headerReady = Boolean(
     purpose &&
       companyId &&
-      values.cash_bank_id &&
+      (funded ? values.currency_id : values.cash_bank_id) &&
       (!needsPartner || values.partner_id)
   );
 
@@ -140,6 +167,13 @@ export function TransactionForm({
       if (key === "purpose") {
         const p = purposes.find((x) => x.key === value);
         if (!p?.partnerCategory) next.partner_id = "";
+      }
+      // Company decides the route, and each route names a different field. A
+      // resource left over from the other Company would be a header the Server
+      // Action refuses — and a Partner belongs to one Company only.
+      if (key === "company_id") {
+        next.cash_bank_id = "";
+        next.partner_id = "";
       }
       return next;
     });
@@ -163,7 +197,13 @@ export function TransactionForm({
     linesRef.current = draftLines;
   }, [draftLines]);
 
-  const { purpose: purposeKey, company_id, partner_id, cash_bank_id } = values;
+  const {
+    purpose: purposeKey,
+    company_id,
+    partner_id,
+    cash_bank_id,
+    currency_id,
+  } = values;
   const transactionId = transaction?.id;
 
   useEffect(() => {
@@ -178,6 +218,7 @@ export function TransactionForm({
               company_id,
               partner_id,
               cash_bank_id,
+              currency_id,
               note: "",
             },
             transactionId ? { excludeTransactionId: transactionId } : {}
@@ -211,6 +252,7 @@ export function TransactionForm({
     company_id,
     partner_id,
     cash_bank_id,
+    currency_id,
     transactionId,
   ]);
 
@@ -263,6 +305,7 @@ export function TransactionForm({
   );
 
   const company = refs.companies.find((c) => c.id === companyId) ?? null;
+  const selectableCompanies = refs.companies.filter((c) => c.selectable);
   const partner =
     refs.partners.find((p) => String(p.id) === values.partner_id) ?? null;
 
@@ -349,7 +392,18 @@ export function TransactionForm({
   const run = async (action: TransactionAction) => {
     if (!transaction) return;
     setBusy(true);
-    const result = await transitionTransaction(transaction.id, action);
+    // Submitting raises a Funding Request, and withdrawing a Pending document
+    // closes one — both are state the Funding module owns, so both go through
+    // its action rather than Finance's. Which one runs is decided here and
+    // re-decided by the Server Action; neither is a rule this component holds.
+    const viaFunding =
+      action === "submit" ||
+      (action === "cancel" && transaction.status === "Pending");
+    const result = viaFunding
+      ? action === "submit"
+        ? await requestFunding(transaction.id)
+        : await withdrawFunding(transaction.id)
+      : await transitionTransaction(transaction.id, action);
     setBusy(false);
     setConfirm(null);
     if (result.ok) {
@@ -369,9 +423,62 @@ export function TransactionForm({
   const listHref = "/finance/cash-bank-transaction";
   const backHref = transaction ? `${listHref}/${transaction.id}` : listHref;
   const actions = transaction
-    ? availableTransactionActions(transaction.status, can)
+    ? availableTransactionActions(transaction.status, can, {
+        funded: !refs.companies.find((c) => c.id === transaction.company_id)
+          ?.isParent,
+      })
     : [];
   const postable = actions.includes("post") && lines.length > 0;
+
+  /**
+   * The view-mode header, in header order: danger, then neutral, then the one
+   * primary. `availableTransactionActions` returns menu order — safe first —
+   * which is the opposite arrangement and right for the vertical row menu only.
+   */
+  const viewActions: { key: string; tone: ActionTone; node: React.ReactNode }[] =
+    transaction
+      ? orderForHeader(
+          [
+            ...(can.edit && transactionIsEditable(transaction.status)
+              ? [
+                  {
+                    key: "edit",
+                    tone: "neutral" as ActionTone,
+                    node: (
+                      <Link
+                        key="edit"
+                        className="btn"
+                        href={`${listHref}/${transaction.id}/edit`}
+                      >
+                        <Icon name="pen" size={15} /> Ubah
+                      </Link>
+                    ),
+                  },
+                ]
+              : []),
+            ...actions.map((a) => {
+              const t = TRANSACTION_TRANSITIONS[a];
+              const blocked = a === "post" && !postable;
+              return {
+                key: a,
+                tone: t.tone,
+                node: (
+                  <button
+                    key={a}
+                    className={headerButtonClass(t.tone)}
+                    disabled={busy || blocked}
+                    title={blocked ? "Tambahkan minimal satu Budget" : undefined}
+                    onClick={() => setConfirm(a)}
+                  >
+                    <Icon name={t.icon} size={15} /> {t.label}
+                  </button>
+                ),
+              };
+            }),
+          ],
+          (i) => i.tone
+        )
+      : [];
 
   return (
     <>
@@ -416,34 +523,15 @@ export function TransactionForm({
             )}
             {mode === "view" && transaction && (
               <>
-                {can.edit && transactionIsEditable(transaction.status) && (
-                  <Link className="btn" href={`${listHref}/${transaction.id}/edit`}>
-                    <Icon name="pen" size={15} /> Ubah
-                  </Link>
-                )}
-                {actions.map((a) => {
-                  const t = TRANSACTION_TRANSITIONS[a];
-                  const blocked = a === "post" && !postable;
-                  return (
-                    <button
-                      key={a}
-                      className={`btn${t.danger ? " danger" : a === "post" ? " primary" : ""}`}
-                      disabled={busy || blocked}
-                      title={
-                        blocked ? "Tambahkan minimal satu Budget" : undefined
-                      }
-                      onClick={() => setConfirm(a)}
-                    >
-                      <Icon name={t.icon} size={15} /> {t.label}
-                    </button>
-                  );
-                })}
+                {viewActions.map((i) => i.node)}
                 {!actions.length && (
                   <span className="lockchip">
                     <Icon name="lock" size={13} />{" "}
                     {transaction.status === "Posted"
                       ? "Terkunci setelah Post"
-                      : "Dokumen dibatalkan"}
+                      : transaction.status === "Pending"
+                        ? "Menunggu konfirmasi induk"
+                        : "Dokumen dibatalkan"}
                   </span>
                 )}
               </>
@@ -539,18 +627,37 @@ export function TransactionForm({
                   <div className="fld">
                     <label>
                       Company
-                      {editing && <span className="lockb">Terkunci</span>}
+                      {mode === "new" && <span className="req">*</span>}
+                      {mode === "edit" && <span className="lockb">Terkunci</span>}
                     </label>
-                    <div className="ro">
-                      <span className="lab">{company?.label ?? "—"}</span>
-                      <span>{company?.name ?? ""}</span>
-                    </div>
+                    {mode === "new" && selectableCompanies.length > 1 ? (
+                      <Select
+                        value={values.company_id}
+                        invalid={Boolean(errors.company_id)}
+                        placeholder="Pilih Company…"
+                        options={selectableCompanies.map((c) => ({
+                          value: String(c.id),
+                          label: `${c.label} - ${c.name}`,
+                          hint: c.isParent
+                            ? "Punya Cash & Bank sendiri"
+                            : "Dana disediakan induk",
+                        }))}
+                        onChange={(v) => set("company_id", v)}
+                      />
+                    ) : (
+                      <div className="ro">
+                        <span className="lab">{company?.label ?? "—"}</span>
+                        <span>{company?.name ?? ""}</span>
+                      </div>
+                    )}
                     <Foot
                       error={errors.company_id}
                       help={
-                        editing
-                          ? "Dokumen kas/bank langsung hanya untuk Company induk. Kebutuhan Company anak dipenuhi melalui Funding Request."
-                          : undefined
+                        editing && funded
+                          ? "Company ini tidak memiliki Cash & Bank sendiri. Dokumennya diajukan ke induk sebagai Funding Request, dan terposting saat induk mengonfirmasi."
+                          : editing
+                            ? "Company pemilik dokumen. Currency dan Cash & Bank mengikuti Company ini."
+                            : undefined
                       }
                     />
                   </div>
@@ -606,9 +713,14 @@ export function TransactionForm({
 
                   <div className="fld">
                     <label>
-                      Cash &amp; Bank{editing && <span className="req">*</span>}
+                      Cash &amp; Bank
+                      {editing && !funded && <span className="req">*</span>}
                     </label>
-                    {editing ? (
+                    {funded ? (
+                      <div className="ro">
+                        <span className="dash">Melalui Funding Request</span>
+                      </div>
+                    ) : editing ? (
                       <Combobox
                         value={values.cash_bank_id ? Number(values.cash_bank_id) : null}
                         options={cashBankOptions}
@@ -633,9 +745,11 @@ export function TransactionForm({
                     <Foot
                       error={errors.cash_bank_id}
                       help={
-                        editing
-                          ? "Resource tempat uang bergerak. Currency dokumen mengikuti resource ini."
-                          : undefined
+                        funded
+                          ? "Company anak tidak memiliki Cash & Bank sendiri. Kas induk yang dipakai ditentukan induk saat mengonfirmasi funding."
+                          : editing
+                            ? "Resource tempat uang bergerak. Currency dokumen mengikuti resource ini."
+                            : undefined
                       }
                     />
                   </div>
@@ -643,11 +757,34 @@ export function TransactionForm({
 
                 <div className="frow">
                   <div className="fld">
-                    <label>Currency</label>
-                    <div className="ro">
-                      <span className="lab">{currencyLabel}</span>
-                      <span>mengikuti Cash &amp; Bank</span>
-                    </div>
+                    <label>
+                      Currency
+                      {editing && funded && <span className="req">*</span>}
+                    </label>
+                    {editing && funded ? (
+                      <Combobox
+                        value={values.currency_id ? Number(values.currency_id) : null}
+                        options={refs.currencies}
+                        placeholder="Pilih Currency…"
+                        invalid={Boolean(errors.currency_id)}
+                        onChange={(v) => set("currency_id", v ? String(v) : "")}
+                      />
+                    ) : (
+                      <div className="ro">
+                        <span className="lab">{currencyLabel}</span>
+                        <span>
+                          {funded ? "kebutuhan dana" : "mengikuti Cash & Bank"}
+                        </span>
+                      </div>
+                    )}
+                    <Foot
+                      error={errors.currency_id}
+                      help={
+                        editing && funded
+                          ? "Menentukan Budget mana yang dapat direalisasikan, dan kas induk mana yang dapat memenuhinya."
+                          : undefined
+                      }
+                    />
                   </div>
                   <div className="fld">
                     <label>Tanggal Dokumen</label>
@@ -918,13 +1055,46 @@ export function TransactionForm({
                   {editing
                     ? headerReady
                       ? "Tekan Tambah Budget untuk melihat Budget yang memenuhi kriteria header dokumen ini."
-                      : "Pilih Transaction Purpose, Partner (bila diperlukan), dan Cash & Bank terlebih dahulu."
+                      : funded
+                        ? "Pilih Transaction Purpose, Partner (bila diperlukan), dan Currency terlebih dahulu."
+                        : "Pilih Transaction Purpose, Partner (bila diperlukan), dan Cash & Bank terlebih dahulu."
                     : "Tidak ada line pada dokumen ini."}
                 </p>
               </div>
             )}
 
-            {cashBank && total > 0 && (
+            {funded && total > 0 && (
+              <div className="cardfoot">
+                <div className="impact">
+                  <div className="ttl">Dampak Transaksi</div>
+                  <div className="ir">
+                    <span>Arah kas</span>
+                    <b>{inn ? "Penerimaan" : "Pengeluaran"}</b>
+                  </div>
+                  <div className="ir">
+                    <span>Sumber dana</span>
+                    <b>Kas induk melalui Funding Request</b>
+                  </div>
+                  <div className="ir">
+                    <span>Account tujuan</span>
+                    <b>{account ? account.accountLabel : "belum dipetakan"}</b>
+                  </div>
+                  <div className="ir">
+                    <span>
+                      {transaction?.status === "Posted"
+                        ? `Posisi terhadap induk`
+                        : "Saat funding dikonfirmasi"}
+                    </span>
+                    <b>
+                      {inn ? "Piutang kepada induk" : "Hutang kepada induk"}{" "}
+                      {formatMoney(total, currencyLabel)}
+                    </b>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!funded && cashBank && total > 0 && (
               <div className="cardfoot">
                 <div className="impact">
                   <div className="ttl">Dampak Transaksi</div>
@@ -1085,9 +1255,13 @@ export function TransactionForm({
                 <p className="sidenote">
                   {transaction!.status === "Posted"
                     ? "Dokumen sudah menjadi transaksi aktual: realisasi Budget dan saldo Cash & Bank sudah bergerak, dan entri Cash Bank Book sudah tercatat. Historical record bersifat append-only — koreksi dilakukan sebagai dokumen baru."
-                    : transaction!.status === "Draft"
-                      ? "Dokumen masih Draft. Budget dan saldo Cash & Bank belum bergerak, dan Tanggal Dokumen belum dicatat."
-                      : "Dokumen dibatalkan sebelum Post, sehingga tidak pernah menyentuh Budget maupun saldo."}
+                    : transaction!.status === "Pending"
+                      ? `Dokumen menunggu konfirmasi Company induk${
+                          fundingRequestNo ? ` (${fundingRequestNo})` : ""
+                        }. Belum ada yang bergerak: kas, realisasi Budget, buku pembantu, dan journal kedua Company baru tercatat saat funding dikonfirmasi.`
+                      : transaction!.status === "Draft"
+                        ? "Dokumen masih Draft. Budget dan saldo Cash & Bank belum bergerak, dan Tanggal Dokumen belum dicatat."
+                        : "Dokumen dibatalkan sebelum Post, sehingga tidak pernah menyentuh Budget maupun saldo."}
                 </p>
               </div>
             )}
@@ -1127,13 +1301,13 @@ export function TransactionForm({
         <ConfirmDialog
           open
           icon={TRANSACTION_TRANSITIONS[confirm].icon}
-          tone={TRANSACTION_TRANSITIONS[confirm].danger ? "danger" : "ok"}
+          tone={TRANSACTION_TRANSITIONS[confirm].tone === "danger" ? "danger" : "ok"}
           title={TRANSACTION_TRANSITIONS[confirm].title}
           subject={`${transaction.transaction_no} – ${formatMoney(total, currencyLabel)}`}
           body={TRANSACTION_TRANSITIONS[confirm].body}
           confirmLabel={TRANSACTION_TRANSITIONS[confirm].confirmLabel}
           confirmTone={
-            TRANSACTION_TRANSITIONS[confirm].danger ? "solid-danger" : "primary"
+            TRANSACTION_TRANSITIONS[confirm].tone === "danger" ? "solid-danger" : "primary"
           }
           busy={busy}
           onConfirm={() => run(confirm)}
@@ -1177,18 +1351,24 @@ function Foot({ error, help }: { error?: string; help?: string }) {
 
 function initialValues(
   transaction: TransactionRow | null,
-  refs: FinanceRefs
+  refs: FinanceRefs,
+  defaultCurrencyId: number | null
 ): TransactionValues {
   if (!transaction) {
+    // The induk where this reader may write for it, since that is where most
+    // documents are written — but it is a starting point, not a lock: the anak
+    // reaches Finance through the same screen, by the funded route.
+    const selectable = refs.companies.filter((c) => c.selectable);
+    const start =
+      selectable.find((c) => c.id === refs.transactingCompanyId) ??
+      (selectable.length === 1 ? selectable[0] : null);
+
     return {
       purpose: "",
-      // The induk is the only Company this document may name, so it is filled
-      // in rather than asked for — see `transactingCompany` in `finance.ts`.
-      company_id: refs.transactingCompanyId
-        ? String(refs.transactingCompanyId)
-        : "",
+      company_id: start ? String(start.id) : "",
       partner_id: "",
       cash_bank_id: "",
+      currency_id: defaultCurrencyId ? String(defaultCurrencyId) : "",
       note: "",
     };
   }
@@ -1199,6 +1379,7 @@ function initialValues(
     cash_bank_id: transaction.cash_bank_id
       ? String(transaction.cash_bank_id)
       : "",
+    currency_id: String(transaction.currency_id),
     note: transaction.note ?? "",
   };
 }

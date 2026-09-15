@@ -23,8 +23,10 @@ import { fiscalYearPeriods } from "@/lib/siba/fiscal";
 import { defaultCurrencyId } from "@/lib/siba/system-settings";
 import {
   fiscalYearAbilities,
+  availableActions as availableFiscalActions,
   type FiscalYearStatus,
 } from "@/lib/siba/fiscal-workflow";
+import type { ActionTone } from "@/lib/siba/header-actions";
 import { userEmails } from "@/lib/siba/users";
 import { EntityList } from "@/components/master/entity-list";
 
@@ -169,15 +171,28 @@ export async function EntityDetailPage({
 
   // A Fiscal Year has a lifecycle rather than a status field: it is activated,
   // which is what generates its periods. Everything else here is registry-driven.
+  const fiscalStatus = String(row.status ?? "Draft") as FiscalYearStatus;
+  const fiscalCan = fiscalYearAbilities(actor.permissions);
   const headerActions =
     entity.key === "acc_fiscal_year" ? (
       <FiscalYearActions
         id={row.id}
         subject={`${row.year_label} – ${row.year_name}`}
-        status={String(row.status ?? "Draft") as FiscalYearStatus}
-        can={fiscalYearAbilities(actor.permissions)}
+        status={fiscalStatus}
+        can={fiscalCan}
       />
     ) : undefined;
+
+  // A header carries one primary and it is the rightmost button. Activating a
+  // Fiscal Year is the chief thing that screen is for, so where it is offered
+  // Ubah steps down to neutral and sits to its left — the same arrangement
+  // Budget and Cash Bank Transaction already use for Ubah beside a lifecycle
+  // action. With nothing to activate, Ubah is the primary again.
+  const editTone: ActionTone =
+    entity.key === "acc_fiscal_year" &&
+    availableFiscalActions(fiscalStatus, fiscalCan).length > 0
+      ? "neutral"
+      : "primary";
 
   const form = (
     <EntityForm
@@ -189,6 +204,7 @@ export async function EntityDetailPage({
       updatedByEmail={emails[row.updated_by as number]}
       can={abilitiesFor(entity.key, actor.permissions)}
       headerActions={headerActions}
+      editTone={editTone}
     />
   );
 

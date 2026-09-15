@@ -79,6 +79,7 @@ const TABLE_OWNERS: Record<string, string[]> = {
     "src/lib/siba/finance.ts",
     "src/app/actions/finance.ts",
   ],
+  finFundingRequest: ["src/lib/siba/funding.ts", "src/app/actions/funding.ts"],
   cashBankLedger: ["src/lib/siba/cash-bank.ts"],
   cashBankBalance: ["src/lib/siba/cash-bank.ts"],
   subLedger: ["src/lib/siba/subledger.ts"],
@@ -150,6 +151,20 @@ describe("the dependency graph points one way", () => {
       !sibaImports(sibaModule("budget").text).includes("finance"),
       "Finance executes what Budget plans, so Finance may depend on Budget and never " +
         "the reverse. A plan is complete without an execution."
+    );
+  });
+
+  test("finance.ts does not import funding.ts", () => {
+    // Funding is how the anak's cash arrives, not what the realization *is*:
+    // a Cash Bank Transaction is complete without one, exactly as a Budget is
+    // complete without a realization. Funding therefore reads documents and
+    // moves their status through functions Finance exports, and Finance names
+    // nothing here — which is also what keeps the confirmation able to write
+    // both Companies inside one transaction that Funding owns.
+    assert.ok(
+      !sibaImports(sibaModule("finance").text).includes("funding"),
+      "Funding depends on Finance, never the reverse. Export what Funding needs " +
+        "from finance.ts instead of reaching back into it."
     );
   });
 

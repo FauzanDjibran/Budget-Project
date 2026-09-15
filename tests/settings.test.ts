@@ -106,11 +106,15 @@ describe("the System Default catalogue lives in code", () => {
   });
 
   test("a ref value reads back as a row id, and anything else as nothing", () => {
-    assert.equal(refValueOf({ default_currency: "12" }, "default_currency"), 12);
-    assert.equal(refValueOf({ default_currency: null }, "default_currency"), null);
-    assert.equal(refValueOf({ default_currency: "" }, "default_currency"), null);
-    assert.equal(refValueOf({ default_currency: "abc" }, "default_currency"), null);
-    assert.equal(refValueOf({ default_currency: "0" }, "default_currency"), null);
+    const values = (raw: string | null) => ({
+      ...EMPTY_SYSTEM_DEFAULTS,
+      default_currency: raw,
+    });
+    assert.equal(refValueOf(values("12"), "default_currency"), 12);
+    assert.equal(refValueOf(values(null), "default_currency"), null);
+    assert.equal(refValueOf(values(""), "default_currency"), null);
+    assert.equal(refValueOf(values("abc"), "default_currency"), null);
+    assert.equal(refValueOf(values("0"), "default_currency"), null);
   });
 });
 
