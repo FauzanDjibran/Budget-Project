@@ -14,15 +14,16 @@
 ## 1. Project Overview
 
 **SIBA 3.0** is a multi-company budgeting and accounting web application, built in
-Indonesian for Indonesian accounting practice.
+Indonesian for Indonesian accounting practice. It is a **real application on a real
+database**, used by real people who enter their own data.
 
 Governing principle from the concept doc:
 
 > Budget plans → Finance executes → on Post, one business event writes to several
 > **independent** books in parallel → those books reconcile against the General Ledger.
 
-The project is a **conversion of a finished HTML prototype into a real app**. All
-source material lives in `Initialization/` (committed, treated as read-only reference):
+The project began as a **conversion of a finished HTML prototype**. All source
+material lives in `Initialization/` (committed, treated as read-only reference):
 
 | File | Role |
 | --- | --- |
@@ -31,20 +32,28 @@ source material lives in `Initialization/` (committed, treated as read-only refe
 | `SIBA Mockup 2.0.html` | The mockup — a working ~4.7k-line JS SPA, not static HTML |
 | `akui_proto_ui_reference.md` | UI/UX benchmark study that produced the mockup's design |
 
-**Scope split (frozen — see §12):**
+**The mockup is a reference for UI and behaviour only — never for data.** Because
+it is a self-contained HTML simulation with no database, it carried its whole
+dataset inline. That dataset was demo content, not canonical fixtures, and none of
+it exists in the application any more. Master data belongs to whoever uses the app
+and is expected to grow and change through the GUI. Do not design features, tests
+or invariants that assume a particular row exists.
 
-- **V1 (current)** — parity with `SIBA Mockup 2.0.html`: Master, Budget planning and
-  approval, Finance execution through Post. Plus real authentication, which the
-  mockup stubs out.
-- **V2 (deferred)** — the posting engine (Journal, General Ledger, and the Cash Bank /
-  Prive / Titipan / Hutang / Piutang books), Opening Balance, and the intercompany
-  Funding Request flow. Full list in §13.
+**Scope:**
+
+- **Built** — authentication and RBAC, Master, Accounting, Budget through approval,
+  and the Cash Bank Book (`cash_bank_ledger` / `cash_bank_balance`).
+- **Not yet built** — the posting engine (Journal, General Ledger, and the Prive /
+  Titipan / Hutang / Piutang books), Opening Balance, and the intercompany Funding
+  Request flow. Full list in §13.
 
 ### Current status
 
 | Area | State |
 | --- | --- |
-| Scaffold, DB, migration, seed | Done |
+| Scaffold, DB, migration | Done |
+| Seed | Done — **system data only**, idempotent, destroys nothing (§12) |
+| Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; opening balance entered when a resource is registered |
 | Design system port | Done |
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done |
@@ -56,16 +65,18 @@ source material lives in `Initialization/` (committed, treated as read-only refe
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
-| Tests | Security suite plus the Accounting and Budget enforcement points, via `node:test` (`npm test`). |
+| Tests | Security suite plus the Accounting, Budget and Cash Bank Book enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. |
 
 ---
 
 ## 2. Core Principles
 
-1. **The mockup drives the UI. The concept doc drives behaviour. The DBML drives the
-   data model.** When they conflict, surface the conflict — do not silently pick one.
-2. **V1 means mockup parity.** Do not build V2 features (journals, ledgers, funding
-   requests) without explicit instruction.
+1. **The mockup informs the UI. The concept doc drives behaviour. The DBML informs the
+   data model.** None of the three governs the data: the database does. When they
+   conflict, surface the conflict — do not silently pick one.
+2. **The seeder seeds system data only.** Everything a user can create through the
+   GUI, a user creates. Never plant business data in the seed, and never write a
+   seed step that deletes it.
 3. **The design system is finished work.** Reuse its class names; do not restyle.
 4. **Registry over pages.** New entities are added as config, not as new page files.
 5. **Validate on the server.** Client-side checks are convenience, never the guarantee.
@@ -112,7 +123,7 @@ of its own.
 | --- | --- | --- |
 | Entity registry | `src/lib/siba/entities.ts` | Field + column config driving list, detail and form |
 | Navigation model | `src/lib/siba/nav.ts` | Modules → groups → entities; rail and submenu |
-| Business rules | `src/lib/siba/rules.ts` | Budget categories, 22 transaction purposes, FX rates |
+| Business rules | `src/lib/siba/rules.ts` | Budget categories and the 22 transaction purposes |
 | Permission catalogue | `src/lib/siba/permissions.ts` | Every capability in the system; client-safe |
 | Seeded roles | `src/lib/siba/roles.ts` | ADMIN / STAFF and their grants |
 | Authorization gate | `src/lib/siba/auth.ts` | `requireAuth`, `requirePermission`, `authorizeAction` |
@@ -125,6 +136,7 @@ of its own.
 | Data access | `src/lib/siba/records.ts` | Generic list/get/options/computed, COA tree, the account rules the actions enforce; `server-only` |
 | Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
 | Budget data | `src/lib/siba/budget.ts` | Month rollups, budget reads, classification enforcement, `BGT-` numbering; `server-only` |
+| Cash Bank Book | `src/lib/siba/cash-bank.ts` | Append-only ledger writes, the materialised balance, `CBL-` numbering, per-currency summary; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Budget writes | `src/app/actions/budget.ts` | Create, edit, and the lifecycle transitions |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
@@ -179,14 +191,14 @@ Initialization/          Read-only source material (concept, DBML, mockup, UI st
 prisma/
   schema.prisma          Data model; deviations from the DBML commented inline
   migrations/            Applied migrations
-  seed.ts                Mockup fixtures — the canonical "first initialization" data
+  seed.ts                System data only — idempotent, never touches business data
 src/
   proxy.ts               Optimistic redirect to /login (NOT a security boundary)
   app/
     layout.tsx           Root layout: fonts, metadata
     page.tsx             Sends a signed-in user to their first permitted page
     forbidden.tsx        403 outside the shell
-    globals.css          Design system, lifted from the mockup (see §12)
+    globals.css          Design system (see §12)
     (auth)/login/        The only page reachable without a session
     (app)/               Route group carrying the shell
       layout.tsx         requireAuth + shell; nav filtered by permission
@@ -208,12 +220,12 @@ src/
       profile.ts         Own profile and password
   components/
     icon.tsx             <Icon name size /> renderer
-    icon-paths.ts        SVG path map lifted from the mockup
+    icon-paths.ts        SVG path map
     shell/               App shell
     master/              entity-pages (the four shared pages), EntityList,
-                         AccountTree, EntityForm, recordTitle
+                         AccountTree, EntityForm, CashBankBook, recordTitle
     budget/              BudgetMonthList, BudgetList, BudgetForm,
-                         ApproveDialog, ReportPicker, CashPlaceholderDialog
+                         ApproveDialog, ReportPicker, CashBalanceDialog
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     ui/                  Combobox, ConfirmDialog, ToastProvider
@@ -223,9 +235,10 @@ src/
     siba/                entities, nav, rules, records, users,
                          permissions, roles, access, auth, auth-errors,
                          session, login, user-admin, profile, entity-access,
-                         budget, budget-workflow
+                         budget, budget-workflow, cash-bank
   generated/prisma/      Prisma client output — gitignored, never edit
-tests/                   Security suite + Accounting rules (node:test); helpers.ts holds fixtures
+tests/                   Security, Accounting, Budget and Cash Bank Book suites (node:test);
+                         helpers.ts builds and cleans up its own business fixtures
 .claude/skills/          Project skills — `run-siba` brings the app up locally (§6)
 .github/workflows/ci.yml PostgreSQL service -> migrate -> seed -> lint -> build -> test
 ```
@@ -244,8 +257,9 @@ npm run dev                  # dev server → http://localhost:3000
 npm run build                # production build (also typechecks)
 npm start                    # run the production build
 npm run lint                 # ESLint
-npm test                     # security suite — needs a seeded database
-npm run db:seed              # wipe + reseed to the mockup baseline
+npm test                     # test suite — needs a migrated, seeded database
+npm run db:seed              # sync system data; idempotent, destroys nothing
+npm run db:reset             # DESTRUCTIVE: drop, re-migrate, reseed
 npx prisma generate          # regenerate client after schema changes
 npx prisma migrate dev       # create + apply a migration
 npx prisma studio            # browse the database
@@ -257,9 +271,9 @@ create the database (`createdb -U postgres siba30`), then `npx prisma migrate de
 
 **"Run SIBA"** — the `run-siba` skill (`.claude/skills/run-siba/`) does the whole
 local bring-up: starts PostgreSQL, prepares `.env`, installs, generates the Prisma
-client, migrates, seeds *only* when the database is empty, and leaves `npm run dev`
-serving on port 3000. It refuses to run in a remote/cloud session, where `localhost`
-is not the user's machine.
+client, migrates, seeds the system data, and leaves `npm run dev` serving on port
+3000. It refuses to run in a remote/cloud session, where `localhost` is not the
+user's machine.
 
 **Tests cover the security paths, plus the Accounting and Budget enforcement points.**
 `npm test` runs `tests/*.test.ts` against a real, seeded database — authentication,
@@ -386,19 +400,30 @@ so `globals.css` ends with an anchor reset. Keep shared classes working for both
 - `*_label` — short human identifier (`Holding`, `IDR`, `1101`); dropdowns show `label - name`
 - `*_name` — full name
 
-**`m_cash_bank.balance` is not authoritative.** It is a mock-only running balance carried
-over for V1 parity and is read by nothing in the app. The real balance will come from
-`cash_bank_ledger` / `cash_bank_balance` in V2, at which point this column is dropped.
-Never treat it as the source of truth, and never add another running-balance field to a
-master table.
+**A balance is never a column on a master table.** `m_cash_bank` has no balance
+column and must never gain one. A cash or bank resource's balance comes from its
+book: `cash_bank_ledger` holds every movement and `cash_bank_balance` holds the
+running total, written in the same transaction as the entry that moved it. Read a
+balance through `src/lib/siba/cash-bank.ts`, never by summing something else.
+
+**The Cash Bank Book is append-only.** Entries are never updated and never deleted
+— including by a correction, which is itself a new entry. That is the whole point
+of a book: the balance can always be re-derived, and `rebuildCashBankBalance`
+proves the materialised total still matches. Never add an update or delete path to
+`cash_bank_ledger`.
+
+**Money in different currencies is never added together.** There is no
+authoritative exchange-rate source in the system, so totals are reported per
+currency (`MoneyTotal[]` and `formatTotals` in `src/lib/format.ts`). Do not
+reintroduce a conversion constant — see §12.
 
 **Migrations:** always `npx prisma migrate dev`. Never hand-edit an applied migration.
 Never use `prisma db push` on this project.
 
-**Seed:** `prisma/seed.ts` is the canonical first initialization — it mirrors the
-mockup's fixtures exactly (2 companies, 10 partners, 4 cash/bank, 36 accounts, 26
-mappings, 12 periods, 41 budgets, 8 transactions + 9 lines). It **deletes all data**
-first and resets sequences. Keep it the source of truth for baseline data.
+**Seed:** `prisma/seed.ts` syncs **system data only** and nothing else — see §12.
+It is idempotent, creates what is missing, deletes no business data, and is safe to
+run against a live database. Everything a user can create through the GUI is
+deliberately absent from it.
 
 ---
 
@@ -488,6 +513,12 @@ Implemented and enforced:
     an unmapped Company × Category × Partner Category combination, but still allows the
     approval — that gap belongs to the Accounting module, and refusing here would
     strand a planner behind someone else's unfinished setup.
+29. **A cash/bank balance comes only from the Cash Bank Book.** Every resource gets a
+    `cash_bank_balance` row when it is registered, and a non-zero starting figure is
+    written as an `Opening` entry in `cash_bank_ledger`. Nothing else may hold a
+    balance, and the ledger is append-only — see §9 and §12.
+30. **Money is totalled per currency, never converted.** No exchange rate exists in the
+    system, so a figure spanning currencies is reported as a list, not a sum — §12.
 
 Defined in `rules.ts`, not yet exercised by UI:
 
@@ -495,11 +526,14 @@ Defined in `rules.ts`, not yet exercised by UI:
     category × one direction, which is what lets it resolve to a single account.
     Purposes are **application logic, never a master table** — see §12.
 
-Specified in the concept doc, **not yet implemented** (V2 — see §13):
+Specified in the concept doc, **not yet implemented** (see §13):
 
 21. Post fans out into the cash/bank ledger, subject ledgers, and Journal → General Ledger.
+    The cash/bank half of this already exists: the posting engine calls
+    `recordCashBankEntry`, it does not build its own book.
 22. Operational books are independent append-only stores — **never** views over
-    journal lines. Only the General Ledger derives from journals.
+    journal lines. Only the General Ledger derives from journals. `cash_bank_ledger`
+    is built this way already.
 23. The child company's realization emits a Funding Request; the parent confirms it and
     one atomic event produces two journals linked by an Intercompany Event.
 24. No partial funding: realization = request = funding amount.
@@ -536,18 +570,37 @@ Specified in the concept doc, **not yet implemented** (V2 — see §13):
   stack traces. `UNAUTHENTICATED` redirects to login; `UNAUTHORIZED` renders a 403.
 - The seed's development password is intentionally weak and must not survive into any
   deployed environment. `SIBA_ADMIN_PASSWORD` is required when `NODE_ENV=production`.
-- Prisma parameterises queries; the one raw call (`$executeRawUnsafe` for sequence resets
-  in the seed) takes no user input. Do not introduce raw SQL with interpolated user input.
+- Prisma parameterises every query. The only raw SQL is the two `$queryRaw` schema
+  assertions in the test suite, which take no user input. Do not introduce raw SQL
+  with interpolated user input.
 
 ## 12. Important Decisions / Frozen Decisions
 
-### V1 = mockup parity
-- **Decision:** V1 ships exactly what the mockup demonstrates, plus real auth. Journals,
-  ledgers, opening balance and funding requests are V2.
-- **Reason:** The concept doc's posting engine has no tables in the DBML and no UI in the
-  mockup; designing it from prose belongs in its own scoped iteration.
-- **Impact:** V2 tables are absent from the schema deliberately.
-- **Do not change unless:** the user explicitly opens the V2 scope.
+### The seeder seeds system data only (FROZEN)
+- **Decision:** `prisma/seed.ts` writes the `sys_*` tables — the bootstrap
+  administrator, the permission catalogue, the seeded roles, the two Companies — plus
+  the reference tables that behave as system data even though their prefixes say
+  otherwise: account types, document types, budget categories, partner categories,
+  the account **category** and **subcategory** skeleton, and the base reporting
+  currency. Nothing else. Partners, cash & bank resources, further currencies,
+  accounts, mappings, fiscal years and periods, budgets and transactions are business
+  data that users create through the GUI.
+- **Reason:** The seed previously reproduced `SIBA Mockup 2.0.html`'s inline dataset as
+  if it were canonical. It was demo content in a file with no database. Now that the
+  application runs on PostgreSQL, that data belongs to whoever uses it, and reseeding
+  it would wipe real records and reimpose demo content.
+- **Impact:** A fresh installation has system data and nothing else. The dashboard's
+  "Perlu Perhatian" card is the setup path — it names the chart of accounts, the
+  fiscal calendar, the mappings and the missing cash resources in dependency order.
+  Tests build their own business fixtures (`tests/helpers.ts`) and clean them up.
+- **The seed is also idempotent and non-destructive.** It creates what is missing and
+  leaves everything else alone, so it is safe to run against a live database and is
+  how a newly added permission reaches it. The one exception is the permission
+  catalogue, which is re-synced from code because code is its source of truth.
+  `npm run db:reset` is the separate, explicitly destructive path.
+- **Do not change unless:** explicitly instructed. **Never add business data to the
+  seed, and never add a delete step to it.**
+- **Status:** Frozen, current.
 
 ### Design system lifted verbatim
 - **Decision:** `globals.css` is the mockup's stylesheet, near-unmodified. No Tailwind or
@@ -618,12 +671,12 @@ Specified in the concept doc, **not yet implemented** (V2 — see §13):
   `(18,6)` on budget amounts only — read as a typo); `document_date` nullable (the mockup
   records it only at post time); added `SysUser`, `sys_company.is_parent`,
   `acc_account.partner_category_id`, `acc_budget_category_account.partner_category_id`,
-  `m_cash_bank.balance`, `audit_log`, and dropped `acc_account.partner_type`.
-- **Reason:** The DBML lacks columns the mockup demonstrably needs; the mockup annotates
+  `audit_log`, the Cash Bank Book tables, and dropped `acc_account.partner_type`.
+- **Reason:** The DBML lacks columns the application demonstrably needs; the mockup annotates
   most of these itself.
 - **Impact:** The DBML is reference, not gospel.
-- **Caveat:** `m_cash_bank.balance` is the one addition with an expiry date — it is
-  mock-only and gets dropped in V2. See §9.
+- **Note:** `cash_bank_ledger` / `cash_bank_balance` are the concept doc's "Cash Bank
+  Book", which the DBML never modelled. See §9 and §12.
 - **Do not change unless:** the user confirms the original DBML intent.
 
 ### Combobox shows inactive records only when selected
@@ -649,7 +702,7 @@ Specified in the concept doc, **not yet implemented** (V2 — see §13):
 - **Impact:** Reverses the earlier decision that enabled Company create. Design future
   modules against this invariant rather than abstracting over it.
 - **Do not change unless:** an explicit new requirement changes the architecture.
-  **Do not assume this becomes configurable in V2 or later.**
+  **Do not assume this ever becomes configurable.**
 - **Status:** Frozen, foundational. Lock implemented in `src/lib/siba/company.ts`,
   enforced by the Server Actions and the `/master/[entity]` routes.
 
@@ -691,14 +744,43 @@ they relate. Keep the table; keep it out of the UI's write path.
   suggestion of a `fin_purpose` table.
 - **Status:** Frozen, current.
 
-### Cash/bank balance is never stored on the master
-- **Decision:** No running-balance field on `m_cash_bank`. Balance derives from
-  `cash_bank_ledger` / `cash_bank_balance` once V2 lands; the existing mock-only
-  `balance` column is dropped then.
-- **Reason:** A stored master balance duplicates ledger truth and drifts from it.
-- **Impact:** See §9. Nothing in the app reads the column today.
-- **Do not change unless:** explicitly instructed.
-- **Status:** Frozen. Column removal is a V2 task (§13).
+### The Cash Bank Book is the only source of a balance (FROZEN)
+- **Decision:** `m_cash_bank` has **no** balance column. Every movement is an entry in
+  `cash_bank_ledger`; `cash_bank_balance` holds the running total, one row per
+  resource, written in the same database transaction as the entry that moved it.
+  `src/lib/siba/cash-bank.ts` is the only module that writes either.
+- **Reason:** A balance stored on the master duplicates the book's truth and drifts
+  from it the first time anything is posted. Materialising the total next to the book
+  that produces it keeps reads cheap without creating a second answer:
+  `rebuildCashBankBalance` recomputes it from the entries and is what proves the two
+  still agree.
+- **Impact:** A resource's **opening balance** is entered on the Cash & Bank create
+  form and becomes the first entry in its book — a create-only, `virtual` registry
+  field that `createRecord` turns into an `Opening` entry, never a column. Every
+  resource gets a balance row at registration, even at zero. The Cash & Bank detail
+  page shows the book; the list shows the balance as a computed column.
+- **The book is append-only.** No update path, no delete path, no cascade. A
+  correction is a further entry. The concept doc also requires it to stay independent
+  of the journal: when the posting engine lands it calls `recordCashBankEntry`
+  alongside the journal write, and never derives one from the other.
+- **Do not change unless:** explicitly instructed. **Never store a balance on a master
+  table, and never make `cash_bank_ledger` editable.**
+- **Status:** Frozen, current.
+
+### Amounts are never converted between currencies (FROZEN)
+- **Decision:** There is no exchange rate anywhere in the application. The hardcoded
+  `RATES` constant is gone. Money is totalled per currency — `MoneyTotal[]` and
+  `formatTotals` in `src/lib/format.ts` — and rendered side by side (`Rp 45.000.000 ·
+  USD 3.500,00`).
+- **Reason:** The user confirmed a real rate source is coming in a later update. Until
+  it exists, any conversion is a fabricated number presented as a fact, and a budget
+  KPI or a submission report built on one is worse than no figure at all.
+- **Impact:** Budget KPIs, the Budget Month rollup, the submission report recap and the
+  cash balance card all report per currency. When the rate source arrives, conversion
+  is added on top of `MoneyTotal[]` — the per-currency figures stay.
+- **Do not change unless:** the real rate source lands. **Do not reintroduce a
+  conversion constant, and do not create an exchange-rate master table** (§13).
+- **Status:** Frozen, current.
 
 ### Master data is never deleted
 - **Decision:** No hard delete for master data anywhere. Deactivate via status.
@@ -755,39 +837,37 @@ they relate. Keep the table; keep it out of the UI's write path.
 - **Decision:** The module ships create → approve. There is no "Tutup budget" and no
   delete, even though the mockup's row menu offers both.
 - **Reason:** Confirmed with the user when the module was built. Closing belongs to
-  realization, which is V2 — nothing can realize a budget until Finance exists — and the
+  realization — nothing can realize a budget until the Finance module exists — and the
   permission catalogue carries neither `BUDGET_CLOSE` nor `BUDGET_DELETE`. A capability
   is a catalogue entry first (§12, "The permission catalogue lives in code").
-- **Impact:** `Closed` remains a valid status because seeded data carries it and the
-  list renders it; nothing in the application produces it yet. A test asserts the
+- **Impact:** `Closed` remains a valid status because the list renders it, but
+  nothing in the application produces it yet. A test asserts the
   transition table holds exactly submit / approve / reject / cancel.
 - **Do not change unless:** explicitly instructed — and then add the catalogue entry
   and reseed in the same change.
 - **Status:** Frozen, current.
 
-### The Budget page's cash balance card is an explicit placeholder
+### The Budget page's cash card reads the book
 - **Decision:** "Saldo Kas & Bank" on the budget list, its breakdown dialog, and the
-  submission report's Opening Balance all read `m_cash_bank.balance` — the mock-only
-  column §9 slates for deletion — and every one of them is labelled *Sementara* with
-  copy saying the real figure comes from the Cash Bank Ledger.
-- **Reason:** The user asked for the card to exist now and to be resolved in the next
-  module update. Showing it unlabelled would violate §9's "never treat it as the source
-  of truth"; the labelling is what makes the read acceptable in the meantime.
-- **Impact:** This is the **only** place in the application that reads that column. Do
-  not read it anywhere else, and do not quietly drop the "Sementara" badge or the
-  explanatory notes while the source is still the mock column. When
-  `cash_bank_ledger` / `cash_bank_balance` land in V2, these three call sites switch to
-  it and the column is dropped.
-- **Status:** Temporary by agreement — resolve with the V2 ledger, not before.
+  submission report's Opening Balance all read `cashBookSummary()` — real balances from
+  `cash_bank_balance`, grouped per currency. The *Sementara* labelling that accompanied
+  the old placeholder is gone, because the figure is no longer a placeholder.
+- **Reason:** The card was originally built on the mock-only `m_cash_bank.balance`
+  column and labelled to say so. With the Cash Bank Book in place there is a real
+  source, so the card states it plainly.
+- **Impact:** The dialog now lists balance per resource as well as per currency, since
+  the underlying data supports it. Inactive resources are excluded — an inactive
+  resource is not spendable capacity.
+- **Status:** Current.
 
 ### The submission report ships as UI without its export
 - **Decision:** "Laporan Pengajuan" renders the full picker — per-currency recap,
   selection, totals — and its "Unduh XLSX" button is disabled with an explanation.
-- **Reason:** The user asked to see the feature working without the export yet. The
-  recap's Opening Balance is the placeholder figure above, so the export could not
-  produce a trustworthy report until the ledger exists anyway.
+- **Reason:** The user asked to see the feature working without the export yet, and
+  writing the spreadsheet is a sizeable piece of work in its own right.
 - **Impact:** No XLSX writer and no spreadsheet dependency in the tree. Building the
-  export is a follow-up task, and it should wait for the ledger.
+  export is a follow-up task; its recap now rests on real balances, so nothing blocks
+  it but the work itself.
 - **Status:** Current, by agreement.
 
 ### `Initialization/` stays in the repository
@@ -912,25 +992,25 @@ they relate. Keep the table; keep it out of the UI's write path.
 
 ---
 
-## 13. V2 / Planned Changes
+## 13. Planned Changes
 
 Deferred by design. Do not build these without explicit instruction, and do not make
-V1 decisions that foreclose them.
+decisions now that foreclose them.
 
 | Item | Planned behaviour |
 | --- | --- |
-| Posting engine | On Post, one event writes the cash/bank ledger, the subject ledgers (Prive / Titipan / Hutang / Piutang) and the Journal → General Ledger, in parallel |
-| `cash_bank_ledger` / `cash_bank_balance` | New tables; become the authoritative source of cash/bank balance |
-| Drop `m_cash_bank.balance` | Remove the mock-only column once the ledger exists (§9) |
-| Exchange rate | Move from the placeholder constants in `rules.ts` to deriving from `cash_bank_balance`. **Do not create a standalone exchange-rate master table.** |
-| `Transfer` transaction type | Extend the transaction-type enum, UI and logic. Note `transaction_type` currently shares the `FlowDirection` enum with `budget_type`, so this likely needs a separate enum rather than a third member. Not part of the current MVP — do not force it in early. |
-| Opening Balance | `acc_opening_balance(_line)` tables and UI |
+| Finance module | Cash bank transactions: draft, edit, cancel, and Post |
+| Posting engine | On Post, one event writes the Cash Bank Book (via `recordCashBankEntry` — the book already exists), the subject ledgers (Prive / Titipan / Hutang / Piutang) and the Journal → General Ledger, in parallel |
+| Budget realization | `bud_budget.realized_amount` is written by a posted transaction settling the budget. Nothing writes it today |
+| Exchange rate | A real rate source, arriving in a later update. **Do not create a standalone exchange-rate master table, and do not reintroduce a hardcoded rate in the meantime** — §12 |
+| Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
+| `Transfer` transaction type | Extend the transaction-type enum, UI and logic. Note `transaction_type` currently shares the `FlowDirection` enum with `budget_type`, so this likely needs a separate enum rather than a third member |
+| Opening Balance | `acc_opening_balance(_line)` tables and UI — the accounting opening balance per account, distinct from a cash resource's opening entry, which already exists |
 | Funding Request | `fin_funding_request` + the atomic two-company posting and Intercompany Event |
 
-**Exchange rate — current state.** `RATES` in `src/lib/siba/rules.ts` holds temporary
-placeholder values (IDR / USD / SGD). This is a stopgap, **not** the intended
-architecture. Keep using the placeholder until the V2 source exists; do not mistake it
-for a finalised design and do not build a rate master.
+**Exchange rate — current state.** There is none, deliberately. Every total is
+reported per currency instead (§12). When the real source arrives, conversion is
+layered on top of `MoneyTotal[]`; the per-currency figures stay.
 
 ---
 
@@ -953,8 +1033,14 @@ for a finalised design and do not build a rate master.
   registry. The lifecycle is create → approve and lives in `budget-workflow.ts`.
 - Do **not** let a budget be edited outside Draft and Rejected, and do **not** let
   `category_id` or `partner_id` be set anywhere but approval.
-- Do **not** read `m_cash_bank.balance` anywhere new, and do **not** remove the
-  "Sementara" labelling from the three Budget call sites that already do (§12).
+- Do **not** add a balance column to `m_cash_bank` or any other master table, and do
+  **not** compute a balance anywhere but `src/lib/siba/cash-bank.ts` (§9, §12).
+- Do **not** add an update or delete path to `cash_bank_ledger`. The book is
+  append-only; a correction is a further entry.
+- Do **not** reintroduce a hardcoded exchange rate, and do **not** sum amounts across
+  currencies. Totals are reported per currency until a real rate source exists (§12).
+- Do **not** put business data in `prisma/seed.ts`, and do **not** add a delete step to
+  it. It syncs system data and nothing else (§12).
 - Do **not** add a `sys_user_permission` table or any second path to a permission —
   roles are the only one.
 - Do **not** add permission inheritance, ABAC, per-record ACLs, a policy engine, or a
@@ -971,39 +1057,42 @@ for a finalised design and do not build a rate master.
   `MENU_<AREA>_ACCESS` and is settled (§12).
 - Do **not** add session rotation, a cleanup scheduler, or a session-management
   framework. Dead rows are pruned on login and that is the whole mechanism (§12).
-- Do **not** store a running balance on `m_cash_bank` or any other master table.
 - Do **not** edit `src/generated/prisma/` — regenerate it.
 - Do **not** rewrite `globals.css` or introduce a utility CSS framework.
 - Do **not** rename Prisma fields to camelCase.
-- Do **not** build V2 features without explicit instruction.
+- Do **not** build the Finance module, the posting engine or the Funding Request flow
+  without explicit instruction (§13).
 - Do **not** add an API route layer for internal CRUD.
 - Do **not** hand-edit applied migrations or use `prisma db push`.
-- Do **not** run `npm run db:seed` against data the user cares about — it deletes everything.
-  Ask first outside local development.
-- Do **not** make operational books derive from journal lines (V2 constraint, but decide
-  nothing now that forecloses it).
+- Do **not** run `npm run db:reset` against data the user cares about — it drops the
+  database. `npm run db:seed` is the safe one and destroys nothing.
+- Do **not** make operational books derive from journal lines.
+- Do **not** write a test that assumes a particular business row exists. Build the
+  fixture (`tests/helpers.ts`) and clean it up.
 - Do **not** add dependencies without saying why; several installed ones are still unused.
 - Do **not** refactor working modules while implementing an unrelated feature.
 - Do **not** commit `.env` or any real credential.
-- Do **not** claim a feature works without having exercised it — there are no tests to lean on.
+- Do **not** claim a feature works without having exercised it.
 
 ---
 
 ## 15. Change Discipline
 
-1. **Read before writing.** Inspect the mockup's implementation of a feature before
-   building it; it is the specification. Its own comments flag what is mock-only.
+1. **Read before writing.** For a feature the mockup demonstrates, look at how it
+   behaves there before building it — for interaction and layout, never for its data.
 2. **Smallest change that works.** No speculative abstraction.
 3. **Reuse existing patterns** — registry config, Server Action shape, CSS classes.
 4. **Keep commits small and per-feature**, with the established message style.
 5. **Validate before reporting done:** `npm run build` (typechecks), `npm run lint`, and
    `npm test`. For UI work, exercise it in a browser; for write paths, verify the row in
-   Postgres. Anything touching authentication or authorization needs a test in
-   `tests/` — that is the one area with a suite, and it should stay that way.
+   Postgres. Anything touching authentication, authorization, or money needs a test in
+   `tests/`.
 6. **Report** files changed, what was verified, what was not, and anything unresolved.
 7. **Surface conflicts** between the concept doc, the DBML and the mockup — do not
    resolve them silently.
-8. **Restore the baseline** (`npm run db:seed`) after generating throwaway test data.
+8. **Clean up after yourself.** Throwaway data created while testing is removed by hand
+   or by a fixture teardown — never by reseeding, which no longer wipes anything, and
+   never by `db:reset` on a database holding real data.
 
 ---
 
@@ -1033,14 +1122,15 @@ for a finalised design and do not build a rate master.
 | Issue | Detail |
 | --- | --- |
 | Company context selector is inert | The topbar dropdown is local state and filters nothing. `Entity.scope` exists in the registry but is unused. |
-| Audit log shows raw table keys | Dashboard renders `m_partner` rather than the mockup's `Partner / Cabang Medan`; needs entity display names + record lookup. (The author column now resolves correctly.) |
-| `m_cash_bank.balance` still present | Mock-only column. Now read in exactly one place — the Budget page's cash placeholder, its dialog, and the report recap — always labelled *Sementara* (§12). Dropped in V2 (§13). |
-| Budget realization is inert | `realized_amount` is only ever what the seed carries: nothing in the app writes it until Finance exists. The "Belum Direalisasi" KPI and the `real.` sub-line are therefore accurate for seeded rows and zero for new ones. |
+| Audit log shows raw table keys | Dashboard renders `m_partner` rather than `Partner / Cabang Medan`; needs entity display names + record lookup. (The author column resolves correctly.) |
+| Budget realization is inert | Nothing writes `realized_amount` until the Finance module exists, so the "Belum Direalisasi" KPI reads as the full amount of every approved budget. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
+| The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, and — once Finance exists — by posting. There is deliberately no manual entry form yet. |
+| No fiscal-period generator | A fiscal year's twelve periods are created one at a time through the registry form. Workable but tedious on a fresh install. |
 | `zod` unused | Installed; validation is hand-written in the services. |
-| Tests cover security, Accounting and Budget only | No tests for the Master module or anything else. |
+| Tests cover security, Accounting, Budget and the Cash Bank Book | No tests for the Master module's own write path or the registry forms. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
-| Dashboard integrity checks reduced | Two of the mockup's checks (missing account, dangling FKs) were dropped — Postgres now makes them unrepresentable. This is intentional, recorded so it is not "restored" by mistake. |
+| Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |
 
 ## 18. Needs Confirmation
 
@@ -1057,8 +1147,9 @@ permissions".
 
 Everything else previously recorded here has moved into §12 as a frozen decision: the
 two-company structure and its three consequences, transaction purposes as application
-logic, cash/bank balance, delete policy, exchange-rate placeholder, `Transfer`, Budget
-Month, and keeping `Initialization/`.
+logic, the Cash Bank Book as the only source of a balance, the seeder's scope, no
+currency conversion, delete policy, `Transfer`, Budget Month, and keeping
+`Initialization/`.
 
 When something genuinely ambiguous appears, record it here rather than guessing — and
 move it into §12 or §10 once the user confirms it.

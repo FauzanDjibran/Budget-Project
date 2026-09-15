@@ -1,6 +1,6 @@
 ---
 name: run-siba
-description: Run the SIBA app so it serves at http://localhost:3000. Use whenever the user says "Run SIBA", "start SIBA", "run the app", "restart SIBA", or otherwise asks to have the application up. Starts PostgreSQL, prepares the database (migrate, and seed only when empty), and leaves `npm run dev` serving.
+description: Run the SIBA app so it serves at http://localhost:3000. Use whenever the user says "Run SIBA", "start SIBA", "run the app", "restart SIBA", or otherwise asks to have the application up. Starts PostgreSQL, prepares the database (migrate and seed system data), and leaves `npm run dev` serving.
 ---
 
 # Run SIBA
@@ -59,16 +59,24 @@ Then apply migrations with `npx prisma migrate deploy`. Use `deploy`, not
 `migrate dev` — this is a run task, not a schema change, and `dev` is
 interactive and can offer to reset.
 
-## 5. Seed — only when the database is empty
+## 5. Seed — always safe to run
 
-`npm run db:seed` **deletes every row** before inserting the baseline.
+`npm run db:seed` syncs **system data only**: the permission catalogue, the
+seeded roles, the bootstrap administrator, the two Companies, the reference
+tables (account types, document types, budget and partner categories, the
+account category / subcategory skeleton) and the base reporting currency.
 
-- Empty database (no `sys_user` rows) → seed without asking.
-- Existing data → **ask first**, and say plainly that it wipes everything. Skip
-  it on anything but a clear yes; the app runs fine against data already there.
+It is idempotent and deletes nothing a user entered, so run it every time. It
+creates what is missing and leaves everything else alone — which is also how a
+new permission added in code reaches the database.
 
-Reseed anyway when the permission catalogue changed in code, since the tests and
-the app read it from the database — but still ask if there is real data.
+Business data — partners, cash & bank resources, accounts, mappings, fiscal
+years and periods, budgets — is never seeded. A fresh installation starts empty
+and the user builds it through the application.
+
+If the user explicitly asks to start over from nothing, `npm run db:reset` drops
+the database, reapplies every migration and re-seeds. **It destroys all data** —
+only run it on a clear, specific yes.
 
 ## 6. Start the dev server
 
@@ -85,10 +93,13 @@ a healthy sign.
 Give the user:
 
 - the URL, <http://localhost:3000>
-- the sign-in credentials the seed printed, and what each account demonstrates:
-  - `admin@siba.app` — Administrator, holds every permission
-  - `meehun@siba.app` — Staff, holds a role with **no** permissions, so it signs
-    in and is refused everywhere except its own profile
+- the administrator sign-in the seed printed (`admin@siba.app` by default, or
+  whatever `SIBA_ADMIN_EMAIL` is set to). It is the only account the seed
+  creates, and it holds every permission
+- if the database is newly seeded, that the app starts with system data only:
+  the chart of accounts, partners, cash & bank resources, mappings and the
+  fiscal calendar are set up through the UI, and the dashboard's "Perlu
+  Perhatian" card lists what to do first
 - how to stop it (Ctrl-C, or the background task id)
 
 Keep the server running afterwards. Do not tear it down at the end of the turn.

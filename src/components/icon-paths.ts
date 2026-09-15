@@ -1,8 +1,8 @@
 /**
- * Icon paths lifted verbatim from the mockup's ICON map.
+ * The icon set, as raw SVG path markup.
  *
- * Stored as raw SVG path markup so the shapes stay byte-identical to the
- * prototype. The strings are authored here, never user input.
+ * The strings are authored here and never come from user input, which is what
+ * makes rendering them as markup safe.
  */
 export const ICON_PATHS = {  grid:'<path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/>',
   book:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',

@@ -1,4 +1,4 @@
-import test, { after, describe } from "node:test";
+import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { ENTITIES } from "../src/lib/siba/entities";
@@ -10,35 +10,71 @@ import {
   checkCashBankAccount,
   partnerCategoriesForBudgetCategory,
 } from "../src/lib/siba/records";
-import { disconnect, prisma } from "./helpers";
+import {
+  childCompanyId,
+  cleanupFixtures,
+  disconnect,
+  makeAccount,
+  parentCompanyId,
+  prisma,
+} from "./helpers";
 
 /**
- * The Accounting module's enforcement points, checked against the real seeded
- * database rather than against the pickers that present them.
+ * The Accounting module's enforcement points, checked against a real database.
  *
  * The rules here are the ones a hand-crafted request would have to get past:
  * which account a Cash & Bank resource may post to, whether a parent account
  * would close a loop, and which Partner Categories a Budget Category admits.
  * The form narrows its options to the same sets, but that is presentation.
+ *
+ * The chart of accounts is business data a real user builds, so this suite
+ * builds its own and removes it afterwards rather than assuming any account
+ * exists.
  */
 
-after(disconnect);
+after(async () => {
+  await cleanupFixtures();
+  await disconnect();
+});
 
-async function companyId(label: string): Promise<number> {
-  const row = await prisma.sysCompany.findFirstOrThrow({
-    where: { company_label: label },
-    select: { id: true },
-  });
-  return row.id;
-}
+let parent = 0;
+let child = 0;
 
-async function accountId(companyLabel: string, accountLabel: string): Promise<number> {
-  const row = await prisma.accAccount.findFirstOrThrow({
-    where: { company: { company_label: companyLabel }, account_label: accountLabel },
-    select: { id: true },
+/** A postable Kas account on the parent Company. */
+let cash = 0;
+/** A header account with one postable Bank account beneath it. */
+let bankHeader = 0;
+let bankLeaf = 0;
+/** A postable account outside the Kas/Bank groups. */
+let receivable = 0;
+/** A postable Kas account belonging to the *other* Company. */
+let foreignCash = 0;
+/** A deactivated Kas account. */
+let inactiveCash = 0;
+
+before(async () => {
+  parent = await parentCompanyId();
+  child = await childCompanyId();
+
+  cash = await makeAccount({ companyId: parent, subcategoryLabel: "Kas" });
+  bankHeader = await makeAccount({
+    companyId: parent,
+    subcategoryLabel: "Bank",
+    postable: false,
   });
-  return row.id;
-}
+  bankLeaf = await makeAccount({
+    companyId: parent,
+    subcategoryLabel: "Bank",
+    parentId: bankHeader,
+  });
+  receivable = await makeAccount({ companyId: parent, subcategoryLabel: "Piutang" });
+  foreignCash = await makeAccount({ companyId: child, subcategoryLabel: "Kas" });
+  inactiveCash = await makeAccount({
+    companyId: parent,
+    subcategoryLabel: "Kas",
+    active: false,
+  });
+});
 
 describe("every registry entity declares its permissions", () => {
   test("each operation names a permission that exists in the catalogue", () => {
@@ -69,64 +105,60 @@ describe("every registry entity declares its permissions", () => {
 });
 
 describe("a Cash & Bank resource may only post to an eligible account", () => {
-  test("accepts a postable Kas/Bank account owned by the same Company", async () => {
-    const holding = await companyId("Holding");
-    assert.equal(await checkCashBankAccount(await accountId("Holding", "1101"), holding), null);
-    assert.equal(await checkCashBankAccount(await accountId("Holding", "110201"), holding), null);
+  test("accepts a postable Kas or Bank account owned by the same Company", async () => {
+    assert.equal(await checkCashBankAccount(cash, parent), null);
+    assert.equal(await checkCashBankAccount(bankLeaf, parent), null);
   });
 
   test("refuses an account owned by the other Company", async () => {
-    const holding = await companyId("Holding");
-    const foreign = await accountId("Trading", "1101");
-    const problem = await checkCashBankAccount(foreign, holding);
+    const problem = await checkCashBankAccount(foreignCash, parent);
     assert.match(String(problem), /Company yang sama/);
   });
 
   test("refuses a header account, which cannot receive a Journal Line", async () => {
-    const holding = await companyId("Holding");
-    // 1102 Bank is the header above Bank Mandiri / Bank BCA.
-    const header = await accountId("Holding", "1102");
-    const problem = await checkCashBankAccount(header, holding);
+    const problem = await checkCashBankAccount(bankHeader, parent);
     assert.match(String(problem), /postable/);
   });
 
   test("refuses a postable account outside the Kas and Bank groups", async () => {
-    const holding = await companyId("Holding");
-    // 1201 Piutang dari Cabang is postable, so only the group rule stops it.
-    const receivable = await accountId("Holding", "1201");
     const row = await prisma.accAccount.findUniqueOrThrow({
       where: { id: receivable },
-      select: { is_postable: true, account_subcategory: { select: { subcategory_label: true } } },
+      select: {
+        is_postable: true,
+        account_subcategory: { select: { subcategory_label: true } },
+      },
     });
-    assert.equal(row.is_postable, true);
+    assert.equal(row.is_postable, true, "only the group rule may stop this one");
     assert.ok(!CASH_BANK_SUBCATEGORIES.includes(row.account_subcategory.subcategory_label));
 
-    const problem = await checkCashBankAccount(receivable, holding);
+    const problem = await checkCashBankAccount(receivable, parent);
     assert.match(String(problem), /Kas atau Bank/);
   });
 
+  test("refuses a deactivated account", async () => {
+    const problem = await checkCashBankAccount(inactiveCash, parent);
+    assert.match(String(problem), /non-aktif/);
+  });
+
   test("refuses an account that does not exist", async () => {
-    const problem = await checkCashBankAccount(999_999, await companyId("Holding"));
+    const problem = await checkCashBankAccount(999_999_999, parent);
     assert.match(String(problem), /tidak ditemukan/);
   });
 });
 
 describe("an account cannot become its own ancestor", () => {
   test("descendants of a header include the accounts under it", async () => {
-    const header = await accountId("Holding", "1102");
-    const child = await accountId("Holding", "110201");
-    const descendants = await accountDescendants(header);
-    assert.ok(descendants.has(header), "the root is part of its own subtree");
+    const descendants = await accountDescendants(bankHeader);
+    assert.ok(descendants.has(bankHeader), "the root is part of its own subtree");
     assert.ok(
-      descendants.has(child),
+      descendants.has(bankLeaf),
       "a child must be refused as its parent's parent"
     );
   });
 
   test("a leaf has no descendants but itself", async () => {
-    const leaf = await accountId("Holding", "110201");
-    const descendants = await accountDescendants(leaf);
-    assert.deepEqual([...descendants], [leaf]);
+    const descendants = await accountDescendants(bankLeaf);
+    assert.deepEqual([...descendants], [bankLeaf]);
   });
 });
 

@@ -1,4 +1,4 @@
-import test, { after, describe } from "node:test";
+import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
@@ -17,20 +17,33 @@ import {
   listBudgets,
   nextBudgetNo,
 } from "../src/lib/siba/budget";
-import { disconnect, prisma } from "./helpers";
+import {
+  budgetCategoryId,
+  childCompanyId,
+  cleanupFixtures,
+  disconnect,
+  makePartner,
+  parentCompanyId,
+  prisma,
+} from "./helpers";
 
 /**
- * The Budget module's enforcement points, checked against the real seeded
- * database rather than against the controls that present them.
+ * The Budget module's enforcement points, checked against a real database.
  *
  * Two things have to hold no matter how a request arrives. A transition must be
  * legal from the budget's current status, and a classification must satisfy the
  * whole chain Budget Category -> allowed Partner Categories -> Partner. The row
  * menu and the approval dialog narrow themselves to the same rules, but a
  * Server Action is reachable directly with any id and any pair of ids.
+ *
+ * Partners are business data a real user creates, so the classification cases
+ * below build the ones they need and remove them afterwards.
  */
 
-after(disconnect);
+after(async () => {
+  await cleanupFixtures();
+  await disconnect();
+});
 
 const ALL_STATUSES: BudgetStatus[] = [
   "Draft",
@@ -41,36 +54,25 @@ const ALL_STATUSES: BudgetStatus[] = [
   "Cancelled",
 ];
 
-async function categoryId(label: string): Promise<number> {
-  const row = await prisma.sysBudgetCategory.findFirstOrThrow({
-    where: { category_label: label },
-    select: { id: true },
-  });
-  return row.id;
-}
+const categoryId = budgetCategoryId;
 
-async function companyId(label: string): Promise<number> {
-  const row = await prisma.sysCompany.findFirstOrThrow({
-    where: { company_label: label },
-    select: { id: true },
-  });
-  return row.id;
-}
+let parent = 0;
+let child = 0;
+/** Partners of each category the classification rules distinguish. */
+let parentCabang = 0;
+let parentStakeholder = 0;
+let childCabang = 0;
 
-async function partnerIn(
-  companyLabel: string,
-  partnerCategoryLabel: string
-): Promise<number> {
-  const row = await prisma.mPartner.findFirstOrThrow({
-    where: {
-      company: { company_label: companyLabel },
-      category: { category_label: partnerCategoryLabel },
-      status: "Active",
-    },
-    select: { id: true },
+before(async () => {
+  parent = await parentCompanyId();
+  child = await childCompanyId();
+  parentCabang = await makePartner({ companyId: parent, categoryLabel: "Cabang" });
+  parentStakeholder = await makePartner({
+    companyId: parent,
+    categoryLabel: "Stakeholder",
   });
-  return row.id;
-}
+  childCabang = await makePartner({ companyId: child, categoryLabel: "Cabang" });
+});
 
 // ------------------------------------------------------------- the lifecycle
 
@@ -184,7 +186,7 @@ describe("a permission is required for every transition offered", () => {
 
 describe("approval classification is enforced, not merely offered", () => {
   const outBudget = async () => ({
-    company_id: await companyId("Holding"),
+    company_id: parent,
     budget_type: "Out",
   });
 
@@ -196,7 +198,7 @@ describe("approval classification is enforced, not merely offered", () => {
   test("a category is refused when the direction does not apply to it", async () => {
     // Hasil Investasi is In-only; approving an Out budget with it would put the
     // amount on the wrong side of the balance sheet.
-    const budget = { company_id: await companyId("Holding"), budget_type: "Out" };
+    const budget = { company_id: parent, budget_type: "Out" };
     const problems = await checkClassification(
       budget,
       await categoryId("Hasil Investasi"),
@@ -206,11 +208,11 @@ describe("approval classification is enforced, not merely offered", () => {
   });
 
   test("the same category is accepted in the direction it does apply to", async () => {
-    const budget = { company_id: await companyId("Holding"), budget_type: "In" };
+    const budget = { company_id: parent, budget_type: "In" };
     const problems = await checkClassification(
       budget,
       await categoryId("Hasil Investasi"),
-      await partnerIn("Holding", "Cabang")
+      parentCabang
     );
     assert.deepEqual(problems, {});
   });
@@ -230,7 +232,7 @@ describe("approval classification is enforced, not merely offered", () => {
     const problems = await checkClassification(
       await outBudget(),
       await categoryId("Biaya"),
-      await partnerIn("Holding", "Cabang")
+      parentCabang
     );
     assert.ok(problems.partner_id, "Biaya takes no Partner");
   });
@@ -240,17 +242,17 @@ describe("approval classification is enforced, not merely offered", () => {
     const problems = await checkClassification(
       await outBudget(),
       await categoryId("Prive"),
-      await partnerIn("Holding", "Cabang")
+      parentCabang
     );
     assert.ok(problems.partner_id, "Prive must not accept a Cabang partner");
   });
 
   test("a partner belonging to another Company is refused", async () => {
-    const budget = { company_id: await companyId("Holding"), budget_type: "Out" };
+    const budget = { company_id: parent, budget_type: "Out" };
     const problems = await checkClassification(
       budget,
       await categoryId("Hutang"),
-      await partnerIn("Trading", "Cabang")
+      childCabang
     );
     assert.ok(problems.partner_id, "a partner of another Company must be refused");
   });
@@ -259,7 +261,16 @@ describe("approval classification is enforced, not merely offered", () => {
     const problems = await checkClassification(
       await outBudget(),
       await categoryId("Hutang"),
-      await partnerIn("Holding", "Cabang")
+      parentCabang
+    );
+    assert.deepEqual(problems, {});
+  });
+
+  test("Prive accepts the one Partner Category it admits", async () => {
+    const problems = await checkClassification(
+      await outBudget(),
+      await categoryId("Prive"),
+      parentStakeholder
     );
     assert.deepEqual(problems, {});
   });
@@ -305,8 +316,10 @@ describe("Budget Month is derived from Fiscal Period, never stored", () => {
   });
 
   test("every month's rollup matches the budgets in its own date range", async () => {
+    // Fiscal periods are business data now, so an installation may legitimately
+    // have none. The rule under test is the rollup, which holds for however
+    // many periods exist.
     const months = await budgetMonths();
-    assert.ok(months.length > 0, "the seed provides fiscal periods");
 
     for (const month of months) {
       const inRange = await listBudgets({

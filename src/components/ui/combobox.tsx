@@ -5,7 +5,7 @@ import { Icon } from "@/components/icon";
 import type { RefOption } from "@/lib/siba/records";
 
 /**
- * FK picker from the mockup: a search field over `CODE – Name` options.
+ * FK picker: a search field over `CODE – Name` options.
  *
  * Inactive records are hidden, except the one currently selected — otherwise
  * editing an old record would silently drop a still-valid reference. That was

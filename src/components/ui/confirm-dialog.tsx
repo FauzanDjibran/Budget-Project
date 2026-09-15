@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { Icon, type IconName } from "@/components/icon";
 
 /**
- * Centred confirm dialog, matching the mockup: tinted icon, a subject chip
+ * Centred confirm dialog: tinted icon, a subject chip
  * naming the exact record, and body copy that states the consequence rather
  * than just asking "are you sure?".
  */

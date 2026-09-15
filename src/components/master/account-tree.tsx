@@ -33,7 +33,7 @@ export function AccountTree({
   const moduleName = moduleByKey(entity.module)?.name ?? entity.module;
 
   const [query, setQuery] = useState("");
-  /** Collapsed keys. Everything starts open, as in the mockup. */
+  /** Collapsed keys. Every branch starts open. */
   const [closed, setClosed] = useState<Set<string>>(new Set());
 
   const q = query.trim().toLowerCase();

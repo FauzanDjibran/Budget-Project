@@ -52,6 +52,7 @@ export default async function DashboardPage() {
     mappings,
     budgets,
     budgetCategories,
+    fiscalPeriods,
     recentAudit,
     structure,
   ] = await Promise.all([
@@ -66,6 +67,7 @@ export default async function DashboardPage() {
     }),
     prisma.budBudget.count(),
     prisma.sysBudgetCategory.findMany({ select: { id: true, category_label: true } }),
+    prisma.accFiscalPeriod.count(),
     prisma.auditLog.findMany({ orderBy: { at: "desc" }, take: 6 }),
     companyStructure(),
   ]);
@@ -87,9 +89,10 @@ export default async function DashboardPage() {
   ];
   const kpis = allKpis.filter((k) => can(k.permission));
 
-  // The mockup also checked for dangling foreign keys and cash banks with no
-  // account at all. Both are now impossible — Postgres enforces them — so only
-  // the checks that survive real constraints are kept.
+  // Follow-ups, in the order a new installation has to work through them: a
+  // chart of accounts, then the mapping that points budget categories at it,
+  // then a fiscal calendar, then somewhere for the money to sit. Referential
+  // problems Postgres already makes impossible are deliberately not checked.
   const attention: Attention[] = [];
 
   // The two-company structure is foundational: exactly one induk and one anak.
@@ -101,7 +104,30 @@ export default async function DashboardPage() {
       title: "Struktur Company tidak sesuai",
       detail:
         `Ditemukan ${structure.total} Company (${structure.parents} induk, ${structure.children} anak). ` +
-        "Sistem mengharuskan tepat satu induk dan satu anak — perbaiki melalui seed data.",
+        "Sistem mengharuskan tepat satu induk dan satu anak — perbaiki langsung pada database.",
+    });
+  }
+
+  // A brand-new installation has system data and nothing else. These say what
+  // to do next, in the order the modules depend on each other, rather than
+  // leaving someone to discover an empty picker on a form.
+  if (!accounts.length && can("ACCOUNT_VIEW")) {
+    attention.push({
+      href: "/accounting/account",
+      title: "Bagan akun belum dibuat",
+      detail:
+        "Account adalah dasar seluruh modul: Cash & Bank, mapping Budget Category, " +
+        "dan nantinya Journal. Susun bagan akun tiap Company terlebih dahulu.",
+    });
+  }
+
+  if (!fiscalPeriods && can("FISCAL_PERIOD_VIEW")) {
+    attention.push({
+      href: "/accounting/fiscal-period",
+      title: "Belum ada Fiscal Period",
+      detail:
+        "Budget Month mengikuti Fiscal Period. Tanpa satu pun periode, Budget yang " +
+        "dibuat tidak akan muncul pada bulan mana pun.",
     });
   }
 
@@ -116,13 +142,17 @@ export default async function DashboardPage() {
     });
   }
 
+  // Only worth raising once a chart of accounts exists — before that, the
+  // missing accounts are the thing to fix and this would just repeat it.
   const unmapped: string[] = [];
-  for (const c of companies) {
-    for (const bc of budgetCategories) {
-      const has = mappings.some(
-        (m) => m.company_id === c.id && m.budget_category_id === bc.id
-      );
-      if (!has) unmapped.push(`${c.company_label} · ${bc.category_label}`);
+  if (accounts.length) {
+    for (const c of companies) {
+      for (const bc of budgetCategories) {
+        const has = mappings.some(
+          (m) => m.company_id === c.id && m.budget_category_id === bc.id
+        );
+        if (!has) unmapped.push(`${c.company_label} · ${bc.category_label}`);
+      }
     }
   }
   if (unmapped.length && can("MAPPING_VIEW")) {

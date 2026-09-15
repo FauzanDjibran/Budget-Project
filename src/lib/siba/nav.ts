@@ -1,9 +1,7 @@
 /**
- * Navigation model, ported from the mockup's MODULES array and the module/group
- * metadata on each ENTITIES entry.
- *
- * The mockup routed on `#/module/entity/id/mode`. That maps directly onto
- * `/module/entity/[id]` here, so URLs stay recognisable.
+ * Navigation model: modules, the groups inside them, and the entities inside
+ * those. Each registry entity declares its own module and group, so this file
+ * describes the shape of the menu and nothing about the entities themselves.
  */
 import type { IconName } from "@/components/icon";
 import type { PermissionCode } from "./permissions";

@@ -6,7 +6,7 @@ import type { RefOption, Row } from "@/lib/siba/records";
  *
  * Most records carry their own identity — a label and a name. A mapping does
  * not: it exists only to connect three other records, so it is named by what it
- * connects (`titleRefs`), the way the mockup titled it.
+ * connects (`titleRefs`).
  */
 export function recordTitle(
   entity: Entity,

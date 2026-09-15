@@ -9,19 +9,23 @@ Built from the reference material in [`Initialization/`](./Initialization):
 | --- | --- |
 | `Konsep SIBA 3.0 v3.md` | Concept / behaviour spec |
 | `SIBA 3.0 DBML.txt` | Source database schema |
-| `SIBA Mockup 2.0.html` | UI mockup (a self-contained JS prototype) |
-| `akui_proto_ui_reference.md` | UI/UX benchmark study behind the mockup's design |
+| `SIBA Mockup 2.0.html` | UI reference (a self-contained JS prototype) |
+| `akui_proto_ui_reference.md` | UI/UX benchmark study behind the interface design |
+
+The mockup is a reference for **interface and behaviour only**. Its data was
+demo content baked into a file with no database; this application keeps none of
+it.
 
 ## Scope
 
-**V1 — in progress.** Parity with `SIBA Mockup 2.0.html`: Master data, Budget
-planning and approval, and Finance execution through Post. Plus real
-authentication, which the mockup stubs out.
+**Built.** Authentication and role-based access control, Master data, the
+Accounting module (chart of accounts, budget-category mapping, fiscal calendar),
+Budget planning through approval, and the Cash Bank Book — the append-only
+ledger each cash and bank resource's balance is derived from.
 
-**V2 — deferred.** The concept doc's posting engine (Journal, General Ledger, and
-the Cash Bank / Prive / Titipan / Hutang / Piutang books), Opening Balance, and
-the intercompany Funding Request flow. None of these exist in the mockup, and
-most have no tables in the source DBML.
+**Not yet built.** The posting engine that fans a Finance transaction out into
+the journal and the subject books (Prive / Titipan / Hutang / Piutang), the
+General Ledger, Opening Balance, and the intercompany Funding Request flow.
 
 ## Stack
 
@@ -29,7 +33,7 @@ most have no tables in the source DBML.
 - **Prisma 7** + **PostgreSQL**
 - Email/password authentication with database-backed sessions, and role-based
   access control — built on the framework's own primitives, no auth library
-- Plain CSS, lifted from the mockup's design tokens — no utility framework
+- Plain CSS on a fixed set of design tokens — no utility framework
 
 ## Running locally
 
@@ -77,20 +81,26 @@ npx prisma migrate dev
 npm run db:seed
 ```
 
-The seed mirrors the mockup's fixtures: 2 companies, 10 partners, 4 cash/bank
-accounts, 36 accounts, 41 budgets, and 8 transactions.
-
-It also seeds the access model — the permission catalogue, the `ADMIN` and
-`STAFF` roles, and three accounts:
+**The seed creates system data only.** It syncs the permission catalogue, the
+`ADMIN` and `STAFF` roles, the bootstrap administrator, the two Companies, the
+reference tables application logic reads by label (account types, document
+types, budget and partner categories, and the account category / subcategory
+skeleton), and the base reporting currency.
 
 | Email | Role | Notes |
 | --- | --- | --- |
-| `admin@siba.app` | Administrator | Bootstrap account. Address and password come from `SIBA_ADMIN_*`. |
-| `meehun@siba.app` | Staff | The mockup's everyday user. `STAFF` is seeded **empty**, so this account can sign in and reach only its own profile. |
-| `sistem@siba.app` | — | Owns seeded records. Seeded **inactive**, so it cannot sign in. |
+| `admin@siba.app` | Administrator | Bootstrap account. Address and password come from `SIBA_ADMIN_*`; in development the password defaults to `siba123`. |
+| `sistem@siba.app` | — | Owns seeded rows. Seeded **inactive** with an unusable password hash, so it can never sign in. |
 
-The two fixture accounts use the password `siba123`. These are development
-fixtures — change them before deploying anywhere reachable.
+Everything else — partners, cash & bank resources, currencies beyond the base,
+the chart of accounts, budget-category mappings, fiscal years and periods,
+budgets — is business data you create through the application. A fresh
+installation therefore starts empty, and the dashboard's **Perlu Perhatian**
+card lists what to set up first, in the order the modules depend on each other.
+
+The seed is idempotent and deletes nothing: run it again after any release that
+adds a permission. To start over from scratch, `npm run db:reset` drops the
+database, reapplies every migration and reseeds — it destroys all data.
 
 ### 6. Run
 
@@ -107,8 +117,9 @@ http://localhost:3000
 | `npm run dev` | Dev server |
 | `npm run build` | Production build |
 | `npm run lint` | ESLint |
-| `npm test` | Security test suite (needs a seeded database) |
-| `npm run db:seed` | Reseed (wipes transactional tables first) |
+| `npm test` | Test suite (needs a migrated, seeded database) |
+| `npm run db:seed` | Sync system data — idempotent, destroys nothing |
+| `npm run db:reset` | **Destructive.** Drop, re-migrate and reseed |
 | `npx prisma studio` | Browse the database |
 | `npx prisma migrate dev` | Create and apply a migration |
 
@@ -155,8 +166,20 @@ Node.
 ## Notes on the data model
 
 The Prisma schema deviates from the source DBML in a few deliberate places —
-Postgres-native types, `Int` ids, normalised money precision, and several columns
-the mockup needs that the DBML never declared (`is_parent`,
-`partner_category_id`, `balance`, and the user, role, permission and session
-tables, none of which the DBML models at all). Each is commented inline in
-[`prisma/schema.prisma`](./prisma/schema.prisma).
+Postgres-native types, `Int` ids, normalised money precision, and several
+columns the application needs that the DBML never declared (`is_parent`,
+`partner_category_id`, the Cash Bank Book tables, and the user, role, permission
+and session tables, none of which the DBML models at all). Each is commented
+inline in [`prisma/schema.prisma`](./prisma/schema.prisma).
+
+**A cash or bank balance is never a column on the master.** `cash_bank_ledger`
+is append-only — entries are never edited or deleted, and a mistake is corrected
+by a further entry — and `cash_bank_balance` is the running total, written in
+the same transaction as the entry that moved it and recomputable from the ledger
+at any time. A resource's opening balance is entered when it is registered and
+becomes the first entry in its book.
+
+**Amounts in different currencies are never added together.** Totals are
+reported per currency throughout, because the system has no authoritative
+exchange-rate source yet and a combined figure would be a guess presented as a
+fact.

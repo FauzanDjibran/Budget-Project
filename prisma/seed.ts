@@ -1,10 +1,25 @@
 /**
- * Seeds the fixtures from `SIBA Mockup 2.0.html`'s `buildSeed()` so the app
- * starts with the same data the mockup demonstrates.
+ * Brings the system tables up to date. Nothing else.
  *
- * Ids are set explicitly to match the mockup, which keeps cross-references
- * readable; the sequences are resynced at the end so later inserts don't
- * collide.
+ * The seed owns exactly two kinds of row:
+ *
+ *   1. The `sys_*` tables — the bootstrap administrator, the permission
+ *      catalogue, the seeded roles, and the fixed two-Company structure.
+ *   2. The reference tables that behave as system data even though their names
+ *      say otherwise: account types, document types, budget categories,
+ *      partner categories, and the account category / subcategory skeleton the
+ *      chart of accounts hangs off. Application logic reads these by label, so
+ *      they are code in the same sense the permission catalogue is.
+ *
+ * Everything else — partners, cash & bank resources, currencies beyond the
+ * reporting base, accounts, mappings, fiscal years and periods, budgets and
+ * transactions — is business data that real users create through the
+ * application. It is deliberately absent here.
+ *
+ * The seed is idempotent and never deletes business data. Rows are created when
+ * missing and otherwise left alone, so running it against a live database is
+ * safe: it adds what a new release introduced and touches nothing a user has
+ * entered or adjusted.
  *
  * Run with: npm run db:seed
  */
@@ -12,17 +27,11 @@ import "dotenv/config";
 import { hash } from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PURPOSES, rateFor } from "../src/lib/siba/rules";
 import { PERMISSIONS } from "../src/lib/siba/permissions";
-import { SEEDED_ROLES, ADMIN_ROLE, STAFF_ROLE, adminPermissionCodes } from "../src/lib/siba/roles";
+import { SEEDED_ROLES, ADMIN_ROLE, adminPermissionCodes } from "../src/lib/siba/roles";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
-
-const SEED_TS = new Date("2026-01-01T08:00:00Z");
-const SYS = 1; // "Sistem" — owns the seeded rows, never signs in
-const ME = 2; // "MeeHun" — the mockup's everyday user, seeded as Staff
-const ADMIN = 3; // bootstrap administrator, configured through the environment
 
 /**
  * The bootstrap administrator.
@@ -30,13 +39,12 @@ const ADMIN = 3; // bootstrap administrator, configured through the environment
  * Credentials come from the environment so no real password is ever committed.
  * Outside development the seed refuses to run without one — the fallback below
  * exists purely so a local checkout works out of the box, and CLAUDE.md §11
- * already records that it must not survive into a deployed environment.
+ * records that it must not survive into a deployed environment.
  */
 const ADMIN_EMAIL = process.env.SIBA_ADMIN_EMAIL?.trim().toLowerCase() || "admin@siba.app";
 const ADMIN_NAME = process.env.SIBA_ADMIN_NAME?.trim() || "Administrator";
 const ADMIN_INITIALS = process.env.SIBA_ADMIN_INITIALS?.trim().toUpperCase() || "AD";
 
-/** Dev-only password for the seeded mockup accounts. */
 const DEV_PASSWORD = "siba123";
 
 function resolveAdminPassword(): string {
@@ -50,612 +58,495 @@ function resolveAdminPassword(): string {
   return DEV_PASSWORD;
 }
 
+/**
+ * The two Companies.
+ *
+ * Exactly one induk and one anak, permanently — the structure is foundational,
+ * not configuration, so the application has no write path for it and these rows
+ * are created once. Identity is adjusted in the database afterwards; the
+ * environment variables exist so a first install does not have to start from
+ * placeholder names.
+ */
+const PARENT_LABEL = process.env.SIBA_PARENT_COMPANY_LABEL?.trim() || "INDUK";
+const PARENT_NAME = process.env.SIBA_PARENT_COMPANY_NAME?.trim() || "Perusahaan Induk";
+const CHILD_LABEL = process.env.SIBA_CHILD_COMPANY_LABEL?.trim() || "ANAK";
+const CHILD_NAME = process.env.SIBA_CHILD_COMPANY_NAME?.trim() || "Perusahaan Anak";
+
+/** The reporting base currency. Further currencies are added through the app. */
+const BASE_CURRENCY_LABEL = process.env.SIBA_BASE_CURRENCY?.trim().toUpperCase() || "IDR";
+const BASE_CURRENCY_NAME = process.env.SIBA_BASE_CURRENCY_NAME?.trim() || "Rupiah Indonesia";
+
 const pad4 = (n: number) => String(n).padStart(4, "0");
 const code = (prefix: string, n: number) => `${prefix}.${pad4(n)}`;
-const ts = (s: string) => new Date(s.replace(" ", "T") + "Z");
-const day = (s: string) => new Date(`${s}T00:00:00Z`);
 
-const audit = (by = SYS) => ({
-  created_by: by,
-  updated_by: null,
-  created_at: SEED_TS,
-  updated_at: SEED_TS,
-});
-
-// --------------------------------------------------------------- chart of accounts
-
-/** [offset, subcategoryId, label, name, normalBalance, postable, partnerCategory, control, parentOffset] */
-const COA_TEMPLATE: [
-  number, number, string, string, "Debit" | "Kredit", boolean, string | null, boolean, number | null
-][] = [
-  [1, 1, "1101", "Kas", "Debit", true, null, false, null],
-  [2, 2, "1102", "Bank", "Debit", false, null, false, null],
-  [3, 2, "110201", "Bank Mandiri", "Debit", true, null, false, 2],
-  [4, 2, "110202", "Bank BCA", "Debit", true, null, false, 2],
-  [5, 3, "1201", "Piutang dari Cabang", "Debit", true, "Cabang", true, null],
-  [6, 3, "1202", "Piutang dari Karyawan", "Debit", true, "Karyawan", true, null],
-  [7, 3, "1203", "Piutang dari Stakeholder", "Debit", true, "Stakeholder", true, null],
-  [8, 4, "1301", "Investasi pada Cabang/Entitas", "Debit", true, "Cabang", true, null],
-  [9, 5, "1401", "Aktiva Tetap", "Debit", true, null, false, null],
-  [10, 6, "2101", "Titipan dari Cabang", "Kredit", true, "Cabang", true, null],
-  [11, 6, "2102", "Titipan dari Stakeholder", "Kredit", true, "Stakeholder", true, null],
-  [12, 7, "2201", "Hutang kepada Cabang", "Kredit", true, "Cabang", true, null],
-  [13, 7, "2202", "Hutang kepada Karyawan", "Kredit", true, "Karyawan", true, null],
-  [14, 7, "2203", "Hutang kepada Stakeholder", "Kredit", true, "Stakeholder", true, null],
-  [15, 8, "3101", "Modal", "Kredit", true, null, false, null],
-  [16, 9, "3201", "Prive / Dividen Stakeholder", "Debit", true, "Stakeholder", true, null],
-  [17, 10, "4101", "Pendapatan Hasil Investasi", "Kredit", true, "Cabang", false, null],
-  [18, 11, "5101", "Biaya Umum", "Debit", true, null, false, null],
-];
-
-/** Company 1's accounts occupy ids 1-18, company 2's 101-118. */
-const COA_BASE: Record<number, number> = { 1: 0, 2: 100 };
-const PARTNER_CATEGORY_ID: Record<string, number> = {
-  Cabang: 1,
-  Karyawan: 2,
-  Stakeholder: 3,
-};
-const BUDGET_CATEGORY_ID: Record<string, number> = {
-  Titipan: 1,
-  Hutang: 2,
-  Piutang: 3,
-  Prive: 4,
-  Asset: 5,
-  Biaya: 6,
-  Investasi: 7,
-  "Hasil Investasi": 8,
+/** Tally of what this run had to create, printed at the end. */
+const created: Record<string, number> = {};
+const tally = (what: string, n = 1) => {
+  if (n) created[what] = (created[what] ?? 0) + n;
 };
 
-/** [budgetCategory, partnerCategory, accountOffset] */
-const MAPPING: [string, string | null, number][] = [
-  ["Titipan", "Cabang", 10],
-  ["Titipan", "Stakeholder", 11],
-  ["Hutang", "Cabang", 12],
-  ["Hutang", "Karyawan", 13],
-  ["Hutang", "Stakeholder", 14],
-  ["Piutang", "Cabang", 5],
-  ["Piutang", "Karyawan", 6],
-  ["Piutang", "Stakeholder", 7],
-  ["Prive", "Stakeholder", 16],
-  ["Asset", null, 9],
-  ["Biaya", null, 18],
-  ["Investasi", "Cabang", 8],
-  ["Hasil Investasi", "Cabang", 17],
+// ------------------------------------------------------------- system data
+//
+// Labels are load-bearing: `src/lib/siba/rules.ts` keys its classification
+// rules off budget and partner category labels, and `CASH_BANK_SUBCATEGORIES`
+// in `records.ts` names the Kas and Bank groups. Renaming a label here without
+// renaming it there silently breaks a business rule.
+
+const ACCOUNT_TYPES = ["Aset", "Kewajiban", "Ekuitas", "Pendapatan", "Beban"];
+
+const DOC_TYPES: [label: string, table: string][] = [
+  ["Budget", "bud_budget"],
+  ["Cash Bank Transaction", "fin_cash_bank_transaction"],
+  ["Cash Bank Transaction Line", "fin_cash_bank_transaction_line"],
+  ["Funding Request", "fin_funding_request"],
+  ["Journal", "acc_journal"],
 ];
 
-const MONTHS = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
-];
-const MONTH_END = ["31", "28", "31", "30", "31", "30", "31", "31", "30", "31", "30", "31"];
-
-// --------------------------------------------------------------- budgets
-
-/** [id, date, companyId, currencyId, type, description, amount, status, categoryId, partnerId, realized, createdAt] */
-const BUDGETS: [
-  number, string, number, number, "In" | "Out", string, number, string,
-  number | null, number | null, number, string
-][] = [
-  [1, "2026-09-02", 1, 1, "Out", "Pembayaran sewa gudang bulan September", 25000000, "Open", 6, null, 0, "2026-08-28 09:14:00"],
-  [2, "2026-09-03", 1, 1, "Out", "Pembayaran prive Direktur Utama", 15000000, "Closed", 4, 6, 15000000, "2026-08-28 09:20:00"],
-  [3, "2026-09-05", 1, 1, "In", "Penerimaan titipan dana operasional Cabang Jakarta", 40000000, "Open", 1, 1, 0, "2026-08-29 10:02:00"],
-  [4, "2026-09-08", 2, 1, "Out", "Biaya operasional kantor Trading", 12500000, "Submitted", null, null, 0, "2026-09-01 08:41:00"],
-  [5, "2026-09-09", 2, 1, "Out", "Pembelian perlengkapan kantor", 4750000, "Submitted", null, null, 0, "2026-09-01 08:47:00"],
-  [6, "2026-09-10", 1, 1, "Out", "Pembayaran hutang kepada Cabang Surabaya", 32000000, "Submitted", null, null, 0, "2026-09-02 11:05:00"],
-  [7, "2026-09-11", 1, 1, "Out", "Biaya perjalanan dinas tim penjualan", 6200000, "Draft", null, null, 0, "2026-09-03 14:22:00"],
-  [8, "2026-09-12", 2, 1, "In", "Penerimaan pelunasan piutang Cabang Bandung", 18000000, "Draft", null, null, 0, "2026-09-03 15:10:00"],
-  [9, "2026-09-15", 1, 2, "Out", "Pembayaran vendor perangkat lunak luar negeri", 3500, "Submitted", null, null, 0, "2026-09-04 09:33:00"],
-  [10, "2026-09-04", 1, 1, "Out", "Perbaikan kendaraan operasional", 8900000, "Rejected", null, null, 0, "2026-08-30 16:48:00"],
-  [11, "2026-09-01", 2, 1, "Out", "Sewa ruko cabang Trading", 20000000, "Open", 6, null, 0, "2026-08-25 10:15:00"],
-  [12, "2026-09-06", 1, 1, "Out", "Investasi peralatan produksi Cabang Medan", 75000000, "Open", 7, 3, 25000000, "2026-08-27 13:37:00"],
-  [13, "2026-09-07", 2, 1, "Out", "Pengadaan yang dibatalkan", 3000000, "Cancelled", null, null, 0, "2026-09-01 09:05:00"],
-  [14, "2026-09-18", 1, 1, "Out", "Pengembalian titipan kepada Cabang Jakarta", 22000000, "Submitted", null, null, 0, "2026-09-08 10:28:00"],
-  [15, "2026-09-19", 2, 1, "Out", "Biaya pemeliharaan gudang cabang", 9300000, "Submitted", null, null, 0, "2026-09-09 08:12:00"],
-  [16, "2026-08-20", 1, 1, "Out", "Biaya listrik dan air bulan Agustus", 5400000, "Closed", 6, null, 5400000, "2026-08-12 09:00:00"],
-  [17, "2026-08-22", 2, 1, "Out", "Gaji karyawan bulan Agustus", 45000000, "Open", 6, null, 0, "2026-08-14 09:00:00"],
-  [18, "2026-08-25", 1, 1, "In", "Penerimaan hasil investasi dari Cabang Medan", 12750000, "Closed", 8, 3, 12750000, "2026-08-18 11:20:00"],
-  [19, "2026-09-16", 1, 2, "Out", "Perpanjangan lisensi sistem akuntansi", 1250, "Submitted", null, null, 0, "2026-09-05 13:15:00"],
-  [20, "2026-09-17", 1, 2, "In", "Penerimaan royalti lisensi luar negeri", 4800, "Submitted", null, null, 0, "2026-09-05 14:02:00"],
-  // Approved Holding budgets — the realization pool for the Finance module
-  [21, "2026-09-01", 1, 1, "Out", "Pembayaran listrik dan air September", 6800000, "Open", 6, null, 3000000, "2026-08-26 09:30:00"],
-  [22, "2026-09-02", 1, 1, "Out", "Pembayaran internet dan telepon September", 3200000, "Closed", 6, null, 3200000, "2026-08-26 09:34:00"],
-  [23, "2026-09-04", 1, 1, "Out", "Pengembalian titipan kepada Cabang Surabaya", 18000000, "Open", 1, 2, 0, "2026-08-27 10:05:00"],
-  [24, "2026-09-05", 1, 1, "Out", "Pembayaran prive rutin September", 20000000, "Closed", 4, 6, 22000000, "2026-08-27 10:12:00"],
-  [25, "2026-09-08", 1, 1, "In", "Penerimaan pelunasan piutang Cabang Jakarta", 30000000, "Open", 3, 1, 0, "2026-08-28 14:20:00"],
-  [26, "2026-09-10", 1, 1, "Out", "Pembayaran hutang kepada Stakeholder", 25000000, "Open", 2, 7, 0, "2026-08-29 08:55:00"],
-  [27, "2026-09-11", 1, 2, "Out", "Langganan layanan cloud tahunan", 2400, "Open", 6, null, 0, "2026-08-30 11:02:00"],
-  [28, "2026-09-12", 1, 1, "Out", "Pembelian perangkat komputer kantor", 14500000, "Open", 5, null, 0, "2026-08-31 09:18:00"],
-  [29, "2026-09-14", 1, 1, "In", "Penerimaan titipan tahap dua Cabang Jakarta", 25000000, "Open", 1, 1, 0, "2026-09-01 13:40:00"],
-  [30, "2026-09-15", 1, 1, "Out", "Biaya perawatan gedung kantor pusat", 9000000, "Open", 6, null, 0, "2026-09-02 10:07:00"],
-  [31, "2026-09-03", 1, 1, "Out", "Advance perjalanan dinas Budi Santoso", 7500000, "Open", 3, 4, 0, "2026-08-27 15:40:00"],
-  [32, "2026-09-09", 1, 1, "In", "Pelunasan advance perjalanan dinas Siti Rahayu", 4200000, "Open", 3, 5, 0, "2026-08-31 16:05:00"],
-  [33, "2026-09-13", 1, 1, "Out", "Pembayaran reimbursement Budi Santoso", 5600000, "Open", 2, 4, 0, "2026-09-02 08:20:00"],
-  [34, "2026-09-06", 1, 1, "In", "Penerimaan titipan dana Stakeholder", 50000000, "Open", 1, 7, 0, "2026-08-29 09:10:00"],
-  [35, "2026-09-20", 1, 1, "Out", "Investasi tambahan pada Cabang Surabaya", 40000000, "Open", 7, 2, 0, "2026-09-06 11:30:00"],
-  [36, "2026-09-21", 1, 1, "Out", "Pengembalian titipan kepada Rina Kusuma", 30000000, "Open", 1, 7, 0, "2026-09-07 09:15:00"],
-  [37, "2026-09-22", 1, 1, "In", "Penerimaan pinjaman dari Cabang Surabaya", 50000000, "Open", 2, 2, 0, "2026-09-07 10:40:00"],
-  [38, "2026-09-23", 1, 1, "Out", "Pemberian pinjaman kepada Cabang Jakarta", 35000000, "Open", 3, 1, 0, "2026-09-08 08:50:00"],
-  [39, "2026-09-24", 1, 1, "Out", "Pembayaran prive tahap dua Direktur Utama", 18000000, "Open", 4, 6, 0, "2026-09-08 14:05:00"],
-  [40, "2026-09-25", 1, 1, "In", "Penerimaan hasil investasi Cabang Surabaya", 9500000, "Open", 8, 2, 0, "2026-09-09 09:25:00"],
-  [41, "2026-09-26", 1, 1, "Out", "Pembayaran hutang kepada Cabang Medan", 16000000, "Open", 2, 3, 0, "2026-09-09 15:50:00"],
+const BUDGET_CATEGORIES: [label: string, note: string][] = [
+  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder."],
+  ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder."],
+  ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder."],
+  ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder."],
+  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran."],
+  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran."],
+  ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran."],
+  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan."],
 ];
 
-// --------------------------------------------------------------- transactions
-
-/** [id, documentDate, postingDate, purposeKey, companyId, cashBankId, partnerId, status, note] */
-const TRANSACTIONS: [
-  number, string, string | null, string, number, number, number | null, string, string
-][] = [
-  [1, "2026-08-20", "2026-08-20 14:05:00", "BYA_OUT", 1, 2, null, "Posted", "Pembayaran tagihan listrik dan air periode Agustus."],
-  [2, "2026-08-25", "2026-08-25 10:40:00", "HIN_CAB_IN", 1, 2, 3, "Posted", "Penerimaan bagi hasil investasi Cabang Medan."],
-  [3, "2026-09-03", "2026-09-03 15:20:00", "PRV_SH_OUT", 1, 3, 6, "Posted", "Pencairan prive Direktur Utama."],
-  [4, "2026-09-06", "2026-09-06 11:12:00", "INV_CAB_OUT", 1, 2, 3, "Posted", "Pembayaran termin pertama investasi peralatan Cabang Medan."],
-  [5, "2026-09-07", "2026-09-07 16:02:00", "PRV_SH_OUT", 1, 3, 6, "Posted", "Realisasi melebihi outstanding budget atas persetujuan lisan Direksi."],
-  [6, "2026-09-09", "2026-09-09 09:48:00", "BYA_OUT", 1, 2, null, "Posted", "Satu dokumen merealisasikan dua Budget biaya sekaligus."],
-  [7, "2026-09-12", null, "BYA_OUT", 1, 2, null, "Draft", "Pembayaran sebagian sewa gudang, menunggu tanda terima."],
-  [8, "2026-09-13", null, "TTP_CAB_OUT", 1, 3, 2, "Cancelled", "Dibatalkan, Cabang Surabaya meminta penjadwalan ulang."],
+const PARTNER_CATEGORIES: [label: string, name: string, note: string][] = [
+  ["Cabang", "Cabang / Entitas", "Entitas cabang atau investee di luar dua Company utama sistem."],
+  ["Karyawan", "Karyawan", "Pegawai perusahaan. Hanya dipakai oleh Hutang dan Piutang."],
+  ["Stakeholder", "Pemegang Saham", "Pemilik / pemegang saham. Dipakai oleh Titipan, Hutang, Piutang, dan Prive."],
 ];
 
-/** [transactionId, budgetId, outstandingSnapshot, settlementAmount] */
-const TRANSACTION_LINES: [number, number, number, number][] = [
-  [1, 16, 5400000, 5400000],
-  [2, 18, 12750000, 12750000],
-  [3, 2, 15000000, 15000000],
-  [4, 12, 75000000, 25000000],
-  [5, 24, 20000000, 22000000],
-  [6, 21, 6800000, 3000000],
-  [6, 22, 3200000, 3200000],
-  [7, 1, 25000000, 10000000],
-  [8, 23, 18000000, 18000000],
+/** [account type label, category label] */
+const ACCOUNT_CATEGORIES: [string, string][] = [
+  ["Aset", "Kas & Setara Kas"],
+  ["Aset", "Piutang"],
+  ["Aset", "Investasi"],
+  ["Aset", "Aset Tetap"],
+  ["Kewajiban", "Titipan"],
+  ["Kewajiban", "Hutang"],
+  ["Ekuitas", "Ekuitas"],
+  ["Ekuitas", "Prive"],
+  ["Pendapatan", "Pendapatan"],
+  ["Beban", "Beban"],
 ];
 
-/** Opening cash/bank balances, keyed by cash bank id. */
-const OPENING_BALANCE: Record<number, number> = {
-  1: 85000000,
-  2: 1250000000,
-  3: 640000000,
-  4: 48500,
-};
+/** [category label, subcategory label, subcategory name] */
+const ACCOUNT_SUBCATEGORIES: [string, string, string][] = [
+  ["Kas & Setara Kas", "Kas", "Kas"],
+  ["Kas & Setara Kas", "Bank", "Bank"],
+  ["Piutang", "Piutang", "Piutang per Partner Category"],
+  ["Investasi", "Investasi", "Investasi pada Entitas"],
+  ["Aset Tetap", "Aset Tetap", "Aset Tetap"],
+  ["Titipan", "Titipan", "Titipan per Partner Category"],
+  ["Hutang", "Hutang", "Hutang per Partner Category"],
+  ["Ekuitas", "Modal", "Modal"],
+  ["Prive", "Prive", "Prive / Dividen"],
+  ["Pendapatan", "Pendapatan Investasi", "Pendapatan Hasil Investasi"],
+  ["Beban", "Beban Umum", "Beban Umum"],
+];
 
-const CURRENCY_LABEL: Record<number, string> = { 1: "IDR", 2: "USD", 3: "SGD" };
-
-// --------------------------------------------------------------- run
+// --------------------------------------------------------------------- run
 
 async function main() {
-  console.log("Clearing existing data…");
-  // Child-to-parent order so foreign keys never block a delete.
-  await prisma.auditLog.deleteMany();
-  await prisma.finCashBankTransactionLine.deleteMany();
-  await prisma.finCashBankTransaction.deleteMany();
-  await prisma.budBudget.deleteMany();
-  await prisma.accFiscalPeriod.deleteMany();
-  await prisma.accFiscalYear.deleteMany();
-  await prisma.accBudgetCategoryAccount.deleteMany();
-  await prisma.mCashBank.deleteMany();
-  await prisma.accAccount.deleteMany();
-  await prisma.accAccountSubcategory.deleteMany();
-  await prisma.accAccountCategory.deleteMany();
-  await prisma.mPartner.deleteMany();
-  await prisma.refCurrency.deleteMany();
-  await prisma.sysPartnerCategory.deleteMany();
-  await prisma.sysBudgetCategory.deleteMany();
-  await prisma.sysDocType.deleteMany();
-  await prisma.sysAccountType.deleteMany();
-  await prisma.sysCompany.deleteMany();
-  await prisma.sysSession.deleteMany();
-  await prisma.sysUserRole.deleteMany();
-  await prisma.sysRolePermission.deleteMany();
-  await prisma.sysPermission.deleteMany();
-  await prisma.sysRole.deleteMany();
-  await prisma.sysUser.deleteMany();
+  const system = await systemUser();
+  const audit = { created_by: system, updated_by: null };
 
-  const devHash = await hash(DEV_PASSWORD, 10);
-  const adminPassword = resolveAdminPassword();
-  const adminHash = await hash(adminPassword, 10);
+  await bootstrapAdministrator();
+  await syncPermissionCatalogue();
+  await syncRoles(system);
+  await ensureCompanies(audit);
+  await ensureReferenceData(audit);
 
-  await prisma.sysUser.createMany({
-    data: [
-      // The system account owns every seeded row. It is seeded Inactive so it
-      // can never be signed in as — it exists to be referenced, not used.
-      { id: SYS, user_code: code("user", SYS), email: "sistem@siba.app", name: "Sistem", initials: "SY", password_hash: devHash, status: "Inactive", created_at: SEED_TS, updated_at: SEED_TS },
-      { id: ME, user_code: code("user", ME), email: "meehun@siba.app", name: "MeeHun", initials: "MH", password_hash: devHash, created_at: SEED_TS, updated_at: SEED_TS },
-      { id: ADMIN, user_code: code("user", ADMIN), email: ADMIN_EMAIL, name: ADMIN_NAME, initials: ADMIN_INITIALS, password_hash: adminHash, created_at: SEED_TS, updated_at: SEED_TS },
-    ],
+  report();
+}
+
+/**
+ * The account every seeded row is attributed to. Seeded Inactive so it can
+ * never be signed in as — it exists to be referenced, not used.
+ */
+async function systemUser(): Promise<number> {
+  const existing = await prisma.sysUser.findUnique({
+    where: { email: "sistem@siba.app" },
+    select: { id: true },
   });
+  if (existing) return existing.id;
 
-  // ---- RBAC ---------------------------------------------------------------
-  // The permission catalogue lives in `src/lib/siba/permissions.ts`; the table
-  // is its materialisation, so role_permission can reference it and the role
-  // matrix can read names from it.
-  await prisma.sysPermission.createMany({
-    data: PERMISSIONS.map((p, i) => ({
-      id: i + 1,
-      permission_code: p.code,
-      permission_name: p.name,
-      module: p.module,
-      description: "description" in p ? p.description : null,
-      created_at: SEED_TS,
-      updated_at: SEED_TS,
-    })),
+  const user = await prisma.sysUser.create({
+    data: {
+      user_code: await nextUserCode(),
+      email: "sistem@siba.app",
+      name: "Sistem",
+      initials: "SY",
+      // Unusable by construction: bcrypt never produces this string, so no
+      // password can ever verify against it.
+      password_hash: "-",
+      status: "Inactive",
+    },
+    select: { id: true },
   });
+  tally("system account");
+  return user.id;
+}
 
-  const permissionId = new Map(PERMISSIONS.map((p, i) => [p.code, i + 1]));
+async function nextUserCode(): Promise<string> {
+  const count = await prisma.sysUser.count();
+  return code("user", count + 1);
+}
 
-  await prisma.sysRole.createMany({
-    data: SEEDED_ROLES.map((r, i) => ({
-      id: i + 1,
-      role_code: code("role", i + 1),
-      role_label: r.label,
-      role_name: r.name,
-      note: r.note,
-      is_system: true,
-      created_by: SYS,
-      created_at: SEED_TS,
-      updated_at: SEED_TS,
-    })),
+/**
+ * Creates the administrator if the application has none.
+ *
+ * An existing account is never touched: re-seeding must not reset a password or
+ * reactivate an account somebody deliberately disabled.
+ */
+async function bootstrapAdministrator(): Promise<void> {
+  const existing = await prisma.sysUser.findUnique({
+    where: { email: ADMIN_EMAIL },
+    select: { id: true },
   });
+  if (existing) return;
 
-  const roleId = new Map(SEEDED_ROLES.map((r, i) => [r.label, i + 1]));
+  await prisma.sysUser.create({
+    data: {
+      user_code: await nextUserCode(),
+      email: ADMIN_EMAIL,
+      name: ADMIN_NAME,
+      initials: ADMIN_INITIALS,
+      password_hash: await hash(resolveAdminPassword(), 10),
+    },
+  });
+  tally("administrator");
+}
 
-  // ADMIN's grant is the whole catalogue and is frozen in the application, so
-  // re-seeding is what keeps it in step as the catalogue grows.
-  const grants: { role_id: number; permission_id: number }[] = [];
-  for (const role of SEEDED_ROLES) {
-    const codes = role.permissions ?? adminPermissionCodes();
-    for (const c of codes) {
-      grants.push({ role_id: roleId.get(role.label)!, permission_id: permissionId.get(c)! });
+/**
+ * `src/lib/siba/permissions.ts` is the source of truth; this table is its
+ * materialisation. Names and descriptions are re-synced so the role matrix
+ * reads current copy, and a permission dropped from the catalogue is removed
+ * along with every grant of it — a row no code reads is a row that can only
+ * mislead.
+ */
+async function syncPermissionCatalogue(): Promise<void> {
+  const existing = await prisma.sysPermission.findMany({
+    select: { id: true, permission_code: true },
+  });
+  const byCode = new Map(existing.map((p) => [p.permission_code, p.id]));
+
+  let added = 0;
+  for (const p of PERMISSIONS) {
+    const description = "description" in p ? p.description : null;
+    if (byCode.has(p.code)) {
+      await prisma.sysPermission.update({
+        where: { permission_code: p.code },
+        data: { permission_name: p.name, module: p.module, description },
+      });
+    } else {
+      await prisma.sysPermission.create({
+        data: {
+          permission_code: p.code,
+          permission_name: p.name,
+          module: p.module,
+          description,
+        },
+      });
+      added += 1;
     }
   }
-  await prisma.sysRolePermission.createMany({
-    data: grants.map((g, i) => ({ id: i + 1, ...g, created_by: SYS, created_at: SEED_TS })),
-  });
+  tally("permissions", added);
 
-  await prisma.sysUserRole.createMany({
-    data: [
-      { id: 1, user_id: ADMIN, role_id: roleId.get(ADMIN_ROLE)!, created_by: SYS, created_at: SEED_TS },
-      { id: 2, user_id: ME, role_id: roleId.get(STAFF_ROLE)!, created_by: SYS, created_at: SEED_TS },
-    ],
+  const live = new Set<string>(PERMISSIONS.map((p) => p.code));
+  const stale = existing.filter((p) => !live.has(p.permission_code));
+  if (stale.length) {
+    const ids = stale.map((p) => p.id);
+    await prisma.sysRolePermission.deleteMany({ where: { permission_id: { in: ids } } });
+    await prisma.sysPermission.deleteMany({ where: { id: { in: ids } } });
+    console.log(`  Removed ${stale.length} permission(s) no longer in the catalogue.`);
+  }
+}
+
+/**
+ * Seeded roles are created once and then belong to whoever administers the
+ * system — except ADMIN's grant, which is frozen at the whole catalogue and
+ * re-synced on every run so it keeps up as capabilities are added. That is what
+ * guarantees the application always has a way to administer itself.
+ */
+async function syncRoles(system: number): Promise<void> {
+  const permissionId = new Map(
+    (await prisma.sysPermission.findMany({ select: { id: true, permission_code: true } })).map(
+      (p) => [p.permission_code, p.id]
+    )
+  );
+
+  for (const role of SEEDED_ROLES) {
+    let row = await prisma.sysRole.findUnique({
+      where: { role_label: role.label },
+      select: { id: true },
+    });
+    if (!row) {
+      row = await prisma.sysRole.create({
+        data: {
+          role_code: code("role", (await prisma.sysRole.count()) + 1),
+          role_label: role.label,
+          role_name: role.name,
+          note: role.note,
+          is_system: true,
+          created_by: system,
+        },
+        select: { id: true },
+      });
+      tally("roles");
+
+      // A custom role starts empty; only ADMIN is granted anything on creation.
+      for (const c of role.permissions ?? []) {
+        await prisma.sysRolePermission.create({
+          data: { role_id: row.id, permission_id: permissionId.get(c)!, created_by: system },
+        });
+      }
+    }
+
+    if (role.label !== ADMIN_ROLE) continue;
+
+    const held = new Set(
+      (
+        await prisma.sysRolePermission.findMany({
+          where: { role_id: row.id },
+          select: { permission_id: true },
+        })
+      ).map((g) => g.permission_id)
+    );
+    const wanted = adminPermissionCodes().map((c) => permissionId.get(c)!);
+    const missing = wanted.filter((id) => !held.has(id));
+    if (missing.length) {
+      await prisma.sysRolePermission.createMany({
+        data: missing.map((permission_id) => ({
+          role_id: row!.id,
+          permission_id,
+          created_by: system,
+        })),
+      });
+      tally("administrator grants", missing.length);
+    }
+  }
+
+  // The bootstrap administrator holds the ADMIN role. Re-checked every run so a
+  // fresh catalogue entry cannot leave the system unadministrable.
+  const admin = await prisma.sysUser.findUnique({
+    where: { email: ADMIN_EMAIL },
+    select: { id: true },
   });
+  const adminRole = await prisma.sysRole.findUnique({
+    where: { role_label: ADMIN_ROLE },
+    select: { id: true },
+  });
+  if (admin && adminRole) {
+    const assigned = await prisma.sysUserRole.findUnique({
+      where: { user_id_role_id: { user_id: admin.id, role_id: adminRole.id } },
+      select: { id: true },
+    });
+    if (!assigned) {
+      await prisma.sysUserRole.create({
+        data: { user_id: admin.id, role_id: adminRole.id, created_by: system },
+      });
+      tally("administrator role assignment");
+    }
+  }
+}
+
+/**
+ * Exactly one induk and one anak. Created only when the table is empty: after
+ * that the structure is fixed, and identity edits made directly in the database
+ * must survive a re-seed.
+ */
+async function ensureCompanies(audit: { created_by: number; updated_by: null }): Promise<void> {
+  if (await prisma.sysCompany.count()) return;
 
   await prisma.sysCompany.createMany({
     data: [
-      { id: 1, company_code: code("comp", 1), company_label: "Holding", company_name: "Holding Company", is_parent: true, note: "Induk. Memiliki Cash Bank sendiri dan bertindak sebagai treasury provider bagi Company anak.", ...audit() },
-      { id: 2, company_code: code("comp", 2), company_label: "Trading", company_name: "Trading Company", is_parent: false, note: "Anak dari Holding Company. Tidak memiliki Cash Bank sendiri; kebutuhan dana dipenuhi melalui Funding Request ke induk.", ...audit() },
+      {
+        company_code: code("comp", 1),
+        company_label: PARENT_LABEL,
+        company_name: PARENT_NAME,
+        is_parent: true,
+        note: "Induk. Memiliki Cash Bank sendiri dan bertindak sebagai treasury provider bagi Company anak.",
+        ...audit,
+      },
+      {
+        company_code: code("comp", 2),
+        company_label: CHILD_LABEL,
+        company_name: CHILD_NAME,
+        is_parent: false,
+        note: "Anak dari Company induk. Kebutuhan dana dipenuhi melalui Funding Request ke induk.",
+        ...audit,
+      },
     ],
   });
+  tally("companies", 2);
+}
 
-  await prisma.sysAccountType.createMany({
-    data: ["Aset", "Kewajiban", "Ekuitas", "Pendapatan", "Beban"].map((label, i) => ({
-      id: i + 1, type_code: code("atyp", i + 1), type_label: label, type_name: label, note: "", ...audit(),
-    })),
-  });
-
-  await prisma.sysDocType.createMany({
-    data: [
-      ["Budget", "bud_budget"],
-      ["Cash Bank Transaction", "fin_cash_bank_transaction"],
-      ["Cash Bank Transaction Line", "fin_cash_bank_transaction_line"],
-      ["Funding Request", "fin_funding_request"],
-      ["Journal", "acc_journal"],
-    ].map(([label, table], i) => ({
-      id: i + 1, doc_code: code("dtyp", i + 1), doc_label: label, doc_name: label, doc_table: table, note: "", ...audit(),
-    })),
-  });
-
-  await prisma.sysBudgetCategory.createMany({
-    data: [
-      ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder."],
-      ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder."],
-      ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder."],
-      ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder."],
-      ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran."],
-      ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran."],
-      ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran."],
-      ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan."],
-    ].map(([label, note], i) => ({
-      id: i + 1, category_code: code("bcat", i + 1), category_label: label, category_name: label, note, ...audit(),
-    })),
-  });
-
-  await prisma.sysPartnerCategory.createMany({
-    data: [
-      ["Cabang", "Cabang / Entitas", "Entitas cabang atau investee di luar dua Company utama sistem."],
-      ["Karyawan", "Karyawan", "Pegawai perusahaan. Hanya dipakai oleh Hutang dan Piutang."],
-      ["Stakeholder", "Pemegang Saham", "Pemilik / pemegang saham. Dipakai oleh Titipan, Hutang, Piutang, dan Prive."],
-    ].map(([label, name, note], i) => ({
-      id: i + 1, category_code: code("pcat", i + 1), category_label: label, category_name: name, note, ...audit(),
-    })),
-  });
-
-  await prisma.refCurrency.createMany({
-    data: [
-      ["IDR", "Rupiah Indonesia", "Base currency pelaporan"],
-      ["USD", "Dolar Amerika", ""],
-      ["SGD", "Dolar Singapura", ""],
-    ].map(([label, name, note], i) => ({
-      id: i + 1, currency_code: code("curr", i + 1), currency_label: label, currency_name: name, note, status: "Active" as const, ...audit(),
-    })),
-  });
-
-  await prisma.mPartner.createMany({
-    data: ([
-      [1, "CAB-JKT", "Cabang Jakarta", 1, 1, ""],
-      [2, "CAB-SBY", "Cabang Surabaya", 1, 1, ""],
-      [3, "CAB-MDN", "Cabang Medan", 1, 1, "Entitas investee pada Budget Investasi dan Hasil Investasi."],
-      [4, "KRY-BS", "Budi Santoso", 1, 2, ""],
-      [5, "KRY-SR", "Siti Rahayu", 1, 2, ""],
-      [6, "SH-AW", "Andi Wijaya", 1, 3, "Direktur Utama sekaligus pemegang saham mayoritas."],
-      [7, "SH-RK", "Rina Kusuma", 1, 3, ""],
-      [8, "CAB-BDG", "Cabang Bandung", 2, 1, ""],
-      [9, "KRY-DP", "Dedi Prasetyo", 2, 2, ""],
-      [10, "SH-AW2", "Andi Wijaya", 2, 3, "Pemegang saham yang sama dengan Holding, dicatat terpisah karena Partner adalah master per Company."],
-    ] as [number, string, string, number, number, string][]).map(([id, label, name, companyId, categoryId, note]) => ({
-      id, partner_code: code("part", id), partner_label: label, partner_name: name,
-      company_id: companyId, category_id: categoryId, note, status: "Active" as const, ...audit(),
-    })),
-  });
-
-  await prisma.accAccountCategory.createMany({
-    data: ([
-      [1, 1, "Kas & Setara Kas"], [2, 1, "Piutang"], [3, 1, "Investasi"], [4, 1, "Aset Tetap"],
-      [5, 2, "Titipan"], [6, 2, "Hutang"], [7, 3, "Ekuitas"], [8, 3, "Prive"],
-      [9, 4, "Pendapatan"], [10, 5, "Beban"],
-    ] as [number, number, string][]).map(([id, typeId, label]) => ({
-      id, account_type_id: typeId, category_code: code("acat", id),
-      category_label: label, category_name: label, note: "", status: "Active" as const, ...audit(),
-    })),
-  });
-
-  await prisma.accAccountSubcategory.createMany({
-    data: ([
-      [1, 1, "Kas", "Kas"],
-      [2, 1, "Bank", "Bank"],
-      [3, 2, "Piutang", "Piutang per Partner Category"],
-      [4, 3, "Investasi", "Investasi pada Entitas"],
-      [5, 4, "Aset Tetap", "Aset Tetap"],
-      [6, 5, "Titipan", "Titipan per Partner Category"],
-      [7, 6, "Hutang", "Hutang per Partner Category"],
-      [8, 7, "Modal", "Modal"],
-      [9, 8, "Prive", "Prive / Dividen"],
-      [10, 9, "Pendapatan Investasi", "Pendapatan Hasil Investasi"],
-      [11, 10, "Beban Umum", "Beban Umum"],
-    ] as [number, number, string, string][]).map(([id, categoryId, label, name]) => ({
-      id, account_category_id: categoryId, subcategory_code: code("asub", id),
-      subcategory_label: label, subcategory_name: name, note: "", status: "Active" as const, ...audit(),
-    })),
-  });
-
-  // Accounts are inserted parent-first so the self-referencing FK resolves.
-  let accountSeq = 0;
-  const accounts = [1, 2].flatMap((companyId) =>
-    COA_TEMPLATE.map((t) => {
-      accountSeq += 1;
-      const [offset, subcategoryId, label, name, normal, postable, partnerCategory, control, parentOffset] = t;
-      return {
-        id: COA_BASE[companyId] + offset,
-        account_code: code("coa", accountSeq),
-        account_subcategory_id: subcategoryId,
-        account_label: label,
-        account_name: name,
-        company_id: companyId,
-        parent_account: parentOffset ? COA_BASE[companyId] + parentOffset : null,
-        is_postable: postable,
-        normal_balance: normal,
-        require_partner: partnerCategory != null,
-        partner_category_id: partnerCategory ? PARTNER_CATEGORY_ID[partnerCategory] : null,
-        is_control_account: control,
-        note: "",
-        is_active: true,
-        ...audit(),
-      };
-    })
-  );
-  for (const a of accounts.filter((a) => a.parent_account == null)) {
-    await prisma.accAccount.create({ data: a });
-  }
-  for (const a of accounts.filter((a) => a.parent_account != null)) {
-    await prisma.accAccount.create({ data: a });
-  }
-
-  await prisma.mCashBank.createMany({
-    data: ([
-      [1, "Kas Pusat", "Kas Kantor Pusat", 1, "Cash", 1, 1],
-      [2, "Mandiri IDR", "Bank Mandiri Rupiah", 1, "Bank", 1, 3],
-      [3, "BCA IDR", "Bank BCA Rupiah", 1, "Bank", 1, 4],
-      [4, "Mandiri USD", "Bank Mandiri Dolar", 1, "Bank", 2, 3],
-    ] as [number, string, string, number, "Cash" | "Bank", number, number][]).map(
-      ([id, label, name, companyId, type, currencyId, accountId]) => ({
-        id, cash_bank_code: code("cbnk", id), cash_bank_label: label, cash_bank_name: name,
-        company_id: companyId, cash_bank_type: type, currency_id: currencyId,
-        account_id: accountId, balance: OPENING_BALANCE[id], note: "",
-        status: "Active" as const, ...audit(),
-      })
-    ),
-  });
-
-  let mappingId = 0;
-  await prisma.accBudgetCategoryAccount.createMany({
-    data: [1, 2].flatMap((companyId) =>
-      MAPPING.map(([budgetCategory, partnerCategory, accountOffset]) => {
-        mappingId += 1;
-        return {
-          id: mappingId,
-          bca_code: code("bcam", mappingId),
-          budget_category_id: BUDGET_CATEGORY_ID[budgetCategory],
-          partner_category_id: partnerCategory ? PARTNER_CATEGORY_ID[partnerCategory] : null,
-          company_id: companyId,
-          account_id: COA_BASE[companyId] + accountOffset,
-          ...audit(),
-        };
-      })
-    ),
-  });
-
-  await prisma.accFiscalYear.createMany({
-    data: [
-      { id: 1, year_code: code("fyr", 1), year_label: "2026", year_name: "Tahun Buku 2026", start_date: day("2026-01-01"), end_date: day("2026-12-31"), note: "Tahun buku berjalan", status: "Open" as const, ...audit() },
-      { id: 2, year_code: code("fyr", 2), year_label: "2027", year_name: "Tahun Buku 2027", start_date: day("2027-01-01"), end_date: day("2027-12-31"), note: "", status: "Draft" as const, ...audit() },
-    ],
-  });
-
-  await prisma.accFiscalPeriod.createMany({
-    data: MONTHS.map((month, i) => {
-      const mm = String(i + 1).padStart(2, "0");
-      return {
-        id: i + 1,
-        period_code: code("fprd", i + 1),
-        fiscal_year_id: 1,
-        sequence_no: i + 1,
-        period_label: `2026-${mm}`,
-        period_name: `${month} 2026`,
-        start_date: day(`2026-${mm}-01`),
-        end_date: day(`2026-${mm}-${MONTH_END[i]}`),
-        note: "",
-        status: (i < 9 ? "Open" : "Draft") as "Open" | "Draft",
-        ...audit(),
-      };
-    }),
-  });
-
-  await prisma.budBudget.createMany({
-    data: BUDGETS.map(([id, date, companyId, currencyId, type, description, amount, status, categoryId, partnerId, realized, createdAt]) => ({
-      id,
-      budget_no: `BGT-${pad4(id)}`,
-      budget_date: day(date),
-      company_id: companyId,
-      currency_id: currencyId,
-      budget_type: type,
-      description,
-      budget_amount: amount,
-      realized_amount: realized,
-      status: status as never,
-      category_id: categoryId,
-      partner_id: partnerId,
-      created_by: ME,
-      updated_by: status === "Draft" ? null : ME,
-      created_at: ts(createdAt),
-      updated_at: ts(createdAt),
-    })),
-  });
-
-  // Transaction amounts are derived from their lines, exactly as the mockup does.
-  const cashBankCurrency: Record<number, number> = { 1: 1, 2: 1, 3: 1, 4: 2 };
-  await prisma.finCashBankTransaction.createMany({
-    data: TRANSACTIONS.map(([id, docDate, postingDate, purposeKey, companyId, cashBankId, partnerId, status, note]) => {
-      const purpose = PURPOSES.find((p) => p.key === purposeKey)!;
-      const currencyId = cashBankCurrency[cashBankId] ?? 1;
-      const rate = rateFor(CURRENCY_LABEL[currencyId]);
-      const amount = TRANSACTION_LINES.filter((l) => l[0] === id).reduce((t, l) => t + l[3], 0);
-      return {
-        id,
-        transaction_no: `CBT-${pad4(id)}`,
-        document_date: status === "Posted" ? day(docDate) : null,
-        posting_date: postingDate ? ts(postingDate) : null,
-        transaction_type: purpose.direction,
-        company_id: companyId,
-        purpose: purposeKey,
-        cash_bank_id: cashBankId,
-        currency_id: currencyId,
-        exchange_rate: rate,
-        partner_id: partnerId,
-        transaction_amount: amount,
-        transaction_base_amount: amount * rate,
-        note,
-        status: status as never,
-        created_by: ME,
-        updated_by: status === "Draft" ? null : ME,
-        created_at: ts(`${docDate} 08:30:00`),
-        updated_at: postingDate ? ts(postingDate) : ts(`${docDate} 08:30:00`),
-      };
-    }),
-  });
-
-  const sequenceByTransaction: Record<number, number> = {};
-  await prisma.finCashBankTransactionLine.createMany({
-    data: TRANSACTION_LINES.map(([transactionId, budgetId, outstanding, settlement], i) => {
-      const header = TRANSACTIONS.find((t) => t[0] === transactionId)!;
-      const currencyId = cashBankCurrency[header[5]] ?? 1;
-      const rate = rateFor(CURRENCY_LABEL[currencyId]);
-      sequenceByTransaction[transactionId] = (sequenceByTransaction[transactionId] ?? 0) + 1;
-      return {
-        id: i + 1,
-        transaction_id: transactionId,
-        sequence_no: sequenceByTransaction[transactionId],
-        source_doc_type_id: 1, // Budget
-        source_doc_id: budgetId,
-        outstanding_amount: outstanding,
-        settlement_amount: settlement,
-        settlement_base_amount: settlement * rate,
-        settlement_exchange_rate: 1,
-        transaction_amount: settlement,
-        transaction_base_amount: settlement * rate,
-        created_by: ME,
-        updated_by: null,
-        created_at: ts(`${header[1]} 08:30:00`),
-        updated_at: header[2] ? ts(header[2]) : ts(`${header[1]} 08:30:00`),
-      };
-    }),
-  });
-
-  await prisma.auditLog.createMany({
-    data: ([
-      [1, "sys_company", 2, "2026-08-14 09:12:00"],
-      [2, "m_cash_bank", 4, "2026-09-02 11:40:00"],
-      [3, "acc_account", 12, "2026-09-08 16:05:00"],
-      [4, "m_partner", 3, "2026-09-11 10:22:00"],
-      [5, "bud_budget", 1, "2026-08-29 14:03:00"],
-      [6, "bud_budget", 12, "2026-08-28 09:11:00"],
-      [7, "bud_budget", 10, "2026-09-01 10:40:00"],
-    ] as [number, string, number, string][]).map(([id, entity, rowId, at]) => ({
-      id, entity_key: entity, row_id: rowId, action: "UPDATE" as const, at: ts(at), by: ME,
-    })),
-  });
-
-  // Explicit ids leave the sequences at 1, which would collide on the next
-  // insert. Fast-forward each to its table's current max.
-  const sequences: [string, string][] = [
-    ["sys_user", "id"], ["sys_role", "id"], ["sys_permission", "id"],
-    ["sys_role_permission", "id"], ["sys_user_role", "id"], ["sys_session", "id"],
-    ["sys_company", "id"], ["sys_account_type", "id"],
-    ["sys_doc_type", "id"], ["sys_budget_category", "id"], ["sys_partner_category", "id"],
-    ["ref_currency", "id"], ["m_partner", "id"], ["m_cash_bank", "id"],
-    ["acc_account_category", "id"], ["acc_account_subcategory", "id"], ["acc_account", "id"],
-    ["acc_budget_category_account", "id"], ["acc_fiscal_year", "id"], ["acc_fiscal_period", "id"],
-    ["bud_budget", "id"], ["fin_cash_bank_transaction", "id"],
-    ["fin_cash_bank_transaction_line", "id"], ["audit_log", "id"],
-  ];
-  for (const [table, column] of sequences) {
-    await prisma.$executeRawUnsafe(
-      `SELECT setval(pg_get_serial_sequence('"${table}"', '${column}'), COALESCE((SELECT MAX("${column}") FROM "${table}"), 1))`
+async function ensureReferenceData(
+  audit: { created_by: number; updated_by: null }
+): Promise<void> {
+  for (const [i, label] of ACCOUNT_TYPES.entries()) {
+    const made = await create(
+      () => prisma.sysAccountType.findUnique({ where: { type_label: label } }),
+      () =>
+        prisma.sysAccountType.create({
+          data: { type_code: code("atyp", i + 1), type_label: label, type_name: label, ...audit },
+        })
     );
+    tally("account types", made);
   }
 
-  const counts = {
-    users: await prisma.sysUser.count(),
-    roles: await prisma.sysRole.count(),
-    permissions: await prisma.sysPermission.count(),
-    rolePermissions: await prisma.sysRolePermission.count(),
-    companies: await prisma.sysCompany.count(),
-    partners: await prisma.mPartner.count(),
-    cashBanks: await prisma.mCashBank.count(),
-    accounts: await prisma.accAccount.count(),
-    mappings: await prisma.accBudgetCategoryAccount.count(),
-    periods: await prisma.accFiscalPeriod.count(),
-    budgets: await prisma.budBudget.count(),
-    transactions: await prisma.finCashBankTransaction.count(),
-    transactionLines: await prisma.finCashBankTransactionLine.count(),
-  };
-  console.table(counts);
+  for (const [i, [label, table]] of DOC_TYPES.entries()) {
+    const made = await create(
+      () => prisma.sysDocType.findFirst({ where: { doc_label: label } }),
+      () =>
+        prisma.sysDocType.create({
+          data: {
+            doc_code: code("dtyp", i + 1),
+            doc_label: label,
+            doc_name: label,
+            doc_table: table,
+            ...audit,
+          },
+        })
+    );
+    tally("document types", made);
+  }
 
-  console.log(`\nSeeded.`);
-  console.log(`  Administrator : ${ADMIN_EMAIL}`);
-  if (process.env.SIBA_ADMIN_PASSWORD) {
-    console.log("  Password      : as set in SIBA_ADMIN_PASSWORD");
+  for (const [i, [label, note]] of BUDGET_CATEGORIES.entries()) {
+    const made = await create(
+      () => prisma.sysBudgetCategory.findFirst({ where: { category_label: label } }),
+      () =>
+        prisma.sysBudgetCategory.create({
+          data: {
+            category_code: code("bcat", i + 1),
+            category_label: label,
+            category_name: label,
+            note,
+            ...audit,
+          },
+        })
+    );
+    tally("budget categories", made);
+  }
+
+  for (const [i, [label, name, note]] of PARTNER_CATEGORIES.entries()) {
+    const made = await create(
+      () => prisma.sysPartnerCategory.findFirst({ where: { category_label: label } }),
+      () =>
+        prisma.sysPartnerCategory.create({
+          data: {
+            category_code: code("pcat", i + 1),
+            category_label: label,
+            category_name: name,
+            note,
+            ...audit,
+          },
+        })
+    );
+    tally("partner categories", made);
+  }
+
+  const typeId = new Map(
+    (await prisma.sysAccountType.findMany({ select: { id: true, type_label: true } })).map((t) => [
+      t.type_label,
+      t.id,
+    ])
+  );
+
+  for (const [i, [typeLabel, label]] of ACCOUNT_CATEGORIES.entries()) {
+    const made = await create(
+      () => prisma.accAccountCategory.findFirst({ where: { category_label: label } }),
+      () =>
+        prisma.accAccountCategory.create({
+          data: {
+            account_type_id: typeId.get(typeLabel)!,
+            category_code: code("acat", i + 1),
+            category_label: label,
+            category_name: label,
+            ...audit,
+          },
+        })
+    );
+    tally("account categories", made);
+  }
+
+  const categoryId = new Map(
+    (
+      await prisma.accAccountCategory.findMany({ select: { id: true, category_label: true } })
+    ).map((c) => [c.category_label, c.id])
+  );
+
+  for (const [i, [categoryLabel, label, name]] of ACCOUNT_SUBCATEGORIES.entries()) {
+    const made = await create(
+      () =>
+        prisma.accAccountSubcategory.findFirst({
+          where: {
+            subcategory_label: label,
+            account_category_id: categoryId.get(categoryLabel)!,
+          },
+        }),
+      () =>
+        prisma.accAccountSubcategory.create({
+          data: {
+            account_category_id: categoryId.get(categoryLabel)!,
+            subcategory_code: code("asub", i + 1),
+            subcategory_label: label,
+            subcategory_name: name,
+            ...audit,
+          },
+        })
+    );
+    tally("account subcategories", made);
+  }
+
+  // The reporting base currency, so a first install can register a Cash & Bank
+  // resource and plan a budget without setting up a master first. Every other
+  // currency is created through the application.
+  const made = await create(
+    () => prisma.refCurrency.findFirst({ where: { currency_label: BASE_CURRENCY_LABEL } }),
+    () =>
+      prisma.refCurrency.create({
+        data: {
+          currency_code: code("curr", 1),
+          currency_label: BASE_CURRENCY_LABEL,
+          currency_name: BASE_CURRENCY_NAME,
+          note: "Base currency pelaporan.",
+          ...audit,
+        },
+      })
+  );
+  tally("base currency", made);
+}
+
+/** Creates the row when the lookup finds nothing. Returns 1 if it created one. */
+async function create<T>(find: () => Promise<T | null>, make: () => Promise<T>): Promise<number> {
+  if (await find()) return 0;
+  await make();
+  return 1;
+}
+
+function report(): void {
+  const entries = Object.entries(created);
+  if (entries.length) {
+    console.log("Created:");
+    for (const [what, n] of entries) console.log(`  ${String(n).padStart(4)}  ${what}`);
   } else {
-    console.log(`  Password      : ${DEV_PASSWORD}   <-- DEVELOPMENT ONLY`);
-    console.log("                  Set SIBA_ADMIN_PASSWORD before seeding anywhere real.");
+    console.log("Nothing to create — system data is already up to date.");
   }
-  console.log(`  Staff         : meehun@siba.app / ${DEV_PASSWORD}`);
+
+  console.log(`\nAdministrator : ${ADMIN_EMAIL}`);
+  if (!process.env.SIBA_ADMIN_PASSWORD) {
+    console.log(`Password      : ${DEV_PASSWORD}   <-- DEVELOPMENT ONLY`);
+    console.log("                Set SIBA_ADMIN_PASSWORD before seeding anywhere real.");
+  }
+  console.log(
+    "\nBusiness data — partners, cash & bank, accounts, mappings, fiscal periods,\n" +
+      "budgets — is created through the application, not by this seed."
+  );
 }
 
 main()
