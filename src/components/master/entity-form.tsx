@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { Combobox } from "@/components/ui/combobox";
 import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
+import { MoneyInput } from "@/components/ui/money-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { createRecord, updateRecord, toggleStatus, type FormValues } from "@/app/actions/master";
@@ -29,7 +30,7 @@ import {
 import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
 import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
-import { formatDate, formatTimestamp, todayIso } from "@/lib/format";
+import { formatDate, formatMoney, formatTimestamp, todayIso } from "@/lib/format";
 import { recordTitle } from "./title";
 
 export type FormMode = "new" | "view" | "edit";
@@ -136,6 +137,14 @@ export function EntityForm({
    * now. The server already applied the structural half when it built these
    * options, and re-checks the whole rule when the form is submitted.
    */
+  /** The currency a `money` field is denominated in, for the label in its box. */
+  const currencyLabelOf = (field: Field): string | undefined => {
+    if (!field.currencyFrom) return undefined;
+    const id = Number(values[field.currencyFrom] ?? 0);
+    if (!id) return undefined;
+    return refs[field.currencyFrom]?.find((o) => o.id === id)?.label;
+  };
+
   const optionsFor = (field: Field): RefOption[] => {
     const all = refs[field.name] ?? [];
     const companyId = Number(values.company_id ?? 0);
@@ -329,6 +338,7 @@ export function EntityForm({
                     error={errors[f.name]}
                     options={optionsFor(f)}
                     prefix={f.type === "segment" ? inheritedCode(f) : null}
+                    currencyLabel={currencyLabelOf(f)}
                     onChange={(v) => setField(f, v)}
                   />
                 ))}
@@ -526,6 +536,7 @@ function FieldControl({
   error,
   options,
   prefix,
+  currencyLabel,
   statusLike,
   onChange,
 }: {
@@ -538,6 +549,8 @@ function FieldControl({
   options: RefOption[];
   /** `segment` only: the code this field's number continues. */
   prefix?: string | null;
+  /** `money` only: the currency the amount is in. */
+  currencyLabel?: string;
   /** This field carries the record's status, so a boolean reads Aktif/Non Aktif. */
   statusLike?: boolean;
   onChange: (value: string | boolean | null) => void;
@@ -601,6 +614,17 @@ function FieldControl({
           </span>
         </div>
       );
+    } else if (field.type === "money") {
+      body =
+        raw == null || raw === "" ? (
+          <div className="ro nil">tidak diisi</div>
+        ) : (
+          <div className="ro">
+            <span className="mny">
+              {formatMoney(raw as number, currencyLabel ?? "IDR")}
+            </span>
+          </div>
+        );
     } else if (field.type === "textarea") {
       body = raw ? (
         <div className="ro multi">{String(raw)}</div>
@@ -721,6 +745,17 @@ function FieldControl({
         onChange={onChange}
       />
     );
+  } else if (field.type === "money") {
+    control = (
+      <MoneyInput
+        value={value == null ? "" : String(value)}
+        currencyLabel={currencyLabel}
+        invalid={Boolean(error)}
+        disabled={locked}
+        placeholder={field.placeholder ?? "0"}
+        onChange={onChange}
+      />
+    );
   } else if (field.type === "textarea") {
     control = (
       <textarea
@@ -734,7 +769,8 @@ function FieldControl({
     control = (
       <input
         className={`inp${field.ident ? " idf" : ""}${error ? " bad" : ""}`}
-        type={field.type === "number" ? "number" : "text"}
+        type="text"
+        inputMode={field.type === "number" ? "numeric" : undefined}
         value={value == null ? "" : String(value)}
         placeholder={field.placeholder}
         disabled={locked}

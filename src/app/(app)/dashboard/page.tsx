@@ -257,7 +257,7 @@ export default async function DashboardPage() {
               </Link>
             ))
           ) : (
-            <div className="empty" style={{ padding: "34px 20px" }}>
+            <div className="empty sm">
               <div className="ic" style={{ background: "var(--ok-bg)", color: "var(--ok)" }}>
                 <Icon name="check" size={20} />
               </div>
@@ -346,7 +346,7 @@ export default async function DashboardPage() {
             ))}
           </div>
         ) : (
-          <div className="empty" style={{ padding: "32px 20px" }}>
+          <div className="empty sm">
             <div className="ic">
               <Icon name="hist" size={20} />
             </div>

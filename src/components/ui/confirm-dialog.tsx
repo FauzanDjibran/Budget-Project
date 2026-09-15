@@ -47,11 +47,8 @@ export function ConfirmDialog({
 
   if (!open) return null;
 
-  const tones = {
-    danger: { background: "var(--bad-bg)", color: "var(--bad)" },
-    ok: { background: "var(--ok-bg)", color: "var(--ok)" },
-    brand: { background: "var(--brand-50)", color: "var(--brand)" },
-  }[tone];
+  // The tint is a class, shared with `Dialog` — see `.mi.t-*` in globals.css.
+  const toneClass = { danger: "t-bad", ok: "t-ok", brand: "t-brand" }[tone];
 
   return (
     <div
@@ -61,7 +58,7 @@ export function ConfirmDialog({
       }}
     >
       <div className="modal" role="dialog" aria-modal="true">
-        <div className="mi" style={tones}>
+        <div className={`mi ${toneClass}`}>
           <Icon name={icon} size={21} />
         </div>
         <h3>{title}</h3>

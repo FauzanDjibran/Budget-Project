@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { MoneyInput } from "@/components/ui/money-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -791,13 +792,12 @@ export function TransactionForm({
                                 </span>
                               </td>
                               <td className="num">
-                                <input
-                                  className={`inp lmny${over ? " over" : ""}`}
-                                  inputMode="numeric"
-                                  autoComplete="off"
-                                  value={formatNumber(l.amount)}
-                                  onChange={(e) => {
-                                    const raw = e.target.value.replace(/[^0-9]/g, "");
+                                <MoneyInput
+                                  size="sm"
+                                  over={over}
+                                  ariaLabel="Nominal realisasi"
+                                  value={l.amount ? String(l.amount) : ""}
+                                  onChange={(raw) => {
                                     setDraftLines((rows) =>
                                       rows.map((r) =>
                                         r.budget_id === l.budget_id

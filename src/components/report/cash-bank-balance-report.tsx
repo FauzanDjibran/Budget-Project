@@ -28,7 +28,7 @@ import { reportHref } from "@/lib/siba/reports";
 export function CashBankBalanceReport({ report }: { report: BalanceReport }) {
   if (!report.groups.length) {
     return (
-      <div className="empty" style={{ padding: "34px 20px" }}>
+      <div className="empty sm">
         <div className="ic">
           <Icon name="wallet" size={20} />
         </div>

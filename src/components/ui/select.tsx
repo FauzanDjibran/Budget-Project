@@ -42,7 +42,8 @@ export function Select({
   options,
   onChange,
   variant = "field",
-  placeholder = "— pilih —",
+  /** Always phrased `Pilih <what>…`, the same prompt a Combobox shows. */
+  placeholder = "Pilih…",
   /** Marks the control as carrying an active filter (`.set`). */
   set,
   invalid,

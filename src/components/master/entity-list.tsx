@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -309,21 +310,14 @@ export function EntityList({
           {companyId != null && (
             <CompanyFilter options={companies} selectedId={companyId} />
           )}
-          <div className={`srch${query ? " has" : ""}`}>
-            <Icon name="srch" size={14} />
-            <input
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setPage(1);
-              }}
-              placeholder={`Cari di ${entity.name}…`}
-              autoComplete="off"
-            />
-            <button className="x" onClick={() => setQuery("")} aria-label="Bersihkan">
-              <Icon name="block" size={13} />
-            </button>
-          </div>
+          <SearchField
+            value={query}
+            placeholder={`Cari di ${entity.name}…`}
+            onChange={(v) => {
+              setQuery(v);
+              setPage(1);
+            }}
+          />
 
           {status && (
             <Select

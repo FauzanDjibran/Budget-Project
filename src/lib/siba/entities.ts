@@ -20,6 +20,15 @@ export type FieldType =
   | "date"
   | "number"
   /**
+   * An amount. Rendered by `ui/money-input.tsx` — mono, right-aligned,
+   * grouped in thousands as it is typed, with the currency named by
+   * `currencyFrom` shown inside the box. Never a native `<input
+   * type="number">`: that control is drawn by the operating system and cannot
+   * carry a separator, which is how the same figure came to read three
+   * different ways on three screens.
+   */
+  | "money"
+  /**
    * One number continuing a code the record inherits. The user types `5`; the
    * Server Action writes `1.1.1.5` into the field named by `writesTo`. See
    * `lib/siba/account-code.ts` — Chart of Accounts is the entity that needs it.
@@ -91,6 +100,11 @@ export type Field = {
   inheritsFrom?: string[];
   /** `segment` only. The field the composed code is written into. */
   writesTo?: string;
+  /**
+   * `money` only. The ref field naming the currency this amount is in, so the
+   * box can say which currency the reader is typing.
+   */
+  currencyFrom?: string;
   defaultValue?: string | boolean | number;
   /**
    * The System Default this field starts on when creating. A default fills the
@@ -414,10 +428,13 @@ export const ENTITIES: Entity[] = [
       {
         name: "opening_balance",
         label: "Saldo Awal",
-        type: "number",
+        type: "money",
+        currencyFrom: "currency_id",
         createOnly: true,
         virtual: true,
-        defaultValue: 0,
+        // Starts empty on its placeholder rather than on a literal `0` the user
+        // has to delete first — the same as every other amount in the
+        // application. A blank field is read as zero by `createRecord`.
         placeholder: "0",
         help: "Saldo resource ini saat mulai dicatat. Disimpan sebagai entri pembuka pada Cash Bank Book, bukan sebagai kolom pada master — saldo berikutnya selalu berasal dari buku.",
       },

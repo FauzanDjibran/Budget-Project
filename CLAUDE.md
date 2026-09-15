@@ -69,7 +69,7 @@ or invariants that assume a particular row exists.
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Currently one entry: default Currency |
-| Tests | Security suite plus the Accounting, Budget, Finance, Cash Bank Book, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. |
+| Tests | Security suite plus the Accounting, Budget, Finance, Cash Bank Book, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted. |
 
 ---
 
@@ -157,7 +157,7 @@ of its own.
 | Finance writes | `src/app/actions/finance.ts` | Create, edit, the eligible-Budget query, and Post / Cancel |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
 | Registry pages | `src/components/master/entity-pages.tsx` | The four registry pages, mounted under each owning module |
-| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, combobox, dialog, toast |
+| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast |
 
 ### Data flow for a Master page
 
@@ -260,7 +260,8 @@ src/
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     accounting/          FiscalPeriods (shown inside a Fiscal Year)
-    ui/                  Combobox, Select, DateInput, ConfirmDialog, ToastProvider
+    ui/                  Combobox, Select, DateInput, MoneyInput, SearchField,
+                         Dialog, ConfirmDialog, ToastProvider
   lib/
     prisma.ts            Client singleton with adapter; the cache is keyed on the
                          generated class, so `prisma generate` retires it (§12)
@@ -274,8 +275,9 @@ src/
                          system-defaults, system-settings
   generated/prisma/      Prisma client output — gitignored, never edit
 tests/                   Security, Accounting, Budget, Finance, Cash Bank Book, reports,
-                         fiscal, settings and schema suites (node:test); helpers.ts
-                         builds and cleans up its own business fixtures
+                         fiscal, settings, schema and design-system suites
+                         (node:test); helpers.ts builds and cleans up its own
+                         business fixtures
 .claude/skills/          Project skills — `run-siba` brings the app up locally (§6)
 .github/workflows/ci.yml PostgreSQL service -> migrate -> seed -> lint -> build -> test
 ```
@@ -340,7 +342,14 @@ The fiscal suite also holds the Fiscal Year lifecycle —
 that `status` is not an isian, that Draft is the only status a year opens from, and
 that nothing writes Draft or Closed — and the settings suite holds what a System
 Default may do: a key outside the catalogue is never written, and a deactivated
-Currency is stored but never prefilled. A schema suite closes the loop underneath all of
+Currency is stored but never prefilled. A design-system suite guards the UI conventions that had already
+drifted once — that no native `<select>`, date input or number input is rendered
+anywhere, that `globals.css` declares no bare `.ph` rule (it is the placeholder class
+as well as the page header, and a bare one silently misaligned every dropdown
+placeholder in the application), that the search box, the dialog chrome and a tinted
+dialog icon each have exactly one implementation, and that nothing formats a date or a
+number outside `lib/format.ts`. It reads source text, so it needs no database and costs
+nothing. A schema suite closes the loop underneath all of
 it: every model in `prisma/schema.prisma` must have a delegate on the generated client
 and a table in the database, so a checkout where `prisma generate` or `prisma migrate`
 has not been run fails here rather than at the first page that reads the missing model.
@@ -418,11 +427,16 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | FK pickers | `Combobox` — searchable, `CODE – Name` options |
 | Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`) |
 | Dates | `DateInput` — **never `<input type="date">`**; types and shows `dd/mm/yyyy`, opens the app's own calendar |
+| Amounts | `MoneyInput` — **never `<input type="number">`**; mono, right-aligned, grouped in thousands as it is typed, currency label inside the box. `size="sm"` inside a table |
+| Search | `SearchField` in the `.toolbar` — icon, `Cari <what>…`, clear button. `grow` when it is the only control |
+| Picker prompts | Always `Pilih <what>…` — for a `Combobox`, a `Select`, and anything that stands in for one |
 | Validation | Inline `.err` under the field + `.bad` on the control + error toast |
 | Unsaved changes | `.ph-dirty` chip with pulse indicator, in `.ph-act` beside Simpan |
-| Confirmations | `ConfirmDialog` — tinted icon, subject chip, **consequence copy** |
+| Confirmations | `ConfirmDialog` — small, centred, one question: tinted icon, subject chip, **consequence copy** |
+| Panel dialogs | `Dialog` — wide and left-aligned: fixed header (tinted `.mi sm`, title, subtitle, close), scrolling `.rp-body`, fixed `.rp-foot`. Everything that is not a confirmation |
 | Feedback | Toasts via `useToast()` |
-| Empty states | `.empty` — icon, heading, explanation, CTA only when the user can act |
+| Empty states | `.empty` — icon, heading, explanation, CTA only when the user can act. Two sizes: `.empty` fills a page, `.empty.sm` sits inside a card, a dialog or a report body. **Never a hand-written padding** |
+| Icon tints | `.mi` + `.t-ok` / `.t-bad` / `.t-brand` / `.t-warn` — never a `background`/`color` pair written inline |
 | Responsive | Desktop-first. `.fgrid` collapses at 1320px, `.frow` at 1000px, nav at 860px. |
 
 **Anti-patterns explicitly rejected** (from `akui_proto_ui_reference.md`, its §9 and §11):
@@ -789,6 +803,32 @@ Specified in the concept doc, **not yet implemented** (see §13):
   seed, and never add a delete step to it.**
 - **Status:** Frozen, current.
 
+### A repeated control is a component, and the test suite says so (FROZEN)
+- **Decision:** Anything that appears on more than one screen is drawn by one
+  component in `src/components/ui/`, not by markup copied between pages. That is
+  now: `Combobox`, `Select`, `DateInput`, **`MoneyInput`**, **`SearchField`**,
+  **`Dialog`** (the wide panel) and `ConfirmDialog` (the small question).
+  `tests/design-system.test.ts` enforces the ones that had already drifted —
+  no native `<select>`, date or number input; no bare `.ph` rule; no `.srch`
+  markup outside `SearchField`; no `.ovl` outside the two dialog components; no
+  `.mi` tinted inline; no date or number formatted outside `lib/format.ts`.
+- **Reason:** A CLAUDE.md line cannot enforce a convention, because none of these
+  mistakes breaks a build, fails a type check or throws at runtime. They just make
+  one screen behave unlike the rest, and the drift is only visible to whoever holds
+  every screen in their head at once. Seven lists each carried their own copy of the
+  search box; four dialogs each drew their own header out of inline styles, so their
+  icons were 34px in two and 38px in two, two had a close button and two did not;
+  eight empty states had four different hand-written paddings between them. Each
+  copy was defensible the day it was written.
+- **Impact:** The test is a source-text scan, so it costs nothing and needs no
+  database. When a genuinely new shape is needed, the answer is a new component and a
+  new assertion — not an exception to an existing one. A component takes a `variant`
+  or a `size` where two contexts differ; it does not take a `style`.
+- **Do not change unless:** explicitly instructed. **Never reproduce one of these
+  controls by hand, and never relax an assertion in `tests/design-system.test.ts` to
+  let a copy through.**
+- **Status:** Frozen, current.
+
 ### Design system lifted verbatim
 - **Decision:** `globals.css` is the mockup's stylesheet, near-unmodified. No Tailwind or
   CSS-in-JS. Components emit its class names.
@@ -851,16 +891,26 @@ Specified in the concept doc, **not yet implemented** (see §13):
   filled nothing in could not see how to save, and a user who had could only
   save by scrolling past a Budget table of arbitrary length. Actions belong
   where a reader looks first, and one place, not two.
-- **Impact:** A new page gets its buttons in `.ph-act` and nowhere else. The
-  sticky rule is scoped `.pad >` **deliberately**: `.ph` is also the
-  placeholder class inside `Combobox` and `Select`, and a bare `.ph` rule would
-  make every placeholder in the app sticky. Page headers are always a direct
+- **Impact:** A new page gets its buttons in `.ph-act` and nowhere else. Every
+  page-header rule is scoped `.pad >` **deliberately**, and `globals.css` now
+  carries **no bare `.ph` rule at all**: `.ph` is also the placeholder class
+  inside `Combobox`, `Select` and `DateInput`. Page headers are always a direct
   child of `.pad`, so the selector is exact. `z-index: 30` puts the header over
   a table's own sticky `thead` (3) and the report criteria bar (20), under the
   topbar (40). The header costs about 100px of a scrolling viewport, which is
   the price of the actions always being reachable.
+- **What a bare `.ph` rule actually did.** `.ph{margin-bottom:15px}` shipped
+  alongside the scoped one and put 15px under **every dropdown placeholder in
+  the application**. Inside a control centred on its children that lifted the
+  text half a line above the caret beside it — visible on every report filter,
+  every FK picker and every form select, and invisible the moment a value was
+  chosen, because only the placeholder carries the class. Nothing broke; the
+  application simply looked slightly wrong in one specific way on every screen.
+  `tests/design-system.test.ts` now fails on a bare `.ph` selector.
 - **Do not change unless:** explicitly instructed. **Never add a button bar at
-  the bottom of a form**, and never widen the sticky rule to a bare `.ph`.
+  the bottom of a form**, and **never write a bare `.ph` rule** — not the sticky
+  one, not a margin, not anything. `.pad > .ph` and `.cbx .ph` both say which
+  `.ph` they mean, and that is the only acceptable shape.
 - **Status:** Frozen, current.
 
 ### The Journal is written by posting, balances, and never changes (FROZEN)
@@ -1263,7 +1313,33 @@ they relate. Keep the table; keep it out of the UI's write path.
   (`yyyy-mm-dd`) as its value and masks typing onto `dd/mm/yyyy` rails; a date that
   does not exist (31/02) is refused rather than rolled forward.
 - **Do not change unless:** explicitly instructed. **Never reintroduce a native
-  `<select>` or date input, and never format a date outside `formatDate`.**
+  `<select>`, date input or number input, and never format a date outside
+  `formatDate`.** `tests/design-system.test.ts` fails on any of them.
+- **Status:** Frozen, current.
+
+### An amount is typed into one control, everywhere (FROZEN)
+- **Decision:** Every amount a user types goes through
+  `components/ui/money-input.tsx` — mono, right-aligned, grouped in thousands as
+  it is typed, with its currency label inside the box on the left, and `size="sm"`
+  where it sits in a table. **No native `<input type="number">` anywhere**, for the
+  same reason there is no native `<select>` and no native date input: the control is
+  drawn by the operating system. The registry expresses this as `type: "money"` plus
+  `currencyFrom`, naming the ref field that says which currency the figure is in.
+- **Reason:** The same amount read three different ways on three screens. Cash &
+  Bank's Saldo Awal was a native number input: OS spinner, left-aligned, `231411`.
+  Budget's Nominal was right-aligned and mono but ungrouped: `3243222`. Only a Cash
+  Bank Transaction line grouped it: `3.243.222`. Grouping is not decoration in an
+  accounting application — it is how a reader checks a figure's order of magnitude at
+  a glance, and three conventions for one thing means a user who learns to read one
+  screen has to re-learn the next.
+- **Impact:** The value crossing the component's boundary is an unformatted numeric
+  string, which is what a Server Action parses; the separators exist only in what is
+  displayed. Digits are the only accepted input, so a separator typed by hand cannot
+  desync the two. An amount field starts **empty on its `0` placeholder**, never on a
+  literal `0` the user has to delete first. `over` is the one state an amount carries.
+- **Do not change unless:** explicitly instructed. **Never render a native number
+  input, never format an amount outside `formatNumber` / `formatMoney`, and do not
+  give one screen its own amount styling.**
 - **Status:** Frozen, current.
 
 ### Amounts are never converted between currencies (FROZEN)
@@ -1717,8 +1793,18 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   currencies. Totals are reported per currency until a real rate source exists (§12).
 - Do **not** put business data in `prisma/seed.ts`, and do **not** add a delete step to
   it. It syncs system data and nothing else (§12).
-- Do **not** use a native `<select>` or `<input type="date">`. Use `Select` and
-  `DateInput` from `components/ui/` — the OS draws neither of those (§12).
+- Do **not** use a native `<select>`, `<input type="date">` or `<input
+  type="number">`. Use `Select`, `DateInput` and `MoneyInput` from
+  `components/ui/` — the OS draws none of those (§12).
+- Do **not** hand-write a control that already exists in `components/ui/` —
+  a search box, a dialog, an amount field, a picker. One repeated control is one
+  component, and `tests/design-system.test.ts` fails on a copy (§12).
+- Do **not** write a bare `.ph` rule in `globals.css`, of any kind. `.ph` is the
+  page header **and** the placeholder inside Combobox, Select and DateInput;
+  scope every page-header rule `.pad > .ph` (§8, §12).
+- Do **not** write a padding, a tint or a border inline where a modifier class
+  exists — `.empty.sm`, `.mi.t-ok`, `.tw.boxed`, `.srch.grow` (§8).
+- Do **not** phrase a picker's prompt any way but `Pilih <what>…` (§8).
 - Do **not** format a date anywhere but `formatDate`. Every date reads `dd/mm/yyyy`.
 - Do **not** give Fiscal Period a menu entry, a route, a registry config, or
   permissions, and do **not** let a period's dates be edited by hand. Periods are
@@ -1872,6 +1958,7 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | `zod` unused | Installed; validation is hand-written in the services. |
+| The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | Tests cover security, Accounting, Budget, Finance, the Cash Bank Book, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |

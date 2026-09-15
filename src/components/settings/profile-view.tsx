@@ -284,7 +284,7 @@ export function ProfileView({ profile }: { profile: Profile }) {
                 </div>
               ))
             ) : (
-              <div className="empty" style={{ padding: "32px 20px" }}>
+              <div className="empty sm">
                 <div className="ic">
                   <Icon name="lock" size={20} />
                 </div>

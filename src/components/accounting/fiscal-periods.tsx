@@ -93,7 +93,7 @@ export function FiscalPeriods({
           </table>
         </div>
       ) : (
-        <div className="empty" style={{ padding: "30px 20px" }}>
+        <div className="empty sm">
           <div className="ic">
             <Icon name="clock" size={20} />
           </div>

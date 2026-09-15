@@ -149,11 +149,15 @@ body.sub-off .reopen{display:grid}
 .pad{padding:0 4px 44px}
 
 /* ============================================================ page header */
-.ph{margin-bottom:15px}
-/* The header travels with the page: a form's actions stay reachable from
-   anywhere in it, which is why nothing is parked at the bottom any more.
-   Scoped to `.pad >` deliberately — `.ph` is also the placeholder class
-   inside a Combobox and a Select, and those must not become sticky. */
+/* Every page-header rule is scoped `.pad > .ph` deliberately, and this sheet
+   carries no bare `.ph` rule at all: `.ph` is *also* the placeholder class
+   inside a Combobox, a Select and a DateInput. A bare `.ph{margin-bottom:15px}`
+   used to sit here, and it leaked 15px onto every dropdown placeholder in the
+   application — inside a flex row centred on its children that pushed "Pilih
+   Cash & Bank…" half a line above the caret beside it, on every report filter
+   and every form. The header travels with the page so a form's actions stay
+   reachable from anywhere in it, which is why nothing is parked at the bottom
+   any more. */
 .pad > .ph{position:sticky;top:0;z-index:30;margin:0 -4px 15px;padding:10px 4px 12px;
   background:var(--bg);box-shadow:0 10px 12px -10px rgba(15,23,42,.10)}
 .crumb{display:flex;align-items:center;gap:7px;font-size:9.5px;font-weight:800;letter-spacing:.11em;
@@ -207,6 +211,8 @@ body.sub-off .reopen{display:grid}
 /* ============================================================ toolbar */
 .toolbar{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid var(--line-2);flex-wrap:wrap}
 .srch{position:relative;flex:1 1 250px;max-width:380px;min-width:190px}
+/* Search is the only control in this toolbar, so it takes the width. */
+.srch.grow{flex:1 1 auto;max-width:none}
 .srch svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);stroke:var(--muted-2)}
 .srch input{width:100%;height:32px;border:1px solid var(--line);border-radius:var(--r);padding:0 30px 0 31px;font-size:12.5px;background:#fff}
 .srch input:focus{border-color:var(--accent-s);outline:none;box-shadow:0 0 0 3px var(--accent-50)}
@@ -220,6 +226,9 @@ body.sub-off .reopen{display:grid}
 
 /* ============================================================ table */
 .tw{overflow-x:auto;position:relative}
+/* A table standing on its own rather than filling a card — inside a dialog,
+   say. The border was being written inline in three places. */
+.tw.boxed{border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 table.grid{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
 table.grid thead th{position:sticky;top:0;z-index:3;background:#fff;text-align:left;font-size:10px;font-weight:800;
   letter-spacing:.1em;text-transform:uppercase;color:var(--muted-2);padding:10px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -357,17 +366,18 @@ td.acts{width:88px;padding-right:7px}
   padding:1px 5px;border-radius:4px;text-transform:uppercase}
 .help{font-size:10.5px;color:var(--muted-2);margin-top:5px;line-height:1.5}
 .err{font-size:10.5px;color:var(--bad);margin-top:5px;font-weight:600;display:flex;align-items:center;gap:4px}
-.inp,.ta,.slc{width:100%;height:34px;border:1px solid var(--line);border-radius:var(--r);background:#fff;padding:0 11px;
+.inp,.ta{width:100%;height:34px;border:1px solid var(--line);border-radius:var(--r);background:#fff;padding:0 11px;
   font-size:12.5px;font-weight:500;color:var(--ink)}
 .inp.idf{font-family:var(--f-mono);font-size:12px;font-weight:600}
 .inp::placeholder,.ta::placeholder{color:var(--muted-3);font-weight:400}
 .ta{height:auto;min-height:74px;padding:9px 11px;resize:vertical;line-height:1.55}
-.slc{cursor:pointer;appearance:none;padding-right:28px;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='3' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");
-  background-repeat:no-repeat;background-position:right 10px center}
-.inp:focus,.ta:focus,.slc:focus{border-color:var(--accent-s);outline:none;box-shadow:0 0 0 3px var(--accent-50)}
-.inp:disabled,.ta:disabled,.slc:disabled{background:var(--line-3);color:var(--muted-2);cursor:not-allowed}
-.inp.bad,.slc.bad,.ta.bad,.cbx.bad{border-color:var(--bad-solid);box-shadow:0 0 0 3px var(--bad-bg)}
+/* There was a `.slc` here, styling a native `<select>`. Nothing renders one
+   any more — `components/ui/select.tsx` draws the whole control, list included
+   — and a style for a control the application has banned is an invitation to
+   use it again. */
+.inp:focus,.ta:focus{border-color:var(--accent-s);outline:none;box-shadow:0 0 0 3px var(--accent-50)}
+.inp:disabled,.ta:disabled{background:var(--line-3);color:var(--muted-2);cursor:not-allowed}
+.inp.bad,.ta.bad,.cbx.bad{border-color:var(--bad-solid);box-shadow:0 0 0 3px var(--bad-bg)}
 .chk{display:flex;align-items:flex-start;gap:9px;padding:9px 11px;border:1px solid var(--line);border-radius:var(--r);background:#fff;cursor:pointer}
 .chk:hover{background:var(--line-3)}
 .chk input{margin:1px 0 0;width:15px;height:15px;accent-color:var(--brand);cursor:pointer;flex:0 0 auto}
@@ -493,6 +503,15 @@ td.acts{width:88px;padding-right:7px}
   border:1px solid var(--line-2);animation:mi .17s cubic-bezier(.2,.9,.3,1)}
 @keyframes mi{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
 .modal .mi{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}
+/* The tinted icon's tone is a class, not an inline style: four dialogs used to
+   write the same `background`/`color` pair by hand and they had drifted. `.sm`
+   is the size a panel dialog's header uses, where the icon sits beside the
+   title rather than above it. */
+.mi.t-ok{background:var(--ok-bg);color:var(--ok)}
+.mi.t-bad{background:var(--bad-bg);color:var(--bad)}
+.mi.t-brand{background:var(--brand-50);color:var(--brand)}
+.mi.t-warn{background:var(--warn-bg);color:var(--warn)}
+.modal .mi.sm{width:34px;height:34px;margin:0;flex:0 0 auto}
 .modal h3{margin:0 0 8px;font-size:15.5px;font-weight:800;color:var(--brand)}
 .modal .subj{display:inline-block;margin-bottom:10px;font-family:var(--f-mono);font-size:11.5px;font-weight:500;
   background:var(--line-2);color:var(--ink-2);padding:5px 11px;border-radius:var(--r-sm);max-width:100%;
@@ -550,10 +569,26 @@ kbd{font-family:var(--f);font-size:9.5px;border:1px solid var(--line);border-bot
 .dstack{display:flex;flex-direction:column;line-height:1.3;gap:1px;min-width:0}
 .dstack .d1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--ink);max-width:260px}
 .dstack .d2{font-family:var(--f-mono);font-size:10px;color:var(--muted-2)}
+/* ---------- money entry ----------
+   One control for every amount somebody types, drawn by `ui/money-input.tsx`:
+   the currency label sits inside the box on the left, the figure is mono,
+   right-aligned and grouped in thousands as it is typed. There is no native
+   `<input type="number">` anywhere — its spinner is drawn by the operating
+   system, it right-aligns nothing, and it cannot carry a separator, so the
+   same amount used to read three different ways on three screens. `.sm` is the
+   in-table size; `.over` is the one state an amount can be in. */
 .mwrap{position:relative;display:block}
 .mwrap .cur{position:absolute;left:11px;top:50%;transform:translateY(-50%);font-family:var(--f-mono);font-size:11px;
-  font-weight:700;color:var(--muted-2);pointer-events:none}
-.inp.mfield{padding-left:48px;font-family:var(--f-mono);font-size:13.5px;font-weight:700;text-align:right;letter-spacing:.02em}
+  font-weight:700;color:var(--muted-2);pointer-events:none;letter-spacing:.02em}
+.inp.mfield{padding-left:48px;font-family:var(--f-mono);font-size:13.5px;font-weight:700;text-align:right;
+  letter-spacing:.02em;font-variant-numeric:tabular-nums}
+.mwrap.sm .cur{left:9px;font-size:10px}
+.mwrap.sm .inp.mfield{height:32px;padding-left:40px;padding-right:10px;font-size:12.5px}
+.mwrap.nocur .inp.mfield{padding-left:11px}
+.mwrap.sm.nocur .inp.mfield{padding-left:10px}
+.inp.mfield.over{border-color:var(--warn-solid);background:var(--warn-bg);color:var(--warn)}
+.mwrap.over .cur{color:var(--warn)}
+.inp.mfield:disabled{background:var(--line-3);color:var(--muted-3)}
 .pgrp{display:flex;gap:4px;flex-wrap:nowrap}
 .pgrp .bdg{padding:2px 6px;font-size:9.5px}
 .kpis.bud{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
@@ -611,6 +646,9 @@ tr.nowrow:hover td{background:#F7F0D4}
 .rp-foot{flex:0 0 auto;display:flex;align-items:center;gap:10px;margin-top:0;
   padding:12px 20px;border-top:1px solid var(--line-2);background:#fff}
 .rp-foot .fnote{flex:1 1 auto;font-size:11.5px;color:var(--muted)}
+/* A footer with no note still ends on the right, so the concluding action is
+   where it is on every other dialog. */
+.rp-foot > .btn:first-child{margin-left:auto}
 .rp-foot .fnote b{color:var(--brand);font-weight:800}
 .rp-foot .btn{flex:0 0 auto;height:34px}
 .allbox{display:flex;align-items:center;gap:7px;padding:7px 12px;border:1px solid var(--line);border-radius:var(--r);
@@ -714,7 +752,6 @@ table.pkt .mny.in{color:var(--ok)}
   background:#fff;border:1px solid var(--line);border-radius:5px;padding:1px 6px;flex:0 0 auto}
 .ro .nil,.rolock .nil{color:var(--muted-3);font-style:italic}
 /* select wajib yang belum dipilih */
-.slc.ph{color:var(--muted-3)}
 
 /* chip filter aktif di toolbar */
 .fchip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 4px 0 11px;border-radius:var(--r);
@@ -759,17 +796,16 @@ table.ltab .dstack .d1,table.pkt2 .dstack .d1{max-width:100%}
 table.ltab .mny{font-size:11.5px}
 table.ltab tr.overrow td{background:var(--warn-bg)}
 table.ltab tfoot td{padding:11px}
-.inp.lmny{height:32px;padding:0 10px;font-family:var(--f-mono);font-size:12.5px;font-weight:700;text-align:right;
-  font-variant-numeric:tabular-nums}
-.inp.lmny.over{border-color:var(--warn-solid);background:var(--warn-bg);color:var(--warn)}
-.inp.lmny:disabled{background:var(--line-3);color:var(--muted-3)}
 .mny.over{color:var(--warn)}
 .overtag{display:block;margin-top:3px;font-size:9.5px;font-weight:800;letter-spacing:.04em;color:var(--warn);
   text-transform:none}
 .fulltag{display:block;margin-top:3px;font-size:9.5px;font-weight:700;color:var(--muted-2)}
 .mstack .rz.warnrz{color:var(--warn);font-weight:600}
 .iact.del:hover{color:var(--bad);background:var(--bad-bg)}
-.empty.sm{padding:26px 18px}
+/* An empty state inside a card, a dialog or a report body, rather than filling
+   a page. There are exactly two sizes: eight screens had drifted onto four
+   different hand-written paddings between them. */
+.empty.sm{padding:30px 18px}
 .empty.sm .ic{width:38px;height:38px}
 .empty.sm h4{font-size:13px}
 

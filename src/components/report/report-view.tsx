@@ -94,7 +94,7 @@ export function ReportNeedsSubject({
   body: string;
 }) {
   return (
-    <div className="empty" style={{ padding: "34px 20px" }}>
+    <div className="empty sm">
       <div className="ic">
         <Icon name={icon} size={20} />
       </div>

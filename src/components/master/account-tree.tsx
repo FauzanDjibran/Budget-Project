@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { SearchField } from "@/components/ui/search-field";
 import { CompanyFilter, NoCompanyAccess } from "./company-filter";
 import type { EntityAbilities } from "@/lib/siba/entity-access";
 import { TAG_CLASS, createLabel, type Entity } from "@/lib/siba/entities";
@@ -322,21 +323,12 @@ export function AccountTree({
           {company && (
             <CompanyFilter options={companies} selectedId={company.id} />
           )}
-          <div
-            className={`srch${query ? " has" : ""}`}
-            style={{ maxWidth: "none", flex: "1 1 auto" }}
-          >
-            <Icon name="srch" size={14} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Cari nomor account, nama account, atau kelompok…"
-              autoComplete="off"
-            />
-            <button className="x" onClick={() => setQuery("")} aria-label="Bersihkan">
-              <Icon name="block" size={13} />
-            </button>
-          </div>
+          <SearchField
+            grow
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari nomor account, nama account, atau kelompok…"
+          />
           <span className="count">
             <b>{visibleAccounts.length}</b> account
           </span>

@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { MoneyInput } from "@/components/ui/money-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -381,19 +382,12 @@ export function BudgetForm({
                       Nominal Budget{editing && <span className="req">*</span>}
                     </label>
                     {editing ? (
-                      <span className="mwrap">
-                        <span className="cur">{currencyLabel}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          inputMode="decimal"
-                          className={`inp mfield${errors.budget_amount ? " bad" : ""}`}
-                          value={values.budget_amount}
-                          onChange={(e) => set("budget_amount", e.target.value)}
-                          placeholder="0"
-                        />
-                      </span>
+                      <MoneyInput
+                        value={values.budget_amount}
+                        currencyLabel={currencyLabel}
+                        invalid={Boolean(errors.budget_amount)}
+                        onChange={(v) => set("budget_amount", v)}
+                      />
                     ) : (
                       <div className="ro">
                         <span className="mny big">

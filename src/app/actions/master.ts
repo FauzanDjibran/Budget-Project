@@ -92,7 +92,7 @@ function coerce(field: Field, raw: string | boolean | null | undefined) {
 
   const value = raw == null ? "" : String(raw).trim();
 
-  if (field.type === "ref" || field.type === "number") {
+  if (field.type === "ref" || field.type === "number" || field.type === "money") {
     if (value === "") return null;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;

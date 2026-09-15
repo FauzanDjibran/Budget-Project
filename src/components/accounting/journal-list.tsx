@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { SearchField } from "@/components/ui/search-field";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { JournalRow } from "@/lib/siba/journal";
 
@@ -64,18 +65,12 @@ export function JournalList({ journals }: { journals: JournalRow[] }) {
 
       <div className="card">
         <div className="toolbar">
-          <div className={`srch${query ? " has" : ""}`} style={{ flex: "1 1 auto" }}>
-            <Icon name="srch" size={14} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Cari nomor journal, keterangan, atau Company…"
-              autoComplete="off"
-            />
-            <button className="x" onClick={() => setQuery("")} aria-label="Bersihkan">
-              <Icon name="block" size={13} />
-            </button>
-          </div>
+          <SearchField
+            grow
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari nomor journal, keterangan, atau Company…"
+          />
           <span className="count">
             <b>{rows.length}</b> journal
           </span>

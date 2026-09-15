@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
+import { Dialog } from "@/components/ui/dialog";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { BudgetRefs, BudgetRow } from "@/lib/siba/budget";
 import type { CashBookSummary } from "@/lib/siba/cash-bank";
@@ -95,51 +96,48 @@ export function ReportPicker({
     });
 
   return (
-    <div
-      className="ovl"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="modal modal-flex"
-        role="dialog"
-        aria-modal="true"
-        style={{ width: "min(900px, 94vw)" }}
-      >
-        <div className="rp-head">
-          <span
-            className="mi"
-            style={{
-              margin: 0,
-              width: 34,
-              height: 34,
-              background: "var(--brand-50)",
-              color: "var(--brand)",
-            }}
-          >
-            <Icon name="print" size={16} />
+    <Dialog
+      open
+      icon="print"
+      width={900}
+      title="Laporan Pengajuan Budget"
+      subtitle={`Tandai budget berstatus Diajukan yang masuk ke laporan${
+        periodName ? ` · ${periodName}` : ""
+      }`}
+      onClose={onClose}
+      headExtra={
+        budgets.length > 0 ? (
+          <label className="allbox">
+            <input
+              type="checkbox"
+              checked={allOn}
+              onChange={(e) => setAll(e.target.checked)}
+            />
+            <span>Tandai semua</span>
+          </label>
+        ) : null
+      }
+      foot={
+        <>
+          <span className="fnote">
+            <b>{chosen.length}</b> dari {budgets.length} budget ditandai
+            {budgets.length > 0 && " · Ringkasan, lalu satu bagian per currency"}
           </span>
-          <div className="t">
-            <h3>Laporan Pengajuan Budget</h3>
-            <p>
-              Tandai budget berstatus Diajukan yang masuk ke laporan
-              {periodName ? ` · ${periodName}` : ""}
-            </p>
-          </div>
-          {budgets.length > 0 && (
-            <label className="allbox">
-              <input
-                type="checkbox"
-                checked={allOn}
-                onChange={(e) => setAll(e.target.checked)}
-              />
-              <span>Tandai semua</span>
-            </label>
-          )}
-        </div>
-
-        <div className="rp-body">
+          <button className="btn" onClick={onClose}>
+            Tutup
+          </button>
+          <button
+            className="btn primary"
+            disabled
+            title="Ekspor XLSX belum tersedia."
+          >
+            <Icon name="down" size={14} /> Unduh XLSX
+            {chosen.length > 0 && ` (${chosen.length})`}
+          </button>
+        </>
+      }
+    >
+      <>
           {budgets.length ? (
             <>
               <div className="rp-sec">Ringkasan Laporan</div>
@@ -310,7 +308,7 @@ export function ReportPicker({
               })}
             </>
           ) : (
-            <div className="empty" style={{ padding: "30px 12px" }}>
+            <div className="empty sm">
               <div className="ic">
                 <Icon name="print" size={20} />
               </div>
@@ -321,26 +319,7 @@ export function ReportPicker({
               </p>
             </div>
           )}
-        </div>
-
-        <div className="mf rp-foot">
-          <span className="fnote">
-            <b>{chosen.length}</b> dari {budgets.length} budget ditandai
-            {budgets.length > 0 && " · Ringkasan, lalu satu bagian per currency"}
-          </span>
-          <button className="btn" onClick={onClose}>
-            Tutup
-          </button>
-          <button
-            className="btn primary"
-            disabled
-            title="Ekspor XLSX belum tersedia."
-          >
-            <Icon name="down" size={14} /> Unduh XLSX
-            {chosen.length > 0 && ` (${chosen.length})`}
-          </button>
-        </div>
-      </div>
-    </div>
+      </>
+    </Dialog>
   );
 }

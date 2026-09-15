@@ -43,7 +43,7 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
   // at all. Saying so beats a blank card, which reads as "no data".
   if (report.accounts.length === 0) {
     return (
-      <div className="empty" style={{ padding: "34px 20px" }}>
+      <div className="empty sm">
         <div className="ic">
           <Icon name="tree" size={20} />
         </div>

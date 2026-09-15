@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/icon";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { Dialog } from "@/components/ui/dialog";
+import { MoneyInput } from "@/components/ui/money-input";
+import { formatDate, formatMoney } from "@/lib/format";
 import type { EligibleBudget } from "@/lib/siba/finance";
 
 /**
@@ -52,44 +54,39 @@ export function BudgetPicker({
   const total = chosen.reduce((t, id) => t + (picked[id] || 0), 0);
 
   return (
-    <div
-      className="ovl"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="modal modal-flex"
-        role="dialog"
-        aria-modal="true"
-        style={{ width: "min(1040px, 95vw)" }}
-      >
-        <div className="rp-head">
-          <span
-            className="mi"
-            style={{
-              margin: 0,
-              width: 34,
-              height: 34,
-              background: "var(--brand-50)",
-              color: "var(--brand)",
-            }}
-          >
-            <Icon name="clip" size={16} />
+    <Dialog
+      open
+      icon="clip"
+      width={1040}
+      title="Pilih Budget yang Direalisasikan"
+      subtitle="Hanya Budget yang memenuhi seluruh kriteria header dokumen yang ditampilkan."
+      onClose={onClose}
+      foot={
+        <>
+          <span className="fnote">
+            <b>{chosen.length}</b> budget dipilih · total{" "}
+            <b>{formatMoney(total, currencyLabel)}</b>
           </span>
-          <div className="t">
-            <h3>Pilih Budget yang Direalisasikan</h3>
-            <p>
-              Hanya Budget yang memenuhi seluruh kriteria header dokumen yang
-              ditampilkan.
-            </p>
-          </div>
-          <button className="btn ico" onClick={onClose} title="Tutup">
-            <Icon name="block" size={15} />
+          <button className="btn" onClick={onClose}>
+            Batal
           </button>
-        </div>
-
-        <div className="rp-body">
+          <button
+            className="btn primary"
+            disabled={!chosen.length}
+            onClick={() =>
+              onAdd(
+                chosen
+                  .filter((id) => (picked[id] || 0) > 0)
+                  .map((id) => ({ budget_id: id, amount: picked[id] }))
+              )
+            }
+          >
+            <Icon name="plus" size={14} /> Tambahkan ke Dokumen
+          </button>
+        </>
+      }
+    >
+      <>
           <div className="critbar">
             {criteria.map((c) => (
               <span className="cr" key={c.label}>
@@ -174,19 +171,19 @@ export function BudgetPicker({
                           </span>
                         </td>
                         <td className="num" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            className={`inp lmny${over ? " over" : ""}`}
-                            inputMode="numeric"
-                            autoComplete="off"
+                          <MoneyInput
+                            size="sm"
+                            over={over}
                             disabled={!on}
-                            value={on ? formatNumber(value) : ""}
-                            onChange={(e) => {
-                              const raw = e.target.value.replace(/[^0-9]/g, "");
+                            placeholder=""
+                            ariaLabel="Nominal realisasi"
+                            value={on && value ? String(value) : ""}
+                            onChange={(raw) =>
                               setPicked((p) => ({
                                 ...p,
                                 [b.id]: raw ? Number(raw) : 0,
-                              }));
-                            }}
+                              }))
+                            }
                           />
                           {over && <span className="overtag">Over</span>}
                         </td>
@@ -210,31 +207,7 @@ export function BudgetPicker({
               </p>
             </div>
           )}
-        </div>
-
-        <div className="rp-foot">
-          <span className="fnote">
-            <b>{chosen.length}</b> budget dipilih · total{" "}
-            <b>{formatMoney(total, currencyLabel)}</b>
-          </span>
-          <button className="btn" onClick={onClose}>
-            Batal
-          </button>
-          <button
-            className="btn primary"
-            disabled={!chosen.length}
-            onClick={() =>
-              onAdd(
-                chosen
-                  .filter((id) => (picked[id] || 0) > 0)
-                  .map((id) => ({ budget_id: id, amount: picked[id] }))
-              )
-            }
-          >
-            <Icon name="plus" size={14} /> Tambahkan ke Dokumen
-          </button>
-        </div>
-      </div>
-    </div>
+      </>
+    </Dialog>
   );
 }
