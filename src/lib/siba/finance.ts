@@ -2,7 +2,13 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
+import {
+  budgetsByIds,
+  openBudgetsMatching,
+  realizeBudgets,
+} from "./budget";
 import { recordCashBankEntry } from "./cash-bank";
+import { nextDocumentNumber } from "./document-number";
 import { postJournal, type JournalLineInput } from "./journal";
 import { PURPOSES, purposeOf, type Purpose } from "./rules";
 import type { TransactionStatus } from "./transaction-workflow";
@@ -151,9 +157,7 @@ export async function transactionLines(
   });
   if (!lines.length) return [];
 
-  const budgets = await prisma.budBudget.findMany({
-    where: { id: { in: lines.map((l) => l.source_doc_id) } },
-  });
+  const budgets = await budgetsByIds(lines.map((l) => l.source_doc_id));
   const byId = new Map(budgets.map((b) => [b.id, b]));
 
   return lines.flatMap((l) => {
@@ -165,12 +169,12 @@ export async function transactionLines(
         sequence_no: l.sequence_no,
         budget_id: b.id,
         budget_no: b.budget_no,
-        budget_date: day(b.budget_date),
+        budget_date: b.budget_date,
         description: b.description,
         category_id: b.category_id,
         partner_id: b.partner_id,
-        budget_amount: b.budget_amount.toNumber(),
-        realized_amount: b.realized_amount.toNumber(),
+        budget_amount: b.budget_amount,
+        realized_amount: b.realized_amount,
         outstanding_amount: l.outstanding_amount.toNumber(),
         settlement_amount: l.settlement_amount.toNumber(),
         budget_status: b.status,
@@ -439,23 +443,16 @@ export async function eligibleBudgets(
   const categoryId = await categoryIdOf(purpose);
   if (!categoryId) return [];
 
-  const budgets = await prisma.budBudget.findMany({
-    where: {
-      status: "Open",
-      company_id: header.company_id,
-      budget_type: purpose.direction,
-      category_id: categoryId,
-      currency_id: cashBank.currency_id,
-      ...(purpose.partnerCategory ? { partner_id: header.partner_id } : {}),
-    },
-    orderBy: [{ budget_date: "asc" }, { id: "asc" }],
+  const budgets = await openBudgetsMatching({
+    companyId: header.company_id,
+    budgetType: purpose.direction,
+    categoryId,
+    currencyId: cashBank.currency_id,
+    partnerId: purpose.partnerCategory ? header.partner_id : null,
   });
 
   const outstanding = budgets
-    .map((b) => ({
-      row: b,
-      left: b.budget_amount.toNumber() - b.realized_amount.toNumber(),
-    }))
+    .map((b) => ({ row: b, left: b.budget_amount - b.realized_amount }))
     .filter((x) => x.left > 0);
   if (!outstanding.length) return [];
 
@@ -467,13 +464,13 @@ export async function eligibleBudgets(
   return outstanding.map(({ row, left }) => ({
     id: row.id,
     budget_no: row.budget_no,
-    budget_date: day(row.budget_date),
+    budget_date: row.budget_date,
     description: row.description,
     category_id: row.category_id,
     partner_id: row.partner_id,
     currency_id: row.currency_id,
-    budget_amount: row.budget_amount.toNumber(),
-    realized_amount: row.realized_amount.toNumber(),
+    budget_amount: row.budget_amount,
+    realized_amount: row.realized_amount,
     outstanding: left,
     draftAllocated: draftAllocated.get(row.id) ?? 0,
   }));
@@ -865,9 +862,7 @@ export async function applyPosting(
     return { ok: false, errors: { _form: "Dokumen belum menunjuk Cash & Bank." } };
   }
 
-  const budgets = await prisma.budBudget.findMany({
-    where: { id: { in: doc.lines.map((l) => l.source_doc_id) } },
-  });
+  const budgets = await budgetsByIds(doc.lines.map((l) => l.source_doc_id));
   const byId = new Map(budgets.map((b) => [b.id, b]));
 
   const stale = doc.lines.filter(
@@ -908,32 +903,17 @@ export async function applyPosting(
       actorId,
     });
 
-    for (const line of doc.lines) {
-      const budget = byId.get(line.source_doc_id)!;
-      const realized =
-        budget.realized_amount.toNumber() + line.settlement_amount.toNumber();
-      // Over-realization is permitted (§6.5) and still closes the plan: the
-      // money left, and a plan cannot be "more than finished".
-      const willClose = realized >= budget.budget_amount.toNumber();
-      if (willClose) closed += 1;
-
-      await tx.budBudget.update({
-        where: { id: budget.id },
-        data: {
-          realized_amount: realized,
-          ...(willClose ? { status: "Closed" as const } : {}),
-          updated_by: actorId,
-        },
-      });
-      await tx.auditLog.create({
-        data: {
-          entity_key: "bud_budget",
-          row_id: budget.id,
-          action: "UPDATE",
-          by: actorId,
-        },
-      });
-    }
+    // Realization is Budget's to write, not Finance's — same transaction, but
+    // `bud_budget` is only ever touched by the module that owns it. Closing
+    // follows from the figures and is reported back for the caller's message.
+    ({ closed } = await realizeBudgets(
+      tx,
+      doc.lines.map((line) => ({
+        budgetId: line.source_doc_id,
+        amount: line.settlement_amount.toNumber(),
+      })),
+      actorId
+    ));
 
     // The Journal is written *alongside* the Cash Bank Book, never from it:
     // an operational book is an independent historical store and only the
@@ -965,23 +945,15 @@ export async function applyPosting(
 
 // --------------------------------------------------------------- numbering
 
-/**
- * Next document number, `CBT-0001`.
- *
- * Documents are numbered `PREFIX-0000`, not the `prefix.0000` system-code shape
- * `nextCode()` produces for master records — §9 keeps the two apart so a
- * document number is recognisable on sight.
- */
+/** Next document number, `CBT-0001`. The format lives in `document-number.ts`. */
 export async function nextTransactionNo(): Promise<string> {
-  const rows = await prisma.finCashBankTransaction.findMany({
-    select: { transaction_no: true },
+  return nextDocumentNumber("CBT", async () => {
+    const row = await prisma.finCashBankTransaction.findFirst({
+      orderBy: { id: "desc" },
+      select: { transaction_no: true },
+    });
+    return row?.transaction_no ?? null;
   });
-  let max = 0;
-  for (const r of rows) {
-    const n = Number(r.transaction_no.split("-")[1]);
-    if (Number.isFinite(n) && n > max) max = n;
-  }
-  return `CBT-${String(max + 1).padStart(4, "0")}`;
 }
 
 // ------------------------------------------------------------- KPI summary

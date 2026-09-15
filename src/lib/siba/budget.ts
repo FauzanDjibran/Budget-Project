@@ -1,6 +1,8 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
+import { nextDocumentNumber } from "./document-number";
 import {
   allowedPartnerCategories,
   budgetCategoryAllowsDirection,
@@ -404,23 +406,142 @@ export async function checkClassification(
   return {};
 }
 
-// --------------------------------------------------------------- numbering
+// ------------------------------------------------ realization (the contract)
 
 /**
- * Next document number, `BGT-0001`.
+ * How another module reaches a Budget.
  *
- * Documents are numbered `PREFIX-0000`, not the `prefix.0000` system-code shape
- * `nextCode()` produces for master records — §9 keeps the two apart so a
- * document number is recognisable on sight.
+ * Finance executes what Budget plans (concept doc §2.2), so it necessarily
+ * holds references to Budgets — but it must not read or write `bud_budget`
+ * itself. These three functions are the whole surface: two reads and one
+ * write, all returning Budget's own `BudgetRow`, so a change to the table is a
+ * change to this file and nowhere else.
+ *
+ * The direction is one-way on purpose. Budget knows nothing about Finance: a
+ * plan is complete without an execution, and `budget.ts` must never import
+ * `finance.ts`. `tests/module-boundaries.test.ts` enforces both halves.
  */
-export async function nextBudgetNo(): Promise<string> {
-  const rows = await prisma.budBudget.findMany({ select: { budget_no: true } });
-  let max = 0;
-  for (const r of rows) {
-    const n = Number(r.budget_no.split("-")[1]);
-    if (Number.isFinite(n) && n > max) max = n;
+
+/** A Prisma client or an interactive transaction. */
+type Db = Prisma.TransactionClient | typeof prisma;
+
+/** The Budgets behind a set of ids — for a module that stores references. */
+export async function budgetsByIds(ids: number[]): Promise<BudgetRow[]> {
+  if (!ids.length) return [];
+  const rows = await prisma.budBudget.findMany({ where: { id: { in: ids } } });
+  return rows.map(toRow);
+}
+
+/**
+ * The criteria a settling document narrows Budgets by.
+ *
+ * The *rule* belongs to the caller — which combination is eligible is concept
+ * doc §9, and Finance owns it. The *query* belongs here, because the table
+ * does. `partnerId` is applied only when supplied: a Budget Category that takes
+ * no subject stores null rather than a stale partner (§10 rule 26).
+ */
+export type OpenBudgetFilter = {
+  companyId: number;
+  budgetType: "In" | "Out";
+  categoryId: number;
+  currencyId: number;
+  partnerId?: number | null;
+};
+
+/** Approved, still-open Budgets matching a filter, oldest plan first. */
+export async function openBudgetsMatching(
+  filter: OpenBudgetFilter
+): Promise<BudgetRow[]> {
+  const rows = await prisma.budBudget.findMany({
+    where: {
+      status: "Open",
+      company_id: filter.companyId,
+      budget_type: filter.budgetType,
+      category_id: filter.categoryId,
+      currency_id: filter.currencyId,
+      ...(filter.partnerId != null ? { partner_id: filter.partnerId } : {}),
+    },
+    orderBy: [{ budget_date: "asc" }, { id: "asc" }],
+  });
+  return rows.map(toRow);
+}
+
+/** One plan, and how much of it a posting is settling. */
+export type BudgetSettlement = { budgetId: number; amount: number };
+
+/**
+ * Records realization against Budgets, inside the caller's transaction.
+ *
+ * This is the only way `realized_amount` and a realization-driven `Closed`
+ * are ever written. It takes the caller's `tx` rather than opening its own,
+ * because Post is one database transaction and must stay that way (§12): the
+ * book entry, the journal and this all commit together or not at all.
+ *
+ * Budgets are re-read *here*, inside that transaction, rather than trusted
+ * from a read the caller made earlier — the figure being incremented is the
+ * one actually in the row. Settlements are summed per Budget first, so the
+ * function is correct even if a caller ever passes the same plan twice.
+ *
+ * Over-realization is permitted (§6.5) and still closes the plan: the money
+ * left, and a plan cannot be more than finished. Nobody closes a Budget by
+ * hand — there is no `BUDGET_CLOSE` permission and there must not be one.
+ */
+export async function realizeBudgets(
+  tx: Db,
+  settlements: BudgetSettlement[],
+  actorId: number
+): Promise<{ closed: number }> {
+  if (!settlements.length) return { closed: 0 };
+
+  const byBudget = new Map<number, number>();
+  for (const s of settlements) {
+    byBudget.set(s.budgetId, (byBudget.get(s.budgetId) ?? 0) + s.amount);
   }
-  return `BGT-${String(max + 1).padStart(4, "0")}`;
+
+  const rows = await tx.budBudget.findMany({
+    where: { id: { in: [...byBudget.keys()] } },
+    select: { id: true, budget_amount: true, realized_amount: true },
+  });
+
+  let closed = 0;
+  for (const row of rows) {
+    const realized =
+      row.realized_amount.toNumber() + (byBudget.get(row.id) ?? 0);
+    const willClose = realized >= row.budget_amount.toNumber();
+    if (willClose) closed += 1;
+
+    await tx.budBudget.update({
+      where: { id: row.id },
+      data: {
+        realized_amount: realized,
+        ...(willClose ? { status: "Closed" as const } : {}),
+        updated_by: actorId,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        entity_key: "bud_budget",
+        row_id: row.id,
+        action: "UPDATE",
+        by: actorId,
+      },
+    });
+  }
+
+  return { closed };
+}
+
+// --------------------------------------------------------------- numbering
+
+/** Next document number, `BGT-0001`. The format lives in `document-number.ts`. */
+export async function nextBudgetNo(): Promise<string> {
+  return nextDocumentNumber("BGT", async () => {
+    const row = await prisma.budBudget.findFirst({
+      orderBy: { id: "desc" },
+      select: { budget_no: true },
+    });
+    return row?.budget_no ?? null;
+  });
 }
 
 // ------------------------------------------------------------- KPI summary

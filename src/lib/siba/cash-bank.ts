@@ -2,6 +2,8 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
+import { nextDocumentNumber } from "./document-number";
+import type { PeriodRange } from "./period";
 
 /**
  * The Cash Bank Book — the authoritative record of what is in each cash and
@@ -40,14 +42,15 @@ export type NewEntry = {
 
 const asDate = (d: string) => new Date(`${d}T00:00:00Z`);
 
-/** Next book entry number, `CBL-0001`. Documents are numbered `PREFIX-0000`. */
+/** Next book entry number, `CBL-0001`. The format lives in `document-number.ts`. */
 async function nextEntryNo(db: Db): Promise<string> {
-  const last = await db.cashBankLedger.findFirst({
-    orderBy: { id: "desc" },
-    select: { entry_no: true },
+  return nextDocumentNumber("CBL", async () => {
+    const row = await db.cashBankLedger.findFirst({
+      orderBy: { id: "desc" },
+      select: { entry_no: true },
+    });
+    return row?.entry_no ?? null;
   });
-  const n = last ? Number(last.entry_no.split("-")[1]) : 0;
-  return `CBL-${String((Number.isFinite(n) ? n : 0) + 1).padStart(4, "0")}`;
 }
 
 /**
@@ -281,7 +284,10 @@ export async function cashBankBalanceMap(): Promise<Map<number, number>> {
 // trusting a stored figure, so the report's own arithmetic is checkable.
 
 /** An inclusive calendar range, `YYYY-MM-DD` at both ends. */
-export type PeriodRange = { from: string; to: string };
+// `PeriodRange` now lives in `./period` — the General Ledger and both report
+// routes need the shape and none of them should import the Cash Bank Book for
+// it. Not re-exported here on purpose: a re-export would keep the old path
+// working and the boundary would quietly stay crossed.
 
 const startOf = (d: string) => new Date(`${d}T00:00:00Z`);
 

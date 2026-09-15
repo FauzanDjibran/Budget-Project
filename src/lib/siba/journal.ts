@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
+import { nextDocumentNumber } from "./document-number";
 
 /**
  * The accounting journal.
@@ -151,13 +152,13 @@ export async function postJournal(
 
 /** `JRN-0001` — the document-number form, not a `<prefix>.<4 digits>` code. */
 async function nextJournalNo(tx: Client): Promise<string> {
-  const rows = await tx.accJournal.findMany({ select: { journal_no: true } });
-  let max = 0;
-  for (const r of rows) {
-    const n = Number(String(r.journal_no).split("-")[1]);
-    if (Number.isFinite(n) && n > max) max = n;
-  }
-  return `JRN-${String(max + 1).padStart(4, "0")}`;
+  return nextDocumentNumber("JRN", async () => {
+    const row = await tx.accJournal.findFirst({
+      orderBy: { id: "desc" },
+      select: { journal_no: true },
+    });
+    return row?.journal_no ?? null;
+  });
 }
 
 // ------------------------------------------------------------------ reading

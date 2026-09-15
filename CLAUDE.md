@@ -159,6 +159,50 @@ of its own.
 | Registry pages | `src/components/master/entity-pages.tsx` | The four registry pages, mounted under each owning module |
 | Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast |
 
+### The module contract
+
+A module is a **building block**: it owns its tables, its rules, its permissions and
+its routes, and other modules reach it only through functions it exports. SIBA ships as
+one deployable unit, and that is not changing — but a module that cannot be replaced or
+lifted out without unpicking three others is not really a module, and the boundary is
+what keeps future work cheap. Enforced by `tests/module-boundaries.test.ts`, which is a
+source scan and needs no database.
+
+| Module | Owns (tables) | Data module + writes |
+| --- | --- | --- |
+| Budget | `bud_budget` | `lib/siba/budget.ts`, `app/actions/budget.ts` |
+| Finance | `fin_cash_bank_transaction(_line)` | `lib/siba/finance.ts`, `app/actions/finance.ts` |
+| Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance` | `lib/siba/cash-bank.ts` |
+| Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22) |
+| Fiscal | `acc_fiscal_year`, `acc_fiscal_period` | `lib/siba/fiscal.ts` |
+
+Three rules, in force:
+
+1. **A module's tables are named only by that module.** No other file writes
+   `prisma.<delegate>` for a table it does not own — the data module *and* its Server
+   Action count as one block, because they are two layers of the same thing.
+2. **Dependencies point one way.** Finance executes what Budget plans, so Finance may
+   depend on Budget and never the reverse: a plan is complete without an execution.
+   The same applies to the UI — `components/finance` may reuse `components/budget`, not
+   the other way round.
+3. **The books depend on nothing.** `cash-bank.ts` and `journal.ts` import only the
+   shared kernel (`document-number`, `period`, `account-code`, `permissions`). They are
+   independent historical stores (concept doc §2.5); a book that imported its writer
+   could not be lifted out, and would invite being derived from it.
+
+**Cross-module references.** A foreign key into *master* data (Company, Partner,
+Currency, Account) is correct and expected. A reference to another module's **document**
+goes through the weak `(doc_type_id, doc_id)` pair instead — which is already how
+`cash_bank_ledger`, `acc_journal` and `fin_cash_bank_transaction_line` all behave. That
+pair is what lets a book survive the module that wrote into it being replaced.
+
+**The shared kernel** is small on purpose: `auth`, `access`, `permissions`, `prisma`,
+`format`, `account-code`, `document-number`, `period`. Everything in it is needed by
+several modules and would never be extracted on its own.
+
+**Three boundaries are still crossed**, baselined in the test rather than hidden — see
+§17. Adding a fourth fails the suite.
+
 ### Data flow for a Master page
 
 ```
@@ -1960,6 +2004,7 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | Tests cover security, Accounting, Budget, Finance, the Cash Bank Book, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
+| Three module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a fourth fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) The dashboard counts rows from every module for its setup checklist — arguably fine for a cross-cutting screen, but it should ask each module for its own figure. (3) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |
 

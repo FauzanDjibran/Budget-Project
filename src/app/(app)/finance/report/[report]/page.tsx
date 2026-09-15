@@ -7,8 +7,8 @@ import { requirePermission } from "@/lib/siba/auth";
 import {
   cashBankBalanceReport,
   cashBankLedgerReport,
-  type PeriodRange,
 } from "@/lib/siba/cash-bank";
+import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";

@@ -11,7 +11,7 @@ import {
   ledgerAccountOptions,
   trialBalanceReport,
 } from "@/lib/siba/ledger";
-import type { PeriodRange } from "@/lib/siba/cash-bank";
+import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { formatDate } from "@/lib/format";
 

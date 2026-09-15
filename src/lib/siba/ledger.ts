@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { compareCodes } from "./account-code";
-import type { PeriodRange } from "./cash-bank";
+import type { PeriodRange } from "./period";
 
 /**
  * The General Ledger and the Trial Balance.
