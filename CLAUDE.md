@@ -205,6 +205,10 @@ prisma/
   schema.prisma          Data model; deviations from the DBML commented inline
   migrations/            Applied migrations
   seed.ts                System data only — idempotent, never touches business data
+scripts/
+  sample-data.ts         Dev convenience: plausible Partners and a Chart of Accounts
+                         to test against. **Not** the seeder — ordinary inserts,
+                         run by hand, never by install/migrate/reset/CI
 src/
   proxy.ts               Optimistic redirect to /login (NOT a security boundary)
   app/
@@ -287,6 +291,7 @@ npm start                    # run the production build
 npm run lint                 # ESLint
 npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
+npm run db:sample            # dev only: sample Partners + Chart of Accounts (NOT the seeder)
 npm run db:reset             # DESTRUCTIVE: drop, re-migrate, reseed
 npx prisma generate          # regenerate client after schema changes
 npx prisma migrate dev       # create + apply a migration
@@ -727,6 +732,13 @@ Specified in the concept doc, **not yet implemented** (see §13):
   "Perlu Perhatian" card is the setup path — it names the chart of accounts, the
   fiscal calendar, the mappings and the missing cash resources in dependency order.
   Tests build their own business fixtures (`tests/helpers.ts`) and clean them up.
+- **Sample business data has its own script, outside the seed.**
+  `scripts/sample-data.ts` (`npm run db:sample`) inserts six generic Partners
+  and a full Chart of Accounts for both Companies, so a developer has something
+  to test against. It is deliberately *not* part of the seed, is never run by
+  install, migrate, reset or CI, and writes ordinary records — composed account
+  numbers, audit entries, editable through the GUI. It reuses anything already
+  present rather than overwriting it, and deletes nothing.
 - **The seed is also idempotent and non-destructive.** It creates what is missing and
   leaves everything else alone, so it is safe to run against a live database and is
   how a newly added permission reaches it. The one exception is the permission

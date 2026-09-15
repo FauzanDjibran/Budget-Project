@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "db:seed": "tsx prisma/seed.ts",
+    "db:sample": "tsx scripts/sample-data.ts",
     "db:reset": "prisma migrate reset --force",
     "test": "node --env-file-if-exists=.env --conditions=react-server --import tsx --test --test-concurrency=1 tests/*.test.ts"
   },
