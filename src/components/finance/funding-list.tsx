@@ -286,8 +286,8 @@ export function FundingList({
       <p className="foot-note">
         Tidak ada funding sebagian: nominal permintaan selalu sama dengan
         nominal realisasi yang mendasarinya. Selama masih menunggu, belum ada
-        yang bergerak — kas, realisasi Budget, buku pembantu, dan journal kedua
-        Company tercatat serentak saat konfirmasi.
+        yang bergerak — kas, realisasi Budget, dan journal kedua Company
+        tercatat serentak saat konfirmasi.
       </p>
     </>
   );

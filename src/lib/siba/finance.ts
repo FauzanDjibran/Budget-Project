@@ -1132,13 +1132,18 @@ export async function applyPosting(
 // ----------------------------------------------------- funded posting (anak)
 
 /**
- * One Company's side of the intercompany bridge: where it keeps its claim on
- * the other, what it owes the other, and the Partner that *is* the other.
+ * One Company's side of the intercompany bridge: where it records its claim on
+ * the other, and what it owes the other.
+ *
+ * Accounts only. The position between the two Companies is **journal**, not
+ * subject book: a subject book's subject is a Partner (§10 rule 56), and the
+ * other Company is not one — inventing a Partner to stand for it would put a
+ * fiction in the master just to satisfy a foreign key. The General Ledger and
+ * the Trial Balance are where the two sides are read and reconciled.
  */
 export type BridgeSide = {
   arAccountId: number;
   apAccountId: number;
-  partnerId: number;
 };
 
 export type FundedPostingInput = {
@@ -1163,9 +1168,7 @@ export type FundedPostingPlan = {
     companyId: number;
     cashBankId: number;
     cashAccountId: number;
-    bookKey: "piutang" | "hutang";
     bridgeAccountId: number;
-    partnerId: number;
   };
   anak: {
     companyId: number;
@@ -1173,11 +1176,7 @@ export type FundedPostingPlan = {
     /** The subject book the Purpose itself keeps, where it keeps one. */
     purposeBook: string | null;
     purposePartnerId: number | null;
-    interBookKey: "piutang" | "hutang";
-    /** The cash direction that *raises* the anak's position against the induk. */
-    interDirection: "In" | "Out";
     bridgeAccountId: number;
-    partnerId: number;
   };
   direction: "In" | "Out";
   currencyId: number;
@@ -1205,13 +1204,16 @@ export type FundedPostingCheck =
  * their books and the request is closed, or nothing happened at all.
  *
  * **Both directions are one mechanism.** Money leaving the induk for the anak's
- * expense raises the induk's Piutang and the anak's Hutang; money the anak
- * receives into an induk resource raises the induk's Hutang and the anak's
- * Piutang (§34, §37). Only which side of each bridge is written flips. The
- * subject books still sign themselves from the cash direction exactly as they
- * do on the direct route — the anak's intercompany leg simply carries the
- * *opposite* direction to the document's, because the money passed through the
- * induk on its way.
+ * expense debits the induk's receivable from the anak and credits the anak's
+ * payable to the induk; money the anak receives into an induk resource does the
+ * mirror (§34, §37). Only which side of each bridge is written flips.
+ *
+ * The position itself is carried by those two accounts and read through the
+ * General Ledger — **no subject book entry is written for the intercompany
+ * leg**, because its subject would have to be a Partner and the other Company
+ * is not one. The anak's *own* subject book is untouched by that: the partner
+ * it actually paid or was paid by still gets its entry, because that is the
+ * business event and the funding is only how the cash reached it.
  */
 export async function prepareFundedPosting(
   input: FundedPostingInput
@@ -1336,23 +1338,18 @@ export async function prepareFundedPosting(
         cashAccountId: cashBank.account_id,
         // Money paid out for the anak is a claim on it; money taken in on the
         // anak's behalf is money held for it.
-        bookKey: outgoing ? "piutang" : "hutang",
         bridgeAccountId: outgoing
           ? input.bridge.induk.arAccountId
           : input.bridge.induk.apAccountId,
-        partnerId: input.bridge.induk.partnerId,
       },
       anak: {
         companyId: doc.company_id,
         purposeAccountId: mapped.accountId,
         purposeBook: subledger?.key ?? null,
         purposePartnerId: doc.partner_id,
-        interBookKey: outgoing ? "hutang" : "piutang",
-        interDirection: outgoing ? "In" : "Out",
         bridgeAccountId: outgoing
           ? input.bridge.anak.apAccountId
           : input.bridge.anak.arAccountId,
-        partnerId: input.bridge.anak.partnerId,
       },
       direction: doc.transaction_type as "In" | "Out",
       currencyId: doc.currency_id,
@@ -1376,12 +1373,14 @@ export async function prepareFundedPosting(
 /**
  * Writes both Companies' books, inside the caller's transaction.
  *
- * One business event, seven writes (§30): the induk's cash entry and its
- * balance, one subject-book entry for each Company's position against the
- * other, the anak's own subject book where its Purpose keeps one, every
+ * One business event, five writes (§30): the induk's cash entry and its
+ * balance, the anak's own subject book where its Purpose keeps one, every
  * Budget's realization, a journal each, and the document itself.
  * `postJournal` throws rather than returns, so an unbalanced journal takes the
  * whole confirmation down — the caller's request closure included.
+ *
+ * The two Companies' positions against each other are in those journals and
+ * nowhere else: they are accounts, not subjects (see `BridgeSide`).
  *
  * Neither journal derives from the other, and neither derives from a book: they
  * are two accounting representations of one business event, each pointing at
@@ -1409,21 +1408,6 @@ export async function writeFundedPosting(
     actorId,
   });
 
-  // The induk's position against the anak.
-  await recordSubledgerEntry(tx, {
-    book: induk.bookKey,
-    partnerId: induk.partnerId,
-    currencyId: plan.currencyId,
-    date: today,
-    type: "Transaction",
-    direction: plan.direction,
-    amount: plan.amount,
-    sourceDocTypeId: plan.requesterSource.docTypeId,
-    sourceDocId: plan.requesterSource.docId,
-    note: plan.note,
-    actorId,
-  });
-
   // The anak's own subject book, where its Purpose keeps one — the partner it
   // actually paid or was paid by. Unchanged from the direct route: that is the
   // business event, and the funding is only how the cash reached it.
@@ -1443,21 +1427,6 @@ export async function writeFundedPosting(
     });
   }
 
-  // The anak's position against the induk — the other half of the bridge.
-  await recordSubledgerEntry(tx, {
-    book: anak.interBookKey,
-    partnerId: anak.partnerId,
-    currencyId: plan.currencyId,
-    date: today,
-    type: "Transaction",
-    direction: anak.interDirection,
-    amount: plan.amount,
-    sourceDocTypeId: plan.requesterSource.docTypeId,
-    sourceDocId: plan.requesterSource.docId,
-    note: plan.note,
-    actorId,
-  });
-
   const { closed } = await realizeBudgets(tx, plan.lines, actorId);
 
   const outgoing = plan.direction === "Out";
@@ -1471,7 +1440,6 @@ export async function writeFundedPosting(
     lines: [
       {
         accountId: induk.bridgeAccountId,
-        partnerId: induk.partnerId,
         currencyId: plan.currencyId,
         debit: outgoing ? plan.amount : 0,
         credit: outgoing ? 0 : plan.amount,
@@ -1502,7 +1470,6 @@ export async function writeFundedPosting(
   }));
   const bridgeLine: JournalLineInput = {
     accountId: anak.bridgeAccountId,
-    partnerId: anak.partnerId,
     currencyId: plan.currencyId,
     debit: outgoing ? 0 : plan.amount,
     credit: outgoing ? plan.amount : 0,

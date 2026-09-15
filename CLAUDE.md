@@ -67,7 +67,7 @@ or invariants that assume a particular row exists.
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal and `realized_amount` in one transaction. Bespoke, not registry-driven. |
-| Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, both Companies' positions against each other, a journal each, every Budget's realization, the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
+| Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
 | Report Views | Done — the screen type plus eight reports: `Buku Kas & Bank`, `Saldo Kas & Bank` and the six subject books under Finance › Laporan, and General Ledger + Trial Balance under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
@@ -413,11 +413,13 @@ Post writes the ledger entry, the balance and every Budget's realization togethe
 refused when a Budget has since closed, and leaves nothing behind when it refuses.
 The funding suite holds the intercompany bridge: that the route is decided by the
 Company rather than by a setting, that submitting freezes the document and moves
-nothing, that the induk's confirmation writes one cash entry, both Companies'
-positions, a balanced journal each, the realization and the request's closure
-together — in both directions, since an anak receipt mirrors an anak payment — and
-that an unfinished bridge, a resource in the wrong currency, an anak resource and a
-Budget closed since each refuse before anything is written.
+nothing, that the induk's confirmation writes one cash entry, a balanced journal
+each carrying the two Companies' positions, the realization and the request's
+closure together — in both directions, since an anak receipt mirrors an anak
+payment — that it writes **no** subject-book entry for the intercompany leg while
+still writing the anak's own, and that an unfinished bridge, a resource in the wrong
+currency, an anak resource and a Budget closed since each refuse before anything is
+written.
 The reports suite holds the one property a money report lives or dies by —
 `opening + in − out = closing` — pushed at from the edges: entries dated exactly on each
 boundary, entries before the period folding into the opening rather than appearing as
@@ -820,10 +822,10 @@ Implemented and enforced:
     journal, no `realized_amount`, no document date. Confirmation is the actual
     boundary, for **both** Companies at once (§30).
 59. **One confirmation, one transaction, two Companies.** `writeFundedPosting` writes
-    the induk's cash entry and balance, each Company's position against the other, the
-    anak's own subject book where its Purpose keeps one, every Budget's realization,
-    a journal each and the document's Posted status; `confirmFundingRequest` closes
-    the request in the same transaction. Either all of it happened or none of it did.
+    the induk's cash entry and balance, the anak's own subject book where its Purpose
+    keeps one, every Budget's realization, a journal each and the document's Posted
+    status; `confirmFundingRequest` closes the request in the same transaction.
+    Either all of it happened or none of it did.
 60. **Each journal points at its own Company's document.** The induk's names the
     Funding Request it confirmed; the anak's names its own Cash Bank Transaction,
     because that document is an ordinary realization that happened to be funded.
@@ -831,15 +833,16 @@ Implemented and enforced:
     Intercompany Event exists to guarantee — the request is that identifier, so there
     is no separate ICE table.
 61. **Money out of the induk is a claim on the anak; money in is a debt to it.** An
-    anak payment raises the induk's Piutang and the anak's Hutang; an anak receipt
-    raises the induk's Hutang and the anak's Piutang (§34, §37). The subject books
-    sign themselves from the cash direction as always — the anak's intercompany leg
-    simply carries the *opposite* direction to the document's, because the money
-    passed through the induk on its way.
-62. **The bridge is six System Defaults, and nothing guesses them.** Each Company
-    names the account for what it is owed, the account for what it owes, and the
-    Partner that *is* the other Company. A confirmation is refused, by name, until
-    every one is set — see §12.
+    anak payment debits the induk's receivable and credits the anak's payable; an
+    anak receipt does the mirror (§34, §37). **That position is journal, never
+    subject book**: a subject book's subject is a Partner (rule 56) and the other
+    Company is not one, so the two bridge accounts carry it and the General Ledger is
+    where it is read and reconciled. The anak's *own* subject book is untouched by
+    this — the partner it actually paid or was paid by still gets its entry, because
+    that is the business event and the funding is only how the cash arrived.
+62. **The bridge is four System Defaults, and nothing guesses them.** Each Company
+    names the account for what it is owed and the account for what it owes. A
+    confirmation is refused, by name, until every one is set — see §12.
 39. **A report states what it was run for.** Every Report View restates its subject,
     its period and when it was produced, on the output itself. A page of figures that
     does not say what it covers cannot be checked by anyone who did not run it, and a
@@ -1544,10 +1547,9 @@ they relate. Keep the table; keep it out of the UI's write path.
   the picker would not offer it either. The Server Action validates the saved record
   exactly as it would a value the user picked. A registry field opts in with
   `systemDefault: "default_currency"`; Budget takes it as a prop.
-- **The intercompany bridge is the one group that does more.** Six settings — for
-  each Company, the account for what it is owed, the account for what it owes, and the
-  Partner that *is* the other Company — do not prefill a control: they are where a
-  confirmed Funding Request posts. They are still settings rather than a table because
+- **The intercompany bridge is the one group that does more.** Four settings — for
+  each Company, the account for what it is owed and the account for what it owes — do
+  not prefill a control: they are where a confirmed Funding Request journals. They are still settings rather than a table because
   there are exactly two permanent Companies and a company-relationship table is what
   §14 forbids. Because they decide rather than suggest, they are checked **when they
   are stored** as well as when they are read (`checkSystemDefaultValue`: the right
@@ -1872,30 +1874,41 @@ they relate. Keep the table; keep it out of the UI's write path.
 ### One confirmation, one transaction, two Companies (FROZEN)
 - **Decision:** `prepareFundedPosting` resolves and checks everything before anything
   is written; `writeFundedPosting` then writes, inside the transaction `funding.ts`
-  opens: the induk's cash entry and its balance, **each Company's position against the
-  other** as a subject-book entry, the anak's own subject book where its Purpose keeps
-  one, every Budget's realization, **one journal per Company**, and the document's
-  Posted status — with the request's closure alongside. Either all of it happened or
-  none of it did (concept doc §30).
+  opens: the induk's cash entry and its balance, the anak's own subject book where its
+  Purpose keeps one, every Budget's realization, **one journal per Company**, and the
+  document's Posted status — with the request's closure alongside. Either all of it
+  happened or none of it did (concept doc §30).
+- **The two Companies' positions against each other are journal, and only journal.**
+  Each Company names one account for what it is owed and one for what it owes, and
+  the confirmation debits one and credits the other. **No subject-book entry is
+  written for the intercompany leg**, which is a deliberate deviation from §34, §37
+  and §38: those show the position in the Piutang and Hutang *ledgers*, but a subject
+  book's subject is a Partner (§10 rule 56) and the other Company is not one.
+  Recording it there would mean registering each Company as a Partner in the other's
+  master — a fiction in the master existing only to satisfy a foreign key, and one
+  nothing would mark as special or protect from being deactivated. The reconciliation
+  §38 asks for is the same reconciliation, read from the General Ledger: the induk's
+  receivable account against the anak's payable account. **Confirmed with the user
+  before implementation**, after the Partner-based version had been built and
+  demonstrated.
 - **Each journal points at its own Company's document.** The induk's names the Funding
   Request; the anak's names its own Cash Bank Transaction, because that document is an
   ordinary realization that happened to be funded. Neither is the source of the other,
   which is exactly what §31's Intercompany Event exists to guarantee — **the Funding
   Request is that identifier**, so there is no separate `ICE` table to keep in step.
 - **The direction is one mechanism, not two.** Money leaving the induk for the anak's
-  expense raises the induk's Piutang and the anak's Hutang; money the anak receives
-  into an induk resource raises the induk's Hutang and the anak's Piutang. Only which
-  side of each bridge is written flips. The subject books still sign themselves from
-  the cash direction (§10 rule 53) — the anak's intercompany leg simply carries the
-  *opposite* direction to the document's, because the money passed through the induk.
+  expense debits the induk's receivable and credits the anak's payable; money the anak
+  receives into an induk resource does the mirror. Only which side of each bridge is
+  written flips.
 - **Reason:** The posting is Finance's, written for two Companies rather than one, so
   it lives in `finance.ts` beside `applyPosting`; the request's lifecycle is
   Funding's. Splitting it any other way would either put a second posting engine in a
   second module, or make Finance depend on Funding.
 - **Do not change unless:** explicitly instructed. **Never split the confirmation into
-  separate writes**, never derive one Company's journal from the other's, and do not
-  add an Intercompany Event table unless something needs an identifier the request
-  cannot carry.
+  separate writes**, never derive one Company's journal from the other's, do not add
+  an Intercompany Event table unless something needs an identifier the request cannot
+  carry, and **do not register a Company as a Partner** in order to put the
+  intercompany position in a subject book.
 - **Status:** Frozen, current.
 
 ### Finance is bespoke, and its base-amount columns are placeholders
@@ -2182,7 +2195,10 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   journal from the other's, or add an Intercompany Event table; the Funding Request is
   that identifier (§10 rules 59–60, §12).
 - Do **not** give the intercompany bridge settings a fallback. A confirmation is
-  refused by name until all six are set (§12).
+  refused by name until all four are set (§12).
+- Do **not** register a Company as a Partner so the intercompany position can live in
+  a subject book. That position is journal, and the General Ledger is where the two
+  sides reconcile (§10 rule 61, §12).
 - Do **not** display or populate `transaction_base_amount` / `settlement_base_amount`
   with a conversion — they are the identity until a real rate source lands (§12).
 - Do **not** add a `BUDGET_CLOSE` permission or a close action; a Budget closes when
@@ -2307,7 +2323,7 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |
-| A Funding Request's bridge Partners are ordinary Partners | Each Company registers a Partner standing for the other and names it in System Default. Nothing marks such a Partner as special, so one could be deactivated or renamed like any other — the confirmation then refuses by name rather than posting somewhere wrong, which is the safe failure, but the master gives no warning. |
+| The intercompany position has no subject-book view | It is carried by the two bridge accounts and read through the General Ledger, which is a deliberate deviation from concept doc §34/§37/§38 (§12). The consequence is that the subject books answer "which Partner moved?" and not "what does the anak owe the induk?" — that question is an account balance. If a book of it is ever wanted, it needs a subject that is a Company, which is a change to an append-only table. |
 | Tests cover security, Accounting, Budget, Finance, Funding, the books, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | Three module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a fourth fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) The dashboard counts rows from every module for its setup checklist — arguably fine for a cross-cutting screen, but it should ask each module for its own figure. (3) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |

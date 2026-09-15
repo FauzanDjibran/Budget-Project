@@ -284,18 +284,14 @@ export function FundingDetail({
                   </b>
                 </div>
                 <div className="ir">
-                  <span>Posisi induk</span>
+                  <span>Journal induk</span>
                   <b>
                     {incoming ? "Hutang kepada" : "Piutang kepada"} {companyLabel}
                   </b>
                 </div>
                 <div className="ir">
-                  <span>Posisi {companyLabel}</span>
+                  <span>Journal {companyLabel}</span>
                   <b>{incoming ? "Piutang kepada induk" : "Hutang kepada induk"}</b>
-                </div>
-                <div className="ir">
-                  <span>Journal</span>
-                  <b>Satu journal untuk masing-masing Company</b>
                 </div>
               </div>
             </div>
@@ -364,10 +360,10 @@ export function FundingDetail({
             <div className="card-b" style={{ borderTop: "1px solid var(--line-2)" }}>
               <p className="sidenote">
                 {request.status === "Closed"
-                  ? "Funding sudah dikonfirmasi: kas induk bergerak, buku pembantu kedua Company terisi, dan masing-masing Company memperoleh journal-nya. Semua bersifat append-only — koreksi dilakukan sebagai dokumen baru."
+                  ? "Funding sudah dikonfirmasi: kas induk bergerak dan masing-masing Company memperoleh journal-nya, tempat posisi keduanya terhadap satu sama lain tercatat. Semua bersifat append-only — koreksi dilakukan sebagai dokumen baru."
                   : request.status === "Cancelled"
                     ? "Permintaan ditarik kembali oleh Company pemohon sebelum dikonfirmasi, sehingga tidak pernah menyentuh kas maupun Budget."
-                    : "Belum ada yang bergerak. Konfirmasi menulis entri Cash Bank Book induk, posisi kedua Company terhadap satu sama lain, realisasi Budget, dan dua journal — seluruhnya dalam satu transaksi."}
+                    : "Belum ada yang bergerak. Konfirmasi menulis entri Cash Bank Book induk, realisasi Budget, dan satu journal untuk masing-masing Company — seluruhnya dalam satu transaksi. Posisi kedua Company terhadap satu sama lain dibaca dari journal tersebut, lewat General Ledger."}
               </p>
             </div>
           </div>
@@ -436,11 +432,11 @@ export function FundingDetail({
           <p className="sidenote">
             Konfirmasi adalah batas aktual untuk kedua Company sekaligus: kas
             induk {incoming ? "menerima" : "mengeluarkan"}{" "}
-            {formatMoney(request.request_amount, currencyLabel)}, posisi kedua
-            Company terhadap satu sama lain tercatat, realisasi Budget berjalan,
-            dokumen {doc?.transaction_no ?? ""} menjadi Diposting, dan dua
-            journal terbentuk. Setelah itu tidak dapat dibatalkan — koreksi
-            dilakukan sebagai dokumen baru.
+            {formatMoney(request.request_amount, currencyLabel)}, realisasi
+            Budget berjalan, dokumen {doc?.transaction_no ?? ""} menjadi
+            Diposting, dan satu journal terbentuk untuk masing-masing Company —
+            di situlah posisi keduanya terhadap satu sama lain tercatat. Setelah
+            itu tidak dapat dibatalkan — koreksi dilakukan sebagai dokumen baru.
           </p>
         </Dialog>
       )}

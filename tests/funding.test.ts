@@ -45,10 +45,10 @@ import {
  *
  *  1. **Pending is as inert as Draft.** Submitting moves no cash, no book and
  *     no `realized_amount` — only the induk's confirmation does.
- *  2. **Confirmation is atomic and symmetrical.** One induk cash entry, one
- *     subject-book entry per Company per position, the anak's own subject book
- *     where its Purpose keeps one, every Budget's realization, and one balanced
- *     journal per Company — all of it, or none of it.
+ *  2. **Confirmation is atomic and symmetrical.** One induk cash entry, the
+ *     anak's own subject book where its Purpose keeps one, every Budget's
+ *     realization, and one balanced journal per Company carrying the two
+ *     Companies' positions against each other — all of it, or none of it.
  *  3. **A refusal leaves nothing behind.** An unfinished bridge, a resource in
  *     the wrong currency and a Budget that has closed since each refuse before
  *     anything is written.
@@ -66,9 +66,9 @@ let actor = 0;
 let currency = 0;
 let otherCurrency = 0;
 
-/** The bridge, as this suite sets it up. */
-let indukBridgePartner = 0;
-let anakBridgePartner = 0;
+/** The bridge accounts, as this suite sets them up. */
+let indukArAccount = 0;
+let anakApAccount = 0;
 
 const cashBanks: number[] = [];
 const budgets: number[] = [];
@@ -276,35 +276,24 @@ before(async () => {
     }
   }
 
-  // The bridge itself: a Partner in each Company standing for the other, and
-  // an account each for the claim and the obligation.
-  indukBridgePartner = await makePartner({
-    companyId: induk,
-    categoryLabel: "Cabang",
-  });
-  anakBridgePartner = await makePartner({
-    companyId: anak,
-    categoryLabel: "Stakeholder",
-  });
+  // The bridge itself: one account per Company per direction, and nothing else.
+  // The position between the Companies is journal, never subject book — a book's
+  // subject is a Partner, and the other Company is not one.
+  indukArAccount = await makeAccount({ companyId: induk, subcategoryLabel: "1.1.3" });
+  anakApAccount = await makeAccount({ companyId: anak, subcategoryLabel: "2.1.1" });
 
   savedDefaults = { ...(await systemDefaults()) };
 
   await writeSystemDefaults(
     {
-      induk_bridge_ar_account: String(
-        await makeAccount({ companyId: induk, subcategoryLabel: "1.1.3" })
-      ),
+      induk_bridge_ar_account: String(indukArAccount),
       induk_bridge_ap_account: String(
         await makeAccount({ companyId: induk, subcategoryLabel: "2.1.1" })
       ),
-      induk_bridge_partner: String(indukBridgePartner),
       anak_bridge_ar_account: String(
         await makeAccount({ companyId: anak, subcategoryLabel: "1.1.3" })
       ),
-      anak_bridge_ap_account: String(
-        await makeAccount({ companyId: anak, subcategoryLabel: "2.1.1" })
-      ),
-      anak_bridge_partner: String(anakBridgePartner),
+      anak_bridge_ap_account: String(anakApAccount),
     },
     actor
   );
@@ -390,13 +379,17 @@ describe("the funded route is decided by the Company, not by a setting", () => {
     assert.equal(leaf!.permission, "FUNDING_REQUEST_VIEW");
   });
 
-  test("the bridge is six settings, three per Company", () => {
+  test("the bridge is four settings, two per Company, all accounts", () => {
     const bridge = (SYSTEM_DEFAULTS as readonly SystemDefaultDef[]).filter(
       (d) => d.company
     );
-    assert.equal(bridge.length, 6);
-    assert.equal(bridge.filter((d) => d.company === "induk").length, 3);
-    assert.equal(bridge.filter((d) => d.company === "anak").length, 3);
+    assert.equal(bridge.length, 4);
+    assert.equal(bridge.filter((d) => d.company === "induk").length, 2);
+    assert.equal(bridge.filter((d) => d.company === "anak").length, 2);
+    assert.ok(
+      bridge.every((d) => d.ref === "acc_account"),
+      "the intercompany position is journal, so the bridge names accounts only"
+    );
   });
 });
 
@@ -573,7 +566,7 @@ describe("submitting raises a request and moves nothing", () => {
 // ------------------------------------------------------- confirming one
 
 describe("confirmation posts both Companies, at once", () => {
-  test("an anak expense: induk cash out, induk Piutang, anak Hutang, two journals", async () => {
+  test("an anak expense: induk cash out, and a journal each carrying the position", async () => {
     const supplier = await makePartner({
       companyId: anak,
       categoryLabel: "Stakeholder",
@@ -612,13 +605,18 @@ describe("confirmation posts both Companies, at once", () => {
     assert.equal(entries[0].cash_bank_id, cashBank);
     assert.equal(entries[0].direction, "Out");
 
-    // 2. both sides of the bridge, and the anak's own supplier position
-    assert.equal(await subledgerBalance("piutang", indukBridgePartner), 300_000);
-    assert.equal(await subledgerBalance("hutang", anakBridgePartner), 300_000);
+    // 2. the anak's own supplier position, and *only* that: the two Companies'
+    //    positions against each other are accounts, not subjects, so the
+    //    confirmation writes exactly one subject-book entry.
     assert.equal(
       await subledgerBalance("hutang", supplier),
       -300_000,
       "paying a supplier lowers what the anak owes it"
+    );
+    assert.equal(
+      await subledgerEntries(doc),
+      1,
+      "no subject book entry is written for the intercompany leg"
     );
 
     // 3. one journal each, each balanced, each pointing at its own Company's
@@ -643,6 +641,20 @@ describe("confirmation posts both Companies, at once", () => {
       assert.equal(debit, credit, `${journal.journal_no} must balance`);
       assert.equal(debit, 300_000);
     }
+
+    // 3b. the position itself: the induk's claim is debited, the anak's
+    //     obligation credited, and the two agree — which is the whole of what
+    //     concept doc §38 reconciles, read from the General Ledger.
+    const indukClaim = indukJournals[0].lines.find(
+      (l) => l.account_id === indukArAccount
+    );
+    const anakObligation = anakJournals[0].lines.find(
+      (l) => l.account_id === anakApAccount
+    );
+    assert.ok(indukClaim, "the induk journals its receivable from the anak");
+    assert.ok(anakObligation, "the anak journals its payable to the induk");
+    assert.equal(indukClaim!.debit_amount.toNumber(), 300_000);
+    assert.equal(anakObligation!.kredit_amount.toNumber(), 300_000);
 
     // 4. the plan is realized and closed, the document posted, the request shut
     const plan = await prisma.budBudget.findUniqueOrThrow({
@@ -697,23 +709,30 @@ describe("confirmation posts both Companies, at once", () => {
 
     assert.equal(await bookBalance(cashBank), 250_000, "the induk holds it now");
     assert.equal(
-      await subledgerBalance("hutang", indukBridgePartner),
-      200_000,
-      "money taken in for the anak is owed to the anak"
-    );
-    assert.equal(
-      await subledgerBalance("piutang", anakBridgePartner),
-      200_000,
-      "and the anak may claim it from the induk"
-    );
-    assert.equal(
       await subledgerBalance("piutang", debtor),
       -200_000,
       "being repaid lowers what the debtor owes the anak"
     );
+
+    // The mirror of the expense case, and it is the *other* side of each
+    // bridge: money taken in on the anak's behalf is owed to the anak, and the
+    // anak may claim it back.
+    const indukJournal = (await journalsFor(
+      await fundingRequestDocTypeId(),
+      raised.ok ? raised.id : 0
+    ))[0];
+    const anakJournal = (await journalsFor(await transactionDocType(), doc))[0];
+    assert.ok(
+      indukJournal.lines.some((l) => l.kredit_amount.toNumber() === 200_000),
+      "the induk credits what it now owes the anak"
+    );
+    assert.ok(
+      anakJournal.lines.some((l) => l.debit_amount.toNumber() === 200_000),
+      "the anak debits what it may claim from the induk"
+    );
   });
 
-  test("a Purpose with no Partner writes no subject book, only the bridge", async () => {
+  test("a Purpose with no Partner writes no subject book at all", async () => {
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 40_000 });
     const doc = await makeAnakDraft({
       purpose: "BYA_OUT",
@@ -732,9 +751,10 @@ describe("confirmation posts both Companies, at once", () => {
     );
     assert.equal(result.ok, true, JSON.stringify(result));
 
-    // Two entries, not three: Biaya names no Partner and keeps no book, so
-    // only the two sides of the bridge have a subject.
-    assert.equal(await subledgerEntries(doc), 2);
+    // None: Biaya names no Partner and keeps no book, and the intercompany
+    // position is journal rather than subject book. The Cash Bank Book and both
+    // journals still record the movement.
+    assert.equal(await subledgerEntries(doc), 0);
   });
 });
 
@@ -858,14 +878,14 @@ describe("a refused confirmation leaves nothing behind", () => {
     const raised = await raise(doc);
     assert.ok(raised.ok);
 
-    const held = (await systemDefaults()).induk_bridge_partner;
-    await writeSystemDefaults({ induk_bridge_partner: null }, actor);
+    const held = (await systemDefaults()).induk_bridge_ar_account;
+    await writeSystemDefaults({ induk_bridge_ar_account: null }, actor);
     try {
       const bridge = await intercompanyBridge();
       assert.equal(bridge.ok, false);
       assert.ok(
         bridge.ok === false &&
-          bridge.missing.includes("Partner yang Mewakili Anak")
+          bridge.missing.includes("Account Piutang ke Anak")
       );
 
       const cashBank = await makeCashBank({ opening: 100_000 });
@@ -876,11 +896,11 @@ describe("a refused confirmation leaves nothing behind", () => {
       );
       assert.equal(result.ok, false);
       assert.ok(
-        result.ok === false && /Partner yang Mewakili Anak/.test(result.errors._form)
+        result.ok === false && /Account Piutang ke Anak/.test(result.errors._form)
       );
       assert.equal(await bookBalance(cashBank), 100_000);
     } finally {
-      await writeSystemDefaults({ induk_bridge_partner: held }, actor);
+      await writeSystemDefaults({ induk_bridge_ar_account: held }, actor);
     }
   });
 

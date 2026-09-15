@@ -14,8 +14,8 @@ import { systemDefaults } from "@/lib/siba/system-settings";
 export const dynamic = "force-dynamic";
 
 /**
- * System Default — the values the application prefills with, plus the
- * intercompany bridge each Company posts its side of a Funding Request to.
+ * System Default — the values the application prefills with, plus the account
+ * each Company journals its side of a Funding Request against.
  *
  * Reaching the menu and reading the values are separate permissions, the same
  * split every other module uses, and editing is a third.
@@ -75,32 +75,17 @@ export default async function SystemDefaultPage() {
         }));
     }
 
-    if (def.ref === "acc_account") {
-      const rows = await prisma.accAccount.findMany({
-        where: { company_id: companyId(def.company!), is_postable: true },
-        orderBy: { account_label: "asc" },
-      });
-      return rows
-        .filter((a) => keep(a.id, a.is_active))
-        .map((a) => ({
-          id: a.id,
-          label: a.account_label,
-          name: a.account_name,
-          active: a.is_active,
-        }));
-    }
-
-    const rows = await prisma.mPartner.findMany({
-      where: { company_id: companyId(def.company!) },
-      orderBy: { partner_label: "asc" },
+    const rows = await prisma.accAccount.findMany({
+      where: { company_id: companyId(def.company!), is_postable: true },
+      orderBy: { account_label: "asc" },
     });
     return rows
-      .filter((p) => keep(p.id, p.status === "Active"))
-      .map((p) => ({
-        id: p.id,
-        label: p.partner_label,
-        name: p.partner_name,
-        active: p.status === "Active",
+      .filter((a) => keep(a.id, a.is_active))
+      .map((a) => ({
+        id: a.id,
+        label: a.account_label,
+        name: a.account_name,
+        active: a.is_active,
       }));
   }
 }

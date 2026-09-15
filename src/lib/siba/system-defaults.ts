@@ -13,12 +13,12 @@
  *
  * **The intercompany bridge settings are the one group that behaves
  * differently**, and deliberately so: they do not prefill a control, they name
- * the account and the Partner each Company keeps its position against the other
- * in. Nothing guesses them, and a Funding Request cannot be confirmed until
- * they are set — a refusal that names what is missing, never a silent fallback.
- * They are still settings rather than a table because there are exactly two
- * permanent Companies (CLAUDE.md §12) and a "company relationship" table is
- * precisely what §14 forbids.
+ * the account each Company records its position against the other in. Nothing
+ * guesses them, and a Funding Request cannot be confirmed until they are set —
+ * a refusal that names what is missing, never a silent fallback. They are still
+ * settings rather than a table because there are exactly two permanent
+ * Companies (CLAUDE.md §12) and a "company relationship" table is precisely
+ * what §14 forbids.
  *
  * Client-safe on purpose — no `server-only`, no database import: the settings
  * form reads the same catalogue the Server Action writes against.
@@ -29,13 +29,11 @@ export type SystemDefaultKey =
   | "default_currency"
   | "induk_bridge_ar_account"
   | "induk_bridge_ap_account"
-  | "induk_bridge_partner"
   | "anak_bridge_ar_account"
-  | "anak_bridge_ap_account"
-  | "anak_bridge_partner";
+  | "anak_bridge_ap_account";
 
 /** Which master a `ref` setting points at — a registry entity key. */
-export type SystemDefaultRef = "ref_currency" | "acc_account" | "m_partner";
+export type SystemDefaultRef = "ref_currency" | "acc_account";
 
 export type SystemDefaultGroupKey =
   | "application"
@@ -54,8 +52,8 @@ export type SystemDefaultGroup = {
  *
  * The bridge settings are split by Company rather than listed together,
  * because each Company's pair is a decision taken inside that Company's own
- * chart of accounts and partner master — and the page has to say whose records
- * a picker is offering before the user picks one.
+ * chart of accounts — and the page has to say whose accounts a picker is
+ * offering before the user picks one.
  */
 export const SYSTEM_DEFAULT_GROUPS = [
   {
@@ -68,16 +66,16 @@ export const SYSTEM_DEFAULT_GROUPS = [
     key: "bridge_induk",
     name: "Bridge Intercompany — Induk",
     desc:
-      "Account dan Partner yang dipakai Company induk untuk mencatat posisinya " +
-      "terhadap Company anak saat Funding Request dikonfirmasi.",
+      "Account yang dipakai Company induk untuk mencatat posisinya terhadap " +
+      "Company anak saat Funding Request dikonfirmasi.",
     icon: "link",
   },
   {
     key: "bridge_anak",
     name: "Bridge Intercompany — Anak",
     desc:
-      "Account dan Partner yang dipakai Company anak untuk mencatat posisinya " +
-      "terhadap Company induk atas dana yang sama.",
+      "Account yang dipakai Company anak untuk mencatat posisinya terhadap " +
+      "Company induk atas dana yang sama.",
     icon: "link",
   },
 ] as const satisfies readonly SystemDefaultGroup[];
@@ -140,18 +138,6 @@ export const SYSTEM_DEFAULTS = [
       "Dipakai saat induk menerima kas milik anak: induk memegang dana tersebut, " +
       "sehingga tercatat sebagai kewajiban kepada anak.",
   },
-  {
-    key: "induk_bridge_partner",
-    name: "Partner yang Mewakili Anak",
-    icon: "user",
-    type: "ref",
-    ref: "m_partner",
-    group: "bridge_induk",
-    company: "induk",
-    help:
-      "Partner pada master induk yang berarti Company anak. Buku Piutang dan " +
-      "Buku Hutang induk mencatat posisi intercompany atas nama Partner ini.",
-  },
 
   // ---------------------------------------------------------------- anak
   {
@@ -178,18 +164,7 @@ export const SYSTEM_DEFAULTS = [
       "Dipakai saat pengeluaran anak dibiayai induk: anak mencatat kewajiban " +
       "kepada induk sebesar dana yang dipakai.",
   },
-  {
-    key: "anak_bridge_partner",
-    name: "Partner yang Mewakili Induk",
-    icon: "user",
-    type: "ref",
-    ref: "m_partner",
-    group: "bridge_anak",
-    company: "anak",
-    help:
-      "Partner pada master anak yang berarti Company induk. Buku Hutang dan " +
-      "Buku Piutang anak mencatat posisi intercompany atas nama Partner ini.",
-  },
+
 ] as const satisfies readonly SystemDefaultDef[];
 
 /** What each key is set to; a key that has never been set reads as null. */
@@ -199,10 +174,8 @@ export const EMPTY_SYSTEM_DEFAULTS: SystemDefaultValues = {
   default_currency: null,
   induk_bridge_ar_account: null,
   induk_bridge_ap_account: null,
-  induk_bridge_partner: null,
   anak_bridge_ar_account: null,
   anak_bridge_ap_account: null,
-  anak_bridge_partner: null,
 };
 
 export function isSystemDefaultKey(key: string): key is SystemDefaultKey {
