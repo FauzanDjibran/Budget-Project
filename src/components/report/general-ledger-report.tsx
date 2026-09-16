@@ -4,7 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { ReportSummary } from "@/components/report/report-summary";
-import { formatDate, formatMoney } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { GeneralLedgerReport as Report } from "@/lib/siba/ledger";
 
 /**
@@ -78,7 +79,10 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
 
       {report.accounts.map((a) => {
         const isOpen = open.has(a.id);
-        const money = (n: number) => formatMoney(n, a.currencyLabel);
+        // Every figure here is base currency, so one formatter serves the whole
+        // table. The transaction-currency face lives on the entries that have
+        // one, beside the description.
+        const money = (n: number) => formatMoney(n, BASE_CURRENCY_LABEL);
         return (
           <div className="cblock" key={a.id}>
             <div
@@ -92,6 +96,8 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
               <b>{a.label}</b>
               <span className="cbn">
                 {a.name} · {a.normalBalance} · {a.entries.length} mutasi
+                {a.foreignCurrencies.length > 0 &&
+                  ` · sumber `}
               </span>
               <ReportSummary
                 figures={[
@@ -152,8 +158,20 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                         </td>
                         <td className="pri wrapok">
                           {e.description}
-                          {e.partnerLabel && (
-                            <span className="rsub">{e.partnerLabel}</span>
+                          {(e.partnerLabel || e.trxCurrencyLabel) && (
+                            <span className="rsub">
+                              {[
+                                e.partnerLabel,
+                                // What the rupiah figure beside it came from.
+                                // Only where the two differ — an IDR line
+                                // would just be stating itself twice.
+                                e.trxCurrencyLabel
+                                  ? `${formatMoney(e.trxAmount ?? 0, e.trxCurrencyLabel)} @ ${formatNumber(e.rate ?? 0, 2)}`
+                                  : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </span>
                           )}
                         </td>
                         <td className="num">

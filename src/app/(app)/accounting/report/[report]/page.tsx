@@ -14,6 +14,7 @@ import {
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { formatDate } from "@/lib/format";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 
 export const dynamic = "force-dynamic";
 
@@ -106,12 +107,14 @@ export default async function Page({
         runAt={runAt}
         footnote={
           <>
-            Setiap account memiliki tabelnya sendiri dan tidak pernah
-            dijumlahkan dengan account lain — penjumlahan itu adalah tugas Trial
-            Balance. Saldo bergerak mengikuti normal balance account: account
-            Debit naik di sisi debit, account Kredit naik di sisi kredit. Saldo
-            awal adalah seluruh mutasi sebelum {formatDate(range.from)} dan
-            tidak muncul sebagai baris. Journal bersifat append-only: koreksi
+            Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}); baris
+            yang berasal dari mata uang asing menyebutkan nominal aslinya
+            beserta kurs yang dipakai. Setiap account memiliki tabelnya sendiri
+            dan tidak pernah dijumlahkan dengan account lain — penjumlahan itu
+            adalah tugas Trial Balance. Saldo bergerak mengikuti normal balance
+            account: account Debit naik di sisi debit, account Kredit naik di
+            sisi kredit. Saldo awal adalah seluruh mutasi sebelum{" "}
+            {formatDate(range.from)} dan tidak muncul sebagai baris. Journal bersifat append-only: koreksi
             adalah journal baru, bukan perubahan journal lama.
           </>
         }
@@ -140,14 +143,16 @@ export default async function Page({
       runAt={runAt}
       footnote={
         <>
-          Setiap currency direkap terpisah dan tidak pernah dijumlahkan menjadi
-          satu angka, karena belum ada sumber kurs di sistem ini. Total mutasi
-          debit dan kredit wajib sama: setiap journal ditolak bila kedua sisinya
-          berbeda, sehingga selisih di sini berarti ada masalah sistem, bukan
-          kesalahan input. Account yang tidak memiliki saldo awal maupun mutasi
-          tidak ditampilkan. Huruf D dan K di samping nama account adalah normal
-          balance-nya. Klik nomor account untuk membuka General Ledger-nya pada
-          periode yang sama.
+          Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}). Transaksi
+          dalam mata uang asing dicatat menurut kurs saat dana bergerak, dan
+          nilai itulah yang dijumlahkan di sini — satu journal dapat memuat dua
+          mata uang sekaligus, sehingga hanya mata uang dasar yang dapat
+          ditotal. Total mutasi debit dan kredit wajib sama: setiap journal
+          ditolak bila kedua sisinya berbeda, sehingga selisih di sini berarti
+          ada masalah sistem, bukan kesalahan input. Account yang tidak memiliki
+          saldo awal maupun mutasi tidak ditampilkan. Huruf D dan K di samping
+          nama account adalah normal balance-nya. Klik nomor account untuk
+          membuka General Ledger-nya pada periode yang sama.
         </>
       }
     >

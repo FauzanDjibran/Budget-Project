@@ -3,6 +3,8 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { nextDocumentNumber } from "./document-number";
+import { isBaseCurrency } from "./currency";
+import { roundBase } from "./fx";
 
 /**
  * The accounting journal.
@@ -12,27 +14,54 @@ import { nextDocumentNumber } from "./document-number";
  * document, and nothing anywhere updates or deletes one. A correction is a new
  * journal, exactly as a corrected document is a new document (concept doc §15).
  *
+ * **The journal is measured in base currency.** `debit_amount` and
+ * `kredit_amount` are rupiah; `trx_amount`, `currency_id` and `exchange_rate`
+ * carry the transaction-currency face of the same line. That is concept doc
+ * §16: the operational books keep both measures, and the General Ledger is
+ * base.
+ *
+ * A consequence worth stating plainly: **one journal may now hold lines in two
+ * different currencies** — a foreign document paid from a base-currency
+ * resource produces exactly that — and it balances only in base. Every journal
+ * in this application used to be single-currency, and three places in the code
+ * relied on it.
+ *
  * **The balance is enforced here and nowhere else.** `postJournal` refuses to
- * write a journal whose debits and credits differ, and because it is always
- * called inside the posting transaction, a refusal rolls the whole posting
- * back. That is the whole guarantee: if every journal balances, every sum of
- * journals balances, and a trial balance that does not is a system fault
+ * write a journal whose base debits and credits differ, and because it is
+ * always called inside the posting transaction, a refusal rolls the whole
+ * posting back. That is the whole guarantee: if every journal balances, every
+ * sum of journals balances, and a trial balance that does not is a system fault
  * rather than a data-entry one.
  *
- * Only the General Ledger reads these lines. The Cash Bank Book — and the
- * subject ledgers when they land — are written alongside the journal in the
- * same transaction and never derived from it (§2.5, §11.7).
+ * Only the General Ledger reads these lines. The Cash Bank Book and the subject
+ * books are written alongside the journal in the same transaction and never
+ * derived from it (§2.5, §11.7).
  */
 
 type Client = typeof prisma | Prisma.TransactionClient;
 
-/** One side of one entry. Exactly one of `debit` / `credit` is non-zero. */
+/**
+ * One side of one entry. Exactly one of `debit` / `credit` is non-zero.
+ *
+ * The amounts are in the line's **own currency**; `rate` converts them to base,
+ * which is what the journal balances in. A base-currency line passes `1`, and
+ * that is the only case where `1` is right.
+ */
 export type JournalLineInput = {
   accountId: number;
   partnerId?: number | null;
   currencyId: number;
+  /** Transaction currency to base. Never defaulted — see `lib/siba/currency.ts`. */
+  rate: number;
   debit: number;
   credit: number;
+  /**
+   * The exact base value, where the caller already knows it and it may differ
+   * from the product by a rounding unit — a position relieved to nothing
+   * releases its remaining base exactly. Supplied on the same side as the
+   * non-zero foreign amount.
+   */
+  baseAmount?: number;
   description: string;
 };
 
@@ -55,23 +84,33 @@ export type JournalInput = {
 const cents = (n: number): number => Math.round(n * 100);
 
 export class JournalImbalance extends Error {
+  /** Both figures are in base currency, which is the only measure a journal balances in. */
   constructor(readonly debit: number, readonly credit: number) {
     super(
-      `Journal tidak seimbang: debit ${debit.toFixed(2)} dan kredit ${credit.toFixed(2)}. ` +
-        "Posting dibatalkan."
+      `Journal tidak seimbang dalam mata uang dasar: debit ${debit.toFixed(2)} ` +
+        `dan kredit ${credit.toFixed(2)}. Posting dibatalkan.`
     );
     this.name = "JournalImbalance";
   }
 }
 
+/** A line resolved to both measures, ready to write. */
+type ResolvedLine = JournalLineInput & { baseDebit: number; baseCredit: number };
+
 /**
  * Writes one balanced journal, or writes nothing.
  *
  * Refuses an empty journal, a line carrying value on both sides or on neither,
- * a negative amount, and — the one that matters — any journal whose two sides
- * do not sum equal. Every refusal throws rather than returning a result,
- * because the caller is inside `prisma.$transaction`: an unbalanced journal
- * must take the posting down with it, not be reported and skipped.
+ * a negative amount, a rate of zero or less, and — the one that matters — any
+ * journal whose two sides do not sum equal **in base currency**. Every refusal
+ * throws rather than returning a result, because the caller is inside
+ * `prisma.$transaction`: an unbalanced journal must take the posting down with
+ * it, not be reported and skipped.
+ *
+ * Balancing in base rather than in transaction currency is what lets one
+ * journal hold two currencies. It is also the only thing that *can* balance
+ * once it does — a USD line and an IDR line have no common measure until both
+ * are valued.
  */
 export async function postJournal(
   tx: Client,
@@ -83,9 +122,16 @@ export async function postJournal(
 
   let debit = 0;
   let credit = 0;
+  const resolved: ResolvedLine[] = [];
+
   for (const [i, line] of input.lines.entries()) {
     if (line.debit < 0 || line.credit < 0) {
       throw new Error(`Baris journal ${i + 1} memuat nominal negatif.`);
+    }
+    if (!(line.rate > 0)) {
+      throw new Error(
+        `Baris journal ${i + 1} memuat kurs yang tidak valid (${line.rate}).`
+      );
     }
     const onDebit = cents(line.debit) > 0;
     const onCredit = cents(line.credit) > 0;
@@ -94,8 +140,21 @@ export async function postJournal(
         `Baris journal ${i + 1} harus mengisi tepat satu sisi, debit atau kredit.`
       );
     }
-    debit += line.debit;
-    credit += line.credit;
+
+    // The base value lands on the same side the foreign amount did. A caller
+    // that knows the exact figure supplies it; everything else multiplies once.
+    const base = line.baseAmount ?? roundBase((onDebit ? line.debit : line.credit) * line.rate);
+    if (base <= 0) {
+      throw new Error(
+        `Baris journal ${i + 1} bernilai nol dalam mata uang dasar dan tidak dapat diposting.`
+      );
+    }
+    const baseDebit = onDebit ? base : 0;
+    const baseCredit = onCredit ? base : 0;
+
+    resolved.push({ ...line, baseDebit, baseCredit });
+    debit += baseDebit;
+    credit += baseCredit;
   }
 
   if (cents(debit) !== cents(credit)) throw new JournalImbalance(debit, credit);
@@ -119,19 +178,23 @@ export async function postJournal(
     select: { id: true, journal_no: true },
   });
 
-  for (const [i, line] of input.lines.entries()) {
+  for (const [i, line] of resolved.entries()) {
     await tx.accJournalLine.create({
       data: {
         journal_id: journal.id,
         sequence_no: i + 1,
         account_id: line.accountId,
         partner_id: line.partnerId ?? null,
+        // The transaction-currency face of the line: which currency, how much
+        // of it, and what it was worth. The General Ledger reads the base
+        // columns; this is what lets a reader see that a rupiah figure came
+        // from three hundred dollars.
         currency_id: line.currencyId,
-        // The identity until a real rate source exists (CLAUDE.md §12).
-        exchange_rate: 1,
-        debit_amount: line.debit,
-        kredit_amount: line.credit,
+        exchange_rate: line.rate,
         trx_amount: line.debit > 0 ? line.debit : line.credit,
+        // Base currency. This is what the journal balances in.
+        debit_amount: line.baseDebit,
+        kredit_amount: line.baseCredit,
         description: line.description,
         created_by: input.actorId,
       },
@@ -185,9 +248,16 @@ export type JournalLineRow = {
   accountLabel: string;
   accountName: string;
   partnerLabel: string | null;
+  /** The line's transaction currency, which need not be the base currency. */
   currencyLabel: string;
+  /** Base currency — what the journal balances in. */
   debit: number;
   credit: number;
+  /** The transaction-currency amount, on whichever side carried it. */
+  trxAmount: number;
+  rate: number;
+  /** False where the line is already in base currency and states nothing extra. */
+  foreign: boolean;
   description: string;
 };
 
@@ -279,18 +349,25 @@ export async function getJournal(
       currencyLabel: l.currency.currency_label,
       debit: l.debit_amount.toNumber(),
       credit: l.kredit_amount.toNumber(),
+      trxAmount: l.trx_amount.toNumber(),
+      rate: l.exchange_rate.toNumber(),
+      foreign: !isBaseCurrency(l.currency.currency_label),
       description: l.description,
     })),
   };
 }
 
 /**
- * Every journal whose two sides disagree.
+ * Every journal whose two sides disagree, in base currency.
  *
  * `postJournal` makes this impossible, which is exactly why it is worth
  * asking: a non-empty answer means something wrote the tables without going
  * through it, and that is a system fault rather than a bookkeeping one. The
  * Trial Balance says so on its own page.
+ *
+ * Base is the only measure worth asking in. A journal holding a USD line and
+ * an IDR line has no transaction-currency total at all, so the question only
+ * means anything once both are valued.
  */
 export async function unbalancedJournals(
   companyIds: number[]

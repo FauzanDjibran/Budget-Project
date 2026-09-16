@@ -38,6 +38,8 @@ let actor = 0;
 let cash = 0;
 let expense = 0;
 let currency = 0;
+let foreignCurrency = 0;
+let foreignLabel = "";
 
 before(async () => {
   company = await parentCompanyId();
@@ -53,6 +55,34 @@ before(async () => {
       select: { id: true },
     })
   ).id;
+  // Reuse a non-base currency if the installation has one; only create when
+  // there is none. Currency labels are unique (§10 rule 5), so a fixture that
+  // created its own "USD" beside an existing one would plant a duplicate in
+  // master data the suite does not own and does not clean up.
+  const existingForeign = await prisma.refCurrency.findFirst({
+    where: { id: { not: currency } },
+    orderBy: { id: "asc" },
+    select: { id: true },
+  });
+  foreignCurrency =
+    existingForeign?.id ??
+    (
+      await prisma.refCurrency.create({
+        data: {
+          currency_code: "curr.TESTFX",
+          currency_label: "TFX",
+          currency_name: "Fixture Foreign Currency",
+          created_by: actor,
+        },
+        select: { id: true },
+      })
+    ).id;
+  foreignLabel = (
+    await prisma.refCurrency.findUniqueOrThrow({
+      where: { id: foreignCurrency },
+      select: { currency_label: true },
+    })
+  ).currency_label;
 });
 
 after(async () => {
@@ -60,9 +90,16 @@ after(async () => {
   await disconnect();
 });
 
-const line = (accountId: number, debit: number, credit: number) => ({
+const line = (
+  accountId: number,
+  debit: number,
+  credit: number,
+  /** Base currency unless a case is specifically about a foreign one. */
+  options: { currencyId?: number; rate?: number } = {}
+) => ({
   accountId,
-  currencyId: currency,
+  currencyId: options.currencyId ?? currency,
+  rate: options.rate ?? 1,
   debit,
   credit,
   description: "Fixture",
@@ -252,18 +289,24 @@ describe("the ledger reads journal lines the way an accountant does", () => {
 });
 
 describe("the trial balance balances", () => {
-  test("total debits equal total credits, per currency", async () => {
+  test("total debits equal total credits, on one base-currency scale", async () => {
     const report = await trialBalanceReport(WHOLE_TIME, [company]);
-    assert.ok(report.groups.length > 0, "the cases above posted journals");
+    assert.ok(report.rows.length > 0, "the cases above posted journals");
+    assert.equal(
+      Math.round(report.totalDebit * 100),
+      Math.round(report.totalCredit * 100),
+      "every journal balances in base, so their sum does"
+    );
+    assert.equal(report.balanced, true);
+  });
 
-    for (const g of report.groups) {
-      assert.equal(
-        Math.round(g.totalDebit * 100),
-        Math.round(g.totalCredit * 100),
-        `${g.currencyLabel} must balance — every journal in it does`
-      );
-      assert.equal(g.balanced, true);
-    }
+  test("it is one table, not one per transaction currency", async () => {
+    // The grouping is gone on purpose: a journal may hold two currencies, so
+    // grouping by transaction currency would split one balanced entry across
+    // two tables and leave neither balancing.
+    const report = await trialBalanceReport(WHOLE_TIME, [company]);
+    assert.ok(!("groups" in report), "a trial balance is a base-currency statement");
+    assert.ok(Array.isArray(report.rows));
   });
 
   test("it reports no unbalanced journal, because none can exist", async () => {
@@ -276,7 +319,9 @@ describe("the trial balance balances", () => {
       { from: "1990-01-01", to: "1990-12-31" },
       [company]
     );
-    assert.deepEqual(report.groups, [], "no line was posted by 1990");
+    assert.deepEqual(report.rows, [], "no line was posted by 1990");
+    assert.equal(report.totalDebit, 0);
+    assert.equal(report.balanced, true);
   });
 });
 
@@ -313,5 +358,146 @@ describe("the Journal has no write capability of its own", () => {
     assert.ok(entry, "a menu destination always renders (§12)");
     assert.equal(entry.slug, "journal");
     assert.equal(entry.permission, "JOURNAL_VIEW");
+  });
+});
+
+// ------------------------------------------------- base currency, two faces
+
+describe("a journal is measured in base currency", () => {
+  test("a base-currency line stores the same figure on both faces", async () => {
+    const result = await postJournal(
+      prisma,
+      journal([line(expense, 250_000, 0), line(cash, 0, 250_000)])
+    );
+    const written = await prisma.accJournal.findUniqueOrThrow({
+      where: { id: result.id },
+      include: { lines: { orderBy: { sequence_no: "asc" } } },
+    });
+    const [debitLine] = written.lines;
+    assert.equal(debitLine.debit_amount.toNumber(), 250_000, "base");
+    assert.equal(debitLine.trx_amount.toNumber(), 250_000, "transaction currency");
+    assert.equal(debitLine.exchange_rate.toNumber(), 1);
+  });
+
+  test("a foreign line stores what it was and what it became", async () => {
+    const result = await postJournal(
+      prisma,
+      journal([
+        line(expense, 300, 0, { currencyId: foreignCurrency, rate: 15_500 }),
+        line(cash, 0, 4_650_000),
+      ])
+    );
+    const written = await prisma.accJournal.findUniqueOrThrow({
+      where: { id: result.id },
+      include: { lines: { orderBy: { sequence_no: "asc" } } },
+    });
+    const [foreign, base] = written.lines;
+
+    assert.equal(foreign.trx_amount.toNumber(), 300, "USD 300 was what moved");
+    assert.equal(foreign.exchange_rate.toNumber(), 15_500);
+    assert.equal(
+      foreign.debit_amount.toNumber(),
+      4_650_000,
+      "and that is what it was worth"
+    );
+    assert.equal(base.kredit_amount.toNumber(), 4_650_000);
+  });
+
+  test("one journal may hold two currencies, and balances in base", async () => {
+    // The case that killed the per-currency grouping: a foreign expense paid
+    // out of a rupiah account. Neither side has the other's currency, and the
+    // entry balances only once both are valued.
+    const result = await postJournal(
+      prisma,
+      journal([
+        line(expense, 1_000, 0, { currencyId: foreignCurrency, rate: 16_000 }),
+        line(cash, 0, 16_000_000),
+      ])
+    );
+    const written = await prisma.accJournal.findUniqueOrThrow({
+      where: { id: result.id },
+      include: { lines: true },
+    });
+    const currencies = new Set(written.lines.map((l) => l.currency_id));
+    assert.equal(currencies.size, 2, "two currencies in one journal");
+    assert.equal(
+      written.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0),
+      written.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0),
+      "and it balances, in base"
+    );
+  });
+
+  test("a journal balancing in foreign but not in base is refused", async () => {
+    // 1.000 against 1.000 looks balanced until each is valued. This is the
+    // mistake the old transaction-currency check could not have caught.
+    await assert.rejects(
+      postJournal(
+        prisma,
+        journal([
+          line(expense, 1_000, 0, { currencyId: foreignCurrency, rate: 16_000 }),
+          line(cash, 0, 1_000),
+        ])
+      ),
+      JournalImbalance
+    );
+  });
+
+  test("a line with no rate at all is refused", async () => {
+    for (const rate of [0, -1]) {
+      await assert.rejects(
+        postJournal(
+          prisma,
+          journal([
+            line(expense, 100, 0, { currencyId: foreignCurrency, rate }),
+            line(cash, 0, 100),
+          ])
+        ),
+        /kurs yang tidak valid/
+      );
+    }
+  });
+
+  test("the General Ledger reports base, and names what produced it", async () => {
+    const before = await generalLedgerReport([expense], WHOLE_TIME, [company]);
+    const openingBase = before.accounts[0].closing;
+
+    await postJournal(
+      prisma,
+      journal([
+        line(expense, 200, 0, { currencyId: foreignCurrency, rate: 15_000 }),
+        line(cash, 0, 3_000_000),
+      ])
+    );
+
+    const after = await generalLedgerReport([expense], WHOLE_TIME, [company]);
+    const account = after.accounts[0];
+    assert.equal(
+      account.closing,
+      openingBase + 3_000_000,
+      "the account moved by the rupiah value, not by 200"
+    );
+    assert.ok(
+      account.foreignCurrencies.includes(foreignLabel),
+      "and the account says some of it started out as another currency"
+    );
+
+    const entry = account.entries.at(-1)!;
+    assert.equal(entry.debit, 3_000_000, "the figure is base");
+    assert.equal(entry.trxAmount, 200, "the row still says what moved");
+    assert.equal(entry.trxCurrencyLabel, foreignLabel);
+    assert.equal(entry.rate, 15_000);
+  });
+
+  test("a base-currency entry states its figure once, not twice", async () => {
+    await postJournal(
+      prisma,
+      journal([line(cash, 50_000, 0), line(expense, 0, 50_000)])
+    );
+    const report = await generalLedgerReport([cash], WHOLE_TIME, [company]);
+    const entry = report.accounts[0].entries.at(-1)!;
+    assert.equal(entry.debit, 50_000);
+    assert.equal(entry.trxAmount, null, "nothing to add — it is already rupiah");
+    assert.equal(entry.trxCurrencyLabel, null);
+    assert.equal(entry.rate, null);
   });
 });

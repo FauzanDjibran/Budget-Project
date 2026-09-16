@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { CompanyFilter, NoCompanyAccess } from "@/components/master/company-filter";
 import { SearchField } from "@/components/ui/search-field";
 import { formatDate, formatMoney } from "@/lib/format";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { Company } from "@/lib/siba/company-access";
 import type { JournalRow } from "@/lib/siba/journal";
 
@@ -138,9 +139,9 @@ export function JournalList({
                       <td className="pri">{j.description}</td>
                       <td className="mut">{j.sourceDocLabel ?? "—"}</td>
                       <td className="num">{j.lineCount}</td>
-                      <td className="num">{formatMoney(j.debit, "")}</td>
+                      <td className="num">{formatMoney(j.debit, BASE_CURRENCY_LABEL)}</td>
                       <td className="num">
-                        {formatMoney(j.credit, "")}
+                        {formatMoney(j.credit, BASE_CURRENCY_LABEL)}
                         {!balanced && (
                           <span className="bdg s-bad" style={{ marginLeft: 6 }}>
                             Tidak seimbang

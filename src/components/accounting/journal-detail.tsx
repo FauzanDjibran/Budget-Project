@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { Icon } from "@/components/icon";
-import { formatDate, formatMoney } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { reportHref } from "@/lib/siba/reports";
 import type { JournalDetail as Detail } from "@/lib/siba/journal";
 
@@ -19,7 +20,6 @@ import type { JournalDetail as Detail } from "@/lib/siba/journal";
  */
 export function JournalDetail({ journal }: { journal: Detail }) {
   const balanced = Math.round(journal.debit * 100) === Math.round(journal.credit * 100);
-  const currency = journal.lines[0]?.currencyLabel ?? "";
 
   return (
     <>
@@ -112,12 +112,23 @@ export function JournalDetail({ journal }: { journal: Detail }) {
                   </td>
                   <td className="pri">{l.accountName}</td>
                   <td className="mut">{l.partnerLabel ?? "—"}</td>
-                  <td className="mut">{l.description}</td>
-                  <td className="num">
-                    {l.debit ? formatMoney(l.debit, l.currencyLabel) : "—"}
+                  <td className="mut">
+                    {l.description}
+                    {/* A line in another currency says what it was, beside the
+                        rupiah figure it became. A base-currency line would
+                        only be stating itself twice. */}
+                    {l.foreign && (
+                      <span className="rsub">
+                        {formatMoney(l.trxAmount, l.currencyLabel)} 
+                        {formatNumber(l.rate, 2)}
+                      </span>
+                    )}
                   </td>
                   <td className="num">
-                    {l.credit ? formatMoney(l.credit, l.currencyLabel) : "—"}
+                    {l.debit ? formatMoney(l.debit, BASE_CURRENCY_LABEL) : "—"}
+                  </td>
+                  <td className="num">
+                    {l.credit ? formatMoney(l.credit, BASE_CURRENCY_LABEL) : "—"}
                   </td>
                 </tr>
               ))}
@@ -128,8 +139,12 @@ export function JournalDetail({ journal }: { journal: Detail }) {
                     ? "Total — debit dan kredit seimbang"
                     : "Total — TIDAK SEIMBANG"}
                 </td>
-                <td className="num">{formatMoney(journal.debit, currency)}</td>
-                <td className="num">{formatMoney(journal.credit, currency)}</td>
+                <td className="num">
+                  {formatMoney(journal.debit, BASE_CURRENCY_LABEL)}
+                </td>
+                <td className="num">
+                  {formatMoney(journal.credit, BASE_CURRENCY_LABEL)}
+                </td>
               </tr>
             </tbody>
           </table>

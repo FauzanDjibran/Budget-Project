@@ -1,8 +1,9 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { compareCodes } from "./account-code";
+import { isBaseCurrency } from "./currency";
+import { roundBase } from "./fx";
 import type { PeriodRange } from "./period";
 
 /**
@@ -19,14 +20,21 @@ import type { PeriodRange } from "./period";
  * the credit side. Reporting a raw debit-minus-credit for a liability would
  * print every payable as a negative number, which is not how a ledger reads.
  *
- * **Grouped by currency, never converted.** There is no exchange-rate source
- * in this system (§12), so a period is reported per currency rather than
- * summed into one figure. Each currency group balances on its own, because
- * every journal is written in a single currency and every journal balances.
+ * **Measured in base currency, on one scale.** Concept doc §11.2 and §16 say
+ * the General Ledger uses the base currency, and it now does: every journal
+ * line stores what it was worth in rupiah, so both reports read one column and
+ * produce one set of figures.
  *
- * This deviates from concept doc §11.2, which says the General Ledger uses the
- * base currency. It cannot until a real rate source exists: converting would
- * mean inventing the rate. Recorded in CLAUDE.md rather than resolved quietly.
+ * This replaces the per-currency grouping these reports carried while there was
+ * no rate anywhere in the system. That was a deliberate deviation, recorded as
+ * such, and it could not survive multi-currency for a plainer reason than
+ * fidelity to the concept doc: **a journal may now hold two currencies**, so
+ * there is no longer any transaction-currency total to group by. A USD line and
+ * an IDR line in one entry have no common measure until both are valued.
+ *
+ * The transaction-currency face is not lost — it travels on each entry, so a
+ * reader can see that a rupiah figure came from three hundred dollars. It is
+ * simply not what anything is totalled in.
  */
 
 export type Balance = "Debit" | "Kredit";
@@ -46,10 +54,21 @@ export type LedgerEntry = {
   date: string;
   description: string;
   partnerLabel: string | null;
+  /** Base currency, like every figure in these two reports. */
   debit: number;
   credit: number;
   /** Running balance after this entry, in the account's normal direction. */
   balance: number;
+  /**
+   * What the entry was in its own currency, where that is not the base one.
+   *
+   * Null for an ordinary rupiah line, which would only be stating its own
+   * figure twice. A ledger row is read across, and a column that repeats the
+   * one beside it costs width without earning it (§12, report convention).
+   */
+  trxAmount: number | null;
+  trxCurrencyLabel: string | null;
+  rate: number | null;
 };
 
 export type LedgerAccount = {
@@ -57,12 +76,20 @@ export type LedgerAccount = {
   label: string;
   name: string;
   companyLabel: string;
-  currencyLabel: string;
   normalBalance: string;
   opening: number;
   debit: number;
   credit: number;
   closing: number;
+  /**
+   * Which transaction currencies this account's entries were denominated in,
+   * where any of them was not the base currency.
+   *
+   * The account's own figures are base and always were; this says whether any
+   * of what produced them started out as something else, so a reader knows to
+   * look at the per-entry columns.
+   */
+  foreignCurrencies: string[];
   entries: LedgerEntry[];
 };
 
@@ -144,6 +171,7 @@ export async function generalLedgerReport(
     let debit = 0;
     let credit = 0;
     const entries: LedgerEntry[] = [];
+    const foreign = new Set<string>();
 
     for (const l of within.filter((x) => x.account_id === a.id)) {
       const d = l.debit_amount.toNumber();
@@ -151,6 +179,11 @@ export async function generalLedgerReport(
       debit += d;
       credit += c;
       running += signedMovement(a.normal_balance, d, c);
+
+      const label = l.currency.currency_label;
+      const isForeign = !isBaseCurrency(label);
+      if (isForeign) foreign.add(label);
+
       entries.push({
         journalId: l.journal.id,
         journalNo: l.journal.journal_no,
@@ -160,27 +193,31 @@ export async function generalLedgerReport(
         debit: d,
         credit: c,
         balance: running,
+        trxAmount: isForeign ? l.trx_amount.toNumber() : null,
+        trxCurrencyLabel: isForeign ? label : null,
+        rate: isForeign ? l.exchange_rate.toNumber() : null,
       });
     }
 
-    // A currency is a property of the entries, not of the account: an account
-    // with no movement at all has none to state.
-    const currency =
-      within.find((l) => l.account_id === a.id)?.currency.currency_label ??
-      openingLines[0]?.currency.currency_label ??
-      "—";
+    // Whatever produced the opening counts too — an account funded entirely in
+    // dollars last year still reads as foreign-sourced this year.
+    for (const l of openingLines) {
+      if (!isBaseCurrency(l.currency.currency_label)) {
+        foreign.add(l.currency.currency_label);
+      }
+    }
 
     return {
       id: a.id,
       label: a.account_label,
       name: a.account_name,
       companyLabel: a.company.company_label,
-      currencyLabel: currency,
       normalBalance: a.normal_balance,
       opening,
       debit,
       credit,
       closing: running,
+      foreignCurrencies: [...foreign].sort(),
       entries,
     };
   });
@@ -200,30 +237,32 @@ export type TrialBalanceRow = {
   closing: number;
 };
 
-export type TrialBalanceGroup = {
-  currencyLabel: string;
+export type TrialBalanceReport = {
+  range: PeriodRange;
   rows: TrialBalanceRow[];
   /** The two sides of the period's movement, which must agree. */
   totalDebit: number;
   totalCredit: number;
   balanced: boolean;
-};
-
-export type TrialBalanceReport = {
-  range: PeriodRange;
-  groups: TrialBalanceGroup[];
   /** Journals whose own sides disagree — always empty unless something is wrong. */
   unbalanced: { id: number; journalNo: string; debit: number; credit: number }[];
 };
 
 /**
- * Every account that has moved, or has an opening balance, per currency.
+ * Every account that has moved, or has an opening balance, on one base-currency
+ * scale.
  *
  * The check a trial balance exists for is that total debits equal total
  * credits. Here that is a consequence rather than a hope: every journal is
  * refused unless it balances, so the totals can only disagree if something
  * wrote the tables without going through `postJournal`. The report says which
  * it is instead of printing a number nobody can act on.
+ *
+ * **One table, not one per currency.** The grouping existed because there was
+ * no rate to combine with; now every line carries what it was worth, and a
+ * single journal can hold two currencies at once — so grouping by transaction
+ * currency would split one balanced entry across two tables and make neither of
+ * them balance. The trial balance is a base-currency statement or it is nothing.
  *
  * Accounts with neither an opening balance nor a movement are left out — a
  * trial balance lists the accounts that have something to say.
@@ -244,24 +283,18 @@ export async function trialBalanceReport(
       debit_amount: true,
       kredit_amount: true,
       journal: { select: { posting_date: true } },
-      currency: { select: { currency_label: true } },
       account: {
         select: { account_label: true, account_name: true, normal_balance: true },
       },
     },
   });
 
-  type Key = string;
-  const byCurrency = new Map<string, Map<Key, TrialBalanceRow>>();
+  const rows = new Map<number, TrialBalanceRow>();
 
   for (const l of lines) {
-    const currency = l.currency.currency_label;
-    if (!byCurrency.has(currency)) byCurrency.set(currency, new Map());
-    const rows = byCurrency.get(currency)!;
-
-    const key = String(l.account_id);
-    if (!rows.has(key)) {
-      rows.set(key, {
+    let row = rows.get(l.account_id);
+    if (!row) {
+      row = {
         id: l.account_id,
         label: l.account.account_label,
         name: l.account.account_name,
@@ -270,9 +303,9 @@ export async function trialBalanceReport(
         debit: 0,
         credit: 0,
         closing: 0,
-      });
+      };
+      rows.set(l.account_id, row);
     }
-    const row = rows.get(key)!;
 
     const d = l.debit_amount.toNumber();
     const c = l.kredit_amount.toNumber();
@@ -287,24 +320,20 @@ export async function trialBalanceReport(
     row.closing += signed;
   }
 
-  const groups: TrialBalanceGroup[] = [...byCurrency.entries()]
-    .map(([currencyLabel, rows]) => {
-      const list = [...rows.values()].sort((a, b) => compareCodes(a.label, b.label));
-      const totalDebit = list.reduce((t, r) => t + r.debit, 0);
-      const totalCredit = list.reduce((t, r) => t + r.credit, 0);
-      return {
-        currencyLabel,
-        rows: list,
-        totalDebit,
-        totalCredit,
-        balanced: Math.round(totalDebit * 100) === Math.round(totalCredit * 100),
-      };
-    })
-    .sort((a, b) => a.currencyLabel.localeCompare(b.currencyLabel));
+  const list = [...rows.values()].sort((a, b) => compareCodes(a.label, b.label));
+  const totalDebit = roundBase(list.reduce((t, r) => t + r.debit, 0));
+  const totalCredit = roundBase(list.reduce((t, r) => t + r.credit, 0));
 
   const { unbalancedJournals } = await import("./journal");
 
-  return { range, groups, unbalanced: await unbalancedJournals(companyIds) };
+  return {
+    range,
+    rows: list,
+    totalDebit,
+    totalCredit,
+    balanced: Math.round(totalDebit * 100) === Math.round(totalCredit * 100),
+    unbalanced: await unbalancedJournals(companyIds),
+  };
 }
 
 /**
@@ -339,7 +368,7 @@ export async function ledgerAccountOptions(companyId: number) {
 // -------------------------------------------------------- account positions
 
 /**
- * Where a handful of named accounts stand right now, per currency.
+ * Where a handful of named accounts stand right now, in base currency.
  *
  * All of history, no period: this answers "what is the balance today", which
  * is a different question from the General Ledger's "what happened between
@@ -348,8 +377,10 @@ export async function ledgerAccountOptions(companyId: number) {
  * readable only by someone who thinks to run the General Ledger for exactly
  * the right account (CLAUDE.md §17).
  *
- * Signed by normal balance like every other figure here, and grouped per
- * currency because nothing converts.
+ * Signed by normal balance like every other figure here. One figure rather
+ * than a per-currency list: the bridge's two sides are meant to be compared
+ * against each other, and two lists of currencies do not compare — one rupiah
+ * figure each does.
  */
 export type AccountPosition = {
   id: number;
@@ -358,7 +389,8 @@ export type AccountPosition = {
   companyId: number;
   companyLabel: string;
   normalBalance: string;
-  totals: MoneyTotal[];
+  /** Base currency, signed in the account's normal direction. */
+  balance: number;
 };
 
 export async function accountPositions(
@@ -384,8 +416,6 @@ export async function accountPositions(
         account_id: true,
         debit_amount: true,
         kredit_amount: true,
-        currency_id: true,
-        currency: { select: { currency_label: true } },
       },
     }),
   ]);
@@ -397,18 +427,19 @@ export async function accountPositions(
     companyId: a.company_id,
     companyLabel: a.company.company_label,
     normalBalance: a.normal_balance,
-    totals: sumByCurrency(
+    balance: roundBase(
       lines
         .filter((l) => l.account_id === a.id)
-        .map((l) => ({
-          currencyId: l.currency_id,
-          currencyLabel: l.currency.currency_label,
-          amount: signedMovement(
-            a.normal_balance,
-            l.debit_amount.toNumber(),
-            l.kredit_amount.toNumber()
-          ),
-        }))
+        .reduce(
+          (t, l) =>
+            t +
+            signedMovement(
+              a.normal_balance,
+              l.debit_amount.toNumber(),
+              l.kredit_amount.toNumber()
+            ),
+          0
+        )
     ),
   }));
 }

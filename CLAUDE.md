@@ -1225,9 +1225,16 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Decision:** `postJournal` in `lib/siba/journal.ts` is the only thing that
   writes `acc_journal` / `acc_journal_line`, it is only ever called inside the
   posting transaction, and it **refuses** any journal whose two sides do not sum
-  equal. Nothing updates or deletes a journal. The posting date is the day of
-  posting. `applyPosting` calls it **alongside** `recordCashBankEntry`, in the
-  same `prisma.$transaction`.
+  equal **in base currency**. Nothing updates or deletes a journal. The posting
+  date is the day of posting. `applyPosting` calls it **alongside**
+  `recordCashBankEntry`, in the same `prisma.$transaction`.
+- **The journal is measured in base.** `debit_amount` and `kredit_amount` are
+  rupiah; `trx_amount`, `currency_id` and `exchange_rate` carry the same line's
+  transaction-currency face. Every line states the rate it was valued at, with
+  no default — `1` is right only when the money is already base currency.
+  A consequence with teeth: **one journal may hold lines in two different
+  currencies**, and it balances only in base. Every journal used to be
+  single-currency and three places in the code relied on it.
 - **Reason:** Concept doc §2.5 and §2.6 — operational books are independent
   historical stores and only the General Ledger derives from journal lines. If
   the book were derived from the journal, or the journal from the book, one
@@ -1302,15 +1309,21 @@ Specified in the concept doc, **not yet implemented** (see §13):
   because each numbers its own chart — the induk's 1.1.1.1 and the anak's are
   different accounts sharing a number, and offering both would read as
   duplicates.
-- **Currency deviates from the concept doc, deliberately.** §11.2 says the
-  General Ledger uses the base currency. It cannot: there is no exchange-rate
-  source (§12), so converting would mean inventing the rate. Both reports group
-  **per currency** instead, and each group balances on its own because every
-  journal is single-currency and every journal balances. Revisit when the rate
-  source lands.
+- **Both reports are measured in base currency, on one scale.** This
+  supersedes the per-currency grouping they carried while the system held no
+  rate at all, and restores concept doc §11.2 and §16. Every journal line now
+  stores what it was worth in rupiah, so both reports read one column.
+  The grouping could not have survived multi-currency in any case: **one
+  journal may hold two currencies** — a foreign document paid from a
+  base-currency resource is exactly that — so grouping by transaction currency
+  would split one balanced entry across two tables and leave neither of them
+  balancing. The transaction-currency face is not lost; it travels on each
+  entry (`trxAmount`, `trxCurrencyLabel`, `rate`) so a reader can see that a
+  rupiah figure came from three hundred dollars, and `LedgerAccount`
+  names the foreign currencies that fed it.
 - **Do not change unless:** explicitly instructed. **Do not sum across accounts
-  in the General Ledger** — that is the Trial Balance's job — and do not convert
-  between currencies.
+  in the General Ledger** — that is the Trial Balance's job — and do not group
+  either report by transaction currency again.
 - **Status:** Frozen, current.
 
 ### Company access is a permission, and the picker lives on the page (FROZEN)

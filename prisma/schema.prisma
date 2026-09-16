@@ -1063,14 +1063,22 @@ model AccJournalLine {
   account_id Int
   partner_id Int?
 
+  /// The line's own currency, which need not be the base one — and need not
+  /// match the other lines of the same journal. A foreign document paid from a
+  /// base-currency resource produces one journal holding both.
   currency_id   Int
-  /// The identity until a real exchange-rate source exists (§12). Nothing
-  /// reads it; it is here because the schema carries what that source fills.
+  /// What `trx_amount` was worth: this line's currency to the base currency.
+  /// `1` means the money is already base currency, and nothing else.
   exchange_rate Decimal @default(1) @db.Decimal(18, 6)
 
+  /// **Base currency.** This is what the journal balances in, what the General
+  /// Ledger reports, and what the Trial Balance totals — concept doc §11.2 and
+  /// §16. Exactly one side carries value.
   debit_amount  Decimal @default(0) @db.Decimal(18, 2)
   kredit_amount Decimal @default(0) @db.Decimal(18, 2)
   /// The transaction-currency value of the entry, whichever side it fell on.
+  /// Carried so a rupiah figure can be read back to the three hundred dollars
+  /// that produced it; nothing is ever totalled in it.
   trx_amount    Decimal @db.Decimal(18, 2)
 
   description String

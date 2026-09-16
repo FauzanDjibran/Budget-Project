@@ -959,17 +959,21 @@ async function purposeAccountId(
   return { ok: true, accountId: mapping.account_id };
 }
 
-async function journalEntries(doc: {
-  id: number;
-  transaction_no: string;
-  purpose: string;
-  company_id: number;
-  partner_id: number | null;
-  cash_bank_id: number | null;
-  transaction_type: string;
-  transaction_amount: { toNumber(): number };
-  lines: { source_doc_id: number; settlement_amount: { toNumber(): number } }[];
-}): Promise<
+async function journalEntries(
+  doc: {
+    id: number;
+    transaction_no: string;
+    purpose: string;
+    company_id: number;
+    partner_id: number | null;
+    cash_bank_id: number | null;
+    transaction_type: string;
+    transaction_amount: { toNumber(): number };
+    lines: { source_doc_id: number; settlement_amount: { toNumber(): number } }[];
+  },
+  /** The kurs both sides of this journal are valued at. */
+  rate: number
+): Promise<
   | { ok: true; lines: JournalLineInput[]; purposeLabel: string }
   | { ok: false; errors: Record<string, string> }
 > {
@@ -1002,6 +1006,7 @@ async function journalEntries(doc: {
     {
       accountId: cashBank.account_id,
       currencyId: cashBank.currency_id,
+      rate,
       debit: incoming ? total : 0,
       credit: incoming ? 0 : total,
       description: `${doc.transaction_no} — ${cashBank.cash_bank_label}`,
@@ -1010,6 +1015,7 @@ async function journalEntries(doc: {
       accountId: mapping.account_id,
       partnerId: doc.partner_id,
       currencyId: cashBank.currency_id,
+      rate,
       debit: incoming ? 0 : l.settlement_amount.toNumber(),
       credit: incoming ? l.settlement_amount.toNumber() : 0,
       description: `${purpose.label} — Budget #${l.source_doc_id}`,
@@ -1080,17 +1086,15 @@ export async function applyPosting(
   const docTypeId = await transactionDocTypeId();
   let closed = 0;
 
-  // Resolved before the transaction opens so a missing mapping refuses the
-  // post rather than aborting it halfway: a document whose Purpose has no
-  // account cannot be journalled, and a posting that moves the book without
-  // writing accounting is exactly the split §12 forbids.
-  const entries = await journalEntries(doc);
-  if (!entries.ok) return { ok: false, errors: entries.errors };
-
-  // Resolved here for the same reason the mapping is: a document that cannot
-  // be valued must refuse before the transaction opens, not halfway through it.
+  // Both resolved before the transaction opens, so a document that cannot be
+  // journalled or cannot be valued refuses rather than aborting halfway: a
+  // posting that moves the book without writing accounting is exactly the
+  // split §12 forbids.
   const valuation = await postingRate(doc.currency_id);
   if (!valuation.ok) return { ok: false, errors: valuation.errors };
+
+  const entries = await journalEntries(doc, valuation.rate);
+  if (!entries.ok) return { ok: false, errors: entries.errors };
 
   // Which subject book this document's Purpose writes into, if any. Resolved
   // from the catalogue rather than from a table: a book is a screen somebody
@@ -1504,6 +1508,7 @@ export async function writeFundedPosting(
       {
         accountId: induk.bridgeAccountId,
         currencyId: plan.currencyId,
+        rate: plan.rate,
         debit: outgoing ? plan.amount : 0,
         credit: outgoing ? 0 : plan.amount,
         description: plan.note,
@@ -1511,6 +1516,7 @@ export async function writeFundedPosting(
       {
         accountId: induk.cashAccountId,
         currencyId: plan.currencyId,
+        rate: plan.rate,
         debit: outgoing ? 0 : plan.amount,
         credit: outgoing ? plan.amount : 0,
         description: plan.note,
@@ -1527,6 +1533,7 @@ export async function writeFundedPosting(
     accountId: anak.purposeAccountId,
     partnerId: anak.purposePartnerId,
     currencyId: plan.currencyId,
+    rate: plan.rate,
     debit: outgoing ? l.amount : 0,
     credit: outgoing ? 0 : l.amount,
     description: `${plan.purposeLabel} — Budget #${l.budgetId}`,
@@ -1534,6 +1541,7 @@ export async function writeFundedPosting(
   const bridgeLine: JournalLineInput = {
     accountId: anak.bridgeAccountId,
     currencyId: plan.currencyId,
+    rate: plan.rate,
     debit: outgoing ? 0 : plan.amount,
     credit: outgoing ? plan.amount : 0,
     description: plan.note,

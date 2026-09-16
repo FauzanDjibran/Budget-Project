@@ -6,6 +6,7 @@ import type {
   StageKey,
   TaskRow,
 } from "@/lib/siba/dashboard";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { reportHref } from "@/lib/siba/reports";
 
 /**
@@ -262,7 +263,13 @@ export function Dashboard({ data }: { data: DashboardData }) {
                           <span className="nm">{a.name}</span>
                         </span>
                       </td>
-                      <td className="num">{formatTotals(a.totals)}</td>
+                      <td className="num">
+                        {a.balance ? (
+                          formatMoney(a.balance, BASE_CURRENCY_LABEL)
+                        ) : (
+                          <span className="dash">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
