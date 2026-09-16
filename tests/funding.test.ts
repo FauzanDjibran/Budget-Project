@@ -104,6 +104,7 @@ async function makeCashBank(options: {
   await openCashBankBook(prisma, {
     cashBankId: row.id,
     openingBalance: options.opening ?? 0,
+    rate: 1,
     date: today,
     actorId: actor,
   });

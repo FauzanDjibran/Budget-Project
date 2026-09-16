@@ -54,6 +54,7 @@ async function makeCashBank(openingBalance: number): Promise<number> {
   await openCashBankBook(prisma, {
     cashBankId: row.id,
     openingBalance,
+    rate: 1,
     date: today,
     actorId: actor,
   });
@@ -135,6 +136,7 @@ describe("the balance never disagrees with the ledger", () => {
       type: "Transaction",
       direction: "Out",
       amount: 250_000,
+      rate: 1,
       actorId: actor,
     });
     await recordCashBankEntry(prisma, {
@@ -143,6 +145,7 @@ describe("the balance never disagrees with the ledger", () => {
       type: "Transaction",
       direction: "In",
       amount: 80_000,
+      rate: 1,
       actorId: actor,
     });
 
@@ -175,6 +178,7 @@ describe("the balance never disagrees with the ledger", () => {
       type: "Adjustment",
       direction: "Out",
       amount: 400_000,
+      rate: 1,
       actorId: actor,
     });
 
@@ -184,7 +188,10 @@ describe("the balance never disagrees with the ledger", () => {
       where: { cash_bank_id: id },
       data: { balance: 999 },
     });
-    assert.equal(await rebuildCashBankBalance(id), 2_000_000);
+    assert.deepEqual(await rebuildCashBankBalance(id), {
+      balance: 2_000_000,
+      baseBalance: 2_000_000,
+    });
 
     const stored = await prisma.cashBankBalance.findUniqueOrThrow({
       where: { cash_bank_id: id },
@@ -193,20 +200,35 @@ describe("the balance never disagrees with the ledger", () => {
   });
 
   test("an amount is stored positive whichever way the money went", async () => {
-    const id = await makeCashBank(0);
+    // Opened with enough to cover the movement: a resource may no longer be
+    // driven below zero, so a payment out of an empty book is refused before
+    // it can demonstrate anything about signs.
+    const id = await makeCashBank(500_000);
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
       type: "Transaction",
       direction: "Out",
       amount: 125_000,
+      rate: 1,
       actorId: actor,
     });
+    // The payment, not the opening entry that had to precede it.
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: id },
+      where: { cash_bank_id: id, entry_type: "Transaction" },
     });
     assert.equal(entry.amount.toNumber(), 125_000, "amount carries no sign");
     assert.equal(entry.movement.toNumber(), -125_000, "direction carries the sign");
+    assert.equal(
+      entry.base_amount.toNumber(),
+      125_000,
+      "base carries no sign either"
+    );
+    assert.equal(
+      entry.base_movement.toNumber(),
+      -125_000,
+      "and the base measure is signed the same way the foreign one is"
+    );
   });
 });
 
@@ -251,5 +273,217 @@ describe("the summary reports per currency and never combines them", () => {
         "belongs to a Company, and this reader may see none of them"
     );
     assert.equal(summary.resources, 0);
+  });
+});
+
+// -------------------------------------------------------- the base measure
+
+describe("every entry carries what it was worth in base currency", () => {
+  test("a rate is required, and must be a real one", async () => {
+    const id = await makeCashBank(1_000_000);
+    for (const rate of [0, -1, Number.NaN]) {
+      await assert.rejects(
+        () =>
+          recordCashBankEntry(prisma, {
+            cashBankId: id,
+            date: today,
+            type: "Transaction",
+            direction: "In",
+            amount: 1_000,
+            rate,
+            actorId: actor,
+          }),
+        /Kurs/,
+        `a rate of ${rate} should be refused outright`
+      );
+    }
+  });
+
+  test("base is the foreign amount at the entry's own rate", async () => {
+    const id = await makeCashBank(0);
+    await recordCashBankEntry(prisma, {
+      cashBankId: id,
+      date: today,
+      type: "Transaction",
+      direction: "In",
+      amount: 300,
+      rate: 15_500,
+      actorId: actor,
+    });
+    const entry = await prisma.cashBankLedger.findFirstOrThrow({
+      where: { cash_bank_id: id, entry_type: "Transaction" },
+    });
+    assert.equal(entry.amount.toNumber(), 300);
+    assert.equal(entry.rate.toNumber(), 15_500);
+    assert.equal(entry.base_amount.toNumber(), 4_650_000);
+    // The property that makes a book independently checkable: every row's own
+    // arithmetic holds, without reference to any other book.
+    assert.equal(
+      entry.base_amount.toNumber() / entry.amount.toNumber(),
+      entry.rate.toNumber(),
+      "base / foreign equals the rate recorded on the row"
+    );
+  });
+
+  test("the caller's exact base wins over the product", async () => {
+    // A layer drawn to nothing releases its remaining base exactly rather than
+    // as a recomputed product, so the two can differ by a rounding unit and the
+    // caller's figure is the true one.
+    const id = await makeCashBank(0);
+    await recordCashBankEntry(prisma, {
+      cashBankId: id,
+      date: today,
+      type: "Transaction",
+      direction: "In",
+      amount: 3,
+      rate: 3_333.333333,
+      baseAmount: 10_000,
+      actorId: actor,
+    });
+    const entry = await prisma.cashBankLedger.findFirstOrThrow({
+      where: { cash_bank_id: id, entry_type: "Transaction" },
+    });
+    assert.equal(entry.base_amount.toNumber(), 10_000);
+    assert.notEqual(entry.base_amount.toNumber(), 9_999.99);
+  });
+
+  test("both measures rebuild from their own column, and agree with the total", async () => {
+    const id = await makeCashBank(0);
+    for (const [amount, rate] of [
+      [200, 15_000],
+      [300, 15_500],
+      [100, 16_100],
+    ] as const) {
+      await recordCashBankEntry(prisma, {
+        cashBankId: id,
+        date: today,
+        type: "Transaction",
+        direction: "In",
+        amount,
+        rate,
+        actorId: actor,
+      });
+    }
+
+    const stored = await prisma.cashBankBalance.findUniqueOrThrow({
+      where: { cash_bank_id: id },
+    });
+    assert.equal(stored.balance.toNumber(), 600);
+    assert.equal(stored.base_balance.toNumber(), 3_000_000 + 4_650_000 + 1_610_000);
+
+    // Corrupt both, then prove the entries repair both.
+    await prisma.cashBankBalance.update({
+      where: { cash_bank_id: id },
+      data: { balance: 1, base_balance: 1 },
+    });
+    const rebuilt = await rebuildCashBankBalance(id);
+    assert.equal(rebuilt.balance, 600);
+    assert.equal(rebuilt.baseBalance, 9_260_000);
+
+    // The account's own carrying rate is the weighted average of what it holds
+    // — a figure that appeared in none of the three movements above. It is
+    // derived here and stored nowhere.
+    assert.equal(
+      Math.round((rebuilt.baseBalance / rebuilt.balance) * 100) / 100,
+      15_433.33
+    );
+  });
+});
+
+describe("a resource can never hold less than nothing", () => {
+  test("a payment larger than the balance is refused", async () => {
+    const id = await makeCashBank(500_000);
+    await assert.rejects(
+      () =>
+        recordCashBankEntry(prisma, {
+          cashBankId: id,
+          date: today,
+          type: "Transaction",
+          direction: "Out",
+          amount: 500_001,
+          rate: 1,
+          actorId: actor,
+        }),
+      /Saldo Cash & Bank tidak mencukupi/
+    );
+  });
+
+  test("a refusal leaves nothing behind", async () => {
+    const id = await makeCashBank(500_000);
+    const before = await prisma.cashBankLedger.count({ where: { cash_bank_id: id } });
+    await assert.rejects(() =>
+      recordCashBankEntry(prisma, {
+        cashBankId: id,
+        date: today,
+        type: "Transaction",
+        direction: "Out",
+        amount: 900_000,
+        rate: 1,
+        actorId: actor,
+      })
+    );
+    assert.equal(
+      await prisma.cashBankLedger.count({ where: { cash_bank_id: id } }),
+      before,
+      "no entry is written for a movement that was refused"
+    );
+    const stored = await prisma.cashBankBalance.findUniqueOrThrow({
+      where: { cash_bank_id: id },
+    });
+    assert.equal(stored.balance.toNumber(), 500_000, "and the balance is untouched");
+  });
+
+  test("spending the balance exactly is allowed", async () => {
+    // The boundary is zero, not "nearly zero" — emptying an account is an
+    // ordinary thing to do.
+    const id = await makeCashBank(500_000);
+    await recordCashBankEntry(prisma, {
+      cashBankId: id,
+      date: today,
+      type: "Transaction",
+      direction: "Out",
+      amount: 500_000,
+      rate: 1,
+      actorId: actor,
+    });
+    const stored = await prisma.cashBankBalance.findUniqueOrThrow({
+      where: { cash_bank_id: id },
+    });
+    assert.equal(stored.balance.toNumber(), 0);
+    assert.equal(stored.base_balance.toNumber(), 0);
+  });
+
+  test("a resource cannot be opened with a negative balance", async () => {
+    const account = await makeAccount({
+      companyId: company,
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+    });
+    const key = `${FIXTURE_PREFIX}CBNEG${Date.now() % 100000}`;
+    const row = await prisma.mCashBank.create({
+      data: {
+        cash_bank_code: `test.${key}`,
+        cash_bank_label: key,
+        cash_bank_name: `Fixture ${key}`,
+        company_id: company,
+        cash_bank_type: "Cash",
+        currency_id: currency,
+        account_id: account,
+        created_by: actor,
+      },
+      select: { id: true },
+    });
+    made.push(row.id);
+    await assert.rejects(
+      () =>
+        openCashBankBook(prisma, {
+          cashBankId: row.id,
+          openingBalance: -1_000,
+          rate: 1,
+          date: today,
+          actorId: actor,
+        }),
+      /tidak boleh negatif/,
+      "the one path that used to reach a negative balance is closed too"
+    );
   });
 });

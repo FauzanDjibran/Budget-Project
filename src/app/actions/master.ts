@@ -18,6 +18,7 @@ import {
   parseSegment,
 } from "@/lib/siba/account-code";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
+import { isBaseCurrency } from "@/lib/siba/currency";
 import { fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
 import {
   CASH_BANK_SUBCATEGORY,
@@ -300,13 +301,38 @@ async function validateCashBank(
   values: FormValues,
   existing: Record<string, string>
 ): Promise<Record<string, string>> {
-  if (existing.company_id || existing.account_id) return {};
+  const errors: Record<string, string> = {};
+
+  // An opening balance becomes the first entry in the resource's book, and a
+  // book entry now states what it was worth in base currency. For a foreign
+  // resource that needs the kurs the money was acquired at — which is what an
+  // opening layer will carry, and which nothing can supply yet. Registering the
+  // resource is fine; opening it with a balance is not.
+  const openingBalance = numberValue(values, "opening_balance") ?? 0;
+  if (openingBalance) {
+    const currencyId = refValue(values, "currency_id");
+    const currency = currencyId
+      ? await prisma.refCurrency.findUnique({
+          where: { id: currencyId },
+          select: { currency_label: true },
+        })
+      : null;
+    if (currency && !isBaseCurrency(currency.currency_label)) {
+      errors.opening_balance =
+        `Saldo awal untuk resource ${currency.currency_label} belum dapat diisi: ` +
+        "kurs perolehannya belum dapat dicatat. Daftarkan resource dengan saldo " +
+        "nol untuk sementara.";
+    }
+  }
+
+  if (existing.company_id || existing.account_id) return errors;
   const companyId = refValue(values, "company_id");
   const accountId = refValue(values, "account_id");
-  if (!companyId || !accountId) return {};
+  if (!companyId || !accountId) return errors;
 
   const problem = await checkCashBankAccount(accountId, companyId);
-  return problem ? { account_id: problem } : {};
+  if (problem) errors.account_id = problem;
+  return errors;
 }
 
 async function validateAccount(
@@ -527,6 +553,12 @@ export async function createRecord(
       await openCashBankBook(tx, {
         cashBankId: row.id,
         openingBalance: numberValue(values, "opening_balance") ?? 0,
+        // A base-currency resource opens at 1, which is true. A foreign one
+        // cannot open with a balance at all yet: its opening figure would need
+        // the kurs it was acquired at, and that is what an opening layer will
+        // carry. `checkOpeningBalance` refuses that combination above, so by
+        // here the rate is honest.
+        rate: 1,
         date: new Date().toISOString().slice(0, 10),
         actorId: actor.user.id,
       });

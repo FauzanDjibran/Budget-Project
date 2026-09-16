@@ -9,6 +9,7 @@ import {
   realizeBudgets,
 } from "./budget";
 import { recordCashBankEntry } from "./cash-bank";
+import { isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
 import { postJournal, type JournalLineInput } from "./journal";
 import { PURPOSES, purposeOf, type Purpose } from "./rules";
@@ -823,6 +824,48 @@ export type PostingResult =
   | { ok: false; errors: Record<string, string> };
 
 /**
+ * The kurs a posting values its movements at.
+ *
+ * The books now carry a base measure, and every entry has to state the rate it
+ * was valued at — but the machinery that produces a real rate does not exist
+ * yet. There is no rate field on the document, no layer to read one off, and
+ * nothing that could tell what a dollar was worth on the day it moved.
+ *
+ * So a base-currency document posts at `1`, which is true, and a foreign one is
+ * **refused by name** rather than posted at a rate somebody invented. Writing
+ * `1` for a USD document would record that a dollar is a rupiah, and it would
+ * record it in an append-only book that cannot be corrected by editing.
+ *
+ * This refusal is temporary and has a named end: it comes out when the document
+ * carries its own kurs and a payment draws on a layer.
+ */
+async function postingRate(
+  currencyId: number
+): Promise<
+  { ok: true; rate: number } | { ok: false; errors: Record<string, string> }
+> {
+  const currency = await prisma.refCurrency.findUnique({
+    where: { id: currencyId },
+    select: { currency_label: true },
+  });
+  if (!currency) {
+    return { ok: false, errors: { _form: "Currency dokumen tidak ditemukan." } };
+  }
+  if (!isBaseCurrency(currency.currency_label)) {
+    return {
+      ok: false,
+      errors: {
+        _form:
+          `Dokumen dalam ${currency.currency_label} belum dapat diposting: ` +
+          "pencatatan nilai kurs terhadap mata uang dasar belum tersedia. " +
+          "Gunakan dokumen dalam mata uang dasar untuk sementara.",
+      },
+    };
+  }
+  return { ok: true, rate: 1 };
+}
+
+/**
  * Post: the actual boundary (concept doc §2.3).
  *
  * Three writes, one database transaction — either the money moved and every
@@ -1044,6 +1087,11 @@ export async function applyPosting(
   const entries = await journalEntries(doc);
   if (!entries.ok) return { ok: false, errors: entries.errors };
 
+  // Resolved here for the same reason the mapping is: a document that cannot
+  // be valued must refuse before the transaction opens, not halfway through it.
+  const valuation = await postingRate(doc.currency_id);
+  if (!valuation.ok) return { ok: false, errors: valuation.errors };
+
   // Which subject book this document's Purpose writes into, if any. Resolved
   // from the catalogue rather than from a table: a book is a screen somebody
   // wrote (CLAUDE.md §12, subledger catalogue).
@@ -1058,6 +1106,7 @@ export async function applyPosting(
       type: "Transaction",
       direction: doc.transaction_type as "In" | "Out",
       amount: doc.transaction_amount.toNumber(),
+      rate: valuation.rate,
       sourceDocTypeId: docTypeId,
       sourceDocId: doc.id,
       note: doc.transaction_no,
@@ -1082,6 +1131,10 @@ export async function applyPosting(
         type: "Transaction",
         direction: doc.transaction_type as "In" | "Out",
         amount: doc.transaction_amount.toNumber(),
+        // The book's own rate. Identical to the cash side's only because both
+        // are base currency today; once a position carries a rate of its own,
+        // a relief releases at that rate and the two diverge.
+        rate: valuation.rate,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
         note: `${doc.transaction_no} — ${entries.purposeLabel}`,
@@ -1181,6 +1234,8 @@ export type FundedPostingPlan = {
   direction: "In" | "Out";
   currencyId: number;
   amount: number;
+  /** The kurs both Companies' books value this movement at. */
+  rate: number;
   transactionNo: string;
   purposeLabel: string;
   note: string;
@@ -1302,6 +1357,11 @@ export async function prepareFundedPosting(
     };
   }
 
+  // Both Companies' books value this movement, so both are refused together
+  // when it cannot be valued at all.
+  const valuation = await postingRate(doc.currency_id);
+  if (!valuation.ok) return { ok: false, errors: valuation.errors };
+
   // Re-read now, not trusted from when the request was raised: another document
   // may have closed a Budget in the meantime, and funding a plan that is no
   // longer Open would record a realization nothing authorised.
@@ -1354,6 +1414,7 @@ export async function prepareFundedPosting(
       direction: doc.transaction_type as "In" | "Out",
       currencyId: doc.currency_id,
       amount: doc.transaction_amount.toNumber(),
+      rate: valuation.rate,
       transactionNo: doc.transaction_no,
       purposeLabel: purpose.label,
       note: input.note,
@@ -1400,6 +1461,7 @@ export async function writeFundedPosting(
     type: "Transaction",
     direction: plan.direction,
     amount: plan.amount,
+    rate: plan.rate,
     // The realization is what caused the movement, so that is what the book
     // names — the same weak pair the direct route writes.
     sourceDocTypeId: plan.requesterSource.docTypeId,
@@ -1420,6 +1482,7 @@ export async function writeFundedPosting(
       type: "Transaction",
       direction: plan.direction,
       amount: plan.amount,
+      rate: plan.rate,
       sourceDocTypeId: plan.requesterSource.docTypeId,
       sourceDocId: plan.requesterSource.docId,
       note: `${plan.transactionNo} — ${plan.purposeLabel}`,

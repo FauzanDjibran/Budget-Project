@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { nextDocumentNumber } from "./document-number";
+import { roundBase } from "./fx";
 import type { PeriodRange } from "./period";
 
 /**
@@ -34,6 +35,23 @@ export type NewEntry = {
   direction: "In" | "Out";
   /** Positive; `direction` carries the sign. */
   amount: number;
+  /**
+   * The kurs this movement is valued at, converting the resource's own
+   * currency to base. Required, and deliberately so: there is no sensible
+   * default. `1` is correct only when the resource holds base currency, and
+   * defaulting to it for a foreign resource would silently record that a
+   * dollar is a rupiah.
+   */
+  rate: number;
+  /**
+   * The exact base value, when the caller already knows it.
+   *
+   * A layer drawn to nothing releases its remaining base *exactly* rather than
+   * as a recomputed product, so the figure can differ from `amount × rate` by a
+   * rounding unit. The caller passes what it actually released; everything else
+   * lets this module multiply.
+   */
+  baseAmount?: number;
   sourceDocTypeId?: number | null;
   sourceDocId?: number | null;
   note?: string | null;
@@ -41,6 +59,27 @@ export type NewEntry = {
 };
 
 const asDate = (d: string) => new Date(`${d}T00:00:00Z`);
+
+/**
+ * A movement refused because the resource does not hold enough to make it.
+ *
+ * Thrown rather than returned, like `JournalImbalance`: every caller is inside
+ * the posting transaction, and an overdrawn resource has to take the whole
+ * posting down rather than be reported and skipped.
+ */
+export class InsufficientFunds extends Error {
+  constructor(
+    readonly cashBankId: number,
+    readonly balance: number,
+    readonly requested: number
+  ) {
+    super(
+      `Saldo Cash & Bank tidak mencukupi: tersedia ${balance}, dibutuhkan ${requested}. ` +
+        "Transaksi dibatalkan."
+    );
+    this.name = "InsufficientFunds";
+  }
+}
 
 /** Next book entry number, `CBL-0001`. The format lives in `document-number.ts`. */
 async function nextEntryNo(db: Db): Promise<string> {
@@ -61,15 +100,35 @@ async function nextEntryNo(db: Db): Promise<string> {
  * neither is.
  */
 export async function recordCashBankEntry(db: Db, entry: NewEntry) {
+  if (!(entry.rate > 0)) {
+    throw new Error(
+      `Kurs entri Cash Bank Book harus lebih besar dari nol (diterima ${entry.rate}).`
+    );
+  }
+
   const amount = Math.abs(entry.amount);
-  const movement = entry.direction === "In" ? amount : -amount;
+  const base = entry.baseAmount ?? roundBase(amount * entry.rate);
+  const sign = entry.direction === "In" ? 1 : -1;
+  const movement = sign * amount;
+  const baseMovement = sign * base;
 
   const current = await db.cashBankBalance.findUnique({
     where: { cash_bank_id: entry.cashBankId },
-    select: { balance: true, entry_count: true },
+    select: { balance: true, base_balance: true, entry_count: true },
   });
   const before = current ? current.balance.toNumber() : 0;
+  const beforeBase = current ? current.base_balance.toNumber() : 0;
   const after = before + movement;
+  const afterBase = roundBase(beforeBase + baseMovement);
+
+  // A resource cannot hold less than nothing. Nothing checked this before, so
+  // a payment larger than the account held was written and the balance simply
+  // went negative — the same mistake a layer's remaining balance already
+  // refuses on a foreign resource, and refusing it in one currency but not the
+  // other would be worse than refusing it in neither.
+  if (after < 0) {
+    throw new InsufficientFunds(entry.cashBankId, before, amount);
+  }
 
   const created = await db.cashBankLedger.create({
     data: {
@@ -81,6 +140,10 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
       amount,
       movement,
       balance_after: after,
+      rate: entry.rate,
+      base_amount: base,
+      base_movement: baseMovement,
+      base_balance_after: afterBase,
       source_doc_type_id: entry.sourceDocTypeId ?? null,
       source_doc_id: entry.sourceDocId ?? null,
       note: entry.note ?? null,
@@ -93,12 +156,14 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
     create: {
       cash_bank_id: entry.cashBankId,
       balance: after,
+      base_balance: afterBase,
       entry_count: 1,
       last_entry_id: created.id,
       last_entry_date: created.entry_date,
     },
     update: {
       balance: after,
+      base_balance: afterBase,
       entry_count: (current?.entry_count ?? 0) + 1,
       last_entry_id: created.id,
       last_entry_date: created.entry_date,
@@ -118,11 +183,33 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
  */
 export async function openCashBankBook(
   db: Db,
-  options: { cashBankId: number; openingBalance: number; date: string; actorId: number }
+  options: {
+    cashBankId: number;
+    openingBalance: number;
+    /** The kurs the opening figure is valued at. `1` for a base-currency resource. */
+    rate: number;
+    date: string;
+    actorId: number;
+  }
 ) {
+  // A resource cannot start out owing money. The figure used to accept a
+  // negative and write it as an `Out`, which was the one way to reach exactly
+  // the state `recordCashBankEntry` now refuses to create.
+  if (options.openingBalance < 0) {
+    throw new Error(
+      "Saldo awal Cash & Bank tidak boleh negatif — sebuah resource tidak dapat " +
+        "dibuka dengan saldo minus."
+    );
+  }
+
   if (!options.openingBalance) {
     await db.cashBankBalance.create({
-      data: { cash_bank_id: options.cashBankId, balance: 0, entry_count: 0 },
+      data: {
+        cash_bank_id: options.cashBankId,
+        balance: 0,
+        base_balance: 0,
+        entry_count: 0,
+      },
     });
     return;
   }
@@ -131,8 +218,9 @@ export async function openCashBankBook(
     cashBankId: options.cashBankId,
     date: options.date,
     type: "Opening",
-    direction: options.openingBalance < 0 ? "Out" : "In",
-    amount: Math.abs(options.openingBalance),
+    direction: "In",
+    amount: options.openingBalance,
+    rate: options.rate,
     note: "Saldo awal saat resource didaftarkan.",
     actorId: options.actorId,
   });
@@ -145,32 +233,42 @@ export async function openCashBankBook(
  * what proves the two agree, and what repairs the total if anything ever writes
  * the balance row on its own.
  */
-export async function rebuildCashBankBalance(cashBankId: number): Promise<number> {
+export async function rebuildCashBankBalance(
+  cashBankId: number
+): Promise<{ balance: number; baseBalance: number }> {
   const entries = await prisma.cashBankLedger.findMany({
     where: { cash_bank_id: cashBankId },
     orderBy: { id: "asc" },
-    select: { id: true, movement: true, entry_date: true },
+    select: {
+      id: true,
+      movement: true,
+      base_movement: true,
+      entry_date: true,
+    },
   });
   const balance = entries.reduce((t, e) => t + e.movement.toNumber(), 0);
+  // Both measures rebuild the same way, from their own signed column. That is
+  // what makes them equally checkable: neither is derived from the other, and
+  // neither is derived from a rate applied after the fact.
+  const baseBalance = roundBase(
+    entries.reduce((t, e) => t + e.base_movement.toNumber(), 0)
+  );
   const last = entries.at(-1) ?? null;
+
+  const row = {
+    balance,
+    base_balance: baseBalance,
+    entry_count: entries.length,
+    last_entry_id: last?.id ?? null,
+    last_entry_date: last?.entry_date ?? null,
+  };
 
   await prisma.cashBankBalance.upsert({
     where: { cash_bank_id: cashBankId },
-    create: {
-      cash_bank_id: cashBankId,
-      balance,
-      entry_count: entries.length,
-      last_entry_id: last?.id ?? null,
-      last_entry_date: last?.entry_date ?? null,
-    },
-    update: {
-      balance,
-      entry_count: entries.length,
-      last_entry_id: last?.id ?? null,
-      last_entry_date: last?.entry_date ?? null,
-    },
+    create: { cash_bank_id: cashBankId, ...row },
+    update: row,
   });
-  return balance;
+  return { balance, baseBalance };
 }
 
 // ------------------------------------------------------------------- reads
@@ -186,6 +284,8 @@ export type CashBankBalanceRow = {
   type: string;
   active: boolean;
   balance: number;
+  /** The same balance in base currency. */
+  baseBalance: number;
   entries: number;
   lastEntryDate: string | null;
 };
@@ -193,8 +293,25 @@ export type CashBankBalanceRow = {
 export type CashBookSummary = {
   /** Active resources only — an inactive resource is not spendable capacity. */
   resources: number;
-  byCurrency: { currencyId: number; currencyLabel: string; balance: number; resources: number }[];
+  byCurrency: {
+    currencyId: number;
+    currencyLabel: string;
+    balance: number;
+    baseBalance: number;
+    resources: number;
+  }[];
   rows: CashBankBalanceRow[];
+  /**
+   * Every currency added together, in base.
+   *
+   * This is the one figure that could not exist before: with no rate there was
+   * nothing to add USD to IDR with, so a total spanning currencies had to be a
+   * list. Now that every entry carries what it was worth when it moved, the
+   * sum is a real historical figure rather than a conversion invented at read
+   * time. `byCurrency` stays, because what a resource actually holds is still
+   * the figure somebody spends.
+   */
+  totalBase: number;
 };
 
 /**
@@ -225,7 +342,14 @@ export async function cashBookSummary(
       status: true,
       company: { select: { company_label: true } },
       currency: { select: { id: true, currency_label: true } },
-      book_balance: { select: { balance: true, entry_count: true, last_entry_date: true } },
+      book_balance: {
+        select: {
+          balance: true,
+          base_balance: true,
+          entry_count: true,
+          last_entry_date: true,
+        },
+      },
     },
   });
 
@@ -240,24 +364,24 @@ export async function cashBookSummary(
     type: r.cash_bank_type,
     active: r.status === "Active",
     balance: r.book_balance?.balance.toNumber() ?? 0,
+    baseBalance: r.book_balance?.base_balance.toNumber() ?? 0,
     entries: r.book_balance?.entry_count ?? 0,
     lastEntryDate: r.book_balance?.last_entry_date
       ? r.book_balance.last_entry_date.toISOString().slice(0, 10)
       : null,
   }));
 
-  const byCurrency = new Map<
-    number,
-    { currencyId: number; currencyLabel: string; balance: number; resources: number }
-  >();
+  const byCurrency = new Map<number, CashBookSummary["byCurrency"][number]>();
   for (const r of rows) {
     const acc = byCurrency.get(r.currencyId) ?? {
       currencyId: r.currencyId,
       currencyLabel: r.currencyLabel,
       balance: 0,
+      baseBalance: 0,
       resources: 0,
     };
     acc.balance += r.balance;
+    acc.baseBalance += r.baseBalance;
     acc.resources += 1;
     byCurrency.set(r.currencyId, acc);
   }
@@ -268,6 +392,7 @@ export async function cashBookSummary(
       a.currencyLabel.localeCompare(b.currencyLabel)
     ),
     rows,
+    totalBase: roundBase(rows.reduce((t, r) => t + r.baseBalance, 0)),
   };
 }
 
@@ -308,6 +433,11 @@ export type LedgerEntryRow = {
   amount: number;
   movement: number;
   balanceAfter: number;
+  /** The kurs this entry moved at — this book's own, not another book's. */
+  rate: number;
+  baseAmount: number;
+  baseMovement: number;
+  baseBalanceAfter: number;
   note: string | null;
   /** The document that caused the movement, for drill-through. Null for an opening. */
   sourceDocTable: string | null;
@@ -330,9 +460,19 @@ export type LedgerReport = {
   totalIn: number;
   totalOut: number;
   closing: number;
+  /** The same four figures in base currency. Both measures reconcile. */
+  baseOpening: number;
+  baseTotalIn: number;
+  baseTotalOut: number;
+  baseClosing: number;
   /** Oldest first — a book reads forward through the period. */
   entries: LedgerEntryRow[];
-  /** False when the stored running balance and the summed movements disagree. */
+  /**
+   * False when the stored running balance and the summed movements disagree —
+   * **on either measure**. A book that reconciles in its own currency but not
+   * in base has had a rate written that its entries do not support, which is
+   * exactly the failure the second measure exists to catch.
+   */
   reconciles: boolean;
 };
 
@@ -377,7 +517,7 @@ export async function cashBankLedgerReport(
   const [before, rows] = await Promise.all([
     prisma.cashBankLedger.aggregate({
       where: { cash_bank_id: cashBankId, entry_date: { lt: startOf(range.from) } },
-      _sum: { movement: true },
+      _sum: { movement: true, base_movement: true },
     }),
     prisma.cashBankLedger.findMany({
       where: {
@@ -390,13 +530,22 @@ export async function cashBankLedgerReport(
   ]);
 
   const opening = before._sum.movement?.toNumber() ?? 0;
+  const baseOpening = roundBase(before._sum.base_movement?.toNumber() ?? 0);
   let totalIn = 0;
   let totalOut = 0;
+  let baseTotalIn = 0;
+  let baseTotalOut = 0;
   for (const r of rows) {
-    if (r.direction === "In") totalIn += r.amount.toNumber();
-    else totalOut += r.amount.toNumber();
+    if (r.direction === "In") {
+      totalIn += r.amount.toNumber();
+      baseTotalIn += r.base_amount.toNumber();
+    } else {
+      totalOut += r.amount.toNumber();
+      baseTotalOut += r.base_amount.toNumber();
+    }
   }
   const closing = opening + totalIn - totalOut;
+  const baseClosing = roundBase(baseOpening + baseTotalIn - baseTotalOut);
 
   const docNumbers = await sourceDocumentNumbers(rows);
 
@@ -409,6 +558,10 @@ export async function cashBankLedgerReport(
     amount: r.amount.toNumber(),
     movement: r.movement.toNumber(),
     balanceAfter: r.balance_after.toNumber(),
+    rate: r.rate.toNumber(),
+    baseAmount: r.base_amount.toNumber(),
+    baseMovement: r.base_movement.toNumber(),
+    baseBalanceAfter: r.base_balance_after.toNumber(),
     note: r.note,
     sourceDocTable: r.source_doc_type?.doc_table ?? null,
     sourceDocId: r.source_doc_id,
@@ -431,8 +584,14 @@ export async function cashBankLedgerReport(
     totalIn,
     totalOut,
     closing,
+    baseOpening,
+    baseTotalIn,
+    baseTotalOut,
+    baseClosing,
     entries,
-    reconciles: last ? last.balanceAfter === closing : true,
+    reconciles: last
+      ? last.balanceAfter === closing && last.baseBalanceAfter === baseClosing
+      : true,
   };
 }
 
@@ -470,6 +629,10 @@ export type BalanceReportRow = {
   totalIn: number;
   totalOut: number;
   closing: number;
+  baseOpening: number;
+  baseTotalIn: number;
+  baseTotalOut: number;
+  baseClosing: number;
   /** Whether anything at all happened to this resource inside the period. */
   moved: boolean;
 };
@@ -482,12 +645,28 @@ export type BalanceReportGroup = {
   totalIn: number;
   totalOut: number;
   closing: number;
+  baseOpening: number;
+  baseTotalIn: number;
+  baseTotalOut: number;
+  baseClosing: number;
 };
 
 export type BalanceReport = {
   range: PeriodRange;
   groups: BalanceReportGroup[];
   resources: number;
+  /**
+   * Every currency group's base figures added together.
+   *
+   * Grouping per currency stays, because what a resource holds is the figure
+   * somebody spends. The base total is what the grouping could never give:
+   * one figure for the whole report, built from what each movement was
+   * actually worth rather than from a rate applied at read time.
+   */
+  baseOpening: number;
+  baseTotalIn: number;
+  baseTotalOut: number;
+  baseClosing: number;
 };
 
 /**
@@ -527,7 +706,17 @@ export async function cashBankBalanceReport(
       currency: { select: { id: true, currency_label: true } },
     },
   });
-  if (!resources.length) return { range, groups: [], resources: 0 };
+  if (!resources.length) {
+    return {
+      range,
+      groups: [],
+      resources: 0,
+      baseOpening: 0,
+      baseTotalIn: 0,
+      baseTotalOut: 0,
+      baseClosing: 0,
+    };
+  }
 
   const ids = resources.map((r) => r.id);
 
@@ -537,7 +726,7 @@ export async function cashBankBalanceReport(
     prisma.cashBankLedger.groupBy({
       by: ["cash_bank_id"],
       where: { cash_bank_id: { in: ids }, entry_date: { lt: startOf(range.from) } },
-      _sum: { movement: true },
+      _sum: { movement: true, base_movement: true },
     }),
     prisma.cashBankLedger.groupBy({
       by: ["cash_bank_id", "direction"],
@@ -545,18 +734,30 @@ export async function cashBankBalanceReport(
         cash_bank_id: { in: ids },
         entry_date: { gte: startOf(range.from), lte: startOf(range.to) },
       },
-      _sum: { amount: true },
+      _sum: { amount: true, base_amount: true },
     }),
   ]);
 
   const openingOf = new Map(
     openings.map((o) => [o.cash_bank_id, o._sum.movement?.toNumber() ?? 0])
   );
+  const baseOpeningOf = new Map(
+    openings.map((o) => [o.cash_bank_id, o._sum.base_movement?.toNumber() ?? 0])
+  );
   const inOf = new Map<number, number>();
   const outOf = new Map<number, number>();
+  const baseInOf = new Map<number, number>();
+  const baseOutOf = new Map<number, number>();
   for (const m of movements) {
-    const target = m.direction === "In" ? inOf : outOf;
-    target.set(m.cash_bank_id, m._sum.amount?.toNumber() ?? 0);
+    const incoming = m.direction === "In";
+    (incoming ? inOf : outOf).set(
+      m.cash_bank_id,
+      m._sum.amount?.toNumber() ?? 0
+    );
+    (incoming ? baseInOf : baseOutOf).set(
+      m.cash_bank_id,
+      m._sum.base_amount?.toNumber() ?? 0
+    );
   }
 
   const groups = new Map<number, BalanceReportGroup>();
@@ -566,6 +767,9 @@ export async function cashBankBalanceReport(
     const opening = openingOf.get(r.id) ?? 0;
     const totalIn = inOf.get(r.id) ?? 0;
     const totalOut = outOf.get(r.id) ?? 0;
+    const baseOpening = baseOpeningOf.get(r.id) ?? 0;
+    const baseTotalIn = baseInOf.get(r.id) ?? 0;
+    const baseTotalOut = baseOutOf.get(r.id) ?? 0;
     const moved = totalIn !== 0 || totalOut !== 0;
 
     // An inactive resource earns its row only by having something to report.
@@ -579,8 +783,13 @@ export async function cashBankBalanceReport(
       totalIn: 0,
       totalOut: 0,
       closing: 0,
+      baseOpening: 0,
+      baseTotalIn: 0,
+      baseTotalOut: 0,
+      baseClosing: 0,
     };
     const closing = opening + totalIn - totalOut;
+    const baseClosing = roundBase(baseOpening + baseTotalIn - baseTotalOut);
     group.rows.push({
       cashBankId: r.id,
       label: r.cash_bank_label,
@@ -592,35 +801,55 @@ export async function cashBankBalanceReport(
       totalIn,
       totalOut,
       closing,
+      baseOpening,
+      baseTotalIn,
+      baseTotalOut,
+      baseClosing,
       moved,
     });
     group.opening += opening;
     group.totalIn += totalIn;
     group.totalOut += totalOut;
     group.closing += closing;
+    group.baseOpening += baseOpening;
+    group.baseTotalIn += baseTotalIn;
+    group.baseTotalOut += baseTotalOut;
+    group.baseClosing += baseClosing;
     groups.set(r.currency.id, group);
     counted += 1;
   }
 
+  const all = [...groups.values()];
   return {
     range,
     resources: counted,
-    groups: [...groups.values()].sort((a, b) =>
-      a.currencyLabel.localeCompare(b.currencyLabel)
-    ),
+    groups: all.sort((a, b) => a.currencyLabel.localeCompare(b.currencyLabel)),
+    baseOpening: roundBase(all.reduce((t, g) => t + g.baseOpening, 0)),
+    baseTotalIn: roundBase(all.reduce((t, g) => t + g.baseTotalIn, 0)),
+    baseTotalOut: roundBase(all.reduce((t, g) => t + g.baseTotalOut, 0)),
+    baseClosing: roundBase(all.reduce((t, g) => t + g.baseClosing, 0)),
   };
 }
 
 /** One resource's headline figures, for the Cash & Bank master detail. */
-export async function cashBankBookSummary(
-  cashBankId: number
-): Promise<{ balance: number; entries: number; lastEntryDate: string | null }> {
+export async function cashBankBookSummary(cashBankId: number): Promise<{
+  balance: number;
+  baseBalance: number;
+  entries: number;
+  lastEntryDate: string | null;
+}> {
   const row = await prisma.cashBankBalance.findUnique({
     where: { cash_bank_id: cashBankId },
-    select: { balance: true, entry_count: true, last_entry_date: true },
+    select: {
+      balance: true,
+      base_balance: true,
+      entry_count: true,
+      last_entry_date: true,
+    },
   });
   return {
     balance: row?.balance.toNumber() ?? 0,
+    baseBalance: row?.base_balance.toNumber() ?? 0,
     entries: row?.entry_count ?? 0,
     lastEntryDate: row?.last_entry_date
       ? row.last_entry_date.toISOString().slice(0, 10)

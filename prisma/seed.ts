@@ -30,6 +30,7 @@ import { PrismaClient } from "../src/generated/prisma/client";
 import { PERMISSIONS } from "../src/lib/siba/permissions";
 import { SEEDED_ROLES, ADMIN_ROLE, adminPermissionCodes } from "../src/lib/siba/roles";
 import { parentCode } from "../src/lib/siba/account-code";
+import { BASE_CURRENCY_LABEL } from "../src/lib/siba/currency";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -73,8 +74,19 @@ const PARENT_NAME = process.env.SIBA_PARENT_COMPANY_NAME?.trim() || "Perusahaan 
 const CHILD_LABEL = process.env.SIBA_CHILD_COMPANY_LABEL?.trim() || "ANAK";
 const CHILD_NAME = process.env.SIBA_CHILD_COMPANY_NAME?.trim() || "Perusahaan Anak";
 
-/** The reporting base currency. Further currencies are added through the app. */
-const BASE_CURRENCY_LABEL = process.env.SIBA_BASE_CURRENCY?.trim().toUpperCase() || "IDR";
+/**
+ * The reporting base currency. Further currencies are added through the app.
+ *
+ * The **label** comes from `lib/siba/currency.ts` and is no longer configurable.
+ * It used to be read from `SIBA_BASE_CURRENCY`, which was harmless while nothing
+ * in the application knew or cared which currency was base. It is not harmless
+ * now: every book entry records what it was worth in base currency, and the code
+ * that decides whether a rate of 1 is honest reads the constant. Two statements
+ * of one fact would mean an installation could seed `USD` while the application
+ * valued everything as though it were `IDR`.
+ *
+ * The **name** stays configurable: it is display text and nothing branches on it.
+ */
 const BASE_CURRENCY_NAME = process.env.SIBA_BASE_CURRENCY_NAME?.trim() || "Rupiah Indonesia";
 
 const pad4 = (n: number) => String(n).padStart(4, "0");

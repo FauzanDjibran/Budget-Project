@@ -88,6 +88,7 @@ async function makeCashBank(options: {
   await openCashBankBook(prisma, {
     cashBankId: row.id,
     openingBalance: options.opening ?? 0,
+    rate: 1,
     date: today,
     actorId: actor,
   });
@@ -865,8 +866,9 @@ describe("a draft moves nothing; posting moves everything at once", () => {
       where: { cash_bank_id: cashBank },
     });
     const rebuilt = await rebuildCashBankBalance(cashBank);
-    assert.equal(rebuilt, stored.balance.toNumber());
-    assert.equal(rebuilt, 1_400_000);
+    assert.equal(rebuilt.balance, stored.balance.toNumber());
+    assert.equal(rebuilt.baseBalance, stored.base_balance.toNumber());
+    assert.equal(rebuilt.balance, 1_400_000);
   });
 
   test("an In purpose increases the balance", async () => {
@@ -1292,7 +1294,7 @@ describe("posting writes the subject book alongside the cash book", () => {
     );
 
     assert.equal(
-      await rebuildCashBankBalance(cashBank),
+      (await rebuildCashBankBalance(cashBank)).balance,
       7_000_000,
       "while the cash resource itself falls"
     );
@@ -1344,6 +1346,84 @@ describe("posting writes the subject book alongside the cash book", () => {
       await prisma.cashBankLedger.count({ where: { source_doc_id: doc } }),
       1,
       "the cash book and the journal still record it"
+    );
+  });
+});
+
+/**
+ * The books now record what every movement was worth in base currency, and the
+ * machinery that produces a real rate does not exist yet — there is no kurs on
+ * the document and no layer to read one off.
+ *
+ * So a foreign document is **refused by name** rather than posted at a rate
+ * somebody invented. This suite exists so the refusal cannot be removed by
+ * accident: when the document carries its own kurs, these tests are the ones
+ * that have to be deliberately rewritten, and the coverage they leave behind is
+ * the reminder that an append-only book cannot be corrected by editing.
+ */
+describe("a document that cannot be valued is refused, not guessed at", () => {
+  test("a foreign-currency posting is refused, and moves nothing", async () => {
+    const cashBank = await makeCashBank({ currencyId: otherCurrency });
+    const budget = await makeBudget({
+      categoryLabel: "Biaya",
+      amount: 900_000,
+      currencyId: otherCurrency,
+    });
+    // makeDraft takes the currency from the resource, so this document is in
+    // the foreign currency by construction.
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 400_000, outstanding: 900_000 }],
+    });
+
+    const result = await applyPosting(doc, actor);
+    assert.equal(result.ok, false);
+    assert.match(
+      result.ok ? "" : result.errors._form ?? "",
+      /belum dapat diposting/,
+      "the refusal names the reason rather than failing obscurely"
+    );
+
+    // And nothing was written on the way to refusing.
+    assert.equal(
+      await prisma.cashBankLedger.count({ where: { cash_bank_id: cashBank } }),
+      0
+    );
+    const after = await prisma.finCashBankTransaction.findUniqueOrThrow({
+      where: { id: doc },
+      select: { status: true, document_date: true },
+    });
+    assert.equal(after.status, "Draft");
+    assert.equal(after.document_date, null);
+    const plan = await prisma.budBudget.findUniqueOrThrow({
+      where: { id: budget },
+      select: { realized_amount: true, status: true },
+    });
+    assert.equal(plan.realized_amount.toNumber(), 0);
+    assert.equal(plan.status, "Open");
+  });
+
+  test("a base-currency posting still values everything at 1", async () => {
+    const cashBank = await makeCashBank({ opening: 5_000_000 });
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 250_000, outstanding: 1_000_000 }],
+    });
+    await post(doc);
+
+    const entry = await prisma.cashBankLedger.findFirstOrThrow({
+      where: { cash_bank_id: cashBank, entry_type: "Transaction" },
+    });
+    assert.equal(entry.rate.toNumber(), 1, "base currency, so the rate is 1");
+    assert.equal(entry.base_amount.toNumber(), entry.amount.toNumber());
+    assert.equal(entry.base_movement.toNumber(), entry.movement.toNumber());
+    assert.equal(
+      entry.base_balance_after.toNumber(),
+      entry.balance_after.toNumber(),
+      "both measures move together while everything is rupiah"
     );
   });
 });

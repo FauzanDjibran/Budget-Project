@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { nextDocumentNumber } from "./document-number";
+import { roundBase } from "./fx";
 import type { PeriodRange } from "./period";
 import {
   SUBLEDGERS,
@@ -53,6 +54,27 @@ export type NewSubledgerEntry = {
   direction: "In" | "Out";
   /** Positive; `direction` and the book's nature carry the sign. */
   amount: number;
+  /**
+   * **This book's own settlement rate**, converting the subject's currency to
+   * base — not necessarily the rate the Cash Bank Book recorded for the same
+   * document.
+   *
+   * An entry that raises a position originates base value at the rate the money
+   * moved at. An entry that relieves one releases base at the rate the position
+   * was already carried at, which is usually a different number. Keeping each
+   * book on its own rate is what lets `base_amount ÷ amount` stay true on every
+   * row, so each book is independently re-derivable; the gap between the two
+   * rates is the FX difference, and it belongs in the journal.
+   *
+   * Required, with no default: `1` is correct only for base currency.
+   */
+  rate: number;
+  /**
+   * The exact base value, when the caller already knows it — a position
+   * relieved to nothing releases its remaining base exactly, which can differ
+   * from `amount × rate` by a rounding unit.
+   */
+  baseAmount?: number;
   sourceDocTypeId?: number | null;
   sourceDocId?: number | null;
   note?: string | null;
@@ -91,8 +113,18 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
     );
   }
 
+  if (!(entry.rate > 0)) {
+    throw new Error(
+      `Kurs entri buku pembantu harus lebih besar dari nol (diterima ${entry.rate}).`
+    );
+  }
+
   const amount = Math.abs(entry.amount);
+  const base = entry.baseAmount ?? roundBase(amount * entry.rate);
   const movement = subledgerMovement(book, entry.direction, amount);
+  // The base figure is signed the same way the foreign one is: whichever way
+  // the book's own nature sends the position, both measures follow it together.
+  const baseMovement = movement < 0 ? -base : base;
   const key = {
     book: book.key,
     partner_id: entry.partnerId,
@@ -101,9 +133,12 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
 
   const current = await db.subLedgerBalance.findUnique({
     where: { book_partner_id_currency_id: key },
-    select: { balance: true, entry_count: true },
+    select: { balance: true, base_balance: true, entry_count: true },
   });
   const after = (current ? current.balance.toNumber() : 0) + movement;
+  const afterBase = roundBase(
+    (current ? current.base_balance.toNumber() : 0) + baseMovement
+  );
 
   const created = await db.subLedger.create({
     data: {
@@ -115,6 +150,10 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
       amount,
       movement,
       balance_after: after,
+      rate: entry.rate,
+      base_amount: base,
+      base_movement: baseMovement,
+      base_balance_after: afterBase,
       source_doc_type_id: entry.sourceDocTypeId ?? null,
       source_doc_id: entry.sourceDocId ?? null,
       note: entry.note ?? null,
@@ -127,12 +166,14 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
     create: {
       ...key,
       balance: after,
+      base_balance: afterBase,
       entry_count: 1,
       last_entry_id: created.id,
       last_entry_date: created.entry_date,
     },
     update: {
       balance: after,
+      base_balance: afterBase,
       entry_count: (current?.entry_count ?? 0) + 1,
       last_entry_id: created.id,
       last_entry_date: created.entry_date,
@@ -153,33 +194,33 @@ export async function rebuildSubledgerBalance(
   book: string,
   partnerId: number,
   currencyId: number
-): Promise<number> {
+): Promise<{ balance: number; baseBalance: number }> {
   const key = { book, partner_id: partnerId, currency_id: currencyId };
   const entries = await prisma.subLedger.findMany({
     where: key,
     orderBy: { id: "asc" },
-    select: { id: true, movement: true, entry_date: true },
+    select: { id: true, movement: true, base_movement: true, entry_date: true },
   });
   const balance = entries.reduce((t, e) => t + e.movement.toNumber(), 0);
+  const baseBalance = roundBase(
+    entries.reduce((t, e) => t + e.base_movement.toNumber(), 0)
+  );
   const last = entries.at(-1) ?? null;
+
+  const row = {
+    balance,
+    base_balance: baseBalance,
+    entry_count: entries.length,
+    last_entry_id: last?.id ?? null,
+    last_entry_date: last?.entry_date ?? null,
+  };
 
   await prisma.subLedgerBalance.upsert({
     where: { book_partner_id_currency_id: key },
-    create: {
-      ...key,
-      balance,
-      entry_count: entries.length,
-      last_entry_id: last?.id ?? null,
-      last_entry_date: last?.entry_date ?? null,
-    },
-    update: {
-      balance,
-      entry_count: entries.length,
-      last_entry_id: last?.id ?? null,
-      last_entry_date: last?.entry_date ?? null,
-    },
+    create: { ...key, ...row },
+    update: row,
   });
-  return balance;
+  return { balance, baseBalance };
 }
 
 // ------------------------------------------------------------------ reports
@@ -200,6 +241,11 @@ export type SubledgerEntryRow = {
   /** Signed in the book's direction: positive raises the position. */
   movement: number;
   balanceAfter: number;
+  /** This book's own settlement rate for the entry. */
+  rate: number;
+  baseAmount: number;
+  baseMovement: number;
+  baseBalanceAfter: number;
   note: string | null;
   sourceDocId: number | null;
 };
@@ -217,6 +263,20 @@ export type SubledgerSubject = {
   raised: number;
   lowered: number;
   closing: number;
+  baseOpening: number;
+  baseRaised: number;
+  baseLowered: number;
+  baseClosing: number;
+  /**
+   * What the subject's position is carried at — `baseClosing ÷ closing`, or
+   * null where the position is nil.
+   *
+   * Derived on read and never stored. This is the figure a later relief
+   * releases at, and therefore the reason an FX difference can arise at all.
+   * It is an effective rate and will generally equal no rate anyone
+   * transacted at, so it is shown and never used as an input.
+   */
+  carryingRate: number | null;
   /** Oldest first — a book reads forward through the period. */
   entries: SubledgerEntryRow[];
   /** False when the stored running balance and the summed movements disagree. */
@@ -260,7 +320,7 @@ export async function subledgerReport(
     prisma.subLedger.groupBy({
       by: ["partner_id", "currency_id"],
       where: { ...scope, entry_date: { lt: startOf(range.from) } },
-      _sum: { movement: true },
+      _sum: { movement: true, base_movement: true },
     }),
     prisma.subLedger.findMany({
       where: {
@@ -277,6 +337,9 @@ export async function subledgerReport(
     opening: number;
     raised: number;
     lowered: number;
+    baseOpening: number;
+    baseRaised: number;
+    baseLowered: number;
     entries: SubledgerEntryRow[];
   };
   const acc = new Map<string, Acc>();
@@ -284,20 +347,38 @@ export async function subledgerReport(
     const k = `${partnerId}:${currencyId}`;
     let found = acc.get(k);
     if (!found) {
-      found = { partnerId, currencyId, opening: 0, raised: 0, lowered: 0, entries: [] };
+      found = {
+        partnerId,
+        currencyId,
+        opening: 0,
+        raised: 0,
+        lowered: 0,
+        baseOpening: 0,
+        baseRaised: 0,
+        baseLowered: 0,
+        entries: [],
+      };
       acc.set(k, found);
     }
     return found;
   };
 
   for (const b of before) {
-    reach(b.partner_id, b.currency_id).opening = b._sum.movement?.toNumber() ?? 0;
+    const subject = reach(b.partner_id, b.currency_id);
+    subject.opening = b._sum.movement?.toNumber() ?? 0;
+    subject.baseOpening = b._sum.base_movement?.toNumber() ?? 0;
   }
   for (const e of within) {
     const subject = reach(e.partner_id, e.currency_id);
     const movement = e.movement.toNumber();
-    if (movement >= 0) subject.raised += movement;
-    else subject.lowered += -movement;
+    const baseMovement = e.base_movement.toNumber();
+    if (movement >= 0) {
+      subject.raised += movement;
+      subject.baseRaised += baseMovement;
+    } else {
+      subject.lowered += -movement;
+      subject.baseLowered += -baseMovement;
+    }
     subject.entries.push({
       id: e.id,
       entryNo: e.entry_no,
@@ -307,6 +388,10 @@ export async function subledgerReport(
       amount: e.amount.toNumber(),
       movement,
       balanceAfter: e.balance_after.toNumber(),
+      rate: e.rate.toNumber(),
+      baseAmount: e.base_amount.toNumber(),
+      baseMovement,
+      baseBalanceAfter: e.base_balance_after.toNumber(),
       note: e.note,
       sourceDocId: e.source_doc_id,
     });
@@ -336,6 +421,7 @@ export async function subledgerReport(
     const partner = partnerOf.get(a.partnerId);
     if (!partner) continue;
     const closing = a.opening + a.raised - a.lowered;
+    const baseClosing = roundBase(a.baseOpening + a.baseRaised - a.baseLowered);
     const last = a.entries.at(-1);
     subjects.push({
       partnerId: a.partnerId,
@@ -350,8 +436,17 @@ export async function subledgerReport(
       raised: a.raised,
       lowered: a.lowered,
       closing,
+      baseOpening: roundBase(a.baseOpening),
+      baseRaised: roundBase(a.baseRaised),
+      baseLowered: roundBase(a.baseLowered),
+      baseClosing,
+      // Null at a nil position rather than zero: a subject holding nothing has
+      // no rate, and a number here would invite being used as one.
+      carryingRate: closing === 0 ? null : baseClosing / closing,
       entries: a.entries,
-      reconciles: last ? last.balanceAfter === closing : true,
+      reconciles: last
+        ? last.balanceAfter === closing && last.baseBalanceAfter === baseClosing
+        : true,
     });
   }
 

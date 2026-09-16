@@ -498,6 +498,30 @@ model CashBankLedger {
   /// Balance after this entry, in the resource's own currency.
   balance_after Decimal @db.Decimal(18, 2)
 
+  /// The kurs this movement was valued at, always converting the resource's
+  /// own currency to the base currency.
+  ///
+  /// **This book's own rate**, not necessarily the one another book recorded
+  /// for the same document. A payment has two rates that need not agree — what
+  /// the cash cost and what the obligation was carried at — and putting both on
+  /// one row would make that row's own arithmetic fail. Each book takes the
+  /// rate belonging to its own side, so `base_amount ÷ amount` always equals
+  /// the rate recorded here and the book stays independently re-derivable. The
+  /// two sides meet in the journal, and the residual is recognised there.
+  ///
+  /// `1` means the money is base currency, and nothing else: a rate of 1
+  /// between two foreign amounts would assert that USD 100 is IDR 100.
+  rate               Decimal @db.Decimal(18, 6)
+  /// `amount` in base currency. Stored rather than derived: base value is a
+  /// record of how the balance was built, and re-deriving it at a current rate
+  /// would destroy the only figure that says what currency movement cost.
+  base_amount        Decimal @db.Decimal(18, 2)
+  /// `movement` in base currency — signed, and summing it rebuilds the base
+  /// balance exactly as `movement` rebuilds the foreign one.
+  base_movement      Decimal @db.Decimal(18, 2)
+  /// `balance_after` in base currency.
+  base_balance_after Decimal @db.Decimal(18, 2)
+
   /// What caused the movement. Null for an opening balance, which has no
   /// source document — the registration of the resource is the event.
   source_doc_type_id Int?
@@ -522,6 +546,10 @@ model CashBankLedger {
 model CashBankBalance {
   cash_bank_id    Int       @id
   balance         Decimal   @default(0) @db.Decimal(18, 2)
+  /// The same balance in base currency. A resource's carrying rate is
+  /// `base_balance ÷ balance`, derived on read and never stored — it is an
+  /// effective rate that will generally equal no rate anyone transacted at.
+  base_balance    Decimal   @default(0) @db.Decimal(18, 2)
   entry_count     Int       @default(0)
   last_entry_id   Int?
   last_entry_date DateTime? @db.Date
@@ -588,6 +616,24 @@ model SubLedger {
   /// The subject's position after this entry, in its own currency.
   balance_after Decimal @db.Decimal(18, 2)
 
+  /// **This book's own settlement rate**, converting the subject's currency to
+  /// the base currency — not necessarily the rate the Cash Bank Book recorded
+  /// for the same document.
+  ///
+  /// An entry that *raises* a position originates its base value at the rate
+  /// the money moved at. An entry that *relieves* one releases base at the rate
+  /// the position was already carried at, which is usually a different number:
+  /// a debt taken on when a dollar cost 15.000 and settled with dollars costing
+  /// 16.000 releases at 15.000. The gap between the two books is the FX
+  /// difference, and it lives in the journal rather than in either book.
+  rate               Decimal @db.Decimal(18, 6)
+  /// `amount` in base currency.
+  base_amount        Decimal @db.Decimal(18, 2)
+  /// `movement` in base currency, signed the same way.
+  base_movement      Decimal @db.Decimal(18, 2)
+  /// `balance_after` in base currency.
+  base_balance_after Decimal @db.Decimal(18, 2)
+
   /// What caused the movement, as the weak document pair every book uses.
   source_doc_type_id Int?
   source_doc_id      Int?
@@ -619,6 +665,10 @@ model SubLedgerBalance {
   currency_id Int
 
   balance         Decimal   @default(0) @db.Decimal(18, 2)
+  /// The same position in base currency. The subject's carrying rate is
+  /// `base_balance ÷ balance`, derived on read — it is what a later relief
+  /// releases at, and the reason an FX difference can arise at all.
+  base_balance    Decimal   @default(0) @db.Decimal(18, 2)
   entry_count     Int       @default(0)
   last_entry_id   Int?
   last_entry_date DateTime? @db.Date

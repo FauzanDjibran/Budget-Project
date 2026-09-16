@@ -177,6 +177,13 @@ describe("the dependency graph points one way", () => {
       // A book's own catalogue: which books exist and which way each one
       // moves. Client-safe, database-free, and declared by the book itself.
       "subledger-catalogue",
+      // The foreign-exchange kernel and the base currency. Pure functions over
+      // numbers with no database and no dependency of their own, needed by
+      // every book that carries a base measure and by the layers that will
+      // value one. A book that had to import a *module* to round a base amount
+      // would not be liftable; a book that imports arithmetic still is.
+      "fx",
+      "currency",
     ];
     for (const book of ["cash-bank", "journal", "subledger"]) {
       const leaked = sibaImports(sibaModule(book).text).filter(

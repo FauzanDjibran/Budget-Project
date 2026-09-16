@@ -76,6 +76,7 @@ async function makeCashBank(options: {
   await openCashBankBook(prisma, {
     cashBankId: row.id,
     openingBalance: options.opening ?? 0,
+    rate: 1,
     date: options.openingDate ?? "2026-01-01",
     actorId: actor,
   });
@@ -103,6 +104,7 @@ const move = (
     type: "Transaction",
     direction,
     amount,
+    rate: 1,
     note: `fixture ${direction} ${date}`,
     actorId: actor,
   });
@@ -351,7 +353,9 @@ describe("the ledger report reconciles", () => {
   });
 
   test("an entry names the document that caused it", async () => {
-    const cb = await makeCashBank({ opening: 0, openingDate: "2026-01-01" });
+    // Opened with enough to cover the payment below: a resource can no longer
+    // be driven negative.
+    const cb = await makeCashBank({ opening: 500_000, openingDate: "2026-01-01" });
     const docType = await prisma.sysDocType.findFirstOrThrow({
       where: { doc_table: "fin_cash_bank_transaction" },
       select: { id: true },
@@ -377,6 +381,7 @@ describe("the ledger report reconciles", () => {
       type: "Transaction",
       direction: "Out",
       amount: 75_000,
+      rate: 1,
       sourceDocTypeId: docType.id,
       sourceDocId: doc.id,
       note: doc.transaction_no,
@@ -497,10 +502,31 @@ describe("the balance report summarises every resource", () => {
       assert.equal(g.closing, g.rows.reduce((t, r) => t + r.closing, 0));
     }
 
-    // And the report exposes no total spanning them.
+    // A total spanning currencies now exists, and is legitimate — but only in
+    // base. It is built from what each movement was actually worth when it
+    // moved, which the books record, rather than from a rate applied to a
+    // closing figure at read time. The per-currency groups stay either way:
+    // what a resource holds is the figure somebody spends.
+    assert.equal(
+      report.baseClosing,
+      report.groups.reduce((t, g) => t + g.baseClosing, 0),
+      "the base total is the sum of the groups' own base figures"
+    );
     assert.ok(
-      !Object.keys(report).some((k) => /total|grand|sum/i.test(k)),
-      "a report-wide money total would have to invent an exchange rate"
+      !report.groups.some((g) => "closing" in g && typeof g.closing !== "number"),
+      "every group still reports its own currency's figures"
+    );
+
+    // And nothing anywhere adds the foreign amounts together, which would
+    // still require inventing a rate.
+    const foreignTotals = Object.entries(report).filter(
+      ([k, v]) =>
+        typeof v === "number" && /total|grand|sum|closing|opening/i.test(k) && !/^base/.test(k)
+    );
+    assert.deepEqual(
+      foreignTotals,
+      [],
+      "a report-wide total in transaction currency would have to invent a rate"
     );
   });
 

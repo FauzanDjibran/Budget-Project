@@ -27,6 +27,7 @@
  */
 import "dotenv/config";
 import { prisma } from "@/lib/prisma";
+import { isBaseCurrency } from "@/lib/siba/currency";
 import { purposeOf } from "@/lib/siba/rules";
 import { subledgerForCategory } from "@/lib/siba/subledger-catalogue";
 import { recordSubledgerEntry } from "@/lib/siba/subledger";
@@ -49,6 +50,7 @@ async function main() {
       purpose: true,
       partner_id: true,
       currency_id: true,
+      currency: { select: { currency_label: true } },
       transaction_type: true,
       transaction_amount: true,
       document_date: true,
@@ -69,6 +71,7 @@ async function main() {
   let written = 0;
   let skipped = 0;
   let noBook = 0;
+  let unvalued = 0;
 
   for (const doc of posted) {
     if (already.has(doc.id)) {
@@ -80,6 +83,16 @@ async function main() {
     const book = subledgerForCategory(purpose?.budgetCategory ?? null);
     if (!book || !doc.partner_id) {
       noBook += 1;
+      continue;
+    }
+
+    // A book entry now states what it was worth in base currency, and this
+    // script cannot know the kurs a foreign document moved at — it replays
+    // documents that were posted before any rate was recorded. A base-currency
+    // document replays at 1, which is true; a foreign one is left alone rather
+    // than backfilled at a rate nobody used.
+    if (!isBaseCurrency(doc.currency.currency_label)) {
+      unvalued += 1;
       continue;
     }
 
@@ -99,6 +112,7 @@ async function main() {
         type: "Transaction",
         direction: doc.transaction_type as "In" | "Out",
         amount: doc.transaction_amount.toNumber(),
+        rate: 1,
         sourceDocTypeId: docType.id,
         sourceDocId: doc.id,
         note: `${doc.transaction_no} — ${purpose!.label}`,
@@ -112,7 +126,8 @@ async function main() {
 
   console.log(
     `\n${posted.length} dokumen Posted diperiksa: ${written} entri ditulis, ` +
-      `${skipped} sudah ada, ${noBook} tanpa buku pembantu (Asset / Biaya).`
+      `${skipped} sudah ada, ${noBook} tanpa buku pembantu (Asset / Biaya), ` +
+      `${unvalued} dilewati karena mata uang asing belum dapat dinilai.`
   );
 }
 

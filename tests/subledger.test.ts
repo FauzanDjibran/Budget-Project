@@ -239,6 +239,7 @@ describe("the book is append-only, and its total is derived", () => {
           type: "Transaction",
           direction,
           amount,
+          rate: 1,
           note: `${FIXTURE_PREFIX} ${direction} ${amount}`,
           actorId: actor,
         })
@@ -254,7 +255,7 @@ describe("the book is append-only, and its total is derived", () => {
       "10.000.000 borrowed, 4.000.000 repaid, 1.500.000 borrowed again"
     );
     assert.equal(
-      await rebuildSubledgerBalance("hutang", partner, currency),
+      (await rebuildSubledgerBalance("hutang", partner, currency)).balance,
       7_500_000,
       "and recomputing from the entries agrees with the stored total"
     );
@@ -273,6 +274,7 @@ describe("the book is append-only, and its total is derived", () => {
             type: "Transaction",
             direction: "In",
             amount: 1_000,
+            rate: 1,
             actorId: actor,
           })
         ),
@@ -307,6 +309,7 @@ describe("the book is append-only, and its total is derived", () => {
             type: "Transaction",
             direction: "In",
             amount,
+            rate: 1,
             actorId: actor,
           })
         );
@@ -354,6 +357,7 @@ describe("a subledger report reconciles on its own page", () => {
           type: "Transaction",
           direction,
           amount,
+          rate: 1,
           actorId: actor,
         })
       );
@@ -439,5 +443,193 @@ describe("a subledger report reconciles on its own page", () => {
       null
     );
     assert.deepEqual(await subledgerSubjects("tidak-ada", [induk]), []);
+  });
+});
+
+// --------------------------------------------------- the position's own rate
+
+describe("a position carries a rate, and it is derived from what built it", () => {
+  test("a rate is required, and must be a real one", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    for (const rate of [0, -1, Number.NaN]) {
+      await assert.rejects(
+        () =>
+          prisma.$transaction((tx) =>
+            recordSubledgerEntry(tx, {
+              book: "hutang",
+              partnerId: partner,
+              currencyId: currency,
+              date: "2026-03-01",
+              type: "Transaction",
+              direction: "In",
+              amount: 1_000,
+              rate,
+              actorId: actor,
+            })
+          ),
+        /Kurs/,
+        `a rate of ${rate} should be refused outright`
+      );
+    }
+  });
+
+  test("the base measure is signed by the book's direction, like the foreign one", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    // Hutang rises on In and falls on Out. Both measures follow that together,
+    // or a position could reach zero foreign against a base nobody can explain.
+    await prisma.$transaction((tx) =>
+      recordSubledgerEntry(tx, {
+        book: "hutang",
+        partnerId: partner,
+        currencyId: currency,
+        date: "2026-03-01",
+        type: "Transaction",
+        direction: "In",
+        amount: 1_000,
+        rate: 15_000,
+        actorId: actor,
+      })
+    );
+    const raised = await prisma.subLedger.findFirstOrThrow({
+      where: { book: "hutang", partner_id: partner },
+    });
+    assert.equal(raised.movement.toNumber(), 1_000);
+    assert.equal(raised.base_movement.toNumber(), 15_000_000);
+
+    await prisma.$transaction((tx) =>
+      recordSubledgerEntry(tx, {
+        book: "hutang",
+        partnerId: partner,
+        currencyId: currency,
+        date: "2026-03-02",
+        type: "Transaction",
+        direction: "Out",
+        amount: 400,
+        rate: 15_000,
+        actorId: actor,
+      })
+    );
+    const lowered = await prisma.subLedger.findFirstOrThrow({
+      where: { book: "hutang", partner_id: partner, direction: "Out" },
+    });
+    assert.equal(lowered.movement.toNumber(), -400);
+    assert.equal(lowered.base_movement.toNumber(), -6_000_000);
+    assert.equal(
+      lowered.base_amount.toNumber(),
+      6_000_000,
+      "the amount itself stays positive on both measures"
+    );
+
+    const rebuilt = await rebuildSubledgerBalance("hutang", partner, currency);
+    assert.deepEqual(rebuilt, { balance: 600, baseBalance: 9_000_000 });
+  });
+
+  test("the report derives a carrying rate, and none at a nil position", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    // Two borrowings at different rates. The position then carries at a
+    // weighted average that appeared in neither — which is exactly why the
+    // figure is derived on read and stored nowhere.
+    for (const [amount, rate] of [
+      [200, 15_000],
+      [300, 15_500],
+    ] as const) {
+      await prisma.$transaction((tx) =>
+        recordSubledgerEntry(tx, {
+          book: "hutang",
+          partnerId: partner,
+          currencyId: currency,
+          date: "2026-03-05",
+          type: "Transaction",
+          direction: "In",
+          amount,
+          rate,
+          actorId: actor,
+        })
+      );
+    }
+
+    const march = { from: "2026-03-01", to: "2026-03-31" };
+    const report = await subledgerReport("hutang", march, {
+      partnerIds: [partner],
+      companyIds: [induk],
+    });
+    const subject = report!.subjects[0];
+    assert.equal(subject.closing, 500);
+    assert.equal(subject.baseClosing, 3_000_000 + 4_650_000);
+    assert.equal(subject.carryingRate, 15_300, "weighted, not either rate quoted");
+    assert.ok(subject.reconciles, "both measures agree with the stored total");
+
+    // Settle it to nothing. The position then has no rate at all.
+    await prisma.$transaction((tx) =>
+      recordSubledgerEntry(tx, {
+        book: "hutang",
+        partnerId: partner,
+        currencyId: currency,
+        date: "2026-03-20",
+        type: "Transaction",
+        direction: "Out",
+        amount: 500,
+        rate: 15_300,
+        baseAmount: 7_650_000,
+        actorId: actor,
+      })
+    );
+    const cleared = await subledgerReport("hutang", march, {
+      partnerIds: [partner],
+      companyIds: [induk],
+    });
+    const closed = cleared!.subjects[0];
+    assert.equal(closed.closing, 0);
+    assert.equal(closed.baseClosing, 0, "zero foreign means zero base");
+    assert.equal(
+      closed.carryingRate,
+      null,
+      "a position holding nothing has no rate — null, never zero"
+    );
+  });
+
+  test("opening + naik - turun = closing holds on the base measure too", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    for (const [date, direction, amount, rate] of [
+      ["2026-01-10", "In", 1_000, 15_000],
+      ["2026-02-14", "In", 500, 16_000],
+      ["2026-02-20", "Out", 300, 15_333.333333],
+    ] as const) {
+      await prisma.$transaction((tx) =>
+        recordSubledgerEntry(tx, {
+          book: "hutang",
+          partnerId: partner,
+          currencyId: currency,
+          date,
+          type: "Transaction",
+          direction,
+          amount,
+          rate,
+          actorId: actor,
+        })
+      );
+    }
+
+    // February only, so January folds into the opening on both measures.
+    const february = { from: "2026-02-01", to: "2026-02-28" };
+    const report = await subledgerReport("hutang", february, {
+      partnerIds: [partner],
+      companyIds: [induk],
+    });
+    const s = report!.subjects[0];
+
+    assert.equal(s.opening, 1_000);
+    assert.equal(s.baseOpening, 15_000_000);
+    assert.equal(
+      s.baseOpening + s.baseRaised - s.baseLowered,
+      s.baseClosing,
+      "the report's own base arithmetic closes"
+    );
+    assert.equal(
+      s.opening + s.raised - s.lowered,
+      s.closing,
+      "and so does its foreign arithmetic"
+    );
+    assert.ok(s.reconciles, "both agree with the running balance the book stored");
   });
 });
