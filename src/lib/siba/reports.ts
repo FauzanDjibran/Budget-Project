@@ -29,7 +29,13 @@ import { SUBLEDGERS } from "./subledger-catalogue";
 export type ReportParams =
   | "cash-bank-period"
   | "account-period"
-  | "subledger-period";
+  | "subledger-period"
+  /**
+   * A Cash & Bank subject with **no** date range — for a report whose answer is
+   * a standing position rather than a period's movement. Rate layers are that:
+   * what an account holds right now is what a payment can be made against.
+   */
+  | "cash-bank";
 
 export type ReportDef = {
   key: string;
@@ -77,6 +83,22 @@ const FIXED_REPORTS = [
     params: "cash-bank-period",
     // Every resource at once is the useful default; narrowing to one is a
     // filter, not a precondition.
+    subjectRequired: false,
+  },
+  {
+    key: "cash_bank_layer",
+    slug: "cash-bank-layer",
+    module: "finance",
+    name: "Posisi Layer Kurs",
+    desc:
+      "Layer kurs setiap resource mata uang asing — berapa yang tersisa pada " +
+      "masing-masing kurs perolehan, dan dari dokumen mana currency itu masuk.",
+    icon: "layers",
+    permission: "REPORT_CASH_BANK_LAYER_VIEW",
+    // No date range: a layer position is what an account holds *now*, which is
+    // the figure a payment is made against. "What did it hold in March" is a
+    // different question and the Cash Bank Book answers it.
+    params: "cash-bank",
     subjectRequired: false,
   },
   {

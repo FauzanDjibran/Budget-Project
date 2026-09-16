@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { nextDocumentNumber } from "./document-number";
+import { openLayer } from "./cash-bank-layers";
 import { roundBase } from "./fx";
 import type { PeriodRange } from "./period";
 
@@ -190,6 +191,16 @@ export async function openCashBankBook(
     rate: number;
     date: string;
     actorId: number;
+    /**
+     * Whether this resource holds a foreign currency, and therefore keeps rate
+     * layers. A non-zero opening balance on one opens its **first layer** at
+     * the same kurs as its first book entry — the currency it starts with was
+     * acquired at some price, and that price is what a later payment releases.
+     *
+     * Passed in rather than looked up: the book is a leaf and does not read the
+     * master's currency to decide how to behave.
+     */
+    layered?: boolean;
   }
 ) {
   // A resource cannot start out owing money. The figure used to accept a
@@ -224,6 +235,21 @@ export async function openCashBankBook(
     note: "Saldo awal saat resource didaftarkan.",
     actorId: options.actorId,
   });
+
+  // The book entry says the resource holds it; the layer says what it cost.
+  // Both, or the account's balance and its layers would disagree from the
+  // moment it was registered — which is the one thing `reconcileLayers` exists
+  // to catch and the one thing nothing would ever repair.
+  if (options.layered) {
+    await openLayer(db, {
+      cashBankId: options.cashBankId,
+      date: options.date,
+      rate: options.rate,
+      foreign: options.openingBalance,
+      note: "Saldo awal saat resource didaftarkan.",
+      actorId: options.actorId,
+    });
+  }
 }
 
 /**

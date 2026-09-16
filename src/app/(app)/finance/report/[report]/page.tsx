@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { CashBankBalanceReport } from "@/components/report/cash-bank-balance-report";
+import { CashBankLayerReport } from "@/components/report/cash-bank-layer-report";
 import { CashBankLedgerReport } from "@/components/report/cash-bank-ledger-report";
 import {
   CompanyFilter,
@@ -18,6 +19,8 @@ import { companyScope } from "@/lib/siba/company-access";
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { subledgerReport, subledgerSubjects } from "@/lib/siba/subledger";
+import { layerReport } from "@/lib/siba/cash-bank-layers";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 
@@ -105,9 +108,37 @@ export default async function Page({
         subjectLabel="Cash & Bank"
         allLabel={report.subjectRequired ? undefined : "Semua resource"}
         companyId={company.id}
+        dateless={report.params === "cash-bank"}
       />
     </>
   );
+
+  // ---------------------------------------------------------- rate layers
+
+  if (report.key === "cash_bank_layer") {
+    const data = await layerReport(companyIds, cashBankId);
+    return (
+      <ReportView
+        report={report}
+        filter={filterBar}
+        runAt={runAt}
+        footnote={
+          <>
+            Hanya resource dalam mata uang selain {BASE_CURRENCY_LABEL} yang
+            memiliki layer: resource {BASE_CURRENCY_LABEL} memegang mata uang
+            dasar itu sendiri. Satu transaksi memakai tepat satu layer, sehingga
+            nominalnya dibatasi sisa layer yang dipilih. Layer yang sudah habis
+            tetap ditampilkan — tanpa itu laporan tidak dapat menjelaskan
+            posisinya sendiri. Kurs rata-rata hanya untuk dibaca: nilainya tidak
+            dipakai menghitung apa pun, dan umumnya bukan kurs yang pernah
+            ditransaksikan siapa pun.
+          </>
+        }
+      >
+        <CashBankLayerReport report={data} />
+      </ReportView>
+    );
+  }
 
   // --------------------------------------------------------------- ledger
 

@@ -18,7 +18,7 @@ import {
   parseSegment,
 } from "@/lib/siba/account-code";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
-import { isBaseCurrency } from "@/lib/siba/currency";
+import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
 import { fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
 import {
   CASH_BANK_SUBCATEGORY,
@@ -93,7 +93,12 @@ function coerce(field: Field, raw: string | boolean | null | undefined) {
 
   const value = raw == null ? "" : String(raw).trim();
 
-  if (field.type === "ref" || field.type === "number" || field.type === "money") {
+  if (
+    field.type === "ref" ||
+    field.type === "number" ||
+    field.type === "money" ||
+    field.type === "rate"
+  ) {
     if (value === "") return null;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
@@ -219,6 +224,12 @@ async function applicableFields(
       if (boolValue(values, "require_partner")) applies.add(field.name);
       continue;
     }
+    if (field.visibleWhen === "currencyIsForeign") {
+      const currencyId = refValue(values, "currency_id");
+      const label = currencyId ? await refLabel("ref_currency", currencyId) : null;
+      if (label && !isBaseCurrency(label)) applies.add(field.name);
+      continue;
+    }
     if (budgetCategoryNeedsPartner === null) {
       const categoryId = refValue(values, "budget_category_id");
       const rule = categoryId
@@ -303,12 +314,13 @@ async function validateCashBank(
 ): Promise<Record<string, string>> {
   const errors: Record<string, string> = {};
 
-  // An opening balance becomes the first entry in the resource's book, and a
-  // book entry now states what it was worth in base currency. For a foreign
-  // resource that needs the kurs the money was acquired at — which is what an
-  // opening layer will carry, and which nothing can supply yet. Registering the
-  // resource is fine; opening it with a balance is not.
+  // An opening balance becomes the resource's first book entry, and for a
+  // foreign resource its first rate layer as well. The currency it starts with
+  // was acquired at some price, and that price is what a later payment out of
+  // it releases — so the kurs is required rather than assumed. A base-currency
+  // resource needs none: rupiah is already the measure.
   const openingBalance = numberValue(values, "opening_balance") ?? 0;
+  const openingRate = numberValue(values, "opening_rate");
   if (openingBalance) {
     const currencyId = refValue(values, "currency_id");
     const currency = currencyId
@@ -318,10 +330,11 @@ async function validateCashBank(
         })
       : null;
     if (currency && !isBaseCurrency(currency.currency_label)) {
-      errors.opening_balance =
-        `Saldo awal untuk resource ${currency.currency_label} belum dapat diisi: ` +
-        "kurs perolehannya belum dapat dicatat. Daftarkan resource dengan saldo " +
-        "nol untuk sementara.";
+      if (!openingRate || openingRate <= 0) {
+        errors.opening_rate =
+          `Isi kurs perolehan saldo awal — berapa nilai 1 ${currency.currency_label} ` +
+          `dalam ${BASE_CURRENCY_LABEL} saat saldo itu diperoleh.`;
+      }
     }
   }
 
@@ -550,15 +563,20 @@ export async function createRecord(
     // starting figure becomes the book's opening entry rather than a column on
     // the master — see `lib/siba/cash-bank.ts`.
     if (entity.key === "m_cash_bank") {
+      // A foreign resource keeps rate layers and opens its first one here; a
+      // base-currency resource has none and opens at `1`, which is true rather
+      // than a placeholder. `validateCashBank` has already refused a foreign
+      // opening balance with no kurs, so by here the rate is honest.
+      const currencyId = refValue(values, "currency_id");
+      const currencyLabel = currencyId
+        ? await refLabel("ref_currency", currencyId)
+        : null;
+      const layered = Boolean(currencyLabel) && !isBaseCurrency(currencyLabel);
       await openCashBankBook(tx, {
         cashBankId: row.id,
         openingBalance: numberValue(values, "opening_balance") ?? 0,
-        // A base-currency resource opens at 1, which is true. A foreign one
-        // cannot open with a balance at all yet: its opening figure would need
-        // the kurs it was acquired at, and that is what an opening layer will
-        // carry. `checkOpeningBalance` refuses that combination above, so by
-        // here the rate is honest.
-        rate: 1,
+        rate: layered ? numberValue(values, "opening_rate") ?? 1 : 1,
+        layered,
         date: new Date().toISOString().slice(0, 10),
         actorId: actor.user.id,
       });

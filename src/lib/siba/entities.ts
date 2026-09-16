@@ -9,6 +9,7 @@
  */
 import type { IconName } from "@/components/icon";
 import { BUDGET_CATEGORY_RULES, type Direction } from "./rules";
+import { isBaseCurrency } from "./currency";
 import type { SystemDefaultKey } from "./system-defaults";
 
 export type FieldType =
@@ -28,6 +29,14 @@ export type FieldType =
    * different ways on three screens.
    */
   | "money"
+  /**
+   * An exchange rate. Rendered by `ui/rate-input.tsx`, which is a separate
+   * control from `money` on purpose: a rate is not an amount. It carries more
+   * decimals than money does, it is never grouped the way a balance is, and it
+   * reads as a ratio between two currencies rather than as a quantity of one.
+   * Giving it the money control would say it was the same kind of figure.
+   */
+  | "rate"
   /**
    * One number continuing a code the record inherits. The user types `5`; the
    * Server Action writes `1.1.1.5` into the field named by `writesTo`. See
@@ -97,7 +106,15 @@ export type Field = {
    * does not apply is hidden and stored as null — the Server Action evaluates
    * the same predicate, so hiding it is never what enforces the rule.
    */
-  visibleWhen?: "accountRequiresPartner" | "budgetCategoryRequiresPartner";
+  visibleWhen?:
+    | "accountRequiresPartner"
+    | "budgetCategoryRequiresPartner"
+    /**
+     * The chosen `currency_id` is not the base currency. A base-currency
+     * resource needs no kurs — asking for one and answering "1" would be a
+     * field that states the obvious on every rupiah account in the system.
+     */
+    | "currencyIsForeign";
   /**
    * `segment` only. The ref fields whose chosen row supplies the code this
    * segment continues, in priority order — the first one filled wins. Chart of
@@ -109,8 +126,10 @@ export type Field = {
   /** `segment` only. The field the composed code is written into. */
   writesTo?: string;
   /**
-   * `money` only. The ref field naming the currency this amount is in, so the
-   * box can say which currency the reader is typing.
+   * `money` and `rate`. The ref field naming the currency this field relates
+   * to: for an amount, the currency it is denominated in; for a rate, the
+   * currency it converts *from*. Either way the box can say so rather than
+   * leaving the reader to infer it.
    */
   currencyFrom?: string;
   defaultValue?: string | boolean | number;
@@ -446,6 +465,21 @@ export const ENTITIES: Entity[] = [
         placeholder: "0",
         help: "dicatat sebagai entri pembuka di Cash Bank Book",
       },
+      {
+        // A foreign resource's opening balance was acquired at some price, and
+        // that price is what a later payment out of it releases. Without it the
+        // account would hold currency of unknown value — which is why a foreign
+        // opening balance was refused outright until layers existed.
+        name: "opening_rate",
+        label: "Kurs Perolehan",
+        type: "rate",
+        currencyFrom: "currency_id",
+        createOnly: true,
+        virtual: true,
+        visibleWhen: "currencyIsForeign",
+        placeholder: "0",
+        help: "kurs saat saldo awal itu diperoleh",
+      },
       STATUS_FIELD,
       NOTE_FIELD,
     ],
@@ -779,12 +813,19 @@ export function createLabel(entity: Entity): string {
 export function fieldApplies(
   field: Field,
   values: Record<string, unknown>,
-  categoryLabelOf?: (id: unknown) => string | undefined
+  categoryLabelOf?: (id: unknown) => string | undefined,
+  currencyLabelOf?: (id: unknown) => string | undefined
 ): boolean {
   if (!field.visibleWhen) return true;
   if (field.visibleWhen === "accountRequiresPartner") {
     const v = values.require_partner;
     return v === true || v === "true";
+  }
+  if (field.visibleWhen === "currencyIsForeign") {
+    const label = currencyLabelOf?.(values.currency_id);
+    // Nothing chosen yet is not foreign: the field appears once the answer is
+    // known, rather than flickering in on an empty picker.
+    return label ? !isBaseCurrency(label) : false;
   }
   // budgetCategoryRequiresPartner
   const label = categoryLabelOf?.(values.budget_category_id);

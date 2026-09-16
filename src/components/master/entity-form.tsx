@@ -9,6 +9,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
 import { MoneyInput } from "@/components/ui/money-input";
+import { RateInput } from "@/components/ui/rate-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -37,7 +38,8 @@ import {
 import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
 import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
-import { formatDate, formatMoney, todayIso } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber, todayIso } from "@/lib/format";
+import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
 import { recordTitle } from "@/lib/siba/record-title";
 
 export type FormMode = "new" | "view" | "edit";
@@ -125,8 +127,12 @@ export function EntityForm({
   const budgetCategoryLabel = (id: unknown) =>
     refs.budget_category_id?.find((o) => o.id === Number(id))?.label;
 
+  /** The short label of the Currency currently chosen, if any. */
+  const currencyLabel = (id: unknown) =>
+    refs.currency_id?.find((o) => o.id === Number(id))?.label;
+
   const applies = (field: Field) =>
-    fieldApplies(field, values, budgetCategoryLabel);
+    fieldApplies(field, values, budgetCategoryLabel, currencyLabel);
 
   /**
    * The code a `segment` field continues — the first of its `inheritsFrom`
@@ -586,6 +592,15 @@ function readOnlyBody({
       </div>
     );
   }
+  if (field.type === "rate") {
+    return raw == null || raw === "" ? (
+      <div className="ro nil">tidak diisi</div>
+    ) : (
+      <div className="ro">
+        <span className="mny">{formatNumber(raw as number, 6)}</span>
+      </div>
+    );
+  }
   if (field.type === "textarea") {
     return raw ? (
       <div className="ro multi">{String(raw)}</div>
@@ -714,6 +729,24 @@ function editableControl({
       <MoneyInput
         value={value == null ? "" : String(value)}
         currencyLabel={currencyLabel}
+        invalid={Boolean(error)}
+        disabled={locked}
+        placeholder={field.placeholder ?? "0"}
+        onChange={onChange}
+      />
+    );
+  }
+  if (field.type === "rate") {
+    // The pair the rate converts, inside the box, so it reads in a direction
+    // rather than as a bare number.
+    const pair =
+      currencyLabel && !isBaseCurrency(currencyLabel)
+        ? `${currencyLabel} → ${BASE_CURRENCY_LABEL}`
+        : undefined;
+    return (
+      <RateInput
+        value={value == null ? "" : String(value)}
+        pairLabel={pair}
         invalid={Boolean(error)}
         disabled={locked}
         placeholder={field.placeholder ?? "0"}

@@ -185,9 +185,19 @@ describe("the dependency graph points one way", () => {
       "fx",
       "currency",
     ];
-    for (const book of ["cash-bank", "journal", "subledger"]) {
+    // The Cash Bank Book is two files: the book itself and the rate layers a
+    // foreign resource holds. They are one module and may name each other;
+    // neither may name anything outside the kernel.
+    const BOOKS = ["cash-bank", "cash-bank-layers", "journal", "subledger"];
+    const SIBLINGS: Record<string, string[]> = {
+      "cash-bank": ["cash-bank-layers"],
+      "cash-bank-layers": ["cash-bank"],
+    };
+
+    for (const book of BOOKS) {
+      const allowed = [...KERNEL, ...(SIBLINGS[book] ?? [])];
       const leaked = sibaImports(sibaModule(book).text).filter(
-        (d) => !KERNEL.includes(d)
+        (d) => !allowed.includes(d)
       );
       assert.deepEqual(
         leaked,

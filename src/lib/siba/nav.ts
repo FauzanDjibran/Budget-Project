@@ -175,6 +175,14 @@ export const MODULES: NavModule[] = [
             desc: "Saldo awal, penerimaan, pengeluaran, dan saldo akhir setiap resource kas dan bank.",
             permission: "REPORT_CASH_BANK_BALANCE_VIEW",
           },
+          {
+            key: "report_cash_bank_layer",
+            slug: "report/cash-bank-layer",
+            name: "Posisi Layer Kurs",
+            icon: "layers",
+            desc: "Layer kurs setiap resource mata uang asing dan sisa pada masing-masing kurs.",
+            permission: "REPORT_CASH_BANK_LAYER_VIEW",
+          },
           // The six subject books, from the one catalogue that declares them.
           // Listed individually rather than behind a single entry with a book
           // picker, because each carries its own permission: who may read the

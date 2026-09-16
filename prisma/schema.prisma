@@ -328,6 +328,7 @@ model SysDocType {
 
   transaction_lines FinCashBankTransactionLine[]
   ledger_entries    CashBankLedger[]
+  cash_bank_layers  CashBankLayer[]
   journals          AccJournal[]
   subledger_entries SubLedger[]
 
@@ -451,6 +452,7 @@ model MCashBank {
 
   transactions     FinCashBankTransaction[]
   ledger           CashBankLedger[]
+  layers           CashBankLayer[]
   book_balance     CashBankBalance?
   funding_requests FinFundingRequest[]
 
@@ -559,6 +561,86 @@ model CashBankBalance {
   cash_bank MCashBank @relation(fields: [cash_bank_id], references: [id])
 
   @@map("cash_bank_balance")
+}
+
+// ------------------------------------------------------------- rate layers
+
+enum CashBankLayerStatus {
+  /// Still holds currency, and may be chosen for a payment.
+  Open
+  /// Drawn down to nothing. Kept for audit, never offered again.
+  Exhausted
+  /// Collapsed by a period-end revaluation. Nothing writes this yet — the
+  /// closing process is the next scope — but a layer's status has to be able
+  /// to reach it, because revaluation is the one sanctioned way layers are
+  /// consolidated and it must not arrive as a change to an append-only shape.
+  ClosedByRevaluation
+}
+
+/// A rate layer: currency a foreign resource acquired at one known kurs.
+///
+/// A **base-currency resource has no layers at all** — it holds rupiah, which
+/// is already the measure everything is reported in. Layers exist because
+/// foreign currency bought at 15.000 and foreign currency bought at 16.000 are
+/// not interchangeable: spending one rather than the other produces a
+/// different gain or loss, and that is a decision somebody makes rather than an
+/// average the system computes.
+///
+/// **A layer is identified by the event that created it, never by its rate.**
+/// Two receipts at an identical kurs are two layers and are never joined. That
+/// is why a user picks a *layer* — "the one from 28 January" — and not a rate:
+/// with three layers at 15.000, "use the 15.000" names none of them.
+///
+/// **The rate is immutable for the layer's life.** Consumption releases base in
+/// proportion to what is left, so `base_remaining / foreign_remaining` equals
+/// `rate` throughout — which is what makes a layer's rate stable against being
+/// spent, and what lets the account's own weighted-average rate stay a
+/// reporting figure that values nothing.
+///
+/// Unlike the books beside it this table is **mutable**, and deliberately: the
+/// remaining balance is the figure a payment is checked against, and it is what
+/// the user picks from. The immutable record of what was consumed lives on the
+/// documents that consumed it.
+model CashBankLayer {
+  id           Int    @id @default(autoincrement())
+  layer_no     String @unique
+  cash_bank_id Int
+
+  /// Drives FIFO ordering, which governs *display* only. Consumption is always
+  /// the user's explicit choice — an implementation that consumed oldest-first
+  /// on its own would not be this feature.
+  acquisition_date DateTime @db.Date
+  /// Tiebreaker within a date, so ordering is total rather than merely mostly.
+  acquisition_seq  Int
+
+  /// The kurs this currency was acquired at, to the base currency. Immutable.
+  rate             Decimal @db.Decimal(18, 6)
+  foreign_original Decimal @db.Decimal(18, 2)
+  base_original    Decimal @db.Decimal(18, 2)
+  /// What is left. Drawn down by payments; never edited by hand.
+  foreign_remaining Decimal @db.Decimal(18, 2)
+  base_remaining    Decimal @db.Decimal(18, 2)
+
+  status CashBankLayerStatus @default(Open)
+
+  /// What brought the currency in — the same weak document pair every book
+  /// uses. Null for the opening layer, whose event is the registration itself.
+  source_doc_type_id Int?
+  source_doc_id      Int?
+
+  note String?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  cash_bank       MCashBank   @relation(fields: [cash_bank_id], references: [id])
+  source_doc_type SysDocType? @relation(fields: [source_doc_type_id], references: [id])
+
+  @@index([cash_bank_id, status, acquisition_date, acquisition_seq])
+  @@index([source_doc_type_id, source_doc_id])
+  @@map("cash_bank_layer")
 }
 
 // ----------------------------------------------------------------- subledger

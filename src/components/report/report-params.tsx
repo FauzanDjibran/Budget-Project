@@ -34,12 +34,19 @@ export function ReportParams({
   subjectLabel,
   allLabel,
   companyId,
+  dateless = false,
 }: {
   slug: string;
   resources: RefOption[];
   cashBankId: number | null;
   from: string;
   to: string;
+  /**
+   * A report whose answer is a standing position rather than a period's
+   * movement takes no date range, and showing an inert one would invite a
+   * reader to set it and wonder why nothing changed.
+   */
+  dateless?: boolean;
   subjectRequired: boolean;
   subjectLabel: string;
   /** Copy for "no subject chosen", where the report allows it. */
@@ -54,7 +61,7 @@ export function ReportParams({
   const [start, setStart] = useState(from);
   const [end, setEnd] = useState(to);
 
-  const invalidRange = Boolean(start && end && start > end);
+  const invalidRange = !dateless && Boolean(start && end && start > end);
   const missingSubject = subjectRequired && !subject;
 
   const run = () => {
@@ -64,8 +71,7 @@ export function ReportParams({
         reportHref(slug, {
           company: companyId ?? null,
           cashBank: subject,
-          from: start,
-          to: end,
+          ...(dateless ? {} : { from: start, to: end }),
         })
       );
     });
@@ -83,16 +89,20 @@ export function ReportParams({
         />
       </div>
 
-      <span className="rsep" />
+      {!dateless && (
+        <>
+          <span className="rsep" />
 
-      <span className="rl">Periode</span>
-      <div className="rf date">
-        <DateInput value={start} invalid={invalidRange} onChange={setStart} />
-      </div>
-      <span className="rl">s/d</span>
-      <div className="rf date">
-        <DateInput value={end} invalid={invalidRange} onChange={setEnd} />
-      </div>
+          <span className="rl">Periode</span>
+          <div className="rf date">
+            <DateInput value={start} invalid={invalidRange} onChange={setStart} />
+          </div>
+          <span className="rl">s/d</span>
+          <div className="rf date">
+            <DateInput value={end} invalid={invalidRange} onChange={setEnd} />
+          </div>
+        </>
+      )}
 
       <button
         className="btn primary sm"
