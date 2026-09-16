@@ -3,6 +3,7 @@ import { UserForm } from "@/components/settings/user-form";
 import { actorCan } from "@/lib/siba/access";
 import { requirePermission } from "@/lib/siba/auth";
 import { assignableRoles, getUser } from "@/lib/siba/user-admin";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
 export const dynamic = "force-dynamic";
 
@@ -24,19 +25,22 @@ export default async function UserDetailPage({
   const assigned = roles.filter((r) => user.role_labels.includes(r.label)).map((r) => r.id);
 
   return (
-    <UserForm
-      mode="view"
-      user={user}
-      roles={roles}
-      assignedRoleIds={assigned}
-      isSelf={user.id === actor.user.id}
-      can={{
-        edit: actorCan(actor, "USER_EDIT"),
-        assignRoles: canAssign,
-        resetPassword: actorCan(actor, "USER_PASSWORD_RESET"),
-        activate: actorCan(actor, "USER_ACTIVATE"),
-        deactivate: actorCan(actor, "USER_DEACTIVATE"),
-      }}
-    />
+    <>
+      <UserForm
+        mode="view"
+        user={user}
+        roles={roles}
+        assignedRoleIds={assigned}
+        isSelf={user.id === actor.user.id}
+        can={{
+          edit: actorCan(actor, "USER_EDIT"),
+          assignRoles: canAssign,
+          resetPassword: actorCan(actor, "USER_PASSWORD_RESET"),
+          activate: actorCan(actor, "USER_ACTIVATE"),
+          deactivate: actorCan(actor, "USER_DEACTIVATE"),
+        }}
+      />
+      <RecordHistoryCard entityKey="sys_user" rowId={user.id} />
+    </>
   );
 }

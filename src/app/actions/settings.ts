@@ -84,6 +84,7 @@ export async function saveSystemDefaults(
           entity_key: "sys_setting",
           row_id: row.id,
           action: "UPDATE",
+          event: "update",
           by: actorId,
         },
       });

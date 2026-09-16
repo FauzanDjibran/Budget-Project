@@ -10,6 +10,7 @@ import {
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
 import { budgetRealizations } from "@/lib/siba/finance";
 import { userEmails } from "@/lib/siba/users";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
 export const dynamic = "force-dynamic";
 
@@ -33,16 +34,19 @@ export default async function Page({
   ]);
 
   return (
-    <BudgetForm
-      mode="view"
-      budget={budget}
-      refs={refs}
-      mappings={mappings}
-      month={month}
-      createdByEmail={emails[budget.created_by]}
-      updatedByEmail={budget.updated_by ? emails[budget.updated_by] : undefined}
-      can={budgetAbilities(actor.permissions)}
-      realizations={realizations}
-    />
+    <>
+      <BudgetForm
+        mode="view"
+        budget={budget}
+        refs={refs}
+        mappings={mappings}
+        month={month}
+        createdByEmail={emails[budget.created_by]}
+        updatedByEmail={budget.updated_by ? emails[budget.updated_by] : undefined}
+        can={budgetAbilities(actor.permissions)}
+        realizations={realizations}
+      />
+      <RecordHistoryCard entityKey="bud_budget" rowId={budget.id} />
+    </>
   );
 }

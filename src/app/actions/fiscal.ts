@@ -84,6 +84,7 @@ export async function transitionFiscalYear(
       entity_key: "acc_fiscal_year",
       row_id: id,
       action: "UPDATE",
+      event: action,
       by: actorId,
     },
   });

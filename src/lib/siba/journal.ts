@@ -143,6 +143,7 @@ export async function postJournal(
       entity_key: "acc_journal",
       row_id: journal.id,
       action: "TAMBAH",
+      event: "create",
       by: input.actorId,
     },
   });

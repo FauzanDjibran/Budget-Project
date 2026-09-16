@@ -217,7 +217,7 @@ export async function createTransaction(
     },
   });
 
-  await audit(created.id, "TAMBAH", g.actor.user.id);
+  await audit(created.id, "TAMBAH", "create", g.actor.user.id);
   revalidateFinance(created.id);
   return { ok: true, id: created.id, transaction_no };
 }
@@ -303,7 +303,7 @@ export async function updateTransaction(
     });
   });
 
-  await audit(id, "UPDATE", g.actor.user.id);
+  await audit(id, "UPDATE", "update", g.actor.user.id);
   revalidateFinance(id);
   return { ok: true, id };
 }
@@ -365,7 +365,7 @@ export async function transitionTransaction(
       where: { id },
       data: { status: "Cancelled", updated_by: g.actor.user.id },
     });
-    await audit(id, "UPDATE", g.actor.user.id);
+    await audit(id, "UPDATE", "cancel", g.actor.user.id);
     revalidateFinance(id);
     return { ok: true, status: "Cancelled", message: transition.done };
   }
@@ -376,7 +376,7 @@ export async function transitionTransaction(
   const posted = await applyPosting(id, g.actor.user.id);
   if (!posted.ok) return { ok: false, errors: posted.errors };
 
-  await audit(id, "UPDATE", g.actor.user.id);
+  await audit(id, "UPDATE", "post", g.actor.user.id);
   revalidateFinance(id);
 
   return {
@@ -388,12 +388,25 @@ export async function transitionTransaction(
   };
 }
 
-async function audit(rowId: number, action: "TAMBAH" | "UPDATE", by: number) {
+/**
+ * One row in the trace.
+ *
+ * Post, Cancel and Submit are all UPDATEs, so `event` is what separates them:
+ * without it a document posted after being drafted and edited would show three
+ * indistinguishable rows and the panel could not say when the money moved.
+ */
+async function audit(
+  rowId: number,
+  action: "TAMBAH" | "UPDATE",
+  event: string,
+  by: number
+) {
   await prisma.auditLog.create({
     data: {
       entity_key: "fin_cash_bank_transaction",
       row_id: rowId,
       action,
+      event,
       by,
     },
   });

@@ -5,6 +5,7 @@ import { FiscalPeriods } from "@/components/accounting/fiscal-periods";
 import { FiscalYearActions } from "@/components/accounting/fiscal-year-actions";
 import { CashBankBookCard } from "@/components/master/cash-bank-book-card";
 import { EntityForm } from "@/components/master/entity-form";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 import { EntityLocked } from "@/components/master/entity-locked";
 import { can as actorHas, requirePermission } from "@/lib/siba/auth";
 import { isCompanyEntity } from "@/lib/siba/company";
@@ -219,6 +220,7 @@ export async function EntityDetailPage({
           yearLabel={String(row.year_label ?? "")}
           yearStatus={String(row.status ?? "")}
         />
+        <RecordHistoryCard entityKey={entity.key} rowId={row.id} />
       </>
     );
   }
@@ -226,7 +228,14 @@ export async function EntityDetailPage({
   // A Cash & Bank resource is the one master with a book behind it, so its
   // detail says what that book adds up to and shows the way into it. The book
   // itself is a report, not a property of the master — see `CashBankBookCard`.
-  if (entity.key !== "m_cash_bank") return form;
+  if (entity.key !== "m_cash_bank") {
+    return (
+      <>
+        {form}
+        <RecordHistoryCard entityKey={entity.key} rowId={row.id} />
+      </>
+    );
+  }
 
   const summary = await cashBankBookSummary(row.id);
   const currencyLabel =
@@ -243,6 +252,7 @@ export async function EntityDetailPage({
         currencyLabel={currencyLabel}
         canViewReport={await actorHas("REPORT_CASH_BANK_LEDGER_VIEW")}
       />
+      <RecordHistoryCard entityKey={entity.key} rowId={row.id} />
     </>
   );
 }
@@ -291,14 +301,17 @@ export async function EntityEditPage({
   const emails = await userEmails([row.created_by as number, row.updated_by as number]);
 
   return (
-    <EntityForm
-      entity={entity}
-      mode="edit"
-      row={row}
-      refs={refs}
-      createdByEmail={emails[row.created_by as number]}
-      updatedByEmail={emails[row.updated_by as number]}
-      can={abilitiesFor(entity.key, actor.permissions)}
-    />
+    <>
+      <EntityForm
+        entity={entity}
+        mode="edit"
+        row={row}
+        refs={refs}
+        createdByEmail={emails[row.created_by as number]}
+        updatedByEmail={emails[row.updated_by as number]}
+        can={abilitiesFor(entity.key, actor.permissions)}
+      />
+      <RecordHistoryCard entityKey={entity.key} rowId={row.id} />
+    </>
   );
 }

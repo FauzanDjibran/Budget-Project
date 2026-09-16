@@ -151,7 +151,7 @@ export async function createBudget(values: BudgetValues): Promise<BudgetResult> 
     },
   });
 
-  await audit(created.id, "TAMBAH", g.actor.user.id);
+  await audit(created.id, "TAMBAH", "create", g.actor.user.id);
   revalidateBudget(created.id);
   return { ok: true, id: created.id, budget_no };
 }
@@ -195,7 +195,7 @@ export async function updateBudget(
     },
   });
 
-  await audit(id, "UPDATE", g.actor.user.id);
+  await audit(id, "UPDATE", "update", g.actor.user.id);
   revalidateBudget(id);
   return { ok: true, id };
 }
@@ -259,15 +259,29 @@ export async function transitionBudget(
   }
 
   await prisma.budBudget.update({ where: { id }, data });
-  await audit(id, "UPDATE", g.actor.user.id);
+  // The transition key, not a generic edit: this is the row that lets the
+  // history say who approved and who rejected.
+  await audit(id, "UPDATE", action, g.actor.user.id);
   revalidateBudget(id);
 
   return { ok: true, status: transition.to, message: transition.done };
 }
 
-async function audit(rowId: number, action: "TAMBAH" | "UPDATE", by: number) {
+/**
+ * One row in the trace.
+ *
+ * `event` is what makes the history readable: every transition here is an
+ * UPDATE, so without it a Budget's panel would report three identical edits
+ * where a submission, an approval and a rejection actually happened.
+ */
+async function audit(
+  rowId: number,
+  action: "TAMBAH" | "UPDATE",
+  event: string,
+  by: number
+) {
   await prisma.auditLog.create({
-    data: { entity_key: "bud_budget", row_id: rowId, action, by },
+    data: { entity_key: "bud_budget", row_id: rowId, action, event, by },
   });
 }
 

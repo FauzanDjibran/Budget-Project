@@ -10,6 +10,7 @@ import {
 } from "@/lib/siba/funding";
 import { purposeLabel } from "@/lib/siba/rules";
 import { intercompanyBridge } from "@/lib/siba/system-settings";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
 export const dynamic = "force-dynamic";
 
@@ -57,23 +58,26 @@ export default async function Page({
     : null;
 
   return (
-    <FundingDetail
-      request={request}
-      lines={lines}
-      resources={resources}
-      companyLabel={
-        refs.companies.find((c) => c.id === doc?.company_id)?.label ?? "anak"
-      }
-      currencyLabel={
-        refs.currencies.find((c) => c.id === request.currency_id)?.label ?? "IDR"
-      }
-      purposeLabel={doc ? purposeLabel(doc.purpose) : "—"}
-      partnerLabel={
-        partner ? `${partner.partner_label} - ${partner.partner_name}` : null
-      }
-      providerLabel={provider ? `${provider.label} - ${provider.name}` : null}
-      bridgeMissing={bridge.ok ? [] : bridge.missing}
-      canConfirm={actorCan(actor, "FUNDING_REQUEST_CONFIRM")}
-    />
+    <>
+      <FundingDetail
+        request={request}
+        lines={lines}
+        resources={resources}
+        companyLabel={
+          refs.companies.find((c) => c.id === doc?.company_id)?.label ?? "anak"
+        }
+        currencyLabel={
+          refs.currencies.find((c) => c.id === request.currency_id)?.label ?? "IDR"
+        }
+        purposeLabel={doc ? purposeLabel(doc.purpose) : "—"}
+        partnerLabel={
+          partner ? `${partner.partner_label} - ${partner.partner_name}` : null
+        }
+        providerLabel={provider ? `${provider.label} - ${provider.name}` : null}
+        bridgeMissing={bridge.ok ? [] : bridge.missing}
+        canConfirm={actorCan(actor, "FUNDING_REQUEST_CONFIRM")}
+      />
+      <RecordHistoryCard entityKey="fin_funding_request" rowId={request.id} />
+    </>
   );
 }

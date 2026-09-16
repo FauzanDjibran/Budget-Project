@@ -88,10 +88,11 @@ async function audit(
   entityKey: string,
   rowId: number,
   action: "TAMBAH" | "UPDATE",
+  event: string,
   by: number
 ): Promise<void> {
   await prisma.auditLog.create({
-    data: { entity_key: entityKey, row_id: rowId, action, by },
+    data: { entity_key: entityKey, row_id: rowId, action, event, by },
   });
 }
 
@@ -364,7 +365,7 @@ export async function createUser(
     select: { id: true, user_code: true },
   });
 
-  await audit("sys_user", created.id, "TAMBAH", actor.user.id);
+  await audit("sys_user", created.id, "TAMBAH", "create", actor.user.id);
   return { ok: true, id: created.id };
 }
 
@@ -396,7 +397,7 @@ export async function updateUser(
     },
   });
 
-  await audit("sys_user", id, "UPDATE", actor.user.id);
+  await audit("sys_user", id, "UPDATE", "update", actor.user.id);
   return { ok: true, id };
 }
 
@@ -443,7 +444,7 @@ export async function setUserRoles(
     prisma.sysUser.update({ where: { id }, data: { updated_by: actor.user.id } }),
   ]);
 
-  await audit("sys_user", id, "UPDATE", actor.user.id);
+  await audit("sys_user", id, "UPDATE", "roles", actor.user.id);
   return { ok: true, id };
 }
 
@@ -481,7 +482,7 @@ export async function setUserStatus(
   // browsing until its cookie happens to expire.
   if (status === "Inactive") await revokeSessionsForUser(id);
 
-  await audit("sys_user", id, "UPDATE", actor.user.id);
+  await audit("sys_user", id, "UPDATE", status === "Active" ? "activate" : "deactivate", actor.user.id);
   return { ok: true, id, status };
 }
 
@@ -507,7 +508,7 @@ export async function resetUserPassword(
   });
   await revokeSessionsForUser(id);
 
-  await audit("sys_user", id, "UPDATE", actor.user.id);
+  await audit("sys_user", id, "UPDATE", "reset", actor.user.id);
   return { ok: true, id };
 }
 
@@ -563,7 +564,7 @@ export async function createRole(actor: Actor, input: RoleInput): Promise<AdminR
     select: { id: true },
   });
 
-  await audit("sys_role", created.id, "TAMBAH", actor.user.id);
+  await audit("sys_role", created.id, "TAMBAH", "create", actor.user.id);
   return { ok: true, id: created.id };
 }
 
@@ -596,7 +597,7 @@ export async function updateRole(
     },
   });
 
-  await audit("sys_role", id, "UPDATE", actor.user.id);
+  await audit("sys_role", id, "UPDATE", "update", actor.user.id);
   return { ok: true, id };
 }
 
@@ -619,7 +620,7 @@ export async function setRoleStatus(
     data: { status, updated_by: actor.user.id },
   });
 
-  await audit("sys_role", id, "UPDATE", actor.user.id);
+  await audit("sys_role", id, "UPDATE", status === "Active" ? "activate" : "deactivate", actor.user.id);
   return { ok: true, id, status };
 }
 
@@ -696,7 +697,7 @@ export async function setRolePermissions(
     prisma.sysRole.update({ where: { id }, data: { updated_by: actor.user.id } }),
   ]);
 
-  await audit("sys_role", id, "UPDATE", actor.user.id);
+  await audit("sys_role", id, "UPDATE", "permissions", actor.user.id);
   return { ok: true, id };
 }
 

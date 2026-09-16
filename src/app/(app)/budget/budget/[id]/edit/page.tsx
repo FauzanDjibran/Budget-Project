@@ -9,6 +9,7 @@ import {
   monthOfDate,
 } from "@/lib/siba/budget";
 import { budgetAbilities, budgetIsEditable } from "@/lib/siba/budget-workflow";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
 export const dynamic = "force-dynamic";
 
@@ -40,13 +41,16 @@ export default async function Page({
   ]);
 
   return (
-    <BudgetForm
-      mode="edit"
-      budget={budget}
-      refs={refs}
-      mappings={mappings}
-      month={month}
-      can={budgetAbilities(actor.permissions)}
-    />
+    <>
+      <BudgetForm
+        mode="edit"
+        budget={budget}
+        refs={refs}
+        mappings={mappings}
+        month={month}
+        can={budgetAbilities(actor.permissions)}
+      />
+      <RecordHistoryCard entityKey="bud_budget" rowId={budget.id} />
+    </>
   );
 }

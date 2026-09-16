@@ -13,6 +13,7 @@ import {
   transactionAbilities,
   transactionIsEditable,
 } from "@/lib/siba/transaction-workflow";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
 export const dynamic = "force-dynamic";
 
@@ -43,14 +44,17 @@ export default async function Page({
   ]);
 
   return (
-    <TransactionForm
-      mode="edit"
-      transaction={transaction}
-      lines={lines}
-      refs={refs}
-      purposes={purposeOptions()}
-      mappings={mappings}
-      can={transactionAbilities(actor.permissions)}
-    />
+    <>
+      <TransactionForm
+        mode="edit"
+        transaction={transaction}
+        lines={lines}
+        refs={refs}
+        purposes={purposeOptions()}
+        mappings={mappings}
+        can={transactionAbilities(actor.permissions)}
+      />
+      <RecordHistoryCard entityKey="fin_cash_bank_transaction" rowId={transaction.id} />
+    </>
   );
 }

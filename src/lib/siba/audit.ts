@@ -160,3 +160,69 @@ export async function recentActivity(limit = 6): Promise<ActivityEntry[]> {
     title: titles.get(r.entity_key)?.get(r.row_id) ?? null,
   }));
 }
+
+// ------------------------------------------------------- one record's history
+
+export type HistoryEntry = {
+  id: number;
+  at: Date;
+  action: string;
+  /** The transition key, or null for a row written before `event` existed. */
+  event: string | null;
+  /** Who did it — a name, falling back to an email, then to nothing. */
+  by: string | null;
+};
+
+export type RecordHistory = {
+  entries: HistoryEntry[];
+  /** How many rows exist in total, which is not `entries.length` once capped. */
+  total: number;
+};
+
+/**
+ * Everything that has happened to one record, newest first.
+ *
+ * Newest first because a history is read backwards: the entry a reader opened
+ * the panel for is the most recent one, and putting the oldest at the top would
+ * push it below the fold on any record with a long life. Older context is what
+ * scrolling is for.
+ *
+ * Capped, and the cap is visible: `total` is counted separately so the panel can
+ * say "menampilkan 10 dari 47" rather than silently presenting a slice as if it
+ * were the whole story. A document's lifecycle fits inside the cap comfortably;
+ * a master record edited for years does not, and should not pretend to.
+ *
+ * Only `audit_log` is read here. Resolving *what changed* is not possible —
+ * the table stores no snapshot (CLAUDE.md §17) — and inventing one would be
+ * worse than the panel saying only that a change happened, and by whom.
+ */
+export async function recordHistory(
+  entityKey: string,
+  rowId: number,
+  limit = 10
+): Promise<RecordHistory> {
+  const [rows, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where: { entity_key: entityKey, row_id: rowId },
+      orderBy: [{ at: "desc" }, { id: "desc" }],
+      take: limit,
+    }),
+    prisma.auditLog.count({
+      where: { entity_key: entityKey, row_id: rowId },
+    }),
+  ]);
+  if (!rows.length) return { entries: [], total };
+
+  const actors = await userLabels([...new Set(rows.map((r) => r.by))]);
+
+  return {
+    entries: rows.map((r) => ({
+      id: r.id,
+      at: r.at,
+      action: r.action,
+      event: r.event,
+      by: actors.get(r.by) ?? null,
+    })),
+    total,
+  };
+}

@@ -87,6 +87,7 @@ export async function updateOwnProfile(
       entity_key: "sys_user",
       row_id: actor.user.id,
       action: "UPDATE",
+      event: "update",
       by: actor.user.id,
     },
   });
@@ -124,6 +125,7 @@ export async function changeOwnPassword(
       entity_key: "sys_user",
       row_id: actor.user.id,
       action: "UPDATE",
+      event: "password",
       by: actor.user.id,
     },
   });

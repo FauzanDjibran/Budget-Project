@@ -61,7 +61,7 @@ or invariants that assume a particular row exists.
 | Subject books (subledgers) | Done — append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. Six Report Views under Finance › Laporan. No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
-| Dashboard | Done |
+| Dashboard | Done — the commitment funnel (submitted → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
@@ -147,6 +147,7 @@ of its own.
 | Entity permissions | `src/lib/siba/entity-access.ts` | Registry entity -> permission per operation |
 | Data access | `src/lib/siba/records.ts` | Generic list/get/options/computed, COA tree, the account rules the actions enforce; `server-only` |
 | Record naming | `src/lib/siba/record-title.ts` | How a record names itself, for forms, lists and the audit log; client-safe |
+| Audit vocabulary | `src/lib/siba/audit-events.ts` | An `event` key -> its past-tense label, icon and tone, read from the owning workflow table; client-safe |
 | Audit reading | `src/lib/siba/audit.ts` | `entity_key` -> subject, `row_id` -> title, each resolved by the owning module; `server-only` |
 | Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, and reading them back; `server-only` |
 | Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open, its permission, and why Closed is not reachable; client-safe |
@@ -163,6 +164,7 @@ of its own.
 | Finance data | `src/lib/siba/finance.ts` | Header and line enforcement, Budget eligibility, `applyPosting`, the funded posting both Companies share, `CBT-` numbering, realization trace; `server-only` |
 | Funding Request | `src/lib/siba/funding.ts` | Raising, withdrawing and confirming a request, `FR-` numbering; depends on Finance and never the reverse; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
+| Dashboard composition | `src/lib/siba/dashboard.ts` | The commitment funnel, the cash position and the setup gaps, asked of each owning module; names no table itself; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Budget writes | `src/app/actions/budget.ts` | Create, edit, and the lifecycle transitions |
 | Finance writes | `src/app/actions/finance.ts` | Create, edit, the eligible-Budget query, and Post / Cancel |
@@ -218,8 +220,8 @@ pair is what lets a book survive the module that wrote into it being replaced.
 `format`, `account-code`, `document-number`, `period`. Everything in it is needed by
 several modules and would never be extracted on its own.
 
-**Three boundaries are still crossed**, baselined in the test rather than hidden — see
-§17. Adding a fourth fails the suite.
+**Two boundaries are still crossed**, baselined in the test rather than hidden — see
+§17. Adding a third fails the suite.
 
 ### Data flow for a Master page
 
@@ -332,10 +334,13 @@ src/
                          one subject, SubjectParams for several), and the report
                          bodies: Cash Bank Ledger, Cash Bank Balance, General
                          Ledger, Trial Balance, Subledger
+    dashboard/           Dashboard — the funnel, the cash table, the positions
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
-    accounting/          FiscalPeriods (shown inside a Fiscal Year)
+    accounting/          FiscalPeriods (shown inside a Fiscal Year), JournalList
     ui/                  Combobox, Select, DateInput, MoneyInput, SearchField,
+                         RecordHistory + RecordHistoryCard (a record's own
+                         audit trail, at the foot of every form),
                          Dialog, ConfirmDialog, ToastProvider
   lib/
     prisma.ts            Client singleton with adapter; the cache is keyed on the
@@ -864,6 +869,28 @@ Implemented and enforced:
     balance at registration stays as it is, because that writes a real ledger entry
     (§29) rather than storing a figure on the master.
 
+63. **Every write names the step it was, and a record carries its own
+    history.** `audit_log.action` is TAMBAH / UPDATE / HAPUS, which cannot
+    tell a submission from an approval from a post — all three are UPDATEs. The
+    nullable `event` column carries the transition key the owning module's
+    workflow table already declares, and `lib/siba/audit-events.ts` turns that
+    key into a past-tense label by reading the same table the button reads. A
+    lifecycle step that writes no `event` reports as a bare "Diubah", which is
+    the one thing the panel exists to stop.
+64. **A history is the last thing on a form, and it is newest-first.** Every
+    form with a saved record ends with `RecordHistoryCard` — after the summary,
+    after a Fiscal Year's periods, after the Cash & Bank book card. Newest at
+    the top because a history is read backwards: the entry somebody opened the
+    panel for is the most recent one, and oldest-first would push it below the
+    fold on a long-lived record. It is capped at ten and **says so**, because a
+    slice presented as the whole story is worse than a stated cap.
+65. **The history states only what the log knows.** Who, when, and which step —
+    never what changed, because `audit_log` stores no snapshot (§17). An event
+    the build cannot name falls back to the coarse verb rather than guessing,
+    and a consequence nobody chose — a Budget closing because a posting reached
+    its planned amount — is marked as automatic rather than attributed to the
+    person who posted.
+
 19. **22 transaction purposes.** A purpose is exactly one budget category × one partner
     category × one direction, which is what lets it resolve to a single account. It is
     the field a Cash Bank Transaction's header starts from, and it decides the
@@ -1208,7 +1235,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
   other capability. A user may hold both, one, or **neither** — neither means
   no Company-scoped record is readable at all. The Company *selection* is a
   per-page control (`?company=`) on the screens where it is genuinely
-  ambiguous: Partner, Cash & Bank, Chart of Accounts and the account mappings.
+  ambiguous: Partner, Cash & Bank, Chart of Accounts, the account mappings and
+  the Journal register.
   **There is no Company control in the topbar.**
 - **Reason:** A global context in the topbar made every page's contents depend
   on a control somewhere else, and it answered a question most screens never
@@ -1773,6 +1801,95 @@ they relate. Keep the table; keep it out of the UI's write path.
   and the vocabulary are shared, the bodies are not.
 - **Status:** Frozen, current.
 
+### A record's history lives on its own form (FROZEN)
+- **Decision:** Every form with a saved record ends with `RecordHistoryCard` —
+  the registry entities, Budget, Cash Bank Transaction, Funding Request, User
+  and Role, on both the view and the edit page. One component
+  (`components/ui/record-history.tsx`), one CSS vocabulary (`.alog` / `.ae`,
+  compacted in place rather than duplicated), newest first, capped at ten with
+  the total stated. It is never shown on a `new` page, because an unsaved
+  record has no history.
+- **The column that makes it readable.** `audit_log` gained a nullable
+  `event`. Every lifecycle transition was an UPDATE, so a Budget's panel would
+  have read "Diubah · Diubah · Diubah" and answered none of the questions a
+  history is opened for. `event` stores the **transition key the workflow table
+  already declares** — `submit`, `approve`, `post`, `confirm`, `withdraw`,
+  `open`, `close`, `activate` / `deactivate` — and the Indonesian label is read
+  back from that table rather than stored, so a new lifecycle step is a row in
+  `budget-workflow.ts` or its siblings and **not a migration**.
+- **Why not extend `AuditAction`.** A single global enum turns every module's
+  private vocabulary into a shared migration and puts label text in the database
+  where the transition table owns it. Nullable text also keeps every row
+  written before the column honest: they report the coarse verb, because that is
+  genuinely all they know.
+- **Impact:** `withdrawFundingRequest` wrote **no audit row at all** and now
+  writes one — a request taken back used to leave no trace of who took it back.
+  `markTransactionPending` / `markTransactionCancelled` / `writeFundedPosting`
+  write the document's row inside the caller's transaction, so a rolled-back
+  funding cannot leave a history entry for something that never happened.
+  `tests/audit.test.ts` fails if a workflow table gains a transition the
+  catalogue cannot name.
+- **`recentActivity()` is still uncalled and still untouched.** This is the
+  per-record reader (`recordHistory`), not the dashboard feed — the feed stays
+  off the dashboard (§12, MECE) pending the user's own placement for it.
+- **Do not change unless:** explicitly instructed. **Never add a lifecycle
+  transition without an `event` on its audit write and a label beside its
+  workflow table**, never store the label in the database, never make the panel
+  writable, and do not claim in it what changed — the log holds no snapshot.
+- **Status:** Frozen, current.
+
+### The dashboard is MECE, and a Draft is not on it (FROZEN)
+- **Decision:** The dashboard answers four questions and no more — what is
+  waiting and on whom, where the money is, what the company owes and is owed,
+  and what is broken. Every figure appears **exactly once**, and the three
+  funnel stages **partition** committed money: `Menunggu Persetujuan` (Budget
+  `Submitted`), `Siap Direalisasi` (approved outstanding **minus** what a
+  `Pending` document already holds), and `Menunggu Konfirmasi Induk` (those
+  pending documents). **No Draft record appears anywhere** — not a Draft
+  Budget, not a Draft document.
+- **Reason:** The old page was six master-row counts, the same counts again
+  broken down per Company, and an audit feed — a statement of the master data
+  rather than of the business, and useless to somebody opening the app to find
+  out what to do. The MECE requirement is the user's, and it has teeth:
+  `realized_amount` is written only at Post (§10 rule 35), so an approved
+  Budget still reports its whole outstanding while a pending document is
+  holding part of it. Printing both unadjusted states the same money twice in
+  two costumes. Drafts are excluded on the user's reasoning that a draft "may
+  or may not happen yet" and so is not a business metric — which is also what
+  keeps a draft document's claim correctly inside the approved stage rather
+  than needing a stage of its own.
+- **Impact:** `src/lib/siba/dashboard.ts` composes the page by asking each
+  module about its own records — `submittedCommitments` / `approvedCommitments`
+  on Budget, `pendingCommitments` on Finance (which returns the per-Budget
+  claim map the subtraction needs), `openFundingRequests` on Funding,
+  `cashBookSummary`, `subledgerPositions`, `accountPositions`,
+  `unbalancedJournals`. It names no other module's table, which is what removed
+  the dashboard from `KNOWN_CROSSINGS`. It is a **leaf**: it depends on every
+  module and nothing depends on it. `tests/dashboard.test.ts` holds the
+  partition outright — stage two plus stage three equals the approved pool,
+  exactly — because that is the property a summary lives or dies by and it
+  cannot be seen by looking at the screen.
+- **The projection uses the approved pool only.** Cash is stated per currency
+  as `Saldo · Komitmen Keluar · Ekspektasi Masuk · Proyeksi`. Stage one is
+  deliberately not in it: a Budget nobody has approved is not yet a claim on
+  anyone's cash. The commitment figure is the funnel's total and is **not**
+  re-broken by stage there, because the tiles above already did that.
+- **The audit feed is gone from the dashboard, not from the system.**
+  `audit_log`, `lib/siba/audit.ts`, `recentActivity()` and the `.alog` CSS are
+  all untouched; `recentActivity()` simply has no caller for now, pending the
+  user's own placement for it.
+- **Permission is deliberately unfinished.** The page checks
+  `MENU_DASHBOARD_ACCESS` and shows every section to whoever holds it, by the
+  user's instruction to settle the content before the permission model. Reads
+  are still Company-scoped through `accessibleCompanyIds`, and each section is
+  composed separately so gating later is a filter in `dashboardData` rather
+  than a rewrite.
+- **Do not change unless:** explicitly instructed. **Never put a Draft record
+  on the dashboard**, never state one figure in two cards, do not restore the
+  master-data counts or the per-Company spread of them, and do not add a stage
+  to the funnel without showing that it still partitions.
+- **Status:** Frozen, current.
+
 ### The Cash Bank Book is a report, not part of the master record
 - **Decision:** `Buku Kas & Bank` and `Saldo Kas & Bank` are their own menu entries
   under Finance › Laporan. The Cash & Bank master detail keeps a summary card — balance,
@@ -2203,6 +2320,17 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   with a conversion — they are the identity until a real rate source lands (§12).
 - Do **not** add a `BUDGET_CLOSE` permission or a close action; a Budget closes when
   realization reaches its planned amount, as a consequence of posting (§12).
+- Do **not** put a Draft record on the dashboard, state one figure in two of its
+  cards, or restore the master-data counts and their per-Company spread. The page
+  is MECE and its funnel partitions committed money (§12).
+- Do **not** add a lifecycle transition without writing its `event` on the audit
+  row and naming it in `lib/siba/audit-events.ts` — without both, the step shows
+  in every history as a bare "Diubah" (§10 rule 63, §12).
+- Do **not** store an audit label in the database, or backfill an `event` onto a
+  row that predates the column. The workflow table owns the wording, and an
+  inferred transition is a guess presented as a fact (§12).
+- Do **not** make the history panel writable, order it oldest-first, or drop the
+  "menampilkan N dari M" line when it is capped (§10 rule 64).
 - Do **not** let a Report View write anything, and do **not** give one a row action
   that mutates. A report reports (§10, §12).
 - Do **not** let a report read outside the reader's Company scope, and do **not**
@@ -2320,12 +2448,15 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
+| `recentActivity()` has no caller | The cross-record audit *feed* is still off the dashboard, pending the user's own plan for where it belongs. The per-record history is a separate reader (`recordHistory`) and is now on every form; `recentActivity()` itself remains unused. |
+| A history says who and when, never what | `audit_log` stores no field-level snapshot, so the panel reports that a record was edited and by whom, and cannot say which field moved. Adding a diff means storing one, which is a much larger change than the `event` column was. |
+| Rows written before `event` existed read as a bare verb | Rows written before the migration carry `event = null` and report "Dibuat" or "Diubah". They are not backfilled, because nothing in the table records which transition they actually were — inferring one from a timestamp would be a guess presented as a fact. |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |
-| The intercompany position has no subject-book view | It is carried by the two bridge accounts and read through the General Ledger, which is a deliberate deviation from concept doc §34/§37/§38 (§12). The consequence is that the subject books answer "which Partner moved?" and not "what does the anak owe the induk?" — that question is an account balance. If a book of it is ever wanted, it needs a subject that is a Company, which is a change to an append-only table. |
+| The intercompany position has no subject-book view | It is carried by the two bridge accounts and read through the General Ledger, which is a deliberate deviation from concept doc §34/§37/§38 (§12). The consequence is that the subject books answer "which Partner moved?" and not "what does the anak owe the induk?" — that question is an account balance, and the dashboard now states it from those two accounts so it is no longer reachable only by running the General Ledger for exactly the right one. If a book of it is ever wanted, it needs a subject that is a Company, which is a change to an append-only table. |
 | Tests cover security, Accounting, Budget, Finance, Funding, the books, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
-| Three module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a fourth fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) The dashboard counts rows from every module for its setup checklist — arguably fine for a cross-cutting screen, but it should ask each module for its own figure. (3) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
+| Two module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a third fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |
 

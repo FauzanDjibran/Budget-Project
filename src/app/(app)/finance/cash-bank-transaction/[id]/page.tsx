@@ -12,6 +12,7 @@ import {
 } from "@/lib/siba/finance";
 import { transactionAbilities } from "@/lib/siba/transaction-workflow";
 import { userEmails } from "@/lib/siba/users";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
 export const dynamic = "force-dynamic";
 
@@ -38,19 +39,22 @@ export default async function Page({
   ]);
 
   return (
-    <TransactionForm
-      mode="view"
-      transaction={transaction}
-      lines={lines}
-      refs={refs}
-      purposes={purposeOptions()}
-      mappings={mappings}
-      fundingRequestNo={request?.funding_request_no ?? null}
-      createdByEmail={emails[transaction.created_by]}
-      updatedByEmail={
-        transaction.updated_by ? emails[transaction.updated_by] : undefined
-      }
-      can={transactionAbilities(actor.permissions)}
-    />
+    <>
+      <TransactionForm
+        mode="view"
+        transaction={transaction}
+        lines={lines}
+        refs={refs}
+        purposes={purposeOptions()}
+        mappings={mappings}
+        fundingRequestNo={request?.funding_request_no ?? null}
+        createdByEmail={emails[transaction.created_by]}
+        updatedByEmail={
+          transaction.updated_by ? emails[transaction.updated_by] : undefined
+        }
+        can={transactionAbilities(actor.permissions)}
+      />
+      <RecordHistoryCard entityKey="fin_cash_bank_transaction" rowId={transaction.id} />
+    </>
   );
 }

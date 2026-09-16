@@ -536,7 +536,13 @@ export async function createRecord(
   });
 
   await prisma.auditLog.create({
-    data: { entity_key: entity.key, row_id: created.id, action: "TAMBAH", by: actor.user.id },
+    data: {
+      entity_key: entity.key,
+      row_id: created.id,
+      action: "TAMBAH",
+      event: "create",
+      by: actor.user.id,
+    },
   });
 
   revalidatePath(`/${entity.module}/${entity.slug}`);
@@ -577,7 +583,13 @@ export async function updateRecord(
   });
 
   await prisma.auditLog.create({
-    data: { entity_key: entity.key, row_id: id, action: "UPDATE", by: actor.user.id },
+    data: {
+      entity_key: entity.key,
+      row_id: id,
+      action: "UPDATE",
+      event: "update",
+      by: actor.user.id,
+    },
   });
 
   revalidatePath(`/${entity.module}/${entity.slug}`);
@@ -639,8 +651,17 @@ export async function toggleStatus(
     },
   });
 
+  // The status toggle is the only lifecycle a master record has, so it is
+  // recorded as the step it is rather than as an anonymous edit — otherwise a
+  // Partner's history could not say when it stopped being selectable.
   await prisma.auditLog.create({
-    data: { entity_key: entity.key, row_id: id, action: "UPDATE", by: actor.user.id },
+    data: {
+      entity_key: entity.key,
+      row_id: id,
+      action: "UPDATE",
+      event: nextActive ? "activate" : "deactivate",
+      by: actor.user.id,
+    },
   });
 
   revalidatePath(`/${entity.module}/${entity.slug}`);
