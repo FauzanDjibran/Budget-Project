@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Icon } from "@/components/icon";
+import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { Combobox } from "@/components/ui/combobox";
 import { useToast } from "@/components/ui/toast";
 import { saveSystemDefaults } from "@/app/actions/settings";
@@ -111,12 +112,6 @@ export function SystemDefaultForm({
             )}
           </div>
         </div>
-        <p className="ph-sub">
-          Nilai bawaan yang dipakai seluruh aplikasi. Default hanya mengisi
-          sebuah pilihan lebih dulu agar isian yang berulang tidak perlu dipilih
-          setiap kali — pengguna tetap dapat menggantinya, dan aturan yang
-          berlaku tidak berubah.
-        </p>
       </div>
 
       {errors._form && (
@@ -142,15 +137,20 @@ export function SystemDefaultForm({
             </div>
           </div>
 
-          <div className="card-b">
-            <div className="fsec">
-              <div className="frow">
+          <FormBody>
+            <FormSection>
+              <FormRow>
                 {systemDefaultsIn(group.key).map((def) => {
                   const value = values[def.key];
                   const list = options[def.key] ?? [];
                   return (
-                    <div className="fld" key={def.key}>
-                      <label>{def.name}</label>
+                    <Field
+                      key={def.key}
+                      label={def.name}
+                      span={4}
+                      help={def.help}
+                      error={errors[def.key]}
+                    >
                       {canEdit ? (
                         <Combobox
                           value={value ? Number(value) : null}
@@ -166,20 +166,12 @@ export function SystemDefaultForm({
                           option={list.find((o) => o.id === Number(value)) ?? null}
                         />
                       )}
-                      {errors[def.key] ? (
-                        <div className="err">
-                          <Icon name="warn" size={11} />
-                          {errors[def.key]}
-                        </div>
-                      ) : (
-                        <div className="help">{def.help}</div>
-                      )}
-                    </div>
+                    </Field>
                   );
                 })}
-              </div>
-            </div>
-          </div>
+              </FormRow>
+            </FormSection>
+          </FormBody>
         </div>
       ))}
 

@@ -9,6 +9,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { MoneyInput } from "@/components/ui/money-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
+import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import {
   createTransaction,
   listEligibleBudgets,
@@ -17,12 +18,7 @@ import {
   type TransactionValues,
 } from "@/app/actions/finance";
 import { requestFunding, withdrawFunding } from "@/app/actions/funding";
-import {
-  formatDate,
-  formatMoney,
-  formatNumber,
-  formatTimestamp,
-} from "@/lib/format";
+import { formatDate, formatMoney, formatNumber } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetMapping } from "@/lib/siba/budget";
 import type {
@@ -81,8 +77,6 @@ export function TransactionForm({
   mappings,
   defaultCurrencyId,
   fundingRequestNo,
-  createdByEmail,
-  updatedByEmail,
   can,
 }: {
   mode: TransactionFormMode;
@@ -95,8 +89,6 @@ export function TransactionForm({
   defaultCurrencyId?: number | null;
   /** The open request this document is waiting on, where it has one. */
   fundingRequestNo?: string | null;
-  createdByEmail?: string;
-  updatedByEmail?: string;
   can: TransactionAbilities;
 }) {
   const router = useRouter();
@@ -497,21 +489,19 @@ export function TransactionForm({
             <span className="ph-ico">
               <Icon name="wallet2" size={16} />
             </span>
-            {mode === "new" ? "Dokumen Baru" : transaction!.transaction_no}
-            {transaction && (
+            {/* The document names itself by its number. The Purpose chip that
+                used to sit here is the form's first field, two lines below. */}
+            {transaction ? (
               <>
-                <span className="lab lg">
-                  {purposes.find((p) => p.key === transaction.purpose)?.label ??
-                    transaction.purpose}
+                <span className="docno">{transaction.transaction_no}</span>
+                <span
+                  className={`bdg ${STATUS_CLASS[transaction.status] ?? "s-mute"}`}
+                >
+                  {STATUS_TEXT[transaction.status] ?? transaction.status}
                 </span>
-                {!editing && (
-                  <span
-                    className={`bdg ${STATUS_CLASS[transaction.status] ?? "s-mute"}`}
-                  >
-                    {STATUS_TEXT[transaction.status] ?? transaction.status}
-                  </span>
-                )}
               </>
+            ) : (
+              "Dokumen Baru"
             )}
             {mode === "edit" && <span className="bdg t-vio">Mode Ubah</span>}
           </h1>
@@ -548,11 +538,6 @@ export function TransactionForm({
             )}
           </div>
         </div>
-        <p className="ph-sub">
-          Layer eksekusi. Satu dokumen kas/bank dapat merealisasikan beberapa
-          Budget yang sudah disetujui; saldo dan realisasi baru bergerak saat
-          dokumen diposting.
-        </p>
       </div>
 
       {errors._form && (
@@ -581,13 +566,25 @@ export function TransactionForm({
                 </p>
               </div>
             </div>
-            <div className="card-b">
-              <div className="fsec">
-                <div className="frow">
-                  <div className="fld">
-                    <label>
-                      Transaction Purpose{editing && <span className="req">*</span>}
-                    </label>
+            <FormBody>
+              <FormSection>
+                <FormRow>
+                  <Field
+                    label="Transaction Purpose"
+                    span={4}
+                    required={editing}
+                    help={
+                      purpose
+                        ? // The partner half is left out: the Partner field
+                          // beside this one already says whether this Purpose
+                          // takes one, and repeating it here overflowed.
+                          `${TRANSACTION_TYPE_TEXT[purpose.direction]} · ${purpose.budgetCategory}`
+                        : editing
+                          ? "arah kas + Category"
+                          : undefined
+                    }
+                    error={errors.purpose}
+                  >
                     {editing ? (
                       <Select
                         value={values.purpose}
@@ -609,27 +606,22 @@ export function TransactionForm({
                         </span>
                       </div>
                     )}
-                    <Foot
-                      error={errors.purpose}
-                      help={
-                        purpose
-                          ? `${TRANSACTION_TYPE_TEXT[purpose.direction]} · Category ${purpose.budgetCategory}` +
-                            (purpose.partnerCategory
-                              ? ` · Partner ${purpose.partnerCategory}`
-                              : " · tanpa Partner")
-                          : editing
-                            ? "Purpose menentukan arah kas, Budget Category, dan apakah Partner diperlukan."
-                            : undefined
-                      }
-                    />
-                  </div>
+                  </Field>
 
-                  <div className="fld">
-                    <label>
-                      Company
-                      {mode === "new" && <span className="req">*</span>}
-                      {mode === "edit" && <span className="lockb">Terkunci</span>}
-                    </label>
+                  <Field
+                    label="Company"
+                    span={4}
+                    required={mode === "new"}
+                    locked={mode === "edit"}
+                    help={
+                      editing && funded
+                        ? "dana diajukan ke induk"
+                        : editing
+                          ? "menentukan Currency dan kas"
+                          : undefined
+                    }
+                    error={errors.company_id}
+                  >
                     {mode === "new" && selectableCompanies.length > 1 ? (
                       <Select
                         value={values.company_id}
@@ -650,25 +642,19 @@ export function TransactionForm({
                         <span>{company?.name ?? ""}</span>
                       </div>
                     )}
-                    <Foot
-                      error={errors.company_id}
-                      help={
-                        editing && funded
-                          ? "Company ini tidak memiliki Cash & Bank sendiri. Dokumennya diajukan ke induk sebagai Funding Request, dan terposting saat induk mengonfirmasi."
-                          : editing
-                            ? "Company pemilik dokumen. Currency dan Cash & Bank mengikuti Company ini."
-                            : undefined
-                      }
-                    />
-                  </div>
-                </div>
+                  </Field>
 
-                <div className="frow">
-                  <div className="fld">
-                    <label>
-                      Partner
-                      {editing && needsPartner && <span className="req">*</span>}
-                    </label>
+                  <Field
+                    label="Partner"
+                    span={4}
+                    required={editing && needsPartner}
+                    help={
+                      editing && needsPartner
+                        ? `hanya kategori ${purpose?.partnerCategory}`
+                        : undefined
+                    }
+                    error={errors.partner_id}
+                  >
                     {editing ? (
                       needsPartner ? (
                         <Combobox
@@ -701,21 +687,23 @@ export function TransactionForm({
                         )}
                       </div>
                     )}
-                    <Foot
-                      error={errors.partner_id}
-                      help={
-                        editing && needsPartner
-                          ? `Hanya Partner berkategori ${purpose?.partnerCategory} pada Company ini.`
-                          : undefined
-                      }
-                    />
-                  </div>
+                  </Field>
+                </FormRow>
 
-                  <div className="fld">
-                    <label>
-                      Cash &amp; Bank
-                      {editing && !funded && <span className="req">*</span>}
-                    </label>
+                <FormRow>
+                  <Field
+                    label="Cash & Bank"
+                    span={4}
+                    required={editing && !funded}
+                    help={
+                      funded
+                        ? "ditentukan induk saat konfirmasi"
+                        : editing
+                          ? "Currency mengikuti resource ini"
+                          : undefined
+                    }
+                    error={errors.cash_bank_id}
+                  >
                     {funded ? (
                       <div className="ro">
                         <span className="dash">Melalui Funding Request</span>
@@ -742,25 +730,19 @@ export function TransactionForm({
                         </span>
                       </div>
                     )}
-                    <Foot
-                      error={errors.cash_bank_id}
-                      help={
-                        funded
-                          ? "Company anak tidak memiliki Cash & Bank sendiri. Kas induk yang dipakai ditentukan induk saat mengonfirmasi funding."
-                          : editing
-                            ? "Resource tempat uang bergerak. Currency dokumen mengikuti resource ini."
-                            : undefined
-                      }
-                    />
-                  </div>
-                </div>
+                  </Field>
 
-                <div className="frow">
-                  <div className="fld">
-                    <label>
-                      Currency
-                      {editing && funded && <span className="req">*</span>}
-                    </label>
+                  <Field
+                    label="Currency"
+                    span={4}
+                    required={editing && funded}
+                    help={
+                      editing && funded
+                        ? "menentukan Budget yang cocok"
+                        : undefined
+                    }
+                    error={errors.currency_id}
+                  >
                     {editing && funded ? (
                       <Combobox
                         value={values.currency_id ? Number(values.currency_id) : null}
@@ -777,17 +759,9 @@ export function TransactionForm({
                         </span>
                       </div>
                     )}
-                    <Foot
-                      error={errors.currency_id}
-                      help={
-                        editing && funded
-                          ? "Menentukan Budget mana yang dapat direalisasikan, dan kas induk mana yang dapat memenuhinya."
-                          : undefined
-                      }
-                    />
-                  </div>
-                  <div className="fld">
-                    <label>Tanggal Dokumen</label>
+                  </Field>
+
+                  <Field label="Tanggal Dokumen" span={4}>
                     <div className="ro">
                       {transaction?.document_date ? (
                         formatDate(transaction.document_date)
@@ -795,12 +769,34 @@ export function TransactionForm({
                         <span className="dash">dicatat saat diposting</span>
                       )}
                     </div>
-                  </div>
-                </div>
+                  </Field>
+                </FormRow>
 
-                <div className="frow">
-                  <div className="fld full">
-                    <label>Catatan</label>
+                <FormRow>
+                  {/* The account the Purpose resolves to. It used to sit in the
+                      summary card; it belongs beside the Purpose that decides
+                      it, and posting is refused without it (CLAUDE.md §10
+                      rule 50), so it is not an aside. */}
+                  <Field
+                    label="Account"
+                    span={4}
+                    help={purpose ? "dari mapping Company × Category" : undefined}
+                  >
+                    <div className="ro">
+                      {account ? (
+                        <>
+                          <span className="lab">{account.accountLabel}</span>
+                          <span>{account.accountName}</span>
+                        </>
+                      ) : (
+                        <span className="dash">
+                          {purpose ? "belum dipetakan" : "menunggu Purpose"}
+                        </span>
+                      )}
+                    </div>
+                  </Field>
+
+                  <Field label="Catatan" span={8}>
                     {editing ? (
                       <textarea
                         className="ta"
@@ -814,10 +810,27 @@ export function TransactionForm({
                         {transaction!.note || <span className="dash">—</span>}
                       </div>
                     )}
-                  </div>
-                </div>
-              </div>
-            </div>
+                  </Field>
+                </FormRow>
+              </FormSection>
+            </FormBody>
+
+            {/* What the document's state means for what has already moved. It
+                was the summary card's `.sidenote`; the state is stated once, by
+                the badge in the heading, and this says what it implies. */}
+            {mode === "view" && (
+              <p className="fnote">
+                {transaction!.status === "Posted"
+                  ? "Dokumen sudah menjadi transaksi aktual: realisasi Budget dan saldo Cash & Bank sudah bergerak, dan entri Cash Bank Book sudah tercatat. Historical record bersifat append-only — koreksi dilakukan sebagai dokumen baru."
+                  : transaction!.status === "Pending"
+                    ? `Dokumen menunggu konfirmasi Company induk${
+                        fundingRequestNo ? ` (${fundingRequestNo})` : ""
+                      }. Belum ada yang bergerak: kas, realisasi Budget, buku pembantu, dan journal kedua Company baru tercatat saat funding dikonfirmasi.`
+                    : transaction!.status === "Draft"
+                      ? "Dokumen masih Draft. Budget dan saldo Cash & Bank belum bergerak, dan Tanggal Dokumen belum dicatat."
+                      : "Dokumen dibatalkan sebelum Post, sehingga tidak pernah menyentuh Budget maupun saldo."}
+              </p>
+            )}
           </div>
 
           <div className="card" style={{ marginTop: 14 }}>
@@ -1125,148 +1138,6 @@ export function TransactionForm({
             )}
           </div>
         </div>
-
-        <div>
-          <div className="card side">
-            <div className="card-h">
-              <span className="ci">
-                <Icon name="file" size={15} />
-              </span>
-              <div className="ct">
-                <h3>Ringkasan</h3>
-              </div>
-            </div>
-            <div className="card-b">
-              <div style={{ padding: "5px 0" }}>
-                {mode === "new" ? (
-                  <>
-                    <div className="mrow">
-                      <span className="k">Nomor</span>
-                      <span className="v">
-                        <span className="dash">dibuat otomatis</span>
-                      </span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Status</span>
-                      <span className="v">Akan tersimpan sebagai Draft</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="mrow">
-                      <span className="k">Nomor</span>
-                      <span className="v mono">{transaction!.transaction_no}</span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Status</span>
-                      <span className="v">
-                        <span
-                          className={`bdg ${STATUS_CLASS[transaction!.status] ?? "s-mute"}`}
-                        >
-                          {STATUS_TEXT[transaction!.status] ?? transaction!.status}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Posting</span>
-                      <span className="v">
-                        {transaction!.posting_date ? (
-                          formatTimestamp(transaction!.posting_date)
-                        ) : (
-                          <span className="dash">belum diposting</span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Dibuat</span>
-                      <span className="v">
-                        {formatTimestamp(transaction!.created_at)}
-                        <small>{createdByEmail ?? ""}</small>
-                      </span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Diubah</span>
-                      <span className="v">
-                        {transaction!.updated_by ? (
-                          <>
-                            {formatTimestamp(transaction!.updated_at)}
-                            <small>{updatedByEmail ?? ""}</small>
-                          </>
-                        ) : (
-                          <span className="dash">Belum pernah diubah</span>
-                        )}
-                      </span>
-                    </div>
-                  </>
-                )}
-                <div className="mrow">
-                  <span className="k">Purpose</span>
-                  <span className="v">
-                    {purpose ? (
-                      <>
-                        {purpose.label}
-                        <small className="mono">{purpose.key}</small>
-                      </>
-                    ) : (
-                      <span className="dash">belum dipilih</span>
-                    )}
-                  </span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Klasifikasi</span>
-                  <span className="v">
-                    {purpose ? (
-                      <>
-                        {purpose.budgetCategory}
-                        {purpose.partnerCategory ? (
-                          <span className="lab">{purpose.partnerCategory}</span>
-                        ) : (
-                          <small>tanpa Partner</small>
-                        )}
-                      </>
-                    ) : (
-                      <span className="dash">—</span>
-                    )}
-                  </span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Account</span>
-                  <span className="v">
-                    {account ? (
-                      <>
-                        <span className="lab">{account.accountLabel}</span>{" "}
-                        {account.accountName}
-                      </>
-                    ) : (
-                      <span className="dash">
-                        {purpose ? "belum dipetakan" : "menunggu Purpose"}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {mode === "view" && (
-              <div
-                className="card-b"
-                style={{ borderTop: "1px solid var(--line-2)" }}
-              >
-                <p className="sidenote">
-                  {transaction!.status === "Posted"
-                    ? "Dokumen sudah menjadi transaksi aktual: realisasi Budget dan saldo Cash & Bank sudah bergerak, dan entri Cash Bank Book sudah tercatat. Historical record bersifat append-only — koreksi dilakukan sebagai dokumen baru."
-                    : transaction!.status === "Pending"
-                      ? `Dokumen menunggu konfirmasi Company induk${
-                          fundingRequestNo ? ` (${fundingRequestNo})` : ""
-                        }. Belum ada yang bergerak: kas, realisasi Budget, buku pembantu, dan journal kedua Company baru tercatat saat funding dikonfirmasi.`
-                      : transaction!.status === "Draft"
-                        ? "Dokumen masih Draft. Budget dan saldo Cash & Bank belum bergerak, dan Tanggal Dokumen belum dicatat."
-                        : "Dokumen dibatalkan sebelum Post, sehingga tidak pernah menyentuh Budget maupun saldo."}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       {picking && (
@@ -1335,18 +1206,6 @@ export function TransactionForm({
       )}
     </>
   );
-}
-
-function Foot({ error, help }: { error?: string; help?: string }) {
-  if (error) {
-    return (
-      <div className="err">
-        <Icon name="warn" size={11} />
-        {error}
-      </div>
-    );
-  }
-  return help ? <div className="help">{help}</div> : null;
 }
 
 function initialValues(

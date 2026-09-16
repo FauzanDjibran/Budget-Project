@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
+import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import {
   createRoleAction,
   setRolePermissionsAction,
@@ -188,7 +189,7 @@ export function RoleForm({
             <span className="ph-ico">
               <Icon name="tags" size={16} />
             </span>
-            {mode === "new" ? "Tambah Role" : role?.role_name}
+            {mode === "new" ? "Role Baru" : role?.role_name}
             {mode !== "new" && <span className="lab lg">{role?.role_label}</span>}
             {mode === "view" && status && (
               <span className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}>
@@ -238,23 +239,20 @@ export function RoleForm({
             )}
           </div>
         </div>
-        <p className="ph-sub">
-          {frozen
-            ? frozenReason
-            : "Akses menu dan aksi adalah permission terpisah: melihat sebuah modul bukan izin untuk menambah, menyetujui, atau mem-posting di dalamnya."}
-        </p>
       </div>
 
       <div className="card">
-        <div className="fsec">
-          <div className="sec-t">Identitas Role</div>
-          <div className="frow">
-            <div className="fld">
-              <label>
-                Label
-                {editing && <span className="req">*</span>}
-                {role?.is_system && editing && <span className="lockb">Terkunci</span>}
-              </label>
+        <FormBody>
+        <FormSection title="Identitas Role">
+          <FormRow>
+            <Field
+              label="Label"
+              span={4}
+              required={editing}
+              locked={Boolean(role?.is_system) && editing}
+              help={editing ? "kunci di kode — tidak ikut berubah dengan nama" : undefined}
+              error={errors.role_label}
+            >
               {editing ? (
                 <input
                   className={`inp idf${errors.role_label ? " bad" : ""}`}
@@ -269,24 +267,14 @@ export function RoleForm({
                   <span className="lab">{role?.role_label}</span>
                 </div>
               )}
-              {errors.role_label ? (
-                <div className="err">
-                  <Icon name="warn" size={11} />
-                  {errors.role_label}
-                </div>
-              ) : editing ? (
-                <div className="help">
-                  Huruf kapital, angka, dan garis bawah. Dipakai sebagai kunci di kode,
-                  jadi tidak berubah mengikuti nama tampilan.
-                </div>
-              ) : null}
-            </div>
+            </Field>
 
-            <div className="fld">
-              <label>
-                Nama Role
-                {editing && <span className="req">*</span>}
-              </label>
+            <Field
+              label="Nama Role"
+              span={4}
+              required={editing}
+              error={errors.role_name}
+            >
               {editing ? (
                 <input
                   className={`inp${errors.role_name ? " bad" : ""}`}
@@ -298,19 +286,13 @@ export function RoleForm({
               ) : (
                 <div className="ro">{role?.role_name}</div>
               )}
-              {errors.role_name && (
-                <div className="err">
-                  <Icon name="warn" size={11} />
-                  {errors.role_name}
-                </div>
-              )}
-            </div>
+            </Field>
 
-            <div className="fld full">
-              <label>Catatan</label>
+            <Field label="Catatan" span={4}>
               {editing ? (
                 <textarea
                   className="ta"
+                  rows={2}
                   value={values.note ?? ""}
                   onChange={(e) => set("note", e.target.value)}
                   placeholder="Untuk siapa Role ini dan mengapa…"
@@ -320,17 +302,15 @@ export function RoleForm({
               ) : (
                 <div className="ro multi nil">tidak diisi</div>
               )}
-            </div>
-          </div>
-        </div>
+            </Field>
+          </FormRow>
+        </FormSection>
+        </FormBody>
 
-        <div className="fsec">
-          <div className="sec-t">
-            Permission
-            <span className="h">
-              {codes.length} dari {total} permission aktif
-            </span>
-          </div>
+        <FormSection
+          title="Permission"
+          hint={`${codes.length} dari ${total} permission aktif · menu dan aksi adalah izin terpisah`}
+        >
 
           {errors._form && (
             <div className="frow" style={{ paddingBottom: 0 }}>
@@ -418,7 +398,7 @@ export function RoleForm({
               </div>
             );
           })}
-        </div>
+        </FormSection>
       </div>
 
       <ConfirmDialog

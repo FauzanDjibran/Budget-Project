@@ -411,3 +411,106 @@ describe("the header order each status actually produces", () => {
     );
   });
 });
+
+describe("a form is laid out by one component", () => {
+  const FORM = "src/components/ui/form.tsx";
+
+  test("a labelled field goes through `ui/form.tsx`", () => {
+    // A hand-written `.fld` that carries a `<label>` is a field, and a field is
+    // what `Field` is for — it decides the label, the required star, the lock
+    // badge, where the help sits and where the error goes. Five files each kept
+    // their own copy of that, which is how the same control came to present
+    // three different ways. A label-less `.fld` is a layout slot (a button, an
+    // error banner, a checkbox grid) and stays allowed.
+    const bad = files
+      .filter((f) => f.rel !== FORM)
+      .filter((f) =>
+        // A bare `<label>` (or one carrying only `htmlFor`) is a field's label.
+        // `<label className="…">` is a control in its own right — a checkbox
+        // row, a toggle — and is not what `Field` replaces.
+        /className="fld[^"]*">(?:[^<]|<(?!\/div))*?<label(?:\s+htmlFor=[^>]*)?>/.test(
+          code(f.text)
+        )
+      );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      `A field with a label belongs to <Field> from ${FORM}, not to hand-written markup.`
+    );
+  });
+
+  test("only `ui/form.tsx` builds a form section or row", () => {
+    const bad = files
+      .filter((f) => f.rel !== FORM)
+      .filter((f) => /className="(fsec|sec-t|fbody)"/.test(code(f.text)));
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      `Use <FormSection> / <FormBody> from ${FORM} rather than emitting its classes.`
+    );
+  });
+
+  test("help text is written by `Field`, never beside a control", () => {
+    // Help shares the label's line now. A `.help` div rendered next to a
+    // control would sit under it again, which is the 21px per field this
+    // layout exists to stop paying.
+    const allowed = new Set([
+      FORM,
+      // Standalone notes, not a field's help: why a Role is frozen, and why an
+      // administrator cannot change their own roles.
+      "src/components/settings/role-form.tsx",
+      "src/components/settings/user-form.tsx",
+      "src/components/budget/report-picker.tsx",
+    ]);
+    const bad = files
+      .filter((f) => !allowed.has(f.rel))
+      .filter((f) => /className="help"/.test(code(f.text)));
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Pass a help prop to <Field> instead of rendering a .help div."
+    );
+  });
+
+  test("no form page carries a `.ph-sub`", () => {
+    // A form's subtitle restated the card header 40px below it. Lists and the
+    // dashboard keep theirs: there, the sentence says what the table is of.
+    const forms = files.filter((f) => /-form\.tsx$|profile-view\.tsx$|funding-detail\.tsx$|journal-detail\.tsx$/.test(f.rel));
+    const bad = forms.filter((f) => /className="ph-sub"/.test(code(f.text)));
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "A form states its purpose in its card header, not in a page subtitle."
+    );
+  });
+
+  test("no form keeps a summary side card", () => {
+    // Its facts went where each is read: the number and the status into the
+    // page heading, the authorship into the record's own history panel.
+    const bad = files.filter((f) => /className="card side"/.test(code(f.text)));
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "A summary card collects leftovers; put each fact where it is read."
+    );
+  });
+
+  test("a document heading is the document number", () => {
+    // Every document screen names itself the same way, so `.docno` is what the
+    // heading of a record-bearing form contains.
+    for (const rel of [
+      "src/components/budget/budget-form.tsx",
+      "src/components/finance/transaction-form.tsx",
+      "src/components/finance/funding-detail.tsx",
+      "src/components/accounting/journal-detail.tsx",
+    ]) {
+      const f = files.find((x) => x.rel === rel);
+      assert.ok(f, `${rel} is missing`);
+      assert.match(
+        code(f!.text),
+        /className="docno"/,
+        `${rel} should title itself with its document number.`
+      );
+    }
+  });
+});

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Field } from "@/components/ui/form";
 import { Icon } from "@/components/icon";
 import { login } from "@/app/actions/auth";
 
@@ -55,8 +56,7 @@ export function LoginForm({ next }: { next?: string }) {
       </p>
 
       <form onSubmit={onSubmit} noValidate>
-        <div className="fld full">
-          <label htmlFor="email">Email</label>
+        <Field label="Email" span={12} htmlFor="email">
           <input
             id="email"
             className={`inp${error ? " bad" : ""}`}
@@ -68,10 +68,9 @@ export function LoginForm({ next }: { next?: string }) {
             autoFocus
             required
           />
-        </div>
+        </Field>
 
-        <div className="fld full">
-          <label htmlFor="password">Password</label>
+        <Field label="Password" span={12} htmlFor="password">
           <input
             id="password"
             className={`inp${error ? " bad" : ""}`}
@@ -82,7 +81,7 @@ export function LoginForm({ next }: { next?: string }) {
             autoComplete="current-password"
             required
           />
-        </div>
+        </Field>
 
         {error && (
           <div className="err" role="alert">

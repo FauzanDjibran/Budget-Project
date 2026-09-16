@@ -11,6 +11,12 @@ import { Select } from "@/components/ui/select";
 import { MoneyInput } from "@/components/ui/money-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
+import {
+  Field as FormField,
+  FormRow,
+  FormSection,
+  type FieldSpan,
+} from "@/components/ui/form";
 import { createRecord, updateRecord, toggleStatus, type FormValues } from "@/app/actions/master";
 import {
   COMPANY_LOCK_BADGE,
@@ -31,7 +37,7 @@ import {
 import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
 import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
-import { formatDate, formatMoney, formatTimestamp, todayIso } from "@/lib/format";
+import { formatDate, formatMoney, todayIso } from "@/lib/format";
 import { recordTitle } from "@/lib/siba/record-title";
 
 export type FormMode = "new" | "view" | "edit";
@@ -41,8 +47,6 @@ export function EntityForm({
   mode,
   row,
   refs,
-  createdByEmail,
-  updatedByEmail,
   can,
   headerActions,
   editTone = "primary",
@@ -53,8 +57,6 @@ export function EntityForm({
   row: Row | null;
   /** Keyed by field name, not by target table — see `refOptions` in records.ts. */
   refs: Record<string, RefOption[]>;
-  createdByEmail?: string;
-  updatedByEmail?: string;
   /** Presentation only — the Server Actions check the same permissions. */
   can: EntityAbilities;
   /**
@@ -258,7 +260,10 @@ export function EntityForm({
   const statusFields = visible.filter((f) => f.name === statusFieldName);
   const noteFields = visible.filter((f) => f.name === "note");
 
-  const heading = mode === "new" ? `Tambah ${entity.single ?? entity.name}` : title;
+  // Before the first save there is no code and no status to show, so the
+  // heading is a placeholder identity rather than a summary of blanks.
+  const heading = mode === "new" ? `${entity.single ?? entity.name} Baru` : title;
+  const code = mode === "new" ? "" : String(row?.[entity.codeField] ?? "");
 
   return (
     <>
@@ -278,6 +283,10 @@ export function EntityForm({
             </span>
             {heading}
             {mode !== "new" && label && <span className="lab lg">{label}</span>}
+            {/* A master record is known by its name, so the name stays the
+                heading; the system code is its technical reference and belongs
+                beside it rather than in a card of its own. */}
+            {code && <span className="docno sm">{code}</span>}
             {mode === "view" && statusValue && (
               canToggleStatus ? (
                 <button
@@ -330,16 +339,13 @@ export function EntityForm({
             {mode === "view" && editTone !== "primary" && headerActions}
           </div>
         </div>
-        <p className="ph-sub">{entity.desc}</p>
-        {locked && <p className="ph-sub">{COMPANY_LOCK_BODY}</p>}
       </div>
 
-      <div className="fgrid">
+      <div className="fgrid solo">
         <div>
           <div className="card">
-            <div className="fsec">
-              <div className="sec-t">Informasi Utama</div>
-              <div className="frow">
+            <FormSection>
+              <FormRow>
                 {businessFields.map((f) => (
                   <FieldControl
                     key={f.name}
@@ -355,20 +361,15 @@ export function EntityForm({
                     onChange={(v) => setField(f, v)}
                   />
                 ))}
-              </div>
-            </div>
+              </FormRow>
+            </FormSection>
 
             {statusFields.length > 0 && (
-              <div className="fsec">
-                <div className="sec-t">
-                  Status Data
-                  <span className="h">
-                    {statusModel?.toggle
-                      ? "Data Inactive tidak muncul pada pilihan transaksi baru"
-                      : "Draft belum dipakai · Open menerima posting · Closed terkunci"}
-                  </span>
-                </div>
-                <div className="frow">
+              // No section hint: the status field's own help says the same
+              // thing, and with help now on the label row the two sat one line
+              // apart.
+              <FormSection title="Status Data">
+                <FormRow>
                   {statusFields.map((f) => (
                     <FieldControl
                       key={f.name}
@@ -383,13 +384,13 @@ export function EntityForm({
                       onChange={(v) => setField(f, v)}
                     />
                   ))}
-                </div>
-              </div>
+                </FormRow>
+              </FormSection>
             )}
 
             {noteFields.length > 0 && (
-              <div className="fsec">
-                <div className="frow" style={{ paddingTop: 14 }}>
+              <FormSection>
+                <FormRow>
                   {noteFields.map((f) => (
                     <FieldControl
                       key={f.name}
@@ -403,85 +404,14 @@ export function EntityForm({
                       onChange={(v) => setField(f, v)}
                     />
                   ))}
-                </div>
-              </div>
+                </FormRow>
+              </FormSection>
             )}
-          </div>
-        </div>
 
-        <div>
-          <div className="card side">
-            <div className="card-h">
-              <span className="ci">
-                <Icon name="file" size={15} />
-              </span>
-              <div className="ct">
-                <h3>Ringkasan</h3>
-              </div>
-            </div>
-            <div className="card-b">
-              <div style={{ padding: "5px 0" }}>
-                {mode === "new" ? (
-                  <>
-                    <div className="mrow">
-                      <span className="k">Kode</span>
-                      <span className="v">
-                        <span className="dash">dibuat otomatis</span>
-                      </span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Status</span>
-                      <span className="v">Belum tersimpan</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="mrow">
-                      <span className="k">Kode</span>
-                      <span className="v mono">{String(row?.[entity.codeField] ?? "—")}</span>
-                    </div>
-                    {label && (
-                      <div className="mrow">
-                        <span className="k">Label</span>
-                        <span className="v">
-                          <span className="lab">{label}</span>
-                        </span>
-                      </div>
-                    )}
-                    {statusValue && (
-                      <div className="mrow">
-                        <span className="k">Status</span>
-                        <span className="v">
-                          <span className={`bdg ${STATUS_CLASS[statusValue] ?? "s-mute"}`}>
-                            {STATUS_TEXT[statusValue] ?? statusValue}
-                          </span>
-                        </span>
-                      </div>
-                    )}
-                    <div className="mrow">
-                      <span className="k">Dibuat</span>
-                      <span className="v">
-                        {formatTimestamp(row?.created_at as string)}
-                        <small>{createdByEmail ?? "—"}</small>
-                      </span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Diubah</span>
-                      <span className="v">
-                        {row?.updated_by ? (
-                          <>
-                            {formatTimestamp(row?.updated_at as string)}
-                            <small>{updatedByEmail ?? ""}</small>
-                          </>
-                        ) : (
-                          <span className="dash">Belum pernah diubah</span>
-                        )}
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
+            {/* Company is create- and edit-locked (CLAUDE.md §12). The badge in
+                the header says so; the reason belongs beside the fields it
+                explains rather than in a subtitle above the whole page. */}
+            {locked && <p className="fnote">{COMPANY_LOCK_BODY}</p>}
           </div>
         </div>
       </div>
@@ -568,128 +498,152 @@ function FieldControl({
   statusLike?: boolean;
   onChange: (value: string | boolean | null) => void;
 }) {
-  const wrapClass = `fld${field.full || field.type === "textarea" ? " full" : ""}`;
   const locked = Boolean(field.locked && exists);
+  // Three columns by default: a master record's fields are short, and two
+  // columns left a date picker in a 500px box. `full` and a textarea still take
+  // the whole row, and a field that needs a different share says so in the
+  // registry.
+  const span: FieldSpan =
+    field.span ?? (field.full || field.type === "textarea" ? 12 : 4);
 
-  const labelNode = (
-    <label>
-      {field.label}
-      {editing && field.required && <span className="req">*</span>}
-      {locked && editing && <span className="lockb">Terkunci</span>}
-    </label>
+  const node = editing
+    ? editableControl({ field, value, locked, error, options, prefix, currencyLabel, onChange })
+    : readOnlyBody({ field, row, options, currencyLabel, statusLike });
+
+  return (
+    <FormField
+      label={field.label}
+      span={span}
+      required={editing && field.required}
+      locked={locked && editing}
+      help={editing ? field.help : undefined}
+      error={error}
+    >
+      {node}
+    </FormField>
   );
+}
 
-  const footer = error ? (
-    <div className="err">
-      <Icon name="warn" size={11} />
-      {error}
-    </div>
-  ) : editing && field.help ? (
-    <div className="help">{field.help}</div>
-  ) : null;
+/** How a saved value presents itself — as text, never as a disabled input. */
+function readOnlyBody({
+  field,
+  row,
+  options,
+  currencyLabel,
+  statusLike,
+}: {
+  field: Field;
+  row: Row | null;
+  options: RefOption[];
+  currencyLabel?: string;
+  statusLike?: boolean;
+}): React.ReactNode {
+  const raw = row?.[field.name];
 
-  // ---- read-only presentation -------------------------------------------
-  if (!editing) {
-    let body: React.ReactNode;
-    const raw = row?.[field.name];
-
-    if (field.type === "ref") {
-      const opt = options.find((o) => o.id === Number(raw));
-      body = opt ? (
-        <div className="ro">
-          <span className="lab">{opt.label}</span>
-          <span>{opt.name}</span>
-        </div>
-      ) : (
-        <div className="ro nil">tidak diisi</div>
-      );
-    } else if (field.type === "bool") {
-      body = (
-        <div className="ro">
-          <span className={`bdg ${raw ? "s-ok" : "s-bad"}`}>
-            {statusLike ? (raw ? "Aktif" : "Non Aktif") : raw ? "Ya" : "Tidak"}
-          </span>
-        </div>
-      );
-    } else if (field.type === "date") {
-      body = raw ? (
-        <div className="ro">{formatDate(raw as string)}</div>
-      ) : (
-        <div className="ro nil">tidak diisi</div>
-      );
-    } else if (field.type === "select") {
-      const s = String(raw);
-      const statusLike = STATUS_CLASS[s];
-      body = (
-        <div className="ro">
-          <span className={`bdg ${statusLike ?? TAG_CLASS[s] ?? "t-slate"}`}>
-            {STATUS_TEXT[s] ?? s}
-          </span>
-        </div>
-      );
-    } else if (field.type === "money") {
-      body =
-        raw == null || raw === "" ? (
-          <div className="ro nil">tidak diisi</div>
-        ) : (
-          <div className="ro">
-            <span className="mny">
-              {formatMoney(raw as number, currencyLabel ?? "IDR")}
-            </span>
-          </div>
-        );
-    } else if (field.type === "textarea") {
-      body = raw ? (
-        <div className="ro multi">{String(raw)}</div>
-      ) : (
-        <div className="ro multi nil">tidak diisi</div>
-      );
-    } else if (field.ident) {
-      body = raw ? (
-        <div className="ro">
-          <span className="lab">{String(raw)}</span>
-        </div>
-      ) : (
-        <div className="ro nil">tidak diisi</div>
-      );
-    } else {
-      body =
-        raw == null || raw === "" ? (
-          <div className="ro nil">tidak diisi</div>
-        ) : (
-          <div className="ro">{String(raw)}</div>
-        );
-    }
-
+  if (field.type === "ref") {
+    const opt = options.find((o) => o.id === Number(raw));
+    return opt ? (
+      <div className="ro">
+        <span className="lab">{opt.label}</span>
+        <span>{opt.name}</span>
+      </div>
+    ) : (
+      <div className="ro nil">tidak diisi</div>
+    );
+  }
+  if (field.type === "bool") {
     return (
-      <div className={wrapClass}>
-        {labelNode}
-        {body}
+      <div className="ro">
+        <span className={`bdg ${raw ? "s-ok" : "s-bad"}`}>
+          {statusLike ? (raw ? "Aktif" : "Non Aktif") : raw ? "Ya" : "Tidak"}
+        </span>
       </div>
     );
   }
+  if (field.type === "date") {
+    return raw ? (
+      <div className="ro">{formatDate(raw as string)}</div>
+    ) : (
+      <div className="ro nil">tidak diisi</div>
+    );
+  }
+  if (field.type === "select") {
+    const s = String(raw);
+    return (
+      <div className="ro">
+        <span className={`bdg ${STATUS_CLASS[s] ?? TAG_CLASS[s] ?? "t-slate"}`}>
+          {STATUS_TEXT[s] ?? s}
+        </span>
+      </div>
+    );
+  }
+  if (field.type === "money") {
+    return raw == null || raw === "" ? (
+      <div className="ro nil">tidak diisi</div>
+    ) : (
+      <div className="ro">
+        <span className="mny">{formatMoney(raw as number, currencyLabel ?? "IDR")}</span>
+      </div>
+    );
+  }
+  if (field.type === "textarea") {
+    return raw ? (
+      <div className="ro multi">{String(raw)}</div>
+    ) : (
+      <div className="ro multi nil">tidak diisi</div>
+    );
+  }
+  if (field.ident) {
+    return raw ? (
+      <div className="ro">
+        <span className="lab">{String(raw)}</span>
+      </div>
+    ) : (
+      <div className="ro nil">tidak diisi</div>
+    );
+  }
+  return raw == null || raw === "" ? (
+    <div className="ro nil">tidak diisi</div>
+  ) : (
+    <div className="ro">{String(raw)}</div>
+  );
+}
 
-  // ---- editable controls -------------------------------------------------
+function editableControl({
+  field,
+  value,
+  locked,
+  error,
+  options,
+  prefix,
+  currencyLabel,
+  onChange,
+}: {
+  field: Field;
+  value: string | boolean | null | undefined;
+  locked: boolean;
+  error?: string;
+  options: RefOption[];
+  prefix?: string | null;
+  currencyLabel?: string;
+  onChange: (value: string | boolean | null) => void;
+}): React.ReactNode {
   if (field.type === "bool") {
     // A caption that stands on its own gets the one-line control, so a form
     // full of toggles does not read as a wall of explanation.
     const compact = !field.captionDetail;
     return (
-      <div className={wrapClass}>
-        <label>{field.label}</label>
-        <label className={`chk${compact ? " sm" : ""}${error ? " bad" : ""}`}>
-          <input
-            type="checkbox"
-            checked={Boolean(value)}
-            onChange={(e) => onChange(e.target.checked)}
-          />
-          <span>
-            <span className="ct">{field.caption ?? "Aktif"}</span>
-            {field.captionDetail && <span className="cd">{field.captionDetail}</span>}
-          </span>
-        </label>
-        {footer}
-      </div>
+      <label className={`chk${compact ? " sm" : ""}${error ? " bad" : ""}`}>
+        <input
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span>
+          <span className="ct">{field.caption ?? "Aktif"}</span>
+          {field.captionDetail && <span className="cd">{field.captionDetail}</span>}
+        </span>
+      </label>
     );
   }
 
@@ -698,31 +652,25 @@ function FieldControl({
   // collecting a number that would have no place to go.
   if (field.type === "segment") {
     return (
-      <div className={wrapClass}>
-        {labelNode}
-        <div className={`segf${error ? " bad" : ""}`}>
-          <span className={`pfx${prefix ? "" : " nil"}`}>
-            {prefix ? `${prefix}.` : "menunggu induk"}
-          </span>
-          <input
-            value={value == null ? "" : String(value)}
-            placeholder={field.placeholder}
-            disabled={!prefix}
-            inputMode="numeric"
-            autoComplete="off"
-            maxLength={3}
-            onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ""))}
-          />
-        </div>
-        {footer}
+      <div className={`segf${error ? " bad" : ""}`}>
+        <span className={`pfx${prefix ? "" : " nil"}`}>
+          {prefix ? `${prefix}.` : "menunggu induk"}
+        </span>
+        <input
+          value={value == null ? "" : String(value)}
+          placeholder={field.placeholder}
+          disabled={!prefix}
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={3}
+          onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ""))}
+        />
       </div>
     );
   }
 
-  let control: React.ReactNode;
-
   if (field.type === "ref") {
-    control = (
+    return (
       <Combobox
         value={value == null || value === "" ? null : Number(value)}
         options={options}
@@ -732,8 +680,9 @@ function FieldControl({
         onChange={(v) => onChange(v == null ? null : String(v))}
       />
     );
-  } else if (field.type === "select") {
-    control = (
+  }
+  if (field.type === "select") {
+    return (
       <Select
         value={value == null ? "" : String(value)}
         options={[
@@ -749,8 +698,9 @@ function FieldControl({
         onChange={onChange}
       />
     );
-  } else if (field.type === "date") {
-    control = (
+  }
+  if (field.type === "date") {
+    return (
       <DateInput
         value={value == null ? "" : String(value)}
         invalid={Boolean(error)}
@@ -758,8 +708,9 @@ function FieldControl({
         onChange={onChange}
       />
     );
-  } else if (field.type === "money") {
-    control = (
+  }
+  if (field.type === "money") {
+    return (
       <MoneyInput
         value={value == null ? "" : String(value)}
         currencyLabel={currencyLabel}
@@ -769,35 +720,28 @@ function FieldControl({
         onChange={onChange}
       />
     );
-  } else if (field.type === "textarea") {
-    control = (
+  }
+  if (field.type === "textarea") {
+    return (
       <textarea
         className={`ta${error ? " bad" : ""}`}
+        rows={2}
         value={value == null ? "" : String(value)}
         placeholder={field.placeholder}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    );
-  } else {
-    control = (
-      <input
-        className={`inp${field.ident ? " idf" : ""}${error ? " bad" : ""}`}
-        type="text"
-        inputMode={field.type === "number" ? "numeric" : undefined}
-        value={value == null ? "" : String(value)}
-        placeholder={field.placeholder}
-        disabled={locked}
-        autoComplete="off"
         onChange={(e) => onChange(e.target.value)}
       />
     );
   }
-
   return (
-    <div className={wrapClass}>
-      {labelNode}
-      {control}
-      {footer}
-    </div>
+    <input
+      className={`inp${field.ident ? " idf" : ""}${error ? " bad" : ""}`}
+      type="text"
+      inputMode={field.type === "number" ? "numeric" : undefined}
+      value={value == null ? "" : String(value)}
+      placeholder={field.placeholder}
+      disabled={locked}
+      autoComplete="off"
+      onChange={(e) => onChange(e.target.value)}
+    />
   );
 }

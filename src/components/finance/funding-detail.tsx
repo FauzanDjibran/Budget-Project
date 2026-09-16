@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Combobox } from "@/components/ui/combobox";
+import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
 import { confirmFunding } from "@/app/actions/funding";
@@ -107,8 +108,7 @@ export function FundingDetail({
             <span className="ph-ico">
               <Icon name="link" size={16} />
             </span>
-            {request.funding_request_no}
-            <span className="lab lg">{purposeLabel}</span>
+            <span className="docno">{request.funding_request_no}</span>
             <span
               className={`bdg ${
                 open ? "s-warn" : STATUS_CLASS[request.status] ?? "s-mute"
@@ -148,12 +148,6 @@ export function FundingDetail({
             )}
           </div>
         </div>
-        <p className="ph-sub">
-          Company {companyLabel} tidak memiliki Cash & Bank sendiri, sehingga
-          realisasinya dipenuhi dari kas induk. Tidak ada funding sebagian dan
-          tidak ada penolakan — yang ditentukan induk hanyalah kas mana yang
-          dipakai.
-        </p>
       </div>
 
       {Boolean(bridgeMissing.length) && open && (
@@ -172,8 +166,83 @@ export function FundingDetail({
         </div>
       )}
 
-      <div className="fgrid">
+      <div className="fgrid solo">
         <div>
+          {/* What the summary card used to carry, as fields. A request's own
+              facts are read here, beside the Budgets they are a request for. */}
+          <div className="card">
+            <div className="card-h">
+              <span className="ci">
+                <Icon name="file" size={15} />
+              </span>
+              <div className="ct">
+                <h3>Permintaan</h3>
+                <p>
+                  Company {companyLabel} tidak memiliki Cash &amp; Bank sendiri.
+                  Tidak ada funding sebagian dan tidak ada penolakan — induk
+                  hanya menentukan kas mana yang dipakai.
+                </p>
+              </div>
+            </div>
+            <FormBody>
+              <FormSection>
+                <FormRow>
+                  <Field label="Tanggal" span={3}>
+                    <div className="ro">{formatDate(request.request_date)}</div>
+                  </Field>
+                  <Field label="Pemohon" span={3}>
+                    <div className="ro">
+                      <span className="lab">{companyLabel}</span>
+                    </div>
+                  </Field>
+                  <Field label="Purpose" span={3}>
+                    <div className="ro">{purposeLabel}</div>
+                  </Field>
+                  <Field label="Partner" span={3}>
+                    <div className="ro">
+                      {partnerLabel ?? <span className="dash">tanpa Partner</span>}
+                    </div>
+                  </Field>
+                </FormRow>
+                <FormRow>
+                  <Field label="Currency" span={3}>
+                    <div className="ro">
+                      <span className="lab">{currencyLabel}</span>
+                    </div>
+                  </Field>
+                  <Field label="Realisasi" span={3} help="dokumen yang dibiayai">
+                    <div className="ro">
+                      {doc ? (
+                        <Link href={`/finance/cash-bank-transaction/${doc.id}`}>
+                          <span className="lab">{doc.transaction_no}</span>
+                        </Link>
+                      ) : (
+                        <span className="dash">tidak ditemukan</span>
+                      )}
+                    </div>
+                  </Field>
+                  <Field label="Dikonfirmasi" span={3}>
+                    <div className="ro">
+                      {request.confirmed_at ? (
+                        formatTimestamp(request.confirmed_at)
+                      ) : (
+                        <span className="dash">belum</span>
+                      )}
+                    </div>
+                  </Field>
+                </FormRow>
+              </FormSection>
+            </FormBody>
+
+            <p className="fnote">
+              {request.status === "Closed"
+                ? "Funding sudah dikonfirmasi: kas induk bergerak dan masing-masing Company memperoleh journal-nya, tempat posisi keduanya terhadap satu sama lain tercatat. Semua bersifat append-only — koreksi dilakukan sebagai dokumen baru."
+                : request.status === "Cancelled"
+                  ? "Permintaan ditarik kembali oleh Company pemohon sebelum dikonfirmasi, sehingga tidak pernah menyentuh kas maupun Budget."
+                  : "Belum ada yang bergerak. Konfirmasi menulis entri Cash Bank Book induk, realisasi Budget, dan satu journal untuk masing-masing Company — seluruhnya dalam satu transaksi. Posisi kedua Company terhadap satu sama lain dibaca dari journal tersebut, lewat General Ledger."}
+            </p>
+          </div>
+
           <div className="card">
             <div className="card-h">
               <span className="ci">
@@ -297,77 +366,6 @@ export function FundingDetail({
             </div>
           </div>
         </div>
-
-        <div>
-          <div className="card side">
-            <div className="card-h">
-              <span className="ci">
-                <Icon name="file" size={15} />
-              </span>
-              <div className="ct">
-                <h3>Ringkasan</h3>
-              </div>
-            </div>
-            <div className="card-b">
-              <div style={{ padding: "5px 0" }}>
-                <div className="mrow">
-                  <span className="k">Tanggal</span>
-                  <span className="v">{formatDate(request.request_date)}</span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Pemohon</span>
-                  <span className="v">{companyLabel}</span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Realisasi</span>
-                  <span className="v">
-                    {doc ? (
-                      <Link href={`/finance/cash-bank-transaction/${doc.id}`}>
-                        <span className="lab">{doc.transaction_no}</span>
-                      </Link>
-                    ) : (
-                      <span className="dash">tidak ditemukan</span>
-                    )}
-                  </span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Purpose</span>
-                  <span className="v">{purposeLabel}</span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Partner</span>
-                  <span className="v">
-                    {partnerLabel ?? <span className="dash">tanpa Partner</span>}
-                  </span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Currency</span>
-                  <span className="v">{currencyLabel}</span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Dikonfirmasi</span>
-                  <span className="v">
-                    {request.confirmed_at ? (
-                      formatTimestamp(request.confirmed_at)
-                    ) : (
-                      <span className="dash">belum</span>
-                    )}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="card-b" style={{ borderTop: "1px solid var(--line-2)" }}>
-              <p className="sidenote">
-                {request.status === "Closed"
-                  ? "Funding sudah dikonfirmasi: kas induk bergerak dan masing-masing Company memperoleh journal-nya, tempat posisi keduanya terhadap satu sama lain tercatat. Semua bersifat append-only — koreksi dilakukan sebagai dokumen baru."
-                  : request.status === "Cancelled"
-                    ? "Permintaan ditarik kembali oleh Company pemohon sebelum dikonfirmasi, sehingga tidak pernah menyentuh kas maupun Budget."
-                    : "Belum ada yang bergerak. Konfirmasi menulis entri Cash Bank Book induk, realisasi Budget, dan satu journal untuk masing-masing Company — seluruhnya dalam satu transaksi. Posisi kedua Company terhadap satu sama lain dibaca dari journal tersebut, lewat General Ledger."}
-              </p>
-            </div>
-          </div>
-        </div>
       </div>
 
       {asking && (
@@ -393,12 +391,15 @@ export function FundingDetail({
             </>
           }
         >
-          <div className="fsec">
-            <div className="frow">
-              <div className="fld full">
-                <label>
-                  Cash &amp; Bank yang Dipakai<span className="req">*</span>
-                </label>
+          <FormSection>
+            <FormRow>
+              <Field
+                label="Cash & Bank yang Dipakai"
+                span={12}
+                required
+                help={`hanya kas induk bercurrency ${currencyLabel}`}
+                error={error ?? undefined}
+              >
                 <Combobox
                   value={cashBankId}
                   options={resources.map((r) => ({
@@ -414,20 +415,9 @@ export function FundingDetail({
                     setError(null);
                   }}
                 />
-                {error ? (
-                  <div className="err">
-                    <Icon name="warn" size={11} />
-                    {error}
-                  </div>
-                ) : (
-                  <div className="help">
-                    Hanya resource induk bercurrency {currencyLabel}, karena
-                    nominal tidak pernah dikonversi antar currency.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+              </Field>
+            </FormRow>
+          </FormSection>
 
           <p className="sidenote">
             Konfirmasi adalah batas aktual untuk kedua Company sekaligus: kas

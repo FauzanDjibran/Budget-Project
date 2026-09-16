@@ -338,7 +338,9 @@ src/
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     accounting/          FiscalPeriods (shown inside a Fiscal Year), JournalList
-    ui/                  Combobox, Select, DateInput, MoneyInput, SearchField,
+    ui/                  form (FormBody/FormSection/FormRow/Field — every
+                         form in the application is built from these),
+                         Combobox, Select, DateInput, MoneyInput, SearchField,
                          RecordHistory + RecordHistoryCard (a record's own
                          audit trail, at the foot of every form),
                          Dialog, ConfirmDialog, ToastProvider
@@ -445,7 +447,10 @@ destructive button never lands where a confirming one just was, that no native
 as well as the page header, and a bare one silently misaligned every dropdown
 placeholder in the application), that the search box, the dialog chrome and a tinted
 dialog icon each have exactly one implementation, and that nothing formats a date or a
-number outside `lib/format.ts`. It reads source text, so it needs no database and costs
+number outside `lib/format.ts`. It also holds the form layout: every labelled field
+goes through `components/ui/form.tsx`, no help is rendered beside a control, no form
+keeps a summary side card or a page subtitle, and each document form titles itself with
+its own number. It reads source text, so it needs no database and costs
 nothing. A schema suite closes the loop underneath all of
 it: every model in `prisma/schema.prisma` must have a delegate on the generated client
 and a table in the database, so a checkout where `prisma generate` or `prisma migrate`
@@ -521,7 +526,11 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Identity cells | `.idc` = `.lab` code chip + `.nm` name |
 | Status | `.bdg` + `s-ok` / `s-bad` / `s-warn` / `s-info` / `s-mute` |
 | Tags | `.bdg` + `t-info` / `t-vio` / `t-acc` / `t-slate` |
-| Forms | `.fgrid` (form + summary side card) → `.fsec` → `.sec-t` → `.frow` → `.fld` |
+| Forms | `.fgrid solo` → `FormBody` → `FormSection` → `FormRow` → `Field`, all from `components/ui/form.tsx`. **Never hand-written** |
+| Form rows | Twelve columns. A field declares its share — `span={3\|4\|5\|6\|8\|12}`, half by default. Registry entities say it as `span` on the field config |
+| Field help | One clause, lower case, no full stop, **on the label row** — never a `.help` div under the control. An error replaces it |
+| Page heading | A document's number (`.docno`, mono) with its status badge beside it; a master record's name with its code as a `.docno sm` chip. Before the first save, a placeholder — `Budget Baru`, `User Baru` |
+| Summary cards | **None.** Each fact sits where it is read; a closing note about the record's state is a `.fnote` at the foot of its card |
 | Read-only fields | `.ro` — presented as text, **never disabled inputs** |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options |
 | Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`) |
@@ -982,6 +991,50 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Do not change unless:** explicitly instructed. **Never add business data to the
   seed, and never add a delete step to it.**
 - **Status:** Frozen, current.
+
+### A form is one component, twelve columns wide, and carries no summary (FROZEN)
+
+- **Decision:** `src/components/ui/form.tsx` is the only thing that builds a
+  form. `FormBody` → `FormSection` → `FormRow` → `Field`; nothing else emits
+  `.fld`, `.fsec`, `.sec-t` or `.fbody`. A row is **twelve columns** and a field
+  declares its share (`span`, half by default). **Help sits on the label row**,
+  right-aligned, as one lower-case clause — an error replaces it rather than
+  stacking under it. A page heading is the record's identity: a document's
+  number in mono (`.docno`) with its status badge beside it, a master record's
+  name with its code as a chip, and a placeholder (`Budget Baru`) before the
+  first save. **There is no summary side card anywhere**, and no form page
+  carries a `.ph-sub`.
+- **Reason:** A field cost 89px to present a 34px control — 14px of its own
+  padding, 20px of label and 21px of help *beneath* the control — and the row
+  was pinned to two equal columns, so a date picker sat in a 500px box and every
+  third field started a new row. Cash Bank Transaction's whole Budget section was
+  below the fold before a single field had been filled in, and the pointer
+  travelled ~570px between two controls that each needed 180px. The users work
+  by **mouse**, not by Tab, so both the scrolling and the travel are real costs
+  rather than taste. The summary card was the same failure in a second form: it
+  restated the status the header already showed, named a Budget Month the
+  breadcrumb already linked to, and reported an authorship the record's own
+  history panel covers — while taking 306px of width that buys a third column.
+- **Impact:** A Budget create form went 704px → 390px; Cash Bank Transaction now
+  fits header, Budget table and all, with no scroll at 1600×900. `Foot()` had
+  been hand-copied into three files and `Field` into a fourth and fifth, so
+  eleven files had to be edited in step to change anything about a field; it is
+  now one. Registry entities get spans as config (`span` on `Field` in
+  `entities.ts`), defaulting to a third. The 34px control height and every hit
+  area are **deliberately unchanged** — a smaller target costs a mouse-first
+  operator more than the pixels are worth.
+- **The exception that stays:** a label-less `.fld` is a layout slot, not a
+  field — a button, an error banner, the role checkbox grid — and is still
+  written by hand.
+- **`tests/design-system.test.ts` holds it**: no file outside `ui/form.tsx` may
+  render a `.fld` containing a bare `<label>`, emit `.fsec` / `.sec-t` / `.fbody`,
+  put a `.help` div beside a control, keep a `.card side`, or give a form page a
+  `.ph-sub`; and the four document forms must title themselves with `.docno`.
+- **Do not change unless:** explicitly instructed. **Never hand-write a field**,
+  never put help back under a control, never reintroduce a summary side card or a
+  form subtitle, and never shrink a control to buy height.
+- **Status:** Frozen, current.
+
 
 ### A repeated control is a component, and the test suite says so (FROZEN)
 - **Decision:** Anything that appears on more than one screen is drawn by one
@@ -2289,6 +2342,21 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 - Do **not** hand-write a control that already exists in `components/ui/` —
   a search box, a dialog, an amount field, a picker. One repeated control is one
   component, and `tests/design-system.test.ts` fails on a copy (§12).
+- Do **not** build a form out of `.fld` / `.frow` / `.fsec` markup. Use
+  `FormBody` / `FormSection` / `FormRow` / `Field` from `components/ui/form.tsx`
+  — a label-less `.fld` holding a button or a banner is the only exception (§12).
+- Do **not** render a field's help under its control, lengthen it past one
+  clause, or leave it as a full sentence. Help shares the label's line, and the
+  space it used to take is the whole point (§8, §12).
+- Do **not** add a summary side card to a form, or a `.ph-sub` to a form page.
+  Each fact goes where it is read: the number and status into the page heading,
+  the authorship into the record's own history panel (§12).
+- Do **not** title a document form with its description. The heading is the
+  document number and its status; before the first save it is a placeholder
+  (§12).
+- Do **not** shrink a control's height or hit area to save vertical space. The
+  operators work by mouse; only the padding around the control is negotiable
+  (§12).
 - Do **not** position a popup relative to its own control — no
   `top: calc(100% + …)`, no `.cbpop` rendered outside `AnchoredPopup`. A popup
   inside a scroll box is clipped by it, and the sheet behind it ends up scrolling

@@ -4,9 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { useToast } from "@/components/ui/toast";
+import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { changePasswordAction, updateProfileAction } from "@/app/actions/profile";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import { formatTimestamp } from "@/lib/format";
 import { MODULE_LABELS, MODULE_ORDER, type PermissionModule } from "@/lib/siba/permissions";
 import type { ProfileView as Profile } from "@/lib/siba/profile";
 
@@ -87,59 +87,34 @@ export function ProfileView({ profile }: { profile: Profile }) {
             </span>
             {profile.name}
             <span className="lab lg">{profile.initials}</span>
+            <span className="docno sm">{profile.user_code}</span>
             <span className={`bdg ${STATUS_CLASS[profile.status] ?? "s-mute"}`}>
               {STATUS_TEXT[profile.status] ?? profile.status}
             </span>
           </h1>
         </div>
-        <p className="ph-sub">
-          Akun Anda sendiri. Role dan permission hanya dapat diubah oleh
-          administrator — halaman ini menampilkannya sebagai informasi.
-        </p>
       </div>
 
-      <div className="fgrid">
+      <div className="fgrid solo">
         <div>
           <div className="card">
-            <div className="fsec">
-              <div className="sec-t">Identitas</div>
-              <div className="frow">
-                <div className="fld">
-                  <label>Email</label>
+            <FormBody>
+            <FormSection title="Identitas">
+              <FormRow>
+                <Field label="Email" span={4} help="hanya administrator yang dapat mengubahnya">
                   <div className="ro">{profile.email}</div>
-                  <div className="help">
-                    Email adalah identitas masuk dan hanya dapat diubah
-                    administrator.
-                  </div>
-                </div>
+                </Field>
 
-                <div className="fld">
-                  <label>Kode User</label>
-                  <div className="ro mono">{profile.user_code}</div>
-                </div>
-
-                <div className="fld">
-                  <label>
-                    Nama<span className="req">*</span>
-                  </label>
+                <Field label="Nama" span={4} required error={identityErrors.name}>
                   <input
                     className={`inp${identityErrors.name ? " bad" : ""}`}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     autoComplete="off"
                   />
-                  {identityErrors.name && (
-                    <div className="err">
-                      <Icon name="warn" size={11} />
-                      {identityErrors.name}
-                    </div>
-                  )}
-                </div>
+                </Field>
 
-                <div className="fld">
-                  <label>
-                    Inisial<span className="req">*</span>
-                  </label>
+                <Field label="Inisial" span={4} required error={identityErrors.initials}>
                   <input
                     className={`inp idf${identityErrors.initials ? " bad" : ""}`}
                     value={initials}
@@ -147,13 +122,26 @@ export function ProfileView({ profile }: { profile: Profile }) {
                     maxLength={3}
                     autoComplete="off"
                   />
-                  {identityErrors.initials && (
-                    <div className="err">
-                      <Icon name="warn" size={11} />
-                      {identityErrors.initials}
-                    </div>
-                  )}
-                </div>
+                </Field>
+
+                {/* Role is read-only here by design: nothing reachable from the
+                    profile can change access (CLAUDE.md §11). It used to sit in
+                    the summary card. */}
+                <Field label="Role" span={12} help="diberikan administrator">
+                  <div className="ro">
+                    {profile.roles.length ? (
+                      <span className="rchips">
+                        {profile.roles.map((r) => (
+                          <span className="bdg t-slate" key={r.label}>
+                            {r.name}
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      <span className="bdg s-mute">Tanpa Role</span>
+                    )}
+                  </div>
+                </Field>
 
                 <div className="fld full">
                   <button
@@ -165,21 +153,15 @@ export function ProfileView({ profile }: { profile: Profile }) {
                     {savingIdentity ? "Menyimpan…" : "Simpan Identitas"}
                   </button>
                 </div>
-              </div>
-            </div>
+              </FormRow>
+            </FormSection>
 
-            <div className="fsec">
-              <div className="sec-t">
-                Ubah Password
-                <span className="h">
-                  Mengubah password mengakhiri sesi Anda di perangkat lain
-                </span>
-              </div>
-              <div className="frow">
-                <div className="fld full">
-                  <label>
-                    Password Saat Ini<span className="req">*</span>
-                  </label>
+            <FormSection
+              title="Ubah Password"
+              hint="Mengubah password mengakhiri sesi Anda di perangkat lain"
+            >
+              <FormRow>
+                <Field label="Password Saat Ini" span={4} required error={pwErrors.current}>
                   <input
                     className={`inp${pwErrors.current ? " bad" : ""}`}
                     type="password"
@@ -187,18 +169,15 @@ export function ProfileView({ profile }: { profile: Profile }) {
                     onChange={(e) => setCurrent(e.target.value)}
                     autoComplete="current-password"
                   />
-                  {pwErrors.current && (
-                    <div className="err">
-                      <Icon name="warn" size={11} />
-                      {pwErrors.current}
-                    </div>
-                  )}
-                </div>
+                </Field>
 
-                <div className="fld">
-                  <label>
-                    Password Baru<span className="req">*</span>
-                  </label>
+                <Field
+                  label="Password Baru"
+                  span={4}
+                  required
+                  help="minimal 8 karakter"
+                  error={pwErrors.next}
+                >
                   <input
                     className={`inp${pwErrors.next ? " bad" : ""}`}
                     type="password"
@@ -206,20 +185,14 @@ export function ProfileView({ profile }: { profile: Profile }) {
                     onChange={(e) => setNext(e.target.value)}
                     autoComplete="new-password"
                   />
-                  {pwErrors.next ? (
-                    <div className="err">
-                      <Icon name="warn" size={11} />
-                      {pwErrors.next}
-                    </div>
-                  ) : (
-                    <div className="help">Minimal 8 karakter.</div>
-                  )}
-                </div>
+                </Field>
 
-                <div className="fld">
-                  <label>
-                    Konfirmasi Password Baru<span className="req">*</span>
-                  </label>
+                <Field
+                  label="Konfirmasi Password Baru"
+                  span={4}
+                  required
+                  error={pwErrors.confirm}
+                >
                   <input
                     className={`inp${pwErrors.confirm ? " bad" : ""}`}
                     type="password"
@@ -227,13 +200,7 @@ export function ProfileView({ profile }: { profile: Profile }) {
                     onChange={(e) => setConfirm(e.target.value)}
                     autoComplete="new-password"
                   />
-                  {pwErrors.confirm && (
-                    <div className="err">
-                      <Icon name="warn" size={11} />
-                      {pwErrors.confirm}
-                    </div>
-                  )}
-                </div>
+                </Field>
 
                 <div className="fld full">
                   <button
@@ -245,8 +212,9 @@ export function ProfileView({ profile }: { profile: Profile }) {
                     {savingPw ? "Mengubah…" : "Ubah Password"}
                   </button>
                 </div>
-              </div>
-            </div>
+              </FormRow>
+            </FormSection>
+            </FormBody>
           </div>
 
           <div className="card">
@@ -296,51 +264,6 @@ export function ProfileView({ profile }: { profile: Profile }) {
                 </p>
               </div>
             )}
-          </div>
-        </div>
-
-        <div>
-          <div className="card side">
-            <div className="card-h">
-              <span className="ci">
-                <Icon name="file" size={15} />
-              </span>
-              <div className="ct">
-                <h3>Ringkasan</h3>
-              </div>
-            </div>
-            <div className="card-b">
-              <div style={{ padding: "5px 0" }}>
-                <div className="mrow">
-                  <span className="k">Role</span>
-                  <span className="v">
-                    {profile.roles.length ? (
-                      <span className="rchips">
-                        {profile.roles.map((r) => (
-                          <span className="bdg t-slate" key={r.label}>
-                            {r.name}
-                          </span>
-                        ))}
-                      </span>
-                    ) : (
-                      <span className="bdg s-mute">Tanpa Role</span>
-                    )}
-                  </span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Status</span>
-                  <span className="v">
-                    <span className={`bdg ${STATUS_CLASS[profile.status] ?? "s-mute"}`}>
-                      {STATUS_TEXT[profile.status] ?? profile.status}
-                    </span>
-                  </span>
-                </div>
-                <div className="mrow">
-                  <span className="k">Dibuat</span>
-                  <span className="v">{formatTimestamp(profile.created_at)}</span>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>

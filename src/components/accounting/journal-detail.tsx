@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { Icon } from "@/components/icon";
 import { formatDate, formatMoney } from "@/lib/format";
 import { reportHref } from "@/lib/siba/reports";
@@ -35,7 +36,7 @@ export function JournalDetail({ journal }: { journal: Detail }) {
             <span className="ph-ico">
               <Icon name="book" size={16} />
             </span>
-            {journal.journalNo}
+            <span className="docno">{journal.journalNo}</span>
             <span className="bdg s-ok">{journal.status}</span>
             {!balanced && <span className="bdg s-bad">Tidak seimbang</span>}
           </h1>
@@ -45,31 +46,37 @@ export function JournalDetail({ journal }: { journal: Detail }) {
             </span>
           </div>
         </div>
-        <p className="ph-sub">{journal.description}</p>
       </div>
 
       <div className="card">
-        <div className="card-b">
-          <div className="critbar">
-            <span className="cr">
-              <i>Tanggal Posting</i>
-              {formatDate(journal.postingDate)}
-            </span>
-            <span className="cr">
-              <i>Company</i>
-              {journal.companyLabel}
-            </span>
-            <span className="cr">
-              <i>Sumber</i>
-              {journal.sourceDocLabel ?? "—"}
-              {journal.sourceDocId && <em>#{journal.sourceDocId}</em>}
-            </span>
-            <span className="cr">
-              <i>Baris</i>
-              {journal.lineCount}
-            </span>
-          </div>
-        </div>
+        <FormBody>
+          <FormSection>
+            <FormRow>
+              <Field label="Tanggal Posting" span={3}>
+                <div className="ro">{formatDate(journal.postingDate)}</div>
+              </Field>
+              <Field label="Company" span={3}>
+                <div className="ro">
+                  <span className="lab">{journal.companyLabel}</span>
+                </div>
+              </Field>
+              <Field label="Sumber" span={3}>
+                <div className="ro">
+                  {journal.sourceDocLabel ?? <span className="dash">—</span>}
+                  {journal.sourceDocId && (
+                    <span className="mut">#{journal.sourceDocId}</span>
+                  )}
+                </div>
+              </Field>
+              <Field label="Baris" span={3}>
+                <div className="ro">{journal.lineCount}</div>
+              </Field>
+              <Field label="Keterangan" span={12}>
+                <div className="ro multi">{journal.description}</div>
+              </Field>
+            </FormRow>
+          </FormSection>
+        </FormBody>
 
         <div className="tw">
           <table className="grid">

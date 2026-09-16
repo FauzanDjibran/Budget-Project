@@ -107,10 +107,7 @@ export const SYSTEM_DEFAULTS = [
     type: "ref",
     ref: "ref_currency",
     group: "application",
-    help:
-      "Currency yang terisi lebih dulu setiap kali ada pilihan Currency — " +
-      "pada Budget baru dan pendaftaran Cash & Bank. Pengguna tetap dapat " +
-      "menggantinya. Tidak diisi berarti pilihan dimulai kosong.",
+    help: "mengisi pilihan Currency lebih dulu",
   },
 
   // --------------------------------------------------------------- induk
@@ -122,9 +119,7 @@ export const SYSTEM_DEFAULTS = [
     ref: "acc_account",
     group: "bridge_induk",
     company: "induk",
-    help:
-      "Dipakai saat induk mengeluarkan kas untuk kebutuhan anak: induk mencatat " +
-      "piutang kepada anak sebesar dana yang dikeluarkan.",
+    help: "saat induk membiayai pengeluaran anak",
   },
   {
     key: "induk_bridge_ap_account",
@@ -134,9 +129,7 @@ export const SYSTEM_DEFAULTS = [
     ref: "acc_account",
     group: "bridge_induk",
     company: "induk",
-    help:
-      "Dipakai saat induk menerima kas milik anak: induk memegang dana tersebut, " +
-      "sehingga tercatat sebagai kewajiban kepada anak.",
+    help: "saat induk menampung penerimaan anak",
   },
 
   // ---------------------------------------------------------------- anak
@@ -148,9 +141,7 @@ export const SYSTEM_DEFAULTS = [
     ref: "acc_account",
     group: "bridge_anak",
     company: "anak",
-    help:
-      "Dipakai saat penerimaan anak ditampung induk: anak berhak menagih dana " +
-      "tersebut kepada induk.",
+    help: "saat penerimaan anak ditampung induk",
   },
   {
     key: "anak_bridge_ap_account",
@@ -160,9 +151,7 @@ export const SYSTEM_DEFAULTS = [
     ref: "acc_account",
     group: "bridge_anak",
     company: "anak",
-    help:
-      "Dipakai saat pengeluaran anak dibiayai induk: anak mencatat kewajiban " +
-      "kepada induk sebesar dana yang dipakai.",
+    help: "saat pengeluaran anak dibiayai induk",
   },
 
 ] as const satisfies readonly SystemDefaultDef[];

@@ -39,6 +39,14 @@ export type Field = {
   name: string;
   label: string;
   type: FieldType;
+  /**
+   * How much of the twelve-column form row this field takes. Left unset a
+   * field takes a third, which is what suits the short values a master record
+   * holds; `full` and a textarea take the whole row. Set it only where a field
+   * genuinely needs a different share — a long name, or a pair that must sit
+   * side by side. See `components/ui/form.tsx`.
+   */
+  span?: 3 | 4 | 5 | 6 | 8 | 12;
   required?: boolean;
   /** Enforced case-insensitively across the table. */
   unique?: boolean;
@@ -209,7 +217,7 @@ const STATUS_FIELD: Field = {
   options: ["Active", "Inactive"],
   optionLabels: { Active: "Aktif", Inactive: "Non Aktif" },
   defaultValue: "Active",
-  help: "Data Inactive tidak muncul sebagai pilihan pada transaksi baru.",
+  help: "bila Inactive, tidak muncul pada transaksi baru",
 };
 
 const FISCAL_STATUS_FIELD: Field = {
@@ -219,7 +227,7 @@ const FISCAL_STATUS_FIELD: Field = {
   required: true,
   options: ["Draft", "Open", "Closed"],
   defaultValue: "Draft",
-  help: "Draft belum dipakai · Open menerima posting · Closed terkunci.",
+  help: "Draft belum dipakai · Open menerima posting · Closed terkunci",
 };
 
 const NOTE_FIELD: Field = {
@@ -231,7 +239,7 @@ const NOTE_FIELD: Field = {
 };
 
 const identHelp =
-  "Identitas ringkas yang dipakai di seluruh dropdown dan laporan.";
+  "identitas ringkas, dipakai di dropdown dan laporan";
 
 /**
  * The years a Fiscal Year may be opened for: a decade around the current one.
@@ -273,7 +281,7 @@ export const ENTITIES: Entity[] = [
         type: "text",
         required: true,
         placeholder: "Holding Company",
-        help: "Nama lengkap entitas.",
+        help: "nama lengkap",
       },
       {
         name: "is_parent",
@@ -326,7 +334,7 @@ export const ENTITIES: Entity[] = [
         type: "text",
         required: true,
         placeholder: "Cabang Jakarta",
-        help: "Nama lengkap entitas.",
+        help: "nama lengkap",
       },
       {
         name: "company_id",
@@ -335,7 +343,7 @@ export const ENTITIES: Entity[] = [
         ref: "sys_company",
         required: true,
         locked: true,
-        help: "Partner dimiliki satu Company dan tidak dapat dipindah, karena history ledger terikat pada Company.",
+        help: "terikat pada satu Company, tidak dapat dipindah",
       },
       {
         name: "category_id",
@@ -343,7 +351,7 @@ export const ENTITIES: Entity[] = [
         type: "ref",
         ref: "sys_partner_category",
         required: true,
-        help: "Menentukan Budget Category mana yang boleh memakai Partner ini.",
+        help: "menentukan Budget Category yang boleh memakainya",
       },
       STATUS_FIELD,
       NOTE_FIELD,
@@ -387,7 +395,7 @@ export const ENTITIES: Entity[] = [
         type: "text",
         required: true,
         placeholder: "Bank Mandiri Rupiah",
-        help: "Nama lengkap entitas.",
+        help: "nama lengkap",
       },
       {
         name: "company_id",
@@ -397,7 +405,7 @@ export const ENTITIES: Entity[] = [
         required: true,
         locked: true,
         resets: ["account_id"],
-        help: "Pemilik resource. Pilihan Account mengikuti Company ini.",
+        help: "pilihan Account mengikuti Company ini",
       },
       {
         name: "cash_bank_type",
@@ -414,7 +422,7 @@ export const ENTITIES: Entity[] = [
         ref: "ref_currency",
         required: true,
         systemDefault: "default_currency",
-        help: "Currency dari resource, bukan currency transaksi.",
+        help: "currency resource, bukan currency transaksi",
       },
       {
         name: "account_id",
@@ -423,7 +431,7 @@ export const ENTITIES: Entity[] = [
         ref: "acc_account",
         required: true,
         refFilter: "cashBankAccount",
-        help: "Hanya account postable pada kelompok Kas atau Bank milik Company yang sama.",
+        help: "account postable di kelompok Kas/Bank Company ini",
       },
       {
         name: "opening_balance",
@@ -436,7 +444,7 @@ export const ENTITIES: Entity[] = [
         // has to delete first — the same as every other amount in the
         // application. A blank field is read as zero by `createRecord`.
         placeholder: "0",
-        help: "Saldo resource ini saat mulai dicatat. Disimpan sebagai entri pembuka pada Cash Bank Book, bukan sebagai kolom pada master — saldo berikutnya selalu berasal dari buku.",
+        help: "dicatat sebagai entri pembuka di Cash Bank Book",
       },
       STATUS_FIELD,
       NOTE_FIELD,
@@ -474,7 +482,7 @@ export const ENTITIES: Entity[] = [
         unique: true,
         ident: true,
         placeholder: "EUR",
-        help: "Kode ISO mata uang, dipakai di seluruh dropdown dan laporan.",
+        help: "kode ISO mata uang",
       },
       {
         name: "currency_name",
@@ -482,7 +490,7 @@ export const ENTITIES: Entity[] = [
         type: "text",
         required: true,
         placeholder: "Euro",
-        help: "Nama lengkap entitas.",
+        help: "nama lengkap",
       },
       STATUS_FIELD,
       NOTE_FIELD,
@@ -522,7 +530,7 @@ export const ENTITIES: Entity[] = [
         required: true,
         locked: true,
         resets: ["parent_account"],
-        help: "Account adalah master per Company. Nomor yang sama pada Company berbeda adalah record berbeda.",
+        help: "nomor sama pada Company lain adalah account lain",
       },
       {
         name: "account_subcategory_id",
@@ -532,7 +540,7 @@ export const ENTITIES: Entity[] = [
         required: true,
         locked: true,
         resets: ["parent_account"],
-        help: "Menentukan posisi account pada struktur bagan akun, sekaligus awal nomornya.",
+        help: "menentukan posisi dan awal nomor account",
       },
       {
         name: "parent_account",
@@ -541,7 +549,7 @@ export const ENTITIES: Entity[] = [
         ref: "acc_account",
         refFilter: "parentAccount",
         locked: true,
-        help: "Opsional. Diisi bila account ini turunan dari account lain pada Kelompok yang sama — nomornya melanjutkan nomor parent.",
+        help: "opsional — nomornya melanjutkan nomor parent",
       },
       {
         name: "account_segment",
@@ -553,7 +561,7 @@ export const ENTITIES: Entity[] = [
         inheritsFrom: ["parent_account", "account_subcategory_id"],
         writesTo: "account_label",
         placeholder: "1",
-        help: "Angka 1–999, unik di bawah induk yang sama. Nomor lengkap dibentuk dari induknya dan tidak dapat diubah setelah disimpan.",
+        help: "1–999, unik di bawah induk yang sama",
       },
       {
         name: "account_label",
@@ -563,7 +571,7 @@ export const ENTITIES: Entity[] = [
         derived: true,
         locked: true,
         ident: true,
-        help: "Dibentuk otomatis dari Kelompok atau Parent Account ditambah Nomor Urut.",
+        help: "dibentuk otomatis dari induk + nomor urut",
       },
       {
         name: "account_name",
@@ -571,7 +579,7 @@ export const ENTITIES: Entity[] = [
         type: "text",
         required: true,
         placeholder: "Persediaan",
-        help: "Nama lengkap entitas.",
+        help: "nama lengkap",
       },
       {
         name: "normal_balance",
@@ -603,7 +611,7 @@ export const ENTITIES: Entity[] = [
         ref: "sys_partner_category",
         required: true,
         visibleWhen: "accountRequiresPartner",
-        help: "Satu Account hanya menampung satu Partner Category, sehingga subledger tidak tercampur antar kategori subjek.",
+        help: "satu Account menampung satu Partner Category",
       },
       {
         name: "is_control_account",
@@ -655,7 +663,7 @@ export const ENTITIES: Entity[] = [
         required: true,
         locked: true,
         resets: ["account_id"],
-        help: "Mapping berlaku per Company karena bagan akun berbeda per Company.",
+        help: "bagan akun berbeda per Company",
       },
       {
         name: "budget_category_id",
@@ -664,7 +672,7 @@ export const ENTITIES: Entity[] = [
         ref: "sys_budget_category",
         required: true,
         resets: ["partner_category_id", "account_id"],
-        help: "Menentukan Partner Category mana saja yang boleh dipasangkan pada baris ini.",
+        help: "menentukan Partner Category yang boleh dipasangkan",
       },
       {
         name: "partner_category_id",
@@ -675,7 +683,7 @@ export const ENTITIES: Entity[] = [
         refFilter: "mappingPartnerCategory",
         visibleWhen: "budgetCategoryRequiresPartner",
         resets: ["account_id"],
-        help: "Satu kombinasi Budget Category × Partner Category menuju tepat satu Account.",
+        help: "satu kombinasi menuju tepat satu Account",
       },
       {
         name: "account_id",
@@ -685,7 +693,7 @@ export const ENTITIES: Entity[] = [
         required: true,
         full: true,
         refFilter: "postableAccount",
-        help: "Hanya account postable milik Company yang sama.",
+        help: "hanya account postable milik Company ini",
       },
     ],
     columns: [

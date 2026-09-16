@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
+import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import {
   createUserAction,
   resetUserPasswordAction,
@@ -14,7 +15,7 @@ import {
   updateUserAction,
 } from "@/app/actions/users";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import { formatTimestamp } from "@/lib/format";
+
 import type { UserRow } from "@/lib/siba/user-admin";
 import { firstError } from "./user-list";
 
@@ -169,7 +170,7 @@ export function UserForm({
     }
   };
 
-  const title = mode === "new" ? "Tambah User" : (user?.name ?? "");
+  const title = mode === "new" ? "User Baru" : (user?.name ?? "");
   const status = user?.status ?? "";
   const canToggle = user && (user.status === "Active" ? can.deactivate : can.activate);
 
@@ -191,7 +192,10 @@ export function UserForm({
             </span>
             {title}
             {mode !== "new" && <span className="lab lg">{user?.initials}</span>}
-            {mode === "view" && status && (
+            {mode !== "new" && user?.user_code && (
+              <span className="docno sm">{user.user_code}</span>
+            )}
+            {mode !== "new" && status && (
               <span className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}>
                 {STATUS_TEXT[status] ?? status}
               </span>
@@ -239,19 +243,15 @@ export function UserForm({
             )}
           </div>
         </div>
-        <p className="ph-sub">
-          Akses user berasal sepenuhnya dari Role yang melekat padanya. Tidak ada
-          permission yang diberikan langsung ke satu akun.
-        </p>
       </div>
 
-      <div className="fgrid">
+      <div className="fgrid solo">
         <div>
           <div className="card">
-            <div className="fsec">
-              <div className="sec-t">Identitas</div>
-              <div className="frow">
-                <Field label="Email" required={editing} error={errors.email} help={editing ? "Dipakai sebagai identitas masuk." : undefined}>
+            <FormBody>
+            <FormSection title="Identitas">
+              <FormRow>
+                <Field label="Email" span={4} required={editing} error={errors.email} help={editing ? "dipakai sebagai identitas masuk" : undefined}>
                   {editing ? (
                     <input
                       className={`inp${errors.email ? " bad" : ""}`}
@@ -266,7 +266,7 @@ export function UserForm({
                   )}
                 </Field>
 
-                <Field label="Nama" required={editing} error={errors.name}>
+                <Field label="Nama" span={4} required={editing} error={errors.name}>
                   {editing ? (
                     <input
                       className={`inp${errors.name ? " bad" : ""}`}
@@ -280,7 +280,7 @@ export function UserForm({
                   )}
                 </Field>
 
-                <Field label="Inisial" required={editing} error={errors.initials} help={editing ? "Maksimal 3 karakter, tampil pada avatar." : undefined}>
+                <Field label="Inisial" span={4} required={editing} error={errors.initials} help={editing ? "maksimal 3 karakter, tampil pada avatar" : undefined}>
                   {editing ? (
                     <input
                       className={`inp idf${errors.initials ? " bad" : ""}`}
@@ -300,9 +300,10 @@ export function UserForm({
                 {mode === "new" && (
                   <Field
                     label="Password Awal"
+                    span={4}
                     required
                     error={errors.password}
-                    help="Minimal 8 karakter. Sampaikan kepada user melalui jalur yang aman."
+                    help="minimal 8 karakter, sampaikan lewat jalur aman"
                   >
                     <input
                       className={`inp${errors.password ? " bad" : ""}`}
@@ -313,19 +314,13 @@ export function UserForm({
                     />
                   </Field>
                 )}
-              </div>
-            </div>
+              </FormRow>
+            </FormSection>
 
             {/* Role assignment is its own permission, so it is its own section. */}
             {(can.assignRoles || mode === "view") && (
-              <div className="fsec">
-                <div className="sec-t">
-                  Role
-                  <span className="h">
-                    Satu-satunya jalur pemberian akses
-                  </span>
-                </div>
-                <div className="frow">
+              <FormSection title="Role" hint="Satu-satunya jalur pemberian akses">
+                <FormRow>
                   <div className="fld full">
                     {errors._form && (
                       <div className="err" style={{ marginBottom: 8 }}>
@@ -379,69 +374,10 @@ export function UserForm({
                       </div>
                     )}
                   </div>
-                </div>
-              </div>
+                </FormRow>
+              </FormSection>
             )}
-          </div>
-        </div>
-
-        <div>
-          <div className="card side">
-            <div className="card-h">
-              <span className="ci">
-                <Icon name="file" size={15} />
-              </span>
-              <div className="ct">
-                <h3>Ringkasan</h3>
-              </div>
-            </div>
-            <div className="card-b">
-              <div style={{ padding: "5px 0" }}>
-                {mode === "new" ? (
-                  <>
-                    <div className="mrow">
-                      <span className="k">Kode</span>
-                      <span className="v">
-                        <span className="dash">dibuat otomatis</span>
-                      </span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Status</span>
-                      <span className="v">Aktif setelah disimpan</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="mrow">
-                      <span className="k">Kode</span>
-                      <span className="v mono">{user?.user_code}</span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Status</span>
-                      <span className="v">
-                        <span className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}>
-                          {STATUS_TEXT[status] ?? status}
-                        </span>
-                      </span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Dibuat</span>
-                      <span className="v">{formatTimestamp(user?.created_at)}</span>
-                    </div>
-                    <div className="mrow">
-                      <span className="k">Diubah</span>
-                      <span className="v">
-                        {user?.updated_by ? (
-                          formatTimestamp(user?.updated_at)
-                        ) : (
-                          <span className="dash">Belum pernah diubah</span>
-                        )}
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
+            </FormBody>
           </div>
         </div>
       </div>
@@ -462,8 +398,7 @@ export function UserForm({
           setNewPassword("");
         }}
       >
-        <div className="fld full">
-          <label>Password Baru</label>
+        <Field label="Password Baru" span={12} help="minimal 8 karakter">
           <input
             className="inp"
             type="password"
@@ -472,7 +407,7 @@ export function UserForm({
             placeholder="Minimal 8 karakter"
             autoComplete="new-password"
           />
-        </div>
+        </Field>
       </ConfirmDialog>
 
       <ConfirmDialog
@@ -493,38 +428,6 @@ export function UserForm({
         onCancel={() => setStatusOpen(false)}
       />
     </>
-  );
-}
-
-function Field({
-  label,
-  required,
-  error,
-  help,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  error?: string;
-  help?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="fld">
-      <label>
-        {label}
-        {required && <span className="req">*</span>}
-      </label>
-      {children}
-      {error ? (
-        <div className="err">
-          <Icon name="warn" size={11} />
-          {error}
-        </div>
-      ) : help ? (
-        <div className="help">{help}</div>
-      ) : null}
-    </div>
   );
 }
 

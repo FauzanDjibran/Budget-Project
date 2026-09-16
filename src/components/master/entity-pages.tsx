@@ -28,7 +28,6 @@ import {
   type FiscalYearStatus,
 } from "@/lib/siba/fiscal-workflow";
 import type { ActionTone } from "@/lib/siba/header-actions";
-import { userEmails } from "@/lib/siba/users";
 import { EntityList } from "@/components/master/entity-list";
 
 /**
@@ -168,7 +167,6 @@ export async function EntityDetailPage({
   if (!row) notFound();
 
   const refs = await refOptions(entity);
-  const emails = await userEmails([row.created_by as number, row.updated_by as number]);
 
   // A Fiscal Year has a lifecycle rather than a status field: it is activated,
   // which is what generates its periods. Everything else here is registry-driven.
@@ -201,8 +199,6 @@ export async function EntityDetailPage({
       mode="view"
       row={row}
       refs={refs}
-      createdByEmail={emails[row.created_by as number]}
-      updatedByEmail={emails[row.updated_by as number]}
       can={abilitiesFor(entity.key, actor.permissions)}
       headerActions={headerActions}
       editTone={editTone}
@@ -298,7 +294,6 @@ export async function EntityEditPage({
   if (!row) notFound();
 
   const refs = await refOptions(entity);
-  const emails = await userEmails([row.created_by as number, row.updated_by as number]);
 
   return (
     <>
@@ -307,8 +302,6 @@ export async function EntityEditPage({
         mode="edit"
         row={row}
         refs={refs}
-        createdByEmail={emails[row.created_by as number]}
-        updatedByEmail={emails[row.updated_by as number]}
         can={abilitiesFor(entity.key, actor.permissions)}
       />
       <RecordHistoryCard entityKey={entity.key} rowId={row.id} />

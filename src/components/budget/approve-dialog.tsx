@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Field, FormRow } from "@/components/ui/form";
 import { Icon } from "@/components/icon";
 import { Dialog } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
@@ -162,11 +163,14 @@ export function ApproveDialog({
         </div>
       )}
 
-      <div className="frow" style={{ padding: "14px 0 0", gap: "1px 16px" }}>
-        <div className="fld">
-          <label>
-            Budget Category <span className="req">*</span>
-          </label>
+      <FormRow>
+        <Field
+          label="Budget Category"
+          span={6}
+          required
+          help={`hanya Category yang sah untuk budget ${arah}`}
+          error={errors.category_id}
+        >
           <Select
             value={categoryId}
             invalid={Boolean(errors.category_id)}
@@ -182,23 +186,21 @@ export function ApproveDialog({
               setPartnerId("");
             }}
           />
-          {errors.category_id ? (
-            <div className="err">
-              <Icon name="warn" size={11} />
-              {errors.category_id}
-            </div>
-          ) : (
-            <div className="help">
-              Hanya Category yang sah untuk budget bertipe <b>{arah}</b> yang
-              ditampilkan.
-            </div>
-          )}
-        </div>
+        </Field>
 
-        <div className="fld">
-          <label>
-            Partner {needsPartner && <span className="req">*</span>}
-          </label>
+        <Field
+          label="Partner"
+          span={6}
+          required={needsPartner}
+          help={
+            needsPartner
+              ? `hanya kategori ${category!.partnerCategories.join(" / ")}`
+              : categoryId
+                ? "Category ini tidak memakai Partner"
+                : "ditentukan oleh Budget Category"
+          }
+          error={errors.partner_id}
+        >
           <Select
             value={partnerId}
             invalid={Boolean(errors.partner_id)}
@@ -217,27 +219,8 @@ export function ApproveDialog({
             }))}
             onChange={setPartnerId}
           />
-          {errors.partner_id ? (
-            <div className="err">
-              <Icon name="warn" size={11} />
-              {errors.partner_id}
-            </div>
-          ) : (
-            <div className="help">
-              {needsPartner ? (
-                <>
-                  Category ini hanya menerima Partner berkategori{" "}
-                  <b>{category!.partnerCategories.join(" / ")}</b>.
-                </>
-              ) : categoryId ? (
-                "Category yang dipilih tidak memakai Partner."
-              ) : (
-                "Kebutuhan Partner ditentukan oleh Budget Category."
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+        </Field>
+      </FormRow>
 
       {account ? (
         <div className="apmap">
