@@ -134,6 +134,45 @@ describe("one way to do each thing", () => {
     );
   });
 
+  test("only `ui/anchored-popup.tsx` places a popup over the page", () => {
+    const bad = files.filter(
+      (f) =>
+        !f.rel.endsWith("ui/anchored-popup.tsx") &&
+        /<div[^>]*className=\{?"?cbpop/.test(code(f.text))
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Render a dropdown through `AnchoredPopup`: a popup drawn inside its control is clipped by whatever scrolls around it, which is what made a dialog scroll instead of its own list."
+    );
+  });
+
+  test("nothing anchors a popup to its own control's box", () => {
+    const bad = files.filter((f) =>
+      /(top|bottom):\s*"calc\(100%/.test(code(f.text))
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "`top: calc(100% + 4px)` positions a popup inside the control, so a scrolling ancestor clips it. `AnchoredPopup` places it in viewport coordinates instead."
+    );
+  });
+
+  test("a popup is positioned in viewport coordinates", () => {
+    const rule = css.match(/^\.cbpop\{([^}]*)\}/m);
+    assert.ok(rule, "`.cbpop` should still declare the popup's own box.");
+    assert.match(
+      rule![1],
+      /position:fixed/,
+      "`.cbpop` must stay `position:fixed` — absolute would put it back inside the dialog body's scroll box."
+    );
+    assert.doesNotMatch(
+      css,
+      /^\.cal\{[^}]*position:absolute/m,
+      "The calendar takes its position from `AnchoredPopup`, like every other popup."
+    );
+  });
+
   test("a tinted dialog icon takes its tone from a class", () => {
     const bad = files.filter((f) =>
       /className="mi"\s*\n?\s*style=/.test(code(f.text))

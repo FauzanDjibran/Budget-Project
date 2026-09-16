@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Icon } from "@/components/icon";
+import { AnchoredPopup } from "@/components/ui/anchored-popup";
 import type { RefOption } from "@/lib/siba/records";
 
 /**
@@ -32,22 +33,6 @@ export function Combobox({
 
   const selected = options.find((o) => o.id === value) ?? null;
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   const visible = options.filter((o) => {
     if (!o.active && o.id !== value) return false;
     if (!query) return true;
@@ -75,7 +60,7 @@ export function Combobox({
   }
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div ref={wrapRef}>
       <button
         type="button"
         className={`cbx${invalid ? " bad" : ""}${open ? " open" : ""}`}
@@ -113,46 +98,47 @@ export function Combobox({
         </span>
       </button>
 
-      {open && (
-        <div
-          className="cbpop"
-          style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0 }}
-        >
-          <div className="s">
-            <Icon name="srch" size={13} />
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter pilihan…"
-            />
-          </div>
-          <div className="l">
-            {visible.length ? (
-              visible.map((o) => (
-                <div
-                  key={o.id}
-                  className={`cbo${o.id === value ? " sel" : ""}`}
-                  onClick={() => {
-                    onChange(o.id);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="lab">{o.label}</span>
-                  <span className="nm">{o.name}</span>
-                  {o.id === value && (
-                    <span className="tick">
-                      <Icon name="check" size={13} />
-                    </span>
-                  )}
-                </div>
-              ))
-            ) : (
-              <div className="cbe">Tidak ada pilihan yang cocok.</div>
-            )}
-          </div>
+      <AnchoredPopup
+        anchorRef={wrapRef}
+        open={open}
+        onDismiss={() => setOpen(false)}
+        width="anchor"
+        className="cbpop"
+      >
+        <div className="s">
+          <Icon name="srch" size={13} />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter pilihan…"
+          />
         </div>
-      )}
+        <div className="l">
+          {visible.length ? (
+            visible.map((o) => (
+              <div
+                key={o.id}
+                className={`cbo${o.id === value ? " sel" : ""}`}
+                onClick={() => {
+                  onChange(o.id);
+                  setOpen(false);
+                }}
+              >
+                <span className="lab">{o.label}</span>
+                <span className="nm">{o.name}</span>
+                {o.id === value && (
+                  <span className="tick">
+                    <Icon name="check" size={13} />
+                  </span>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="cbe">Tidak ada pilihan yang cocok.</div>
+          )}
+        </div>
+      </AnchoredPopup>
     </div>
   );
 }

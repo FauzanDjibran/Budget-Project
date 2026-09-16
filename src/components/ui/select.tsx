@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Icon } from "@/components/icon";
+import { AnchoredPopup } from "@/components/ui/anchored-popup";
 
 /**
  * The application's dropdown.
@@ -72,22 +73,6 @@ export function Select({
   const selected = options.find((o) => o.value === value) ?? null;
   const withSearch = searchable ?? options.length > 8;
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   const visible = options.filter((o) => {
     if (!query) return true;
     const q = query.toLowerCase();
@@ -105,7 +90,7 @@ export function Select({
     .join(" ");
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", display: variant === "field" ? "block" : "inline-block" }}>
+    <div ref={wrapRef} style={{ display: variant === "field" ? "block" : "inline-block" }}>
       <button
         type="button"
         className={cls}
@@ -137,58 +122,52 @@ export function Select({
         )}
       </button>
 
-      {open && (
-        <div
-          className="cbpop"
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0,
-            minWidth: "100%",
-            width: "max-content",
-            maxWidth: 320,
-          }}
-        >
-          {withSearch && (
-            <div className="s">
-              <Icon name="srch" size={13} />
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Filter pilihan…"
-              />
-            </div>
-          )}
-          <div className="l" role="listbox">
-            {visible.length ? (
-              visible.map((o) => (
-                <div
-                  key={o.value}
-                  role="option"
-                  aria-selected={o.value === value}
-                  className={`cbo${o.value === value ? " sel" : ""}${o.disabled ? " off" : ""}`}
-                  onClick={() => {
-                    if (o.disabled) return;
-                    onChange(o.value);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="nm">{o.label}</span>
-                  {o.hint && <span className="lab">{o.hint}</span>}
-                  {o.value === value && (
-                    <span className="tick">
-                      <Icon name="check" size={13} />
-                    </span>
-                  )}
-                </div>
-              ))
-            ) : (
-              <div className="cbe">Tidak ada pilihan yang cocok.</div>
-            )}
+      <AnchoredPopup
+        anchorRef={wrapRef}
+        open={open}
+        onDismiss={() => setOpen(false)}
+        className="cbpop"
+        maxWidth={320}
+      >
+        {withSearch && (
+          <div className="s">
+            <Icon name="srch" size={13} />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter pilihan…"
+            />
           </div>
+        )}
+        <div className="l" role="listbox">
+          {visible.length ? (
+            visible.map((o) => (
+              <div
+                key={o.value}
+                role="option"
+                aria-selected={o.value === value}
+                className={`cbo${o.value === value ? " sel" : ""}${o.disabled ? " off" : ""}`}
+                onClick={() => {
+                  if (o.disabled) return;
+                  onChange(o.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="nm">{o.label}</span>
+                {o.hint && <span className="lab">{o.hint}</span>}
+                {o.value === value && (
+                  <span className="tick">
+                    <Icon name="check" size={13} />
+                  </span>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="cbe">Tidak ada pilihan yang cocok.</div>
+          )}
         </div>
-      )}
+      </AnchoredPopup>
     </div>
   );
 }

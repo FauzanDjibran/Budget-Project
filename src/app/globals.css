@@ -985,7 +985,8 @@ a{color:inherit;text-decoration:none}
 .dtb:hover{background:var(--line-2);color:var(--ink-2)}
 .dtb[disabled]{opacity:.4;cursor:not-allowed}
 
-.cal{position:absolute;top:calc(100% + 4px);left:0;z-index:96;width:258px;padding:9px;gap:8px}
+.cal{width:258px;padding:9px;gap:8px;overflow-y:auto}
+.cal > *{flex:0 0 auto}
 .cal-h{display:flex;align-items:center;gap:3px}
 .cal-h .cal-t{flex:1 1 auto;text-align:center;font-size:12px;font-weight:800;color:var(--brand)}
 .cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}

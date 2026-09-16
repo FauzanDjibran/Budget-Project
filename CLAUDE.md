@@ -525,6 +525,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Read-only fields | `.ro` — presented as text, **never disabled inputs** |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options |
 | Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`) |
+| Popups | `AnchoredPopup` draws every list and calendar — portalled to `document.body`, placed from the trigger's rect, flipping and clamping to the room it has. **Never positioned inside its control** |
 | Dates | `DateInput` — **never `<input type="date">`**; types and shows `dd/mm/yyyy`, opens the app's own calendar |
 | Amounts | `MoneyInput` — **never `<input type="number">`**; mono, right-aligned, grouped in thousands as it is typed, currency label inside the box. `size="sm"` inside a table |
 | Search | `SearchField` in the `.toolbar` — icon, `Cari <what>…`, clear button. `grow` when it is the only control |
@@ -986,12 +987,15 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Decision:** Anything that appears on more than one screen is drawn by one
   component in `src/components/ui/`, not by markup copied between pages. That is
   now: `Combobox`, `Select`, `DateInput`, **`MoneyInput`**, **`SearchField`**,
+  **`AnchoredPopup`** (the popup all three pickers hang off their trigger),
   **`Dialog`** (the wide panel) and `ConfirmDialog` (the small question).
   `tests/design-system.test.ts` enforces the ones that had already drifted —
   no native `<select>`, date or number input; no bare `.ph` rule; no `.srch`
   markup outside `SearchField`; no `.ovl` outside the two dialog components; no
-  `.mi` tinted inline; no date or number formatted outside `lib/format.ts`; and
-  no `.ph-act` block writing a danger button after its primary.
+  `.cbpop` rendered outside `AnchoredPopup` and nothing anchoring a popup with
+  `top: calc(100% …)`; no `.mi` tinted inline; no date or number formatted
+  outside `lib/format.ts`; and no `.ph-act` block writing a danger button after
+  its primary.
 - **Reason:** A CLAUDE.md line cannot enforce a convention, because none of these
   mistakes breaks a build, fails a type check or throws at runtime. They just make
   one screen behave unlike the rest, and the drift is only visible to whoever holds
@@ -1007,6 +1011,34 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Do not change unless:** explicitly instructed. **Never reproduce one of these
   controls by hand, and never relax an assertion in `tests/design-system.test.ts` to
   let a copy through.**
+- **Status:** Frozen, current.
+
+### A popup is placed in viewport coordinates, never inside its control (FROZEN)
+- **Decision:** Every dropdown the application opens — the FK picker's list, the
+  `Select`'s list, the `DateInput`'s calendar — is rendered into `document.body`
+  by `src/components/ui/anchored-popup.tsx` and positioned from its trigger's own
+  `getBoundingClientRect()`. It opens downwards, flips above when there is more
+  room there, clamps its height to the space it actually has so the list scrolls
+  internally, follows its trigger while an ancestor scrolls, and closes on an
+  outside click or on Escape — which it takes in the **capture** phase and stops,
+  so one press closes the dropdown and not the dialog around it.
+- **Reason:** A popup drawn inside its control belongs to whatever scrolls around
+  it. All three pickers positioned theirs `absolute; top: calc(100% + 4px)`, so
+  inside a panel dialog the list was clipped at `.rp-body`'s edge and the only way
+  to reach the options below the fold was to scroll the **dialog** — which moved
+  the field, the header and the summary card while the list stayed put. The same
+  was true of every ordinary page, whose `.content` is a scroll box too; the
+  dialogs simply made it obvious. A list has its own scroll; nothing behind it
+  should have to move.
+- **Impact:** `.cbpop` keeps `position:fixed` and `.cal` no longer declares a
+  position at all — the component places both. A new popup passes `width`
+  (`anchor` / `auto` / `none`), never its own coordinates. Because the popup is a
+  sibling of the overlay rather than a descendant, `z-index: 96` over `.ovl`'s
+  `90` is what keeps it above a dialog, and a click inside it never reaches the
+  backdrop's dismiss handler.
+- **Do not change unless:** explicitly instructed. **Never position a popup
+  relative to its own control**, never render `.cbpop` outside `AnchoredPopup`,
+  and do not give one screen's dropdown bespoke placement.
 - **Status:** Frozen, current.
 
 ### Design system lifted verbatim
@@ -2257,6 +2289,10 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 - Do **not** hand-write a control that already exists in `components/ui/` —
   a search box, a dialog, an amount field, a picker. One repeated control is one
   component, and `tests/design-system.test.ts` fails on a copy (§12).
+- Do **not** position a popup relative to its own control — no
+  `top: calc(100% + …)`, no `.cbpop` rendered outside `AnchoredPopup`. A popup
+  inside a scroll box is clipped by it, and the sheet behind it ends up scrolling
+  instead of the list (§8, §12).
 - Do **not** write a bare `.ph` rule in `globals.css`, of any kind. `.ph` is the
   page header **and** the placeholder inside Combobox, Select and DateInput;
   scope every page-header rule `.pad > .ph` (§8, §12).

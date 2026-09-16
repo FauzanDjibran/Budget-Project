@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
+import { AnchoredPopup } from "@/components/ui/anchored-popup";
 import { MONTHS_LONG, formatDate, toDisplayDate, toIsoDate } from "@/lib/format";
 
 /**
@@ -42,22 +43,6 @@ export function DateInput({
 
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   /** The month the calendar is showing — the selected date, else today. */
   const [cursor, setCursor] = useState(() => monthOf(value));
@@ -126,7 +111,14 @@ export function DateInput({
         <Icon name="cal" size={14} />
       </button>
 
-      {open && !disabled && (
+      <AnchoredPopup
+        anchorRef={wrapRef}
+        open={open && !disabled}
+        onDismiss={() => setOpen(false)}
+        width="none"
+        maxHeight={340}
+        className="cbpop cal"
+      >
         <Calendar
           cursor={cursor}
           selected={value}
@@ -142,7 +134,7 @@ export function DateInput({
             setOpen(false);
           }}
         />
-      )}
+      </AnchoredPopup>
     </div>
   );
 }
@@ -183,7 +175,7 @@ function Calendar({
   };
 
   return (
-    <div className="cbpop cal">
+    <>
       <div className="cal-h">
         <button type="button" className="pg" title="Tahun sebelumnya" onClick={() => shift(-12)}>
           «
@@ -234,7 +226,7 @@ function Calendar({
           </button>
         )}
       </div>
-    </div>
+    </>
   );
 }
 
