@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { AnchoredPopup } from "@/components/ui/anchored-popup";
 
@@ -13,6 +13,12 @@ import { AnchoredPopup } from "@/components/ui/anchored-popup";
  * list over an otherwise finished interface. This renders the list itself,
  * reusing the combobox popup (`.cbpop` / `.cbo`) so every dropdown in the app —
  * FK picker, toolbar filter, form field — behaves and reads the same way.
+ *
+ * **Where it is searchable, the control itself is the search box**, exactly as
+ * the FK picker is: opening turns the trigger into a text input in place rather
+ * than growing a second bar inside the popup that the user then has to travel
+ * to. A list short enough not to need filtering keeps a plain trigger, because
+ * an input that filters nothing is a control that does nothing.
  *
  * `variant` maps to the trigger class the surrounding layout already expects,
  * so swapping a `<select>` for this changes no spacing:
@@ -61,7 +67,7 @@ export function Select({
   set?: boolean;
   invalid?: boolean;
   disabled?: boolean;
-  /** Adds a filter box. Defaults on once the list is long enough to need one. */
+  /** Turns the trigger into a filter box. Defaults on once the list is long. */
   searchable?: boolean;
   title?: string;
   ariaLabel?: string;
@@ -69,9 +75,11 @@ export function Select({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
 
   const selected = options.find((o) => o.value === value) ?? null;
   const withSearch = searchable ?? options.length > 8;
+  const searching = open && withSearch && !disabled;
 
   const visible = options.filter((o) => {
     if (!query) return true;
@@ -84,63 +92,98 @@ export function Select({
     set ? "set" : "",
     invalid ? "bad" : "",
     open ? "open" : "",
+    disabled ? "dis" : "",
     !selected && variant === "field" ? "ph" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
+  const pick = (v: string) => {
+    onChange(v);
+    setOpen(false);
+    setQuery("");
+  };
+
+  const toggle = (e: React.MouseEvent) => {
+    if (disabled) return;
+    // The popup ignores clicks on its own anchor, so closing again happens
+    // here — but a click into the search input is a click in the field.
+    if (open && (e.target as HTMLElement).tagName === "INPUT") return;
+    e.preventDefault();
+    setOpen((o) => !o);
+    setQuery("");
+  };
+
+  const triggerBody = searching ? (
+    <input
+      className="cbq"
+      autoFocus
+      value={query}
+      onChange={(e) => setQuery(e.target.value)}
+      placeholder={selected?.label ?? placeholder}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const first = visible.find((o) => !o.disabled);
+        if (first) pick(first.value);
+      }}
+    />
+  ) : variant === "field" ? (
+    <span className="v">
+      {selected ? (
+        <span className="nm">{selected.label}</span>
+      ) : (
+        <span className="ph">{placeholder}</span>
+      )}
+    </span>
+  ) : (
+    <span className="tv">{selected?.label ?? placeholder}</span>
+  );
+
   return (
     <div ref={wrapRef} style={{ display: variant === "field" ? "block" : "inline-block" }}>
-      <button
-        type="button"
+      {/* A `<div>` rather than a `<button>`: a button may not contain the input
+          the search turns it into, and a trigger that changed element type
+          between its two states would lose focus mid-gesture. */}
+      <div
+        role="combobox"
         className={cls}
         title={title}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        disabled={disabled}
-        onClick={() => {
-          setOpen((o) => !o);
-          setQuery("");
+        aria-controls={listId}
+        aria-disabled={disabled || undefined}
+        tabIndex={disabled || searching ? -1 : 0}
+        onMouseDown={toggle}
+        onKeyDown={(e) => {
+          if (open || disabled) return;
+          if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
+            e.preventDefault();
+            setOpen(true);
+            setQuery("");
+          }
         }}
       >
-        {variant === "field" ? (
-          <>
-            <span className="v">
-              {selected ? (
-                <span className="nm">{selected.label}</span>
-              ) : (
-                <span className="ph">{placeholder}</span>
-              )}
-            </span>
-            <span className="cv">
-              <Icon name="expand" size={13} />
-            </span>
-          </>
-        ) : (
-          selected?.label ?? placeholder
+        {triggerBody}
+        {variant === "field" && (
+          <span className="cv">
+            <Icon name="expand" size={13} />
+          </span>
         )}
-      </button>
+      </div>
 
       <AnchoredPopup
         anchorRef={wrapRef}
-        open={open}
-        onDismiss={() => setOpen(false)}
+        open={open && !disabled}
+        onDismiss={() => {
+          setOpen(false);
+          setQuery("");
+        }}
         className="cbpop"
         maxWidth={320}
       >
-        {withSearch && (
-          <div className="s">
-            <Icon name="srch" size={13} />
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter pilihan…"
-            />
-          </div>
-        )}
-        <div className="l" role="listbox">
+        <div className="l" id={listId} role="listbox">
           {visible.length ? (
             visible.map((o) => (
               <div
@@ -150,8 +193,7 @@ export function Select({
                 className={`cbo${o.value === value ? " sel" : ""}${o.disabled ? " off" : ""}`}
                 onClick={() => {
                   if (o.disabled) return;
-                  onChange(o.value);
-                  setOpen(false);
+                  pick(o.value);
                 }}
               >
                 <span className="nm">{o.label}</span>

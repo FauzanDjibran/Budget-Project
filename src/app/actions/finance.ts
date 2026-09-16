@@ -142,13 +142,6 @@ const asLines = (lines: TransactionLineValues[]): LineInput[] =>
     .filter((l) => l.budget_id > 0);
 
 /**
- * There is no exchange rate anywhere in this system yet (CLAUDE.md §12), so a
- * document's base figures are its own figures and the rate is the identity.
- * Nothing reads or displays them; they exist because the schema carries the
- * columns the real rate source will one day fill. Never substitute a constant.
- */
-
-/**
  * The Budgets a header may realize, for the form.
  *
  * An action rather than a page prop: the pool depends on Purpose, Partner and

@@ -31,10 +31,11 @@ export type FieldType =
   | "money"
   /**
    * An exchange rate. Rendered by `ui/rate-input.tsx`, which is a separate
-   * control from `money` on purpose: a rate is not an amount. It carries more
-   * decimals than money does, it is never grouped the way a balance is, and it
-   * reads as a ratio between two currencies rather than as a quantity of one.
-   * Giving it the money control would say it was the same kind of figure.
+   * control from `money` on purpose: a rate is not an amount. It carries six
+   * decimals where money carries two, it has to accept a decimal separator at
+   * all, and it reads as a ratio between two currencies rather than as a
+   * quantity of one. Giving it the money control would say it was the same
+   * kind of figure — and would silently drop the decimals.
    */
   | "rate"
   /**

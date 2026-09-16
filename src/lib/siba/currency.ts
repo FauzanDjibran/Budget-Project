@@ -32,12 +32,12 @@
  * a page cannot reach the database to ask. It is a currency *label*, matching
  * `ref_currency.currency_label`.
  *
- * **This and `prisma/seed.ts` are currently two statements of one fact.** The
- * seed takes `SIBA_BASE_CURRENCY` from the environment, defaulting to the same
- * value. Nothing reconciles them yet, so that variable must not be changed —
- * reconciling the two (most likely by the seed importing this constant) belongs
- * with the migration that gives the books their base measure, where there is a
- * schema change to carry it.
+ * **This is the only statement of it.** `prisma/seed.ts` imports this constant
+ * rather than reading `SIBA_BASE_CURRENCY` from the environment, which it used
+ * to do — a base currency that could be changed by a deployment variable while
+ * the books were already measured in it was a way to invalidate every stored
+ * base figure at once. Only the currency's *name* is still configurable
+ * (`SIBA_BASE_CURRENCY_NAME`), because a name is not a measure.
  */
 export const BASE_CURRENCY_LABEL = "IDR";
 

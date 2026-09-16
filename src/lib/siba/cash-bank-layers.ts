@@ -211,11 +211,34 @@ export type LayerOption = {
  * only** — nothing consumes a layer without being told to.
  */
 export async function openLayersOf(cashBankId: number): Promise<LayerOption[]> {
+  return (await openLayersFor([cashBankId])).get(cashBankId) ?? [];
+}
+
+/**
+ * The same, for several resources at once.
+ *
+ * The form that picks a layer is handed every resource's layers up front,
+ * because the choice of resource happens in the browser and the page is where
+ * the database is read (§3). Asking per resource made that page cost one round
+ * trip per foreign account — so it is one query, grouped in memory, and a
+ * resource with no open layers is simply absent from the map.
+ */
+export async function openLayersFor(
+  cashBankIds: number[]
+): Promise<Map<number, LayerOption[]>> {
+  const byResource = new Map<number, LayerOption[]>();
+  if (!cashBankIds.length) return byResource;
+
   const rows = await prisma.cashBankLayer.findMany({
-    where: { cash_bank_id: cashBankId, status: "Open" },
-    orderBy: [{ acquisition_date: "asc" }, { acquisition_seq: "asc" }],
+    where: { cash_bank_id: { in: cashBankIds }, status: "Open" },
+    orderBy: [
+      { cash_bank_id: "asc" },
+      { acquisition_date: "asc" },
+      { acquisition_seq: "asc" },
+    ],
     select: {
       id: true,
+      cash_bank_id: true,
       layer_no: true,
       acquisition_date: true,
       rate: true,
@@ -224,15 +247,21 @@ export async function openLayersOf(cashBankId: number): Promise<LayerOption[]> {
       note: true,
     },
   });
-  return rows.map((r) => ({
-    id: r.id,
-    layerNo: r.layer_no,
-    date: r.acquisition_date.toISOString().slice(0, 10),
-    rate: r.rate.toNumber(),
-    foreignRemaining: r.foreign_remaining.toNumber(),
-    baseRemaining: r.base_remaining.toNumber(),
-    note: r.note,
-  }));
+
+  for (const r of rows) {
+    const list = byResource.get(r.cash_bank_id) ?? [];
+    list.push({
+      id: r.id,
+      layerNo: r.layer_no,
+      date: r.acquisition_date.toISOString().slice(0, 10),
+      rate: r.rate.toNumber(),
+      foreignRemaining: r.foreign_remaining.toNumber(),
+      baseRemaining: r.base_remaining.toNumber(),
+      note: r.note,
+    });
+    byResource.set(r.cash_bank_id, list);
+  }
+  return byResource;
 }
 
 /**

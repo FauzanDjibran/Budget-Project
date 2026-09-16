@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { checkAccountIsLeaf } from "./records";
 import {
   EMPTY_SYSTEM_DEFAULTS,
   SYSTEM_DEFAULTS,
@@ -62,6 +63,25 @@ export async function writeSystemDefaults(
 }
 
 /**
+ * The System Defaults currently pointing at an account, by name.
+ *
+ * Read before that account is given a sub-account: becoming a parent revokes
+ * its posting privilege, and every account-valued default names somewhere a
+ * posting *goes* — the four intercompany bridge accounts and the two FX
+ * difference accounts. A setting left pointing at a heading would refuse a
+ * funded confirmation or an FX posting later, by name, for a reason nobody
+ * would connect to the sub-account they had created.
+ */
+export async function systemDefaultsUsingAccount(
+  accountId: number
+): Promise<string[]> {
+  const current = await systemDefaults();
+  return SYSTEM_DEFAULTS.filter(
+    (def) => def.ref === "acc_account" && refValueOf(current, def.key) === accountId
+  ).map((def) => def.name);
+}
+
+/**
  * The Currency a new record's Currency picker starts on.
  *
  * Resolved against the master rather than trusted as stored: a currency that
@@ -119,7 +139,9 @@ export async function checkSystemDefaultValue(
     }
     if (!account.is_postable) return "Account tersebut bukan account postable.";
     if (!account.is_active) return "Account tersebut non-aktif.";
-    return null;
+    // A parent account is a heading, not a destination — a bridge or FX
+    // posting made to one would be money in the chart no leaf accounts for.
+    return checkAccountIsLeaf(id);
   }
 
   return null;

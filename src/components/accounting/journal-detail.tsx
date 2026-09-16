@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { Icon } from "@/components/icon";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatForeignFace, formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { reportHref } from "@/lib/siba/reports";
 import type { JournalDetail as Detail } from "@/lib/siba/journal";
@@ -114,13 +114,13 @@ export function JournalDetail({ journal }: { journal: Detail }) {
                   <td className="mut">{l.partnerLabel ?? "—"}</td>
                   <td className="mut">
                     {l.description}
-                    {/* A line in another currency says what it was, beside the
-                        rupiah figure it became. A base-currency line would
-                        only be stating itself twice. */}
+                    {/* A line in another currency says what it was and at what
+                        kurs, beside the rupiah figure it became — `USD 1.000,00
+                        @ 16.000,00`. A base-currency line would only be stating
+                        itself twice. */}
                     {l.foreign && (
                       <span className="rsub">
-                        {formatMoney(l.trxAmount, l.currencyLabel)} 
-                        {formatNumber(l.rate, 2)}
+                        {formatForeignFace(l.trxAmount, l.currencyLabel, l.rate)}
                       </span>
                     )}
                   </td>
@@ -152,10 +152,8 @@ export function JournalDetail({ journal }: { journal: Detail }) {
       </div>
 
       <p className="foot-note">
-        Journal bersifat append-only dan immutable: setiap journal wajib
-        seimbang saat diposting, dan tidak ada jalur untuk mengubah, menghapus,
-        atau membalikkannya. Koreksi dilakukan dengan transaksi bisnis baru yang
-        menghasilkan journal tersendiri.
+        Journal bersifat append-only: koreksi dilakukan dengan transaksi bisnis
+        baru yang menghasilkan journal tersendiri.
       </p>
     </>
   );

@@ -12,7 +12,7 @@ import { recordCashBankEntry } from "./cash-bank";
 import {
   drawFromLayer,
   openLayer,
-  openLayersOf,
+  openLayersFor,
   type LayerOption,
 } from "./cash-bank-layers";
 import {
@@ -356,11 +356,15 @@ export async function financeRefs(companyIds?: number[]): Promise<FinanceRefs> {
   // none, so it simply gets an empty list and the form never asks for a kurs.
   // Read here rather than when a resource is chosen: the form is a client
   // component and the page is where the database is read (§3).
-  const layersOf = new Map<number, LayerOption[]>();
-  for (const c of cashBanks) {
-    if (isBaseCurrency(c.currency.currency_label)) continue;
-    layersOf.set(c.id, await openLayersOf(c.id));
-  }
+  //
+  // One query for all of them, not one per resource: this runs on every load
+  // of the Cash Bank Transaction form, and asking per resource made the form's
+  // cost grow with how many foreign accounts the Companies happen to hold.
+  const layersOf = await openLayersFor(
+    cashBanks
+      .filter((c) => !isBaseCurrency(c.currency.currency_label))
+      .map((c) => c.id)
+  );
 
   return {
     companies: companies.map((c) => ({
@@ -1182,46 +1186,6 @@ async function resolveValuation(doc: {
 }
 
 /**
- * Post: the actual boundary (concept doc §2.3).
- *
- * Three writes, one database transaction — either the money moved and every
- * book that must know about it does, or nothing happened at all:
- *
- *   1. the **Cash Bank Book** gets an entry, and its materialised balance moves
- *      with it, in the same transaction (`recordCashBankEntry`);
- *   2. every Budget on the document has its `realized_amount` raised, and a
- *      Budget that reaches its planned amount closes itself (§6.5);
- *   3. the document acquires its document and posting dates and becomes Posted.
- *
- * The book is written **straight from the document**, never derived from a
- * journal line: operational books are independent historical stores, and only
- * the General Ledger derives from journals (§2.5, §11.7). The Journal and the
- * General Ledger are the next scope and are deliberately absent here.
- *
- * Budgets are re-read *now* rather than trusted from when the document was
- * drafted: another document may have closed one in the meantime, and posting
- * against a plan that is no longer Open would record a realization nothing
- * authorised.
- *
- * Lives here rather than inside the Server Action so the rule is testable: the
- * action resolves a caller and then calls this, and the test suite calls the
- * same function.
- */
-/**
- * The accounting entries a Cash Bank Transaction produces.
- *
- * Two sides, which is what a cash document is: the Cash & Bank resource's own
- * account, and the account its Purpose resolves to through the Company x Budget
- * Category x Partner Category mapping. Direction decides which side each falls
- * on — money in debits cash and credits the counterpart, money out does the
- * reverse.
- *
- * One counter line per document line rather than one aggregated line: every
- * line realizes a named Budget, and keeping them apart is what lets a ledger
- * entry be read back to the plan it settled. They share an account, so the
- * journal balances either way.
- */
-/**
  * The account a Purpose resolves to for one Company — Company × Budget Category
  * × Partner Category, which is the whole reason a Purpose is exactly one of
  * each (§19).
@@ -1547,6 +1511,38 @@ async function baseCurrencyId(): Promise<number> {
   }
   return row.id;
 }
+
+/**
+ * Post: the actual boundary (concept doc §2.3).
+ *
+ * One database transaction — either the money moved and every book that must
+ * know about it does, or nothing happened at all:
+ *
+ *   1. the **Cash Bank Book** gets an entry, and its materialised balance moves
+ *      with it, in the same transaction (`recordCashBankEntry`);
+ *   2. the **subject book** its Purpose keeps, where it keeps one;
+ *   3. the **Journal**, balanced in base currency (`postJournal`);
+ *   4. the rate **layer** it draws on, or the one it opens;
+ *   5. every Budget on the document has its `realized_amount` raised, and a
+ *      Budget that reaches its planned amount closes itself (§6.5);
+ *   6. the document acquires its document and posting dates and becomes Posted.
+ *
+ * The books are written **straight from the document**, never derived from a
+ * journal line: operational books are independent historical stores, and only
+ * the General Ledger derives from journals (§2.5, §11.7). That is why the three
+ * writers are called side by side here and none of them reads another.
+ *
+ * Budgets are re-read *now* rather than trusted from when the document was
+ * drafted: another document may have closed one in the meantime, and posting
+ * against a plan that is no longer Open would record a realization nothing
+ * authorised. The same is true of the layer — `drawFromLayer` throws rather
+ * than returning, so a layer spent since the document was drafted takes the
+ * whole posting down instead of being overdrawn.
+ *
+ * Lives here rather than inside the Server Action so the rule is testable: the
+ * action resolves a caller and then calls this, and the test suite calls the
+ * same function.
+ */
 export async function applyPosting(
   transactionId: number,
   actorId: number

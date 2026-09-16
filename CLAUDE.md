@@ -31,6 +31,14 @@ material lives in `Initialization/` (committed, treated as read-only reference):
 | `SIBA 3.0 DBML.txt` | Source database schema (MySQL-flavoured DBML, 19 tables) |
 | `SIBA Mockup 2.0.html` | The mockup — a working ~4.7k-line JS SPA, not static HTML |
 | `akui_proto_ui_reference.md` | UI/UX benchmark study that produced the mockup's design |
+| `CORE Multi Currency Concept.md` | The general foreign-exchange model — origination, relief, settlement, FX difference |
+| `SIBA Multi Currency Concept.md` | That model applied to SIBA's own flow: layers, kurs provenance, which books carry which measure |
+| `Template COA.xlsx` | The chart-of-accounts skeleton. **Sheet1 is the only visible sheet and the only authoritative one** (§12) |
+
+The two multi-currency documents arrived **after** the rest and deliberately
+supersede several decisions taken when the system held no rate at all. Where an
+older statement in this file and those documents disagree, the documents won —
+that is recorded in §12 rather than left for a reader to work out.
 
 **The mockup is a reference for UI and behaviour only — never for data.** Because
 it is a self-contained HTML simulation with no database, it carried its whole
@@ -46,10 +54,12 @@ or invariants that assume a particular row exists.
   books** (`sub_ledger` / `sub_ledger_balance`), Finance's Cash Bank Transaction —
   draft, edit, cancel and Post, which realizes approved Budgets and writes all three
   stores — the **Funding Request** flow that carries the anak's realization across to
-  the induk, and the **Report Views** over all of it.
+  the induk, **multi-currency** end to end (every book carries a base measure beside
+  its own, foreign resources hold rate layers, and a settlement recognises its FX
+  difference), and the **Report Views** over all of it.
 - **Not yet built** — Opening Balance, Fiscal Year closing, report output (print and
-  export), and intercompany settlement (the anak paying the induk back). Full list
-  in §13.
+  export), intercompany settlement (the anak paying the induk back), and revaluation
+  of standing foreign positions at a period end. Full list in §13.
 
 ### Current status
 
@@ -57,8 +67,10 @@ or invariants that assume a particular row exists.
 | --- | --- |
 | Scaffold, DB, migration | Done |
 | Seed | Done — **system data only**, idempotent, destroys nothing (§12) |
-| Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; opening balance entered when a resource is registered |
-| Subject books (subledgers) | Done — append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. Six Report Views under Finance › Laporan. No manual entry and no Opening path yet |
+| Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered |
+| Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. Period-end revaluation is **not** built (§13) |
+| Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows them and says when they stop reconciling with the book |
+| Subject books (subledgers) | Done — append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. Six Report Views under Finance › Laporan. No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done — the commitment funnel (submitted → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
@@ -66,14 +78,14 @@ or invariants that assume a particular row exists.
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
-| Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal and `realized_amount` in one transaction. Bespoke, not registry-driven. |
+| Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
-| Report Views | Done — the screen type plus eight reports: `Buku Kas & Bank`, `Saldo Kas & Bank` and the six subject books under Finance › Laporan, and General Ledger + Trial Balance under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
+| Report Views | Done — the screen type plus nine reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs` and the six subject books under Finance › Laporan, and General Ledger + Trial Balance under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
-| System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Currently one entry: default Currency |
-| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Cash Bank Book, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted. |
+| System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Default Currency, the four intercompany bridge accounts, and each Company's FX difference account |
+| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Cash Bank Book, subject book, rate layer, FX kernel, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
 
@@ -99,6 +111,10 @@ or invariants that assume a particular row exists.
 10. **Authorization is server-side and permission-based.** Hiding a button is
    presentation. Every route and every Server Action asks for a named permission
    itself. Never branch on a role name in business logic — ask for the permission.
+11. **A foreign amount and its base value are two independent facts.** Every book
+   records both, and neither is derived from the other. A rate is either an input
+   that creates base value, or an output read off a balance that already has some —
+   never both, and never fetched from anywhere. §10 rules 66–76 and §12.
 
 ---
 
@@ -132,6 +148,8 @@ of its own.
 | Entity registry | `src/lib/siba/entities.ts` | Field + column config driving list, detail and form |
 | Navigation model | `src/lib/siba/nav.ts` | Modules → groups → entities; rail and submenu |
 | Business rules | `src/lib/siba/rules.ts` | Budget categories and the 22 transaction purposes |
+| FX kernel | `src/lib/siba/fx.ts` | `originate` / `relieve` / `drawLayer` / `settle` / `fxDifference` — pure arithmetic over numbers, no database, no module dependency; client-safe so the form previews exactly what the Server Action computes |
+| Currency rules | `src/lib/siba/currency.ts` | The base currency, which resource may settle which document, and where a kurs comes from (`identity` / `layer` / `entered`); client-safe |
 | Account numbering | `src/lib/siba/account-code.ts` | The dotted lineage code — parsing, segments, ordering; client-safe |
 | Company access | `src/lib/siba/company-access.ts` | Permissions -> the Companies a user may read; `server-only` |
 | Journal | `src/lib/siba/journal.ts` | Writes the one balanced journal a posting produces, `JRN-` numbering, reads it back; `server-only` |
@@ -157,9 +175,10 @@ of its own.
 | Header button order | `src/lib/siba/header-actions.ts` | Where a button sits in `.ph-act` and how it is drawn — one tone, read by every lifecycle table; client-safe |
 | Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
 | Budget data | `src/lib/siba/budget.ts` | Month rollups, budget reads, classification enforcement, `BGT-` numbering; `server-only` |
-| Cash Bank Book | `src/lib/siba/cash-bank.ts` | Append-only ledger writes, the materialised balance, `CBL-` numbering, per-currency summary; `server-only` |
+| Cash Bank Book | `src/lib/siba/cash-bank.ts` | Append-only ledger writes on **both measures**, the materialised balance, `CBL-` numbering, per-currency summary; `server-only` |
+| Rate layers | `src/lib/siba/cash-bank-layers.ts` | A foreign resource's parcels of currency — `openLayer`, `drawFromLayer`, `reconcileLayers`, the layer report, `CBLY-` numbering. Owned by the Cash Bank Book, so it imports only the kernel; `server-only` |
 | Subledger catalogue | `src/lib/siba/subledger-catalogue.ts` | Which categories keep a subject book, which way each one moves; client-safe |
-| Subject books | `src/lib/siba/subledger.ts` | Append-only `sub_ledger` writes, the materialised position, `SBL-` numbering, the six reports; `server-only` |
+| Subject books | `src/lib/siba/subledger.ts` | Append-only `sub_ledger` writes on both measures, the materialised position, `SBL-` numbering, the six reports; `server-only` |
 | Transaction lifecycle | `src/lib/siba/transaction-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Finance data | `src/lib/siba/finance.ts` | Header and line enforcement, Budget eligibility, `applyPosting`, the funded posting both Companies share, `CBT-` numbering, realization trace; `server-only` |
 | Funding Request | `src/lib/siba/funding.ts` | Raising, withdrawing and confirming a request, `FR-` numbering; depends on Finance and never the reverse; `server-only` |
@@ -187,7 +206,7 @@ source scan and needs no database.
 | Budget | `bud_budget` | `lib/siba/budget.ts`, `app/actions/budget.ts` |
 | Finance | `fin_cash_bank_transaction(_line)` | `lib/siba/finance.ts`, `app/actions/finance.ts` |
 | Funding | `fin_funding_request` | `lib/siba/funding.ts`, `app/actions/funding.ts` |
-| Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance` | `lib/siba/cash-bank.ts` |
+| Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22) |
 | Fiscal | `acc_fiscal_year`, `acc_fiscal_period` | `lib/siba/fiscal.ts` |
@@ -204,11 +223,14 @@ Three rules, in force:
    documents and moves their status through functions `finance.ts` exports, and
    `finance.ts` names nothing in Funding. The same applies to the UI —
    `components/finance` may reuse `components/budget`, not the other way round.
-3. **The books depend on nothing.** `cash-bank.ts`, `journal.ts` and `subledger.ts`
-   import only the shared kernel (`document-number`, `period`, `account-code`,
-   `permissions`) and, for the subledgers, their own client-safe catalogue. They are
-   independent historical stores (concept doc §2.5); a book that imported its writer
-   could not be lifted out, and would invite being derived from it.
+3. **The books depend on nothing.** `cash-bank.ts`, `cash-bank-layers.ts`,
+   `journal.ts` and `subledger.ts` import only the shared kernel
+   (`document-number`, `period`, `account-code`, `permissions`, `fx`, `currency`)
+   and, for the subledgers, their own client-safe catalogue. They are independent
+   historical stores (concept doc §2.5); a book that imported its writer could not
+   be lifted out, and would invite being derived from it. `fx.ts` in particular
+   depends on **nothing at all** — it is arithmetic, and a kernel that imported a
+   business rule would stop being one.
 
 **Cross-module references.** A foreign key into *master* data (Company, Partner,
 Currency, Account) is correct and expected. A reference to another module's **document**
@@ -217,8 +239,11 @@ goes through the weak `(doc_type_id, doc_id)` pair instead — which is already 
 pair is what lets a book survive the module that wrote into it being replaced.
 
 **The shared kernel** is small on purpose: `auth`, `access`, `permissions`, `prisma`,
-`format`, `account-code`, `document-number`, `period`. Everything in it is needed by
-several modules and would never be extracted on its own.
+`format`, `account-code`, `document-number`, `period`, `fx`, `currency`. Everything in
+it is needed by several modules and would never be extracted on its own. `fx` and
+`currency` earned their place the same way: the form, the Server Action and all three
+books have to answer "what is this worth in base?" identically, and a rule that exists
+twice is a rule with two answers.
 
 **Two boundaries are still crossed**, baselined in the test rather than hidden — see
 §17. Adding a third fails the suite.
@@ -267,7 +292,8 @@ Path alias: `@/*` → `./src/*`.
 ## 5. Repository Structure
 
 ```
-Initialization/          Read-only source material (concept, DBML, mockup, UI study)
+Initialization/          Read-only source material (concept, DBML, mockup, UI study,
+                         the two multi-currency concept documents, COA template)
 prisma/
   schema.prisma          Data model; deviations from the DBML commented inline
   migrations/            Applied migrations
@@ -324,44 +350,52 @@ src/
     icon-paths.ts        SVG path map
     shell/               App shell
     master/              entity-pages (the four shared pages), EntityList,
-                         AccountTree, EntityForm, CashBankBook, recordTitle
+                         AccountTree, EntityForm, EntityLocked, CompanyFilter,
+                         CashBankBookCard (the master's link into the report)
     budget/              BudgetMonthList, BudgetList, BudgetForm,
                          ApproveDialog, ReportPicker, CashBalanceDialog,
                          RealizationCard
     finance/             TransactionList, TransactionForm, BudgetPicker,
+                         KursSelect (which rate layer a payment draws on),
                          FundingList, FundingDetail
-    report/              ReportView chrome, its two filter bars (ReportParams for
-                         one subject, SubjectParams for several), and the report
-                         bodies: Cash Bank Ledger, Cash Bank Balance, General
-                         Ledger, Trial Balance, Subledger
+    report/              ReportView chrome, ReportSummary, its two filter bars
+                         (ReportParams for one subject, SubjectParams for
+                         several), and the report bodies: Cash Bank Ledger,
+                         Cash Bank Balance, Cash Bank Layer, General Ledger,
+                         Trial Balance, Subledger
     dashboard/           Dashboard — the funnel, the cash table, the positions
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
-    accounting/          FiscalPeriods (shown inside a Fiscal Year), JournalList
+    accounting/          FiscalPeriods (shown inside a Fiscal Year),
+                         FiscalYearActions, JournalList, JournalDetail
     ui/                  form (FormBody/FormSection/FormRow/Field — every
                          form in the application is built from these),
-                         Combobox, Select, DateInput, MoneyInput, SearchField,
+                         Combobox, Select, DateInput, MoneyInput, RateInput,
+                         SearchField, AnchoredPopup (every dropdown hangs off it),
                          RecordHistory + RecordHistoryCard (a record's own
                          audit trail, at the foot of every form),
                          Dialog, ConfirmDialog, ToastProvider
   lib/
     prisma.ts            Client singleton with adapter; the cache is keyed on the
                          generated class, so `prisma generate` retires it (§12)
-    format.ts            Date/number/money formatting (UTC-based)
+    format.ts            Date/number/money/rate formatting (UTC-based). The only
+                         place a date, an amount or a kurs is formatted (§12)
     siba/                entities, nav, rules, records, users, account-code,
                          header-actions,
                          company-access, journal, ledger,
+                         fx, currency,
                          permissions, roles, access, auth, auth-errors,
                          session, login, user-admin, profile, entity-access, fiscal,
                          fiscal-workflow, budget, budget-workflow, cash-bank,
+                         cash-bank-layers,
                          subledger, subledger-catalogue,
                          finance, transaction-workflow, funding, reports,
                          system-defaults, system-settings
   generated/prisma/      Prisma client output — gitignored, never edit
 tests/                   Security, Accounting, Budget, Finance, Funding, the books,
-                         reports, fiscal, settings, schema and design-system suites
-                         (node:test); helpers.ts builds and cleans up its own
-                         business fixtures
+                         fx, layers, money-input, reports, fiscal, settings, schema
+                         and design-system suites (node:test); helpers.ts builds
+                         and cleans up its own business fixtures
 .claude/skills/          Project skills — `run-siba` brings the app up locally (§6)
 .github/workflows/ci.yml PostgreSQL service -> migrate -> seed -> lint -> build -> test
 ```
@@ -517,7 +551,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 
 | Concern | Convention |
 | --- | --- |
-| Layout | Topbar → icon rail → collapsible submenu → content. Shell owns it. |
+| Layout | Topbar → icon rail → collapsible submenu → content. Shell owns it. **Pressing a module in the rail always opens its submenu** — that is the only way a hidden one comes back, and it never toggles |
 | Page header | `.ph` → `.crumb`, `.ph-row` (h1 + `.ph-act`), `.ph-sub`. **Sticky**, and `.ph-act` is where every action on the page lives |
 | Button order | Inside `.ph-act`, left to right: **danger → neutral → primary**, one primary and it is rightmost. `headerButtonClass` draws it, `orderForHeader` places it — both in `lib/siba/header-actions.ts` |
 | Row menus | A vertical menu is the opposite arrangement: **safe first, danger last**. `availableActions` returns that order |
@@ -532,11 +566,15 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Page heading | A document's number (`.docno`, mono) with its status badge beside it; a master record's name with its code as a `.docno sm` chip. Before the first save, a placeholder — `Budget Baru`, `User Baru` |
 | Summary cards | **None.** Each fact sits where it is read; a closing note about the record's state is a `.fnote` at the foot of its card |
 | Read-only fields | `.ro` — presented as text, **never disabled inputs** |
-| FK pickers | `Combobox` — searchable, `CODE – Name` options |
-| Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`) |
+| FK pickers | `Combobox` — searchable, `CODE – Name` options. **The control itself is the search box**: opening turns it into a text input in place, and the popup carries no filter bar of its own |
+| Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`). Searchable once the list is long, and searched the same way — in the trigger |
 | Popups | `AnchoredPopup` draws every list and calendar — portalled to `document.body`, placed from the trigger's rect, flipping and clamping to the room it has. **Never positioned inside its control** |
 | Dates | `DateInput` — **never `<input type="date">`**; types and shows `dd/mm/yyyy`, opens the app's own calendar |
 | Amounts | `MoneyInput` — **never `<input type="number">`**; mono, right-aligned, grouped in thousands as it is typed, currency label inside the box. `size="sm"` inside a table |
+| Rates | `RateInput` — a thin wrapper over `MoneyInput`, never a second control. `decimals={6}` and the pair inside the box (`USD → IDR`, `labelWidth="pair"`) are the whole difference (§12) |
+| Foreign face | `formatForeignFace` — what a base figure was before it was base: `USD 1.000,00 @ 16.000,00`, in `.rsub` beside the row it belongs to. One function, because the Journal and the General Ledger had drifted to two |
+| Separators | **`.` groups thousands, `,` separates decimals** — in what is displayed and in what is typed. A typed `.` groups; a decimal is reached with `,` (§12) |
+| Rate layers | `KursSelect` — a layer is *chosen*, never a rate typed, and it is chosen in a `Dialog` where date, kurs, sisa and sumber are four columns. The field afterwards carries **only the kurs** |
 | Search | `SearchField` in the `.toolbar` — icon, `Cari <what>…`, clear button. `grow` when it is the only control |
 | Picker prompts | Always `Pilih <what>…` — for a `Combobox`, a `Select`, and anything that stands in for one |
 | Validation | Inline `.err` under the field + `.bad` on the control + error toast |
@@ -570,7 +608,8 @@ so `globals.css` ends with an anchor reset. Keep shared classes working for both
 | Timestamps | `DateTime @db.Timestamptz(6)`; `created_at` default now, `updated_at` `@updatedAt` |
 | Authorship | `created_by Int`, `updated_by Int?` — plain Ints with **no FK**, exactly as the DBML declares |
 | Money | `Decimal @db.Decimal(18, 2)` |
-| Exchange rates | `Decimal @db.Decimal(18, 6)` |
+| Exchange rates | `Decimal @db.Decimal(18, 6)`. Six decimals, and the kurs field accepts exactly that many — `formatRate` in `src/lib/format.ts` is the only thing that renders one |
+| Base measures | `Decimal @db.Decimal(18, 2)`, beside the face amount on every book row and balance row. Written once, never recomputed |
 | Calendar dates | `@db.Date`, stored at UTC midnight. **Displayed `dd/mm/yyyy` everywhere** — always via `formatDate` in `src/lib/format.ts`, which reads UTC parts. ISO stays the wire and storage form |
 | Status | Enum `ActiveStatus` (`Active` / `Inactive`) on master tables |
 | Deletion | **None.** Master data is deactivated, never hard-deleted. Do not add delete actions or `onDelete: Cascade` to master tables. |
@@ -600,10 +639,22 @@ of a book: the balance can always be re-derived, and `rebuildCashBankBalance`
 proves the materialised total still matches. Never add an update or delete path to
 `cash_bank_ledger`.
 
-**Money in different currencies is never added together.** There is no
-authoritative exchange-rate source in the system, so totals are reported per
-currency (`MoneyTotal[]` and `formatTotals` in `src/lib/format.ts`). Do not
-reintroduce a conversion constant — see §12.
+**Every book entry carries two measures.** The amount in the currency that
+actually moved, and what it was worth in base currency at the moment it moved —
+`amount` / `base_amount` on `cash_bank_ledger` and `sub_ledger`, `balance` /
+`base_balance` on both balance tables. Neither is derived from the other. The
+base figure is **history**, not a re-quotable conversion: re-deriving it at a
+later rate would destroy the only number that answers what the currency movement
+cost. See §12, "A rate is an input or an output, never both".
+
+**Money in different currencies is still never added together at face value.**
+USD 3.500 and Rp 45.000.000 are quantities of different things, so a figure
+spanning currencies is reported as a list, not a sum (`MoneyTotal[]` and
+`formatTotals` in `src/lib/format.ts`). The base measure does not change this —
+it answers a different question, and the Journal and the General Ledger are where
+it is read. **Never sum across currencies by multiplying through a rate you
+fetched yourself**: the only rates in this system are the ones recorded on the
+movements themselves.
 
 **Migrations:** always `npx prisma migrate dev`. Never hand-edit an applied migration.
 Never use `prisma db push` on this project.
@@ -736,8 +787,11 @@ Implemented and enforced:
    which is what keeps `rebuildSubledgerBalance` able to re-derive the
    position from the entries.
 56. **A subject is a Partner and a currency.** A Partner owing in two
-   currencies holds two positions, reported as two blocks. Nothing is ever
-   converted or pooled — there is no rate source (§12).
+   currencies holds two positions, reported as two blocks, and they are never
+   pooled: a debt of USD 1.000 and a debt of Rp 15.000.000 are two obligations
+   settled by two different things. Each position also carries its own base
+   measure, which is what a settlement relieves against (§10 rule 73) — that is
+   a second measure of the same position, never a way to merge two of them.
 
 44. **A chart-of-accounts code states its own lineage.** Every level continues
    its parent's number rather than starting a new one: Account Type `1`,
@@ -755,6 +809,27 @@ Implemented and enforced:
 46. **A Parent Account sits in the same Kelompok.** A parent supplies the code,
    so an account whose parent is in another group would claim a place in the
    chart it is not in. `validateAccount` enforces it; the picker only narrows.
+
+77. **An account that gains a sub-account stops receiving postings, for good.**
+   A parent is a heading over where money lands, not a place it lands: its
+   balance is whatever sits below it, so a posting made directly to it would
+   be money in the chart that no leaf accounts for. `createRecord` writes
+   `is_postable = false` on the parent in the same transaction as the child,
+   and `checkAccountIsLeaf` in `records.ts` is the check underneath that flag
+   — asked of the tree rather than of the boolean, so an account that somehow
+   still carried it is refused anyway. Every place an account is *chosen as a
+   destination* asks: the Cash & Bank resource's account, the Budget Category
+   mapping, and the account-valued System Defaults. The revocation is one-way;
+   nothing in the application makes a parent postable again, because nothing
+   removes the sub-account either.
+78. **An account that is already in use cannot be given a sub-account.** The
+   mirror of rule 77, and what stops the two contradicting each other: an
+   account with journal lines, a Cash & Bank resource, a mapping or a System
+   Default pointing at it would be left naming a heading the moment a child
+   appeared, and the postings already made to it would have no leaf accounting
+   for them. `accountUsage` in `records.ts` and `systemDefaultsUsingAccount` in
+   `system-settings.ts` report what depends on it, and the refusal **names
+   them**. A miscoded account is deactivated, never restructured (rule 45).
 
 18. **Budget category → partner category → account.** Each budget category declares
    which partner categories are valid and which directions (In/Out) make sense.
@@ -783,8 +858,12 @@ Implemented and enforced:
     `cash_bank_balance` row when it is registered, and a non-zero starting figure is
     written as an `Opening` entry in `cash_bank_ledger`. Nothing else may hold a
     balance, and the ledger is append-only — see §9 and §12.
-30. **Money is totalled per currency, never converted.** No exchange rate exists in the
-    system, so a figure spanning currencies is reported as a list, not a sum — §12.
+30. **Money is totalled per currency at face value, and in base currency only where
+    a base measure was recorded.** A figure spanning currencies is reported as a
+    list, not a sum. The Journal and the General Ledger are the exception and the
+    only one: every journal line stores what it was worth in base at the moment it
+    was posted, so those two report one column. Nothing anywhere converts by
+    fetching a rate — §12.
 31. **A System Default prefills; it never decides.** A default fills a control in when
     a record is created, is resolved against its master first, and is validated by the
     Server Action exactly as a typed value would be. It is never applied to an existing
@@ -799,12 +878,16 @@ Implemented and enforced:
     Derived dates — a Fiscal Year's 01/01 and 31/12 — are untouched, because they are
     the Server Action's to write.
 34. **The document header decides what the document may realize.** Purpose × Company ×
-    Partner × Cash & Bank is the context (concept doc §9). A Budget is eligible only
-    when it is Open, belongs to that Company, points the way the Purpose does, carries
-    the Budget Category the Purpose resolves to, names that Partner where the Purpose
-    takes one, is denominated in the Cash & Bank's own currency, and still has
-    outstanding. **Budget Date is not a criterion** — the distance between plan and
-    execution is a report, not a gate. `eligibleBudgets` and `checkLines` in
+    Partner × Cash & Bank × Currency is the context (concept doc §9). A Budget is
+    eligible only when it is Open, belongs to that Company, points the way the Purpose
+    does, carries the Budget Category the Purpose resolves to, names that Partner where
+    the Purpose takes one, is denominated in **the document's own currency**, and still
+    has outstanding. That currency is the document's and not the resource's: a USD
+    document settles USD plans whether it is paid from a USD account or a rupiah one,
+    a distinction that did not exist while a document took its currency from whatever
+    was paying it. **Neither Budget Date nor the kurs is a criterion** — the distance
+    between plan and execution is a report, not a gate, and eligibility turns on what
+    is being settled rather than on what it cost. `eligibleBudgets` and `checkLines` in
     `finance.ts` are the enforcement; the picker only narrows.
 35. **Post is the actual boundary, and it is atomic.** A Draft touches nothing: no
     ledger entry, no balance, no `realized_amount`, no document date. Post writes the
@@ -913,12 +996,95 @@ Implemented and enforced:
     calls `recordCashBankEntry`, `recordSubledgerEntry` and `postJournal` side by
     side, and none of the three reads another.
 
+**Multi-currency** — the rules the two concept documents in `Initialization/` add.
+The model is in §12 under "A rate is an input or an output, never both"; these are
+the rules that follow from it.
+
+66. **The base currency is a constant, not a setting.** `BASE_CURRENCY_LABEL` in
+    `lib/siba/currency.ts` is `IDR`, and `prisma/seed.ts` imports it rather than
+    reading an environment variable. Every book entry records what it was worth in
+    base, so a deployment that could seed a different base would invalidate every
+    stored base figure at once. Only the currency's display *name* stays
+    configurable, because nothing branches on a name.
+67. **Crossing goes through the base currency only.** A foreign document may be
+    settled from a resource in its own currency or from a base-currency resource,
+    and from nothing else: USD from USD or IDR, EUR from EUR or IDR, USD never
+    from EUR, and an IDR document from IDR alone. This is **narrower than the
+    source specification**, which also admits a third currency needing a cross
+    rate — deliberately, because it means the only rate this system ever holds
+    converts a foreign currency to base. There is no EUR-to-USD rate to enter,
+    store or source. `maySettle` and `settlementRefusal` are the one place it
+    lives, and the Server Action refuses with the same rule the picker narrows by.
+68. **A kurs has exactly three provenances, and `rateSource` is the only thing
+    that decides which.** `identity` — base money through a base resource, where
+    the rate is 1 and no control is shown. `layer` — foreign currency leaving a
+    foreign resource, where the rate is read off the layer the user picked and is
+    never typed. `entered` — everywhere else, where the user states the rate the
+    bank actually used. A rate of `1` is correct **only** in the identity case; a
+    rate of 1 between two foreign amounts would assert that USD 100 is IDR 100.
+69. **A foreign Cash & Bank resource holds rate layers; a base-currency one holds
+    none.** A layer is a parcel of currency acquired at a known kurs. Rupiah is
+    already the measure everything is reported in, so a base resource has nothing
+    to choose between and is unlayered by design, not by omission.
+70. **A layer is chosen, never averaged — and one document draws on exactly one
+    layer.** Currency bought at 15.000 and currency bought at 16.000 are not
+    interchangeable: which one a payment spends decides the gain or loss
+    recognised, so it is a decision somebody takes rather than an average the
+    system computes. Nothing ever auto-selects. **The single-layer limit is a
+    deliberate narrowing** of the source specification, which allows a payment to
+    draw on several: a resource with five layers of a million each holds five
+    million and still cannot make one payment of one and a half. `checkLines`
+    refuses it at draft time and says so.
+71. **Layers are never merged, and a layer's rate is immutable.** Two receipts at
+    an identical kurs stay two layers, whatever their source or timing — that is
+    what makes "the layer from 28 January" name something where "the 15.000" would
+    name three things at once. The rate stays true by construction rather than by
+    rule: relief releases base in proportion to what is left, so
+    `base_remaining ÷ foreign_remaining` equals the layer's rate for its whole
+    life. Period-end revaluation is the **only** sanctioned consolidation of
+    layers, and it is not built (§13).
+72. **A foreign account's balance *is* the sum of its open layers, on both
+    measures.** `cash_bank_layer` is mutable, unlike the books beside it, so
+    nothing can recompute it from an entry log; `reconcileLayers` is what checks
+    it still agrees with the book written beside it, and the layer report says so
+    when it does not.
+73. **A settlement resolves two independently determined base values.** The
+    obligation releases what it was carried at; the cash gives up what it actually
+    cost. **The discriminator is whether base value already exists** — never the
+    Purpose, never the direction, never which book is being written. Where nothing
+    is on the books the movement *is* the origin of the value, both measures come
+    from the same place, and no difference can arise. `settle` in `fx.ts` is the
+    one implementation.
+74. **The FX difference is the balancing figure, and its sign is never chosen
+    separately.** It is `settlementBase − transactionBase`: positive is a gain on
+    the credit side, negative a loss on the debit side, exactly zero writes no
+    line at all. Deriving it from the balance requirement rather than computing a
+    magnitude and then assigning a side is what makes an unbalanced FX entry
+    unrepresentable.
+75. **A difference needs a named account, and posting is refused without one.**
+    Each Company names its own Account Selisih Kurs in System Default. The account
+    is resolved **only when a difference actually arises**, so ordinary rupiah work
+    is never blocked by a setting it does not use — and when one does arise the
+    post is refused by name rather than falling back to anything.
+76. **Base amounts round half away from zero, in one place.** `roundBase` in
+    `fx.ts`. `Math.round` rounds half toward positive infinity, which would round
+    a loss a cent differently from the matching gain and stop the two being mirror
+    images. It also refuses a figure beyond safe integer precision rather than
+    returning one that is merely nearby.
+
 Specified in the concept doc, **not yet implemented** (see §13):
 
-23. **Intercompany settlement** (§36). Funding leaves the induk holding a Piutang and
-    the anak a Hutang of the same size; handing the money back clears both. Both
-    positions are already kept in the subject books — what is missing is the document
-    that settles them.
+23. **Intercompany settlement** (§36). Funding leaves the induk holding a claim on
+    the anak and the anak a matching payable; handing the money back clears both.
+    Both positions are already kept — in the two Companies' **journals**, on the
+    bridge accounts, not in the subject books (rule 61) — and what is missing is
+    the document that settles them.
+24. **Period-end revaluation** (SIBA multi-currency §7). Closing a period
+    retranslates open positions at the closing rate and collapses a foreign
+    account's layers into one. `CashBankLayerStatus.ClosedByRevaluation` exists in
+    the schema and nothing writes it: a layer's status had to be able to reach
+    that state, because revaluation is the one sanctioned way layers consolidate
+    and it must not arrive later as a change to an append-only shape.
 
 ---
 
@@ -1064,6 +1230,60 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Do not change unless:** explicitly instructed. **Never reproduce one of these
   controls by hand, and never relax an assertion in `tests/design-system.test.ts` to
   let a copy through.**
+- **Status:** Frozen, current.
+
+### The dropdown's own field is the search box (FROZEN)
+- **Decision:** A `Combobox` is always searchable and a `Select` is searchable
+  once its list is long, and both search **in the trigger**: opening replaces
+  the control's contents with a `.cbq` text input, in the same box, at the same
+  height, in the same place. The popup carries the list and nothing else —
+  `.cbpop .s` is gone from the stylesheet. Enter picks the first remaining
+  option, Escape closes, and clicking the trigger again closes it.
+- **Reason:** The popup used to grow a search bar of its own, directly below
+  the control. The field a user had just clicked was therefore not the field
+  they had to type into, and reaching it was a second mouse movement — which
+  these users pay for, because they work by mouse rather than by Tab (§12,
+  form density). One gesture, one box.
+- **Impact:** Both triggers are `<div role="combobox">` rather than `<button>`,
+  because a button may not contain an input and a trigger that changed element
+  type between its two states would lose focus mid-gesture. That is why
+  `:disabled` no longer styles them and `.dis` does, and why `.tsel` / `.psel`
+  / `.ctxsel` became `inline-flex` with their label in a `.tv` span — a `<div>`
+  does not centre its own text the way a button did. The placeholder while
+  searching is **the value already set**, so the field still says what it holds
+  while it is being searched in.
+- **Do not change unless:** explicitly instructed. **Never put a filter box
+  back inside a popup**, and do not give one screen's dropdown a search that
+  works differently from the rest.
+- **Status:** Frozen, current.
+
+### An account with children is a heading, not a destination (FROZEN)
+- **Decision:** Creating an account under a parent sets that parent's
+  `is_postable` to false in the same transaction, permanently, and every place
+  an account is chosen as somewhere money goes refuses a parent outright —
+  `checkCashBankAccount`, the Budget Category mapping, and
+  `checkSystemDefaultValue` for the bridge and FX accounts. The mirror rule
+  refuses a sub-account under an account that anything already depends on.
+  §10 rules 77 and 78 are the statement of both.
+- **Reason:** A parent's balance is the sum of what is below it. A posting made
+  directly to one is money in the chart that no leaf accounts for, and it
+  reconciles against nothing. The pair of rules is what keeps them from
+  contradicting each other: without the second, adding a child would revoke a
+  posting privilege that a Cash & Bank resource, a mapping or a System Default
+  was already relying on — and §10 rule 4 says exactly that may not happen.
+- **Impact:** `checkAccountIsLeaf` asks the **tree**, not the flag, so an
+  account that somehow still carried `is_postable` is refused anyway; the flag
+  is what the form shows, the tree is what enforces. The `parentAccount` picker
+  narrows by `journal_lines`/`cash_banks`/`mappings` being empty, and the
+  Server Action adds the System Default case, which is not expressible as a
+  `where`. The form locks the toggle **per row** — `lockedFields` and
+  `lockNote` on `EntityForm`, computed by the page, because the registry
+  describes what an Account *is* and this depends on what was created under
+  this one. Revocation is one-way: nothing makes a parent postable again,
+  because nothing removes the sub-account either.
+- **Do not change unless:** explicitly instructed. **Never let a parent account
+  be posted to, never add a path that makes one postable again, and never
+  loosen the mirror rule** — the two only work as a pair.
 - **Status:** Frozen, current.
 
 ### A popup is placed in viewport coordinates, never inside its control (FROZEN)
@@ -1673,19 +1893,25 @@ they relate. Keep the table; keep it out of the UI's write path.
   the picker would not offer it either. The Server Action validates the saved record
   exactly as it would a value the user picked. A registry field opts in with
   `systemDefault: "default_currency"`; Budget takes it as a prop.
-- **The intercompany bridge is the one group that does more.** Four settings — for
-  each Company, the account for what it is owed and the account for what it owes — do
-  not prefill a control: they are where a confirmed Funding Request journals. They are still settings rather than a table because
-  there are exactly two permanent Companies and a company-relationship table is what
-  §14 forbids. Because they decide rather than suggest, they are checked **when they
-  are stored** as well as when they are read (`checkSystemDefaultValue`: the right
-  Company, postable, active), and a confirmation is **refused by name** until all six
-  are set rather than falling back to anything. The dashboard's "Perlu Perhatian" card
-  lists what is missing.
+- **Two groups do more than prefill, and they are the exception.** The
+  **intercompany bridge** is four settings — for each Company, the account for what
+  it is owed and the account for what it owes — and they are where a confirmed
+  Funding Request journals. The **FX difference accounts** are two more, one per
+  Company, and they are where a settlement's gain or loss lands. Neither group fills
+  a control in; both decide where a posting goes. They are still settings rather
+  than a table because there are exactly two permanent Companies and a
+  company-relationship table is what §14 forbids. Because they decide rather than
+  suggest, they are checked **when they are stored** as well as when they are read
+  (`checkSystemDefaultValue`: the right Company, postable, active). A funded
+  confirmation is **refused by name** until all four bridge accounts are set; a
+  posting that produces an FX difference is refused by name until that Company's
+  difference account is — and only then, so ordinary rupiah work is never blocked by
+  a setting it does not use. Neither falls back to anything. The dashboard's "Perlu
+  Perhatian" card lists what is missing.
 - **Do not change unless:** explicitly instructed. **Never let an ordinary default
   decide what is valid, never apply one to an existing record, and do not add a UI for
-  creating setting keys** — the catalogue is code. Do not give the bridge settings a
-  silent fallback.
+  creating setting keys** — the catalogue is code. Do not give the bridge or FX
+  settings a silent fallback.
 - **Status:** Frozen, current.
 
 ### Every date reads `dd/mm/yyyy`, and the app draws its own controls (FROZEN)
@@ -1726,28 +1952,170 @@ they relate. Keep the table; keep it out of the UI's write path.
   screen has to re-learn the next.
 - **Impact:** The value crossing the component's boundary is an unformatted numeric
   string, which is what a Server Action parses; the separators exist only in what is
-  displayed. Digits are the only accepted input, so a separator typed by hand cannot
-  desync the two. An amount field starts **empty on its `0` placeholder**, never on a
-  literal `0` the user has to delete first. `over` is the one state an amount carries.
+  displayed. An amount takes digits only — `decimals` defaults to `0` — so a
+  separator typed by hand cannot desync the two. An amount field starts **empty on
+  its `0` placeholder**, never on a literal `0` the user has to delete first. `over`
+  is the one state an amount carries.
+- **The same control also carries the kurs**, at `decimals={6}`. See "One numeric
+  control, and one meaning per separator key" below for what that adds and why a
+  rate does not get a field of its own.
 - **Do not change unless:** explicitly instructed. **Never render a native number
   input, never format an amount outside `formatNumber` / `formatMoney`, and do not
   give one screen its own amount styling.**
 - **Status:** Frozen, current.
 
-### Amounts are never converted between currencies (FROZEN)
-- **Decision:** There is no exchange rate anywhere in the application. The hardcoded
-  `RATES` constant is gone. Money is totalled per currency — `MoneyTotal[]` and
-  `formatTotals` in `src/lib/format.ts` — and rendered side by side (`Rp 45.000.000 ·
-  USD 3.500,00`).
-- **Reason:** The user confirmed a real rate source is coming in a later update. Until
-  it exists, any conversion is a fabricated number presented as a fact, and a budget
-  KPI or a submission report built on one is worse than no figure at all.
-- **Impact:** Budget KPIs, the Budget Month rollup, the submission report recap and the
-  cash balance card all report per currency. When the rate source arrives, conversion
-  is added on top of `MoneyTotal[]` — the per-currency figures stay.
-- **Do not change unless:** the real rate source lands. **Do not reintroduce a
-  conversion constant, and do not create an exchange-rate master table** (§13).
+### A rate is an input or an output, never both (FROZEN)
+
+**This supersedes "Amounts are never converted between currencies", which is kept
+below in outline because the half of it that still holds is easy to lose.**
+
+- **Decision:** `src/lib/siba/fx.ts` is the whole foreign-exchange model, and it is
+  pure arithmetic over numbers — no database, no `server-only`, no dependency on any
+  other module, no knowledge of what a Budget or a Partner is. Its premise is that
+  **a foreign amount and its base value are two independent facts**. Every balance
+  is a pair, and a rate is one of exactly two things:
+    * an **input** — `originate(foreign, rate)`, which creates base value where none
+      existed: a receipt, an opening balance, a conversion the bank actually made;
+    * an **output** — `carryingRate(balance)`, which is `base ÷ foreign` over a
+      balance that already exists.
+
+  Confusing the two is the single failure mode the module exists to prevent. A
+  derived rate is **display only**: never stored, never defaulted into a document,
+  never reconciled against a market rate, and never rounded and then multiplied by.
+  `relieve` computes in one expression precisely so that a carrying rate never
+  becomes an intermediate value.
+- **Reason:** The base value of a balance is a record of how it was built, not
+  something re-derivable by re-quoting today's rate. A balance assembled from a
+  16.000 receipt and a 15.500 receipt carries at 15.750, which appeared in no deal
+  anyone made — so a system that re-derived base from a "current rate" would destroy
+  the only figure that answers what the currency movement actually cost, and would
+  do it silently. The earlier decision (no rate at all) was correct while the system
+  held no rate source; it was never a statement that conversion is wrong in
+  principle, and the two concept documents in `Initialization/` supersede it.
+- **Impact:** Two properties are easy to lose and both are load-bearing. **A full
+  release hands back the remaining base exactly** rather than recomputing
+  `foreign × rate` — partial releases each round, and absorbing the residue into the
+  last movement is what makes "zero foreign against a non-zero base" unreachable.
+  **A partial release is one expression and one rounding**, so drift stays in the
+  amount being released instead of compounding into what remains. Over-release
+  throws rather than being absorbed into an FX difference where nobody would look
+  for it.
+- **What survives from the superseded decision, unchanged:** money in different
+  currencies is **still never added together at face value**, `MoneyTotal[]` and
+  `formatTotals` still render side by side (`Rp 45.000.000 · USD 3.500,00`), and
+  there is **still no exchange-rate master table and no rate lookup anywhere**. The
+  system holds rates only as facts recorded on movements that happened. Budget KPIs,
+  the Budget Month rollup, the submission report recap and the cash balance card all
+  still report per currency.
+- **Do not change unless:** explicitly instructed. **Never store a derived carrying
+  rate, never default one into a document, never create an exchange-rate master
+  table or a rate-fetching service, and never convert a figure by a rate that was
+  not recorded on the movement itself.**
+- **Status:** Frozen, current. Supersedes "Amounts are never converted between
+  currencies" (removed).
+
+### Crossing goes through the base currency only (FROZEN)
+- **Decision:** A document may be settled from a resource in its own currency, or
+  from a base-currency resource, and from nothing else. A base-currency document is
+  settled from a base-currency resource alone. `maySettle`, `settlementRefusal` and
+  `rateSource` in `src/lib/siba/currency.ts` are the one statement of it; the
+  picker narrows by it and `checkHeader` refuses by it.
+- **Reason:** It is **narrower than the source specification**, which also admits a
+  foreign document paid from a *third* currency's account — the case that needs a
+  cross rate applied on top of the account's own. Removing it means the only rate
+  this system ever holds converts a foreign currency to base: there is no
+  EUR-to-USD rate to enter, store or source, and `fx.ts` needs one multiplication
+  where the specification needs two. The narrowing was taken deliberately, not
+  overlooked.
+- **Impact:** `currency.ts` is client-safe on purpose — no `server-only`, no
+  database import, no dependency on another module — so the form and the Server
+  Action cannot disagree about what is allowed. A refusal names **both**
+  currencies, because "Cash & Bank tidak sesuai" tells nobody which half to change.
+- **Do not change unless:** a genuine third-currency requirement arrives, and then
+  it is a cross-rate model, not a loosened check. **Do not widen `maySettle`
+  without building the second rate the wider rule needs.**
 - **Status:** Frozen, current.
+
+### A layer is chosen, and one payment draws on one (FROZEN)
+- **Decision:** A foreign Cash & Bank resource holds `cash_bank_layer` rows, one
+  per acquisition event, never merged. Money leaving draws on **exactly one** layer
+  that the user picks; money arriving opens a new one. A base-currency resource is
+  unlayered. `src/lib/siba/cash-bank-layers.ts` is the only writer, and the table is
+  owned by the Cash Bank Book.
+- **Reason:** Currency bought at 15.000 and currency bought at 16.000 are not
+  interchangeable — spending one rather than the other produces a different
+  recognised gain or loss. Under averaging that figure is deterministic; here the
+  user's choice sets it, which the source document calls out as the feature working
+  as intended and an auditable control point. Never merging is what makes "the layer
+  from 28 January" name something, where "the 15.000" would name three things.
+- **The single-layer limit is a deliberate narrowing.** The source specification
+  allows `Σ selected amounts = account_amount` across several layers. SIBA takes one
+  per document: one transaction, one bank, one kurs. The consequence is real and
+  known — a resource with five layers of a million each holds five million and
+  cannot pay one and a half in a single document — so `checkLines` refuses it at
+  draft time with a message that says to split the document, rather than letting it
+  surface at Post.
+- **`cash_bank_layer` is mutable, unlike every book beside it**, and deliberately:
+  the remaining balance is what a payment is checked against and what the picker
+  offers. The immutable record of what was consumed lives on the documents that
+  consumed it. What replaces the books' rebuild is `reconcileLayers` — an account's
+  balance *is* the sum of its open layers, on both measures, and the layer report
+  says so when it is not.
+- **The layer is picked in a panel, and only the kurs survives the choice.**
+  `KursSelect` opens a `Dialog` whose columns are date, kurs, sisa and sumber; the
+  field afterwards shows the kurs alone. As a dropdown each option had to carry all
+  four attributes on one line, so every option ran past the width of the field and
+  truncated — leaving the reader comparing the halves of four strings that all began
+  the same way, which is precisely the comparison the feature exists to make. The
+  panel reuses the Budget picker's own table (`table.grid.pkt2`), so a row that can
+  be chosen looks the same wherever one is offered.
+- **Ordering is chronological and display-only.** Oldest first, because that is how
+  a treasury reads a stack, with a sequence number so two acquisitions on one day
+  are still ordered. **Nothing is ever consumed without being told to** — there is
+  deliberately no "use the oldest" shortcut that commits on its own, even though the
+  source document's policy table switches one on.
+- **Do not change unless:** explicitly instructed. **Never merge layers, never
+  auto-select one, never let a layer's rate be edited, and do not add a second
+  consolidation path** — period-end revaluation is the only sanctioned one and it is
+  not built (§13).
+- **Status:** Frozen, current.
+
+### One numeric control, and one meaning per separator key (FROZEN)
+- **Decision:** `src/components/ui/money-input.tsx` is the only numeric field in the
+  application — every amount **and every kurs**. `RateInput` is a thin wrapper that
+  passes `decimals={6}` and a pair label (`USD → IDR`, `labelWidth="pair"`); it holds
+  no parsing of its own. Thousands are grouped **as the figure is typed**, in both.
+- **`.` groups thousands and `,` separates decimals** — on screen and on the
+  keyboard. A `.` the user types is the separator the field is already inserting, so
+  it is dropped; a decimal is reached by typing `,` and nothing else. The user set
+  this rule, and it is what makes grouping-as-you-type possible on a field that also
+  takes decimals: exactly one meaning per key means re-reading what is on screen is
+  always a no-op.
+- **Reason:** The kurs field could not accept `16000`. It grouped to `1.600` at the
+  fourth digit and then read its own `.` back as a decimal point when the fifth
+  arrived, storing `1.6` — no error, nothing a type check or a server rule could
+  catch, and the value it handed over was a perfectly valid rate. The first fix gave
+  the rate field a focus buffer so it stopped grouping while being typed into; the
+  user rejected it, correctly — Saldo Awal and Kurs Perolehan sit side by side on the
+  Cash & Bank form, and a reader either learns one behaviour or notices there are
+  two. A rate is not an amount in what it *means* (a ratio, never re-derived — see "A
+  rate is an input or an output"), and that says nothing about how it is typed.
+- **Impact:** `decimals` defaults to `0`, so every existing amount field is
+  byte-identical to before. `parseAmount` and `displayAmount` are pure and exported,
+  and `tests/money-input.test.ts` drives them one keystroke at a time — including the
+  round trip `parseAmount(displayAmount(v)) === v`, which is the invariant the defect
+  broke and the thing grouping-as-typed rests on. A kurs is *rendered* by `formatRate`
+  in `lib/format.ts` — minimum two decimals, maximum six — and
+  `tests/design-system.test.ts` fails on any file that passes a decimal count to
+  `formatNumber` for a rate.
+- **The cost, accepted:** a numpad `.` does not produce a decimal point. Under the
+  rule above it is a thousands separator, and the operators type `,`.
+- **Do not change unless:** explicitly instructed. **Never give a rate a second
+  numeric control**, never let `.` mean a decimal point on input, never stop grouping
+  while a field is being typed into, and never restore a per-screen decimal count for
+  a rate.
+- **Status:** Frozen, current. Supersedes "The kurs field shows what you typed, while
+  you are typing it", which lasted one review cycle.
 
 ### Master data is never deleted
 - **Decision:** No hard delete for master data anywhere. Deactivate via status.
@@ -1857,8 +2225,14 @@ they relate. Keep the table; keep it out of the UI's write path.
   6. **Read-only, always.**
   7. **Drill-through downward.** A summary row links to the detail report for the same
      parameters, so a figure is one click from the rows that produced it.
-  8. **Money is grouped per currency, never converted** (§12, amounts are never
-     converted).
+  8. **A report states one measure, and says which.** Reports over the operational
+     books group per currency at face value and never add two together — that is
+     what a Cash & Bank account or a Partner position actually holds. The Journal,
+     the General Ledger and the Trial Balance report **base currency on one scale**,
+     because a journal balances in base alone and grouping by transaction currency
+     would split one balanced entry across two tables leaving neither balancing. A
+     report never converts anything itself: it prints the base measure that was
+     recorded when the movement happened (§12, a rate is an input or an output).
   9. **A block states its headline figures as a `.rsum` strip**, label above value,
      right-aligned and monospaced, closing balance last and larger. Written on one line
      (`Awal Rp 0 · D Rp 0 · K Rp 200.000 · Akhir Rp -200.000`) the figures are all
@@ -1876,6 +2250,12 @@ they relate. Keep the table; keep it out of the UI's write path.
       ledger is read.
   12. **Export belongs in `.ph-act`.** The slot exists and is empty; print and XLSX are
       deferred, and adding them later changes no layout.
+  13. **The footnote is one sentence.** It says the single thing a reader needs in
+      order to read the figures correctly, and nothing else. Each of the six had
+      grown to four or five sentences restating rules the screen already obeys —
+      append-only, per-currency totals, what a saldo awal is — so the one clause
+      that actually changed how a column should be read was buried in the middle
+      of a paragraph nobody finishes. The same applies to a Journal's footnote.
 
 - **Reason:** Reports are the bulk of what the subject ledgers will add, and a report
   invented per screen produces a different answer to "what period is this?" on every
@@ -2006,10 +2386,14 @@ they relate. Keep the table; keep it out of the UI's write path.
 - **Status:** Frozen, current.
 ### Post is the actual boundary, and it is one transaction (FROZEN)
 - **Decision:** A Cash Bank Transaction in Draft moves **nothing** — no ledger entry,
-  no balance, no `realized_amount`, not even a document date. `applyPosting` in
-  `src/lib/siba/finance.ts` is the single place money moves, and it writes the Cash
-  Bank Book entry (through `recordCashBankEntry`), its materialised balance, every
-  Budget's realization, and the document's own dates inside **one** `prisma.$transaction`.
+  no balance, no subject-book entry, no journal, no layer movement, no
+  `realized_amount`, not even a document date. `applyPosting` in
+  `src/lib/siba/finance.ts` is the single place money moves, and inside **one**
+  `prisma.$transaction` it writes the Cash Bank Book entry and its materialised
+  balance (`recordCashBankEntry`), the subject book where the Purpose keeps one
+  (`recordSubledgerEntry`), the balanced Journal (`postJournal`), the rate layer it
+  draws on or the one it opens (`drawFromLayer` / `openLayer`), every Budget's
+  realization, and the document's own dates and status.
 - **Reason:** Concept doc §2.3 makes Post the actual boundary: before it nothing has
   happened, after it nothing can be taken back. Splitting those writes would let the
   money move without the plan recording it, or a plan record a realization that never
@@ -2020,13 +2404,20 @@ they relate. Keep the table; keep it out of the UI's write path.
   written. The rule lives in the data module rather than inside the Server Action so
   `tests/finance.test.ts` can exercise the real path — an action resolves a caller from
   a session cookie, which a test process does not have.
-- **The Journal is deliberately absent.** The book is written **straight from the
-  document**, never derived from a journal line: operational books are independent
-  historical stores and only the General Ledger derives from journals (§2.5, §11.7).
-  When the Journal and the subject ledgers land they are added *alongside* that call.
+- **The three writers sit side by side and none reads another.** Each book is
+  written **straight from the document**, never derived from a journal line:
+  operational books are independent historical stores and only the General Ledger
+  derives from journals (§2.5, §11.7). That is the whole reason `applyPosting` calls
+  `recordCashBankEntry`, `recordSubledgerEntry` and `postJournal` in parallel rather
+  than chaining them.
+- **The layer is re-read at Post too.** `drawFromLayer` **throws** rather than
+  returning a refusal, because it runs inside the posting transaction: a layer that
+  another document has spent since this one was drafted takes the whole posting down
+  instead of being overdrawn. `postJournal` throws on an unbalanced journal for the
+  same reason.
 - **Do not change unless:** explicitly instructed. **Never split Post into separate
-  writes, never let a Draft touch a balance, and never derive the Cash Bank Book from a
-  journal line.**
+  writes, never let a Draft touch a balance or a layer, and never derive the Cash Bank
+  Book from a journal line.**
 - **Status:** Frozen, current.
 
 ### The Cash Bank Transaction lifecycle is one transition table
@@ -2126,7 +2517,7 @@ they relate. Keep the table; keep it out of the UI's write path.
   intercompany position in a subject book.
 - **Status:** Frozen, current.
 
-### Finance is bespoke, and its base-amount columns are placeholders
+### Finance is bespoke, and its base-amount columns carry real figures
 - **Decision:** Cash Bank Transaction has its own routes under
   `/finance/cash-bank-transaction`, its own data module (`lib/siba/finance.ts`), its own
   actions and its own components. It is **not** in `entities.ts`, and `entity-access.ts`
@@ -2134,18 +2525,25 @@ they relate. Keep the table; keep it out of the UI's write path.
   `transactionAbilities()` against the same catalogue.
 - **Reason:** The registry expresses fields, columns and an active/inactive toggle. This
   is a document with a header that filters its own child table, a lifecycle, and a Post
-  that writes three tables — precisely the escape hatch the registry decision
+  that writes several tables — precisely the escape hatch the registry decision
   anticipated, and the one User, Role and Budget already took.
-- **`exchange_rate`, `transaction_base_amount` and `settlement_base_amount` are written
-  as the identity**: rate `1`, base = amount. There is no exchange rate anywhere in this
-  system (§12, "Amounts are never converted"), so nothing reads or displays these
-  columns; they exist because the schema carries what the real rate source will one day
-  fill. A document can only settle a Budget in the Cash & Bank's own currency, which is
-  why the identity is honest rather than a fabricated conversion.
-- **Do not change unless:** explicitly instructed. **Do not display a base amount, and
-  do not put a conversion constant in these columns** — when the rate source lands, it
-  fills them.
+- **`exchange_rate`, `transaction_base_amount` and `settlement_base_amount` are real
+  figures now, and the two base columns are not the same number.** The transaction
+  base is what the cash actually cost — the layer's rate, or the rate the bank
+  converted at. The settlement base is what the obligation released, at its own
+  carrying rate. They are determined independently and the residual between them is
+  the FX difference (§10 rules 73–74). **This supersedes the earlier decision that
+  all three were written as the identity** (rate `1`, base = amount), which was
+  honest while the system held no rate and is now simply wrong.
+- **A document's currency is its own, not its resource's.** It used to be read off
+  the Cash & Bank; a foreign document paid from a rupiah account is the case that
+  separated the two questions. Budget eligibility still turns on the document's
+  currency, never on the kurs.
+- **Do not change unless:** explicitly instructed. **Do not collapse the two base
+  columns into one** — that is the FX difference disappearing — and do not write
+  either of them from a rate that was not the one the movement actually used.
 - **Status:** Frozen, current.
+
 ### The Budget page's cash card reads the book
 - **Decision:** "Saldo Kas & Bank" on the budget list, its breakdown dialog, and the
   submission report's Opening Balance all read `cashBookSummary()` — real balances from
@@ -2299,17 +2697,23 @@ decisions now that foreclose them.
 | Item | Planned behaviour |
 | --- | --- |
 | Subledger opening balances | A subject's position before the application started keeping its book. `SubLedgerEntryType.Opening` exists and nothing writes it; it belongs with Opening Balance below, not with a manual entry form |
-| Exchange rate | A real rate source, arriving in a later update. **Do not create a standalone exchange-rate master table, and do not reintroduce a hardcoded rate in the meantime** — §12 |
+| Period-end revaluation | SIBA multi-currency §7: retranslate open positions at the closing rate and collapse a foreign account's layers into one. `CashBankLayerStatus.ClosedByRevaluation` exists and nothing writes it. **The only sanctioned consolidation of layers** — do not add a second one, and do not merge layers for any other reason (§10 rule 71) |
+| Multi-layer settlement | The source specification lets one payment draw on several layers (`Σ selected = account_amount`). SIBA takes one per document, refused at draft time with a message that says to split it. Widening this means a selection UI with a running total and per-layer relief, not a loosened check (§12) |
+| Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
 | `Transfer` transaction type | Extend the transaction-type enum, UI and logic. Note `transaction_type` currently shares the `FlowDirection` enum with `budget_type`, so this likely needs a separate enum rather than a third member |
 | Fiscal Year closing | The closing process that moves a year Open → Closed, locking its periods against posting. Belongs with the journal and the general ledger. **Add `FISCAL_YEAR_CLOSE` to the catalogue in the same change that builds it, never before** — §12 |
 | Opening Balance | `acc_opening_balance(_line)` tables and UI — the accounting opening balance per account, distinct from a cash resource's opening entry, which already exists |
-| Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept — what is missing is the document that settles them |
+| Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
 
-**Exchange rate — current state.** There is none, deliberately. Every total is
-reported per currency instead (§12). When the real source arrives, conversion is
-layered on top of `MoneyTotal[]`; the per-currency figures stay.
+**Exchange rate — current state.** Built, and it is not a rate *source*. The system
+holds no market rate and looks none up: a kurs is either the identity, the rate of a
+layer that was acquired at it, or a figure the user typed because that is what the
+bank actually used (§10 rule 68). If a real rate feed ever arrives it can only ever
+**prefill** an entered kurs — it must not revalue a stored base figure, which is
+history (§12, a rate is an input or an output). Period-end revaluation is the one
+process allowed to restate positions, and it is not built.
 
 ---
 
@@ -2325,9 +2729,9 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   company-to-company relationship table. `is_parent` is the whole model.
 - Do **not** generalise the two-company structure into a configurable multi-company
   architecture, or build a configurable funding-provider mechanism.
-- Do **not** create a `fin_purpose` table, an exchange-rate master, or a Budget Month table.
-  Budget Month is a date-range query over `acc_fiscal_period`; do not add a month column
-  to `bud_budget` either.
+- Do **not** create a `fin_purpose` table, an exchange-rate master table, a rate-fetching
+  service, or a Budget Month table. Budget Month is a date-range query over
+  `acc_fiscal_period`; do not add a month column to `bud_budget` either.
 - Do **not** add a Budget Close or Budget Delete action, or move Budget into the entity
   registry. The lifecycle is create → approve and lives in `budget-workflow.ts`; a
   Budget reaches `Closed` only as a consequence of posting (§12).
@@ -2345,8 +2749,25 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
   (§10 rule 53).
 - Do **not** write a subledger entry outside `recordSubledgerEntry`, and do
   **not** derive one from a journal line (§10 rule 22, §12).
-- Do **not** reintroduce a hardcoded exchange rate, and do **not** sum amounts across
-  currencies. Totals are reported per currency until a real rate source exists (§12).
+- Do **not** sum amounts across currencies at face value, and do **not** convert a
+  figure by any rate other than the one recorded on the movement itself. There is no
+  rate lookup in this system (§9, §12).
+- Do **not** store a derived carrying rate, default one into a document, or treat one
+  as a market rate. `carryingRate` exists to be displayed (§10 rule 68, §12).
+- Do **not** re-derive a stored base figure at a later rate. The base measure is
+  history; only period-end revaluation may restate a position, and it is not built
+  (§12, §13).
+- Do **not** merge rate layers, auto-select one, edit a layer's rate, or add a second
+  way to consolidate them. One payment draws on one layer the user picked
+  (§10 rules 70–71, §12).
+- Do **not** widen `maySettle` to admit a third currency without building the cross
+  rate that case needs (§10 rule 67, §12).
+- Do **not** write a rate of `1` for anything but base currency moving through a
+  base-currency resource. Between two foreign amounts it asserts USD 100 is IDR 100
+  (§10 rule 68).
+- Do **not** give a rate a numeric control of its own, let `.` mean a decimal point
+  on input, stop a field grouping while it is being typed into, or format a rate
+  outside `formatRate`. One control, and one meaning per separator key (§8, §12).
 - Do **not** put business data in `prisma/seed.ts`, and do **not** add a delete step to
   it. It syncs system data and nothing else (§12).
 - Do **not** use a native `<select>`, `<input type="date">` or `<input
@@ -2490,6 +2911,17 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 - Do **not** let an account number be typed whole, renumbered, or moved to a
   different parent. A code is composed from its lineage and frozen once saved
   (§10, §12).
+- Do **not** let a parent account be posted to, mapped to, or named by a System
+  Default, and do **not** add a path that makes one postable again. Do **not**
+  loosen the mirror rule that keeps an account already in use from gaining a
+  sub-account — the two only work as a pair (§10 rules 77–78, §12).
+- Do **not** put a filter box inside a dropdown's popup. The control itself is
+  the search box, in the `Combobox` and in a searchable `Select` alike (§8, §12).
+- Do **not** give a rate layer a dropdown again, or show anything but the kurs
+  in the field once one is chosen. Four attributes do not fit on one option line
+  (§12).
+- Do **not** write a report footnote longer than one sentence, or restate in it
+  a rule the screen already obeys (§12).
 - Do **not** seed accounts. The seeded skeleton stops at Account Subcategory
   (depth 3); depth 4 and below is the user's chart (§12).
 - Do **not** replace `CASH_BANK_SUBCATEGORY` with a list of account names or a
@@ -2563,6 +2995,11 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | The subject books have no manual entry path, and no opening balance | A subledger entry is only ever written by posting a Cash Bank Transaction. `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated — that belongs with Opening Balance (§13). `Adjustment` is in the same position as the Cash Bank Book's. |
 | A subject book's report shows a document's note, not a link | An entry carries its source as the weak `(doc_type_id, doc_id)` pair and its document number inside `note`. Resolving that to a link would mean the book importing Finance, which is the boundary crossing `cash-bank.ts` already has and that has not been decided. |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
+| Layers can go stale, and that is accepted | Nothing forces the oldest layer to be consumed, so an unselected layer persists indefinitely. The source document names this as a consequence of the design rather than a defect: period-end revaluation is what absorbs them, and it is not built (§13). |
+| The FX difference on a payment is a user decision | Which layer the user picks sets the gain or loss recognised. Under averaging it would be deterministic. This is the feature working as intended — the source document calls layer selection an auditable control point — but it does mean two clerks can post the same payment to different results, and nothing flags that. |
+| A standing foreign position is never retranslated | A Hutang in USD keeps the base value it was carried at until something settles it. Without period-end revaluation (§13) there is no unrealised gain or loss anywhere in the system, so the base measure of an open position drifts from what it would be worth today — by design for now, and the one thing revaluation exists to fix. |
+| A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
+| Nothing refuses a posting on a period's status | `applyPosting` never consults the fiscal calendar, so a document can post into a period that is not Open — or into no period at all. Consistent with Fiscal Year closing not being built (§13); the lock belongs with that work. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | `recentActivity()` has no caller | The cross-record audit *feed* is still off the dashboard, pending the user's own plan for where it belongs. The per-record history is a separate reader (`recordHistory`) and is now on every form; `recentActivity()` itself remains unused. |
@@ -2572,7 +3009,7 @@ layered on top of `MoneyTotal[]`; the per-currency figures stay.
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |
 | The intercompany position has no subject-book view | It is carried by the two bridge accounts and read through the General Ledger, which is a deliberate deviation from concept doc §34/§37/§38 (§12). The consequence is that the subject books answer "which Partner moved?" and not "what does the anak owe the induk?" — that question is an account balance, and the dashboard now states it from those two accounts so it is no longer reachable only by running the General Ledger for exactly the right one. If a book of it is ever wanted, it needs a subject that is a Company, which is a change to an append-only table. |
-| Tests cover security, Accounting, Budget, Finance, Funding, the books, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
+| Tests cover security, Accounting, Budget, Finance, Funding, the books, the layers, the FX kernel, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | Two module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a third fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |

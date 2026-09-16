@@ -20,7 +20,7 @@ import {
   type TransactionValues,
 } from "@/app/actions/finance";
 import { requestFunding, withdrawFunding } from "@/app/actions/funding";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber, formatRate } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, rateSource } from "@/lib/siba/currency";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetMapping } from "@/lib/siba/budget";
@@ -57,6 +57,19 @@ type DraftLine = {
   outstanding: number;
   amount: number;
 };
+
+/**
+ * The header fields that decide where this document's kurs comes from —
+ * `rateSource` reads direction, document currency and resource currency, and
+ * these are what carry them. Changing any one re-asks the question, so the
+ * previous answer cannot be allowed to survive it.
+ */
+const RATE_CONTEXT: (keyof TransactionValues)[] = [
+  "purpose",
+  "company_id",
+  "cash_bank_id",
+  "currency_id",
+];
 
 /**
  * Cash Bank Transaction create / detail / edit.
@@ -184,6 +197,19 @@ export function TransactionForm({
       if (key === "company_id") {
         next.cash_bank_id = "";
         next.partner_id = "";
+      }
+      // Both kurs fields belong to a header context, not to the document: which
+      // of the three provenances applies is decided by direction, document
+      // currency and resource currency together, so any of them moving can
+      // leave an answer to a question the form is no longer asking. A layer
+      // belongs to one resource and `checkHeader` refuses a foreign one — but
+      // the control shows empty when its value is not in the list, so the user
+      // would be reading a refusal about a field that looks blank. Worse, a
+      // rate left behind when the pairing becomes `identity` is refused by a
+      // field the form no longer renders, which is an error nobody can clear.
+      if (RATE_CONTEXT.includes(key)) {
+        next.exchange_rate = "";
+        next.cash_bank_layer_id = "";
       }
       return next;
     });
@@ -819,7 +845,7 @@ export function TransactionForm({
                         ) : (
                           <div className="ro">
                             <span className="mny">
-                              {formatNumber(transaction?.exchange_rate ?? 0, 2)}
+                              {formatRate(transaction?.exchange_rate ?? 0)}
                             </span>
                             <span>dari layer yang dipilih</span>
                           </div>
@@ -847,7 +873,7 @@ export function TransactionForm({
                         ) : (
                           <div className="ro">
                             <span className="mny">
-                              {formatNumber(transaction?.exchange_rate ?? 0, 2)}
+                              {formatRate(transaction?.exchange_rate ?? 0)}
                             </span>
                           </div>
                         )}

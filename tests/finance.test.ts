@@ -497,7 +497,10 @@ describe("the document header is enforced, not merely narrowed", () => {
     // exist in this system, and it is refused rather than silently narrowed.
     const eur = await prisma.refCurrency.upsert({
       where: { currency_code: "curr.TESTEUR" },
-      update: {},
+      // Reasserted, not left alone: a run that deactivated this fixture would
+      // otherwise make `checkHeader` refuse on `currency_id` for ever after, and
+      // the settlement rule this test is about would never be reached at all.
+      update: { status: "Active" },
       create: {
         currency_code: "curr.TESTEUR",
         currency_label: "TEU",

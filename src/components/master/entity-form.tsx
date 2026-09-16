@@ -38,7 +38,7 @@ import {
 import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
 import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
-import { formatDate, formatMoney, formatNumber, todayIso } from "@/lib/format";
+import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
 import { recordTitle } from "@/lib/siba/record-title";
 
@@ -53,6 +53,8 @@ export function EntityForm({
   headerActions,
   editTone = "primary",
   defaults,
+  lockedFields,
+  lockNote,
 }: {
   entity: Entity;
   mode: FormMode;
@@ -81,6 +83,14 @@ export function EntityForm({
    * a new record, never something that reaches an existing one.
    */
   defaults?: Partial<Record<SystemDefaultKey, number | null>>;
+  /**
+   * Fields this particular record may not edit, where the registry cannot say
+   * so because it depends on the row rather than on the entity — an account
+   * that has gained a sub-account no longer decides whether it is postable.
+   */
+  lockedFields?: string[];
+  /** Why those fields are locked, as a closing note at the foot of the card. */
+  lockNote?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -364,6 +374,7 @@ export function EntityForm({
                     options={optionsFor(f)}
                     prefix={f.type === "segment" ? inheritedCode(f) : null}
                     currencyLabel={currencyLabelOf(f)}
+                    forceLocked={lockedFields?.includes(f.name)}
                     onChange={(v) => setField(f, v)}
                   />
                 ))}
@@ -387,6 +398,7 @@ export function EntityForm({
                       error={errors[f.name]}
                       options={[]}
                       statusLike
+                      forceLocked={lockedFields?.includes(f.name)}
                       onChange={(v) => setField(f, v)}
                     />
                   ))}
@@ -407,6 +419,7 @@ export function EntityForm({
                       exists={mode !== "new"}
                       error={errors[f.name]}
                       options={[]}
+                      forceLocked={lockedFields?.includes(f.name)}
                       onChange={(v) => setField(f, v)}
                     />
                   ))}
@@ -418,6 +431,7 @@ export function EntityForm({
                 the header says so; the reason belongs beside the fields it
                 explains rather than in a subtitle above the whole page. */}
             {locked && <p className="fnote">{COMPANY_LOCK_BODY}</p>}
+            {!locked && lockNote && <p className="fnote">{lockNote}</p>}
           </div>
         </div>
       </div>
@@ -487,6 +501,7 @@ function FieldControl({
   prefix,
   currencyLabel,
   statusLike,
+  forceLocked,
   onChange,
 }: {
   field: Field;
@@ -494,6 +509,8 @@ function FieldControl({
   row: Row | null;
   editing: boolean;
   exists: boolean;
+  /** Locked for this row rather than for the entity — see `lockedFields`. */
+  forceLocked?: boolean;
   error?: string;
   options: RefOption[];
   /** `segment` only: the code this field's number continues. */
@@ -504,7 +521,7 @@ function FieldControl({
   statusLike?: boolean;
   onChange: (value: string | boolean | null) => void;
 }) {
-  const locked = Boolean(field.locked && exists);
+  const locked = Boolean((field.locked || forceLocked) && exists);
   // Three columns by default: a master record's fields are short, and two
   // columns left a date picker in a 500px box. `full` and a textarea still take
   // the whole row, and a field that needs a different share says so in the
@@ -597,7 +614,7 @@ function readOnlyBody({
       <div className="ro nil">tidak diisi</div>
     ) : (
       <div className="ro">
-        <span className="mny">{formatNumber(raw as number, 6)}</span>
+        <span className="mny">{formatRate(raw as number)}</span>
       </div>
     );
   }
@@ -648,10 +665,15 @@ function editableControl({
     // full of toggles does not read as a wall of explanation.
     const compact = !field.captionDetail;
     return (
-      <label className={`chk${compact ? " sm" : ""}${error ? " bad" : ""}`}>
+      <label
+        className={`chk${compact ? " sm" : ""}${error ? " bad" : ""}${
+          locked ? " dis" : ""
+        }`}
+      >
         <input
           type="checkbox"
           checked={Boolean(value)}
+          disabled={locked}
           onChange={(e) => onChange(e.target.checked)}
         />
         <span>

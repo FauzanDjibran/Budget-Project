@@ -13,6 +13,7 @@ import { abilitiesFor, entityPermissions } from "@/lib/siba/entity-access";
 import { entityBySlug, type Entity } from "@/lib/siba/entities";
 import {
   accountTree,
+  checkAccountIsLeaf,
   columnRefOptions,
   computedValues,
   getRow,
@@ -193,6 +194,8 @@ export async function EntityDetailPage({
       ? "neutral"
       : "primary";
 
+  const parentLock = await accountParentLock(entity, row);
+
   const form = (
     <EntityForm
       entity={entity}
@@ -202,6 +205,7 @@ export async function EntityDetailPage({
       can={abilitiesFor(entity.key, actor.permissions)}
       headerActions={headerActions}
       editTone={editTone}
+      {...parentLock}
     />
   );
 
@@ -303,8 +307,34 @@ export async function EntityEditPage({
         row={row}
         refs={refs}
         can={abilitiesFor(entity.key, actor.permissions)}
+        {...(await accountParentLock(entity, row))}
       />
       <RecordHistoryCard entityKey={entity.key} rowId={row.id} />
     </>
   );
+}
+
+/**
+ * Postable, for an account that has gained a sub-account, is no longer a
+ * decision — so the toggle is shown off and locked, and the form says why.
+ *
+ * Per-row rather than per-entity, which is why it cannot live in the registry:
+ * `entities.ts` describes what an Account *is*, and this depends on what has
+ * been created underneath this one. `validateAccount` refuses the same change
+ * on the server, which is what actually enforces it — this only stops the form
+ * offering a control whose every use would be refused.
+ */
+async function accountParentLock(
+  entity: Entity,
+  row: { id: number }
+): Promise<{ lockedFields?: string[]; lockNote?: string }> {
+  if (entity.key !== "acc_account") return {};
+  if (!(await checkAccountIsLeaf(row.id))) return {};
+  return {
+    lockedFields: ["is_postable"],
+    lockNote:
+      "Account ini memiliki sub-account, sehingga tidak lagi menerima posting: " +
+      "saldonya adalah jumlah dari account di bawahnya. Hak posting tidak dapat " +
+      "dikembalikan — posting dilakukan pada salah satu sub-accountnya.",
+  };
 }

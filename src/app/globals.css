@@ -114,7 +114,6 @@ button,input,select,textarea{font:inherit;color:inherit}
 .sub{width:var(--w-sub);flex:0 0 auto;background:#fff;border:1px solid var(--line);border-radius:14px;
   display:flex;flex-direction:column;box-shadow:var(--sh-md);overflow:hidden;transition:width .18s ease}
 body.sub-off .sub,body.no-sub .sub{width:0;border-width:0;opacity:0;pointer-events:none;padding:0}
-body.no-sub .reopen{display:none!important}
 .sub-h{padding:14px 14px 11px;border-bottom:1px solid var(--line-2);display:flex;gap:8px;align-items:flex-start}
 .sub-h .t{flex:1 1 auto;min-width:0}
 .sub-h h2{margin:0;font-size:14px;font-weight:800;letter-spacing:-.25px;color:var(--brand);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -143,9 +142,6 @@ body.no-sub .reopen{display:none!important}
 .leaf.on .n{background:#fff;color:var(--brand)}
 
 .content{flex:1 1 auto;min-width:0;overflow-y:auto;position:relative}
-.reopen{position:absolute;left:0;top:0;z-index:5;width:26px;height:26px;border:1px solid var(--line);background:#fff;
-  border-radius:50%;display:none;place-items:center;cursor:pointer;color:var(--muted);box-shadow:var(--sh-sm)}
-body.sub-off .reopen{display:grid}
 .pad{padding:0 4px 44px}
 
 /* ============================================================ page header */
@@ -441,10 +437,15 @@ td.acts{width:88px;padding-right:7px}
 .cbx .cv{color:var(--muted-2);flex:0 0 auto}
 .cbpop{position:fixed;z-index:96;background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-xl);
   overflow:hidden;display:flex;flex-direction:column;max-height:300px}
-.cbpop .s{padding:8px;border-bottom:1px solid var(--line-2);position:relative;flex:0 0 auto}
-.cbpop .s input{width:100%;height:30px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--line-3);padding:0 10px 0 28px;font-size:12px;font-weight:600}
-.cbpop .s input:focus{outline:none;border-color:var(--accent-s);background:#fff}
-.cbpop .s svg{position:absolute;left:16px;top:50%;transform:translateY(-50%);stroke:var(--muted-2)}
+/* The search box IS the control. A Combobox and a searchable Select swap their
+   own contents for `.cbq` while open, so the field a user clicked is the field
+   they type into — the popup used to grow a second bar of its own, which sat
+   below the control and had to be travelled to with the mouse. */
+.cbq{flex:1 1 auto;min-width:0;width:100%;border:0;background:transparent;padding:0;margin:0;
+  font:inherit;color:var(--ink);letter-spacing:inherit;text-transform:inherit}
+.cbq:focus{outline:none}
+.cbq::placeholder{color:var(--muted-3);font-weight:inherit;text-transform:inherit}
+.cbx .cbq{font-size:12.5px;font-weight:500}
 .cbpop .l{overflow-y:auto;padding:5px;flex:1 1 auto}
 .cbo{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:12.5px}
 .cbo:hover,.cbo.hi{background:var(--brand-50)}
@@ -640,6 +641,11 @@ kbd{font-family:var(--f);font-size:9.5px;border:1px solid var(--line);border-bot
 .mwrap.sm .inp.mfield{height:32px;padding-left:40px;padding-right:10px;font-size:12.5px}
 .mwrap.nocur .inp.mfield{padding-left:11px}
 .mwrap.sm.nocur .inp.mfield{padding-left:10px}
+/* A rate names a pair, not a currency: `USD → IDR` is three times the width of
+   `USD`, and the 48px reserved for a currency label is not enough for it. The
+   figure is right-aligned, so a short rate cleared the label by luck and a
+   six-decimal one would have run into it. */
+.mwrap.pair .inp.mfield{padding-left:92px}
 .inp.mfield.over{border-color:var(--warn-solid);background:var(--warn-bg);color:var(--warn)}
 .mwrap.over .cur{color:var(--warn)}
 .inp.mfield:disabled{background:var(--line-3);color:var(--muted-3)}
@@ -666,6 +672,11 @@ kbd{font-family:var(--f);font-size:9.5px;border:1px solid var(--line);border-bot
 tr.nowrow td{background:var(--accent-50)}
 tr.nowrow:hover td{background:#F7F0D4}
 .chk.bad{border-color:var(--bad-solid);box-shadow:0 0 0 3px var(--bad-bg)}
+/* A toggle whose answer is no longer the record's to give — an account that has
+   gained a sub-account does not decide whether it is postable. */
+.chk.dis{background:var(--line-3);color:var(--muted-2);cursor:not-allowed}
+.chk.dis:hover{background:var(--line-3)}
+.chk.dis input{cursor:not-allowed}
 
 /* approval modal */
 .apsum{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px 16px;background:var(--line-3);
@@ -908,7 +919,6 @@ table.pkt2 tbody tr.on:hover td{background:#F7F0D4}
   body.nav-open .scrim{display:block;position:fixed;inset:var(--h-top) 0 0 0;background:rgba(15,23,42,.45);z-index:55}
   body.sub-off .sub,body.no-sub .sub{width:var(--w-sub);opacity:1;pointer-events:auto}
   body.no-sub .sub{transform:translateX(calc(-1 * (var(--w-rail) + var(--w-sub))))!important}
-  .reopen{display:none!important}
   .content{padding:12px}
 }
 @media print{ .topbar,.rail,.sub,.toolbar,.pager,.ph-act,.ract{display:none!important} .pad > .ph{position:static;box-shadow:none} .content{overflow:visible} body{background:#fff} }
@@ -1034,9 +1044,14 @@ a{color:inherit;text-decoration:none}
 .cbo.off{opacity:.45;cursor:not-allowed}
 .cbo.off:hover{background:transparent}
 .cbo .lab{margin-left:auto}
-.cbx:disabled,.tsel:disabled,.psel:disabled,.ctxsel:disabled{background-color:var(--line-3);color:var(--muted-2);
+/* The triggers are `<div>`s, not `<button>`s — a button may not contain the
+   input the search turns it into — so a disabled one says so with a class and
+   centres its own label rather than relying on a button's own layout. */
+.tsel,.psel,.ctxsel{display:inline-flex;align-items:center}
+.tsel .tv,.psel .tv,.ctxsel .tv{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cbx.dis,.tsel.dis,.psel.dis,.ctxsel.dis{background-color:var(--line-3);color:var(--muted-2);
   cursor:not-allowed;border-color:var(--line)}
-.cbx:disabled .cv{opacity:.5}
+.cbx.dis .cv{opacity:.5}
 
 /* ============================================================ report view
    A Report View gives the viewport to its figures. Two pieces make that

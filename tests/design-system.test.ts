@@ -198,6 +198,44 @@ describe("dates and money are formatted in one place", () => {
       "Use `formatDate`, `formatNumber` and `formatMoney` — they are what keep every date dd/mm/yyyy and every amount grouped."
     );
   });
+
+  test("a kurs is rendered by `formatRate`, never by a decimal count", () => {
+    // Seven screens each passed `formatNumber(rate, 2)` and one passed
+    // `formatNumber(rate, 6)`, so the Cash & Bank master showed a kurs to six
+    // places while every report showed the same kurs to two. Nothing broke —
+    // the application just disagreed with itself about what a rate looks like,
+    // which is exactly the drift this suite exists to catch.
+    const bad = files.filter(
+      (f) =>
+        !f.rel.endsWith("lib/format.ts") &&
+        /formatNumber\([^)]*\b(rate|Rate|kurs|exchange_rate)\b[^)]*\)/.test(
+          code(f.text)
+        )
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Use `formatRate` — one rule for how many decimals a kurs shows, rather than a number chosen per screen."
+    );
+  });
+
+  test("a foreign amount and its kurs are written by `formatForeignFace`", () => {
+    // The Journal rendered the pair with a middot between its halves and the
+    // General Ledger with an `@`, so the same fact read two ways on two
+    // screens that link to each other. `@` says what the second figure is —
+    // a price, not another item in a list — and one function is what keeps it
+    // saying that on every screen it appears on.
+    const bad = files.filter(
+      (f) =>
+        !f.rel.endsWith("lib/format.ts") &&
+        /formatMoney\([^)]*\btrx(Amount|_amount)\b/.test(code(f.text))
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Use `formatForeignFace(amount, currencyLabel, rate)` — the transaction-currency face of a base figure is one phrase, not two calls each screen composes itself."
+    );
+  });
 });
 
 describe("a header's buttons sit where the user last left them", () => {

@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { ReportSummary } from "@/components/report/report-summary";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatForeignFace, formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { GeneralLedgerReport as Report } from "@/lib/siba/ledger";
 
@@ -166,7 +166,11 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                                 // Only where the two differ — an IDR line
                                 // would just be stating itself twice.
                                 e.trxCurrencyLabel
-                                  ? `${formatMoney(e.trxAmount ?? 0, e.trxCurrencyLabel)} @ ${formatNumber(e.rate ?? 0, 2)}`
+                                  ? formatForeignFace(
+                                      e.trxAmount ?? 0,
+                                      e.trxCurrencyLabel,
+                                      e.rate ?? 0
+                                    )
                                   : null,
                               ]
                                 .filter(Boolean)

@@ -218,6 +218,22 @@ export async function postJournal(
  * Journal numbers for a set of ids — how another module names a journal it
  * holds a reference to, without reading `acc_journal` itself.
  */
+/**
+ * How many journal lines an account carries — has it been posted to at all?
+ *
+ * Asked by the Chart of Accounts before an account is given a sub-account,
+ * which revokes its posting privilege: an account that has already been posted
+ * to may not become a heading, or the postings already made to it would have
+ * no leaf accounting for them. It lives here rather than in the caller because
+ * `acc_journal_line` is the Journal's table, and a boundary crossed in one
+ * direction becomes a boundary crossed in both.
+ */
+export async function journalLineCountForAccount(
+  accountId: number
+): Promise<number> {
+  return prisma.accJournalLine.count({ where: { account_id: accountId } });
+}
+
 export async function journalNumbersByIds(
   ids: number[]
 ): Promise<Map<number, string>> {

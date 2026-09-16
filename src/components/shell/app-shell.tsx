@@ -113,11 +113,18 @@ export function AppShell({
       <div className="body">
         <nav className="rail">
           <div className="rail-mid" style={{ paddingTop: 7 }}>
+            {/* The rail is how a hidden submenu comes back. There is nowhere else
+                to press: the collapse button leaves with the panel it sits in,
+                and the floating reopen button that used to live in the content
+                area sat underneath the sticky page header, where nobody could
+                reach it. Pressing a module always *opens* its menu rather than
+                toggling it, so one press never has two outcomes. */}
             {modules.map((m) => (
               <Link
                 key={m.key}
                 href={m.groups ? firstLeafHref(modules, m.key) : `/${m.key}`}
                 className={`ri${activeModule?.key === m.key ? " on" : ""}`}
+                onClick={() => setSubOpen(true)}
               >
                 <Icon name={m.icon} size={18} />
                 <span className="ri-tip">{m.name}</span>
@@ -165,16 +172,6 @@ export function AppShell({
         </nav>
 
         <main className="content">
-          {hasSub && !subOpen && (
-            <button
-              className="reopen"
-              style={{ display: "grid" }}
-              onClick={() => setSubOpen(true)}
-              title="Tampilkan menu"
-            >
-              <Icon name="chev" size={13} />
-            </button>
-          )}
           <div className="pad">{children}</div>
         </main>
       </div>

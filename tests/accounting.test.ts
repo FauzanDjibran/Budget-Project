@@ -24,6 +24,8 @@ import {
 import {
   CASH_BANK_SUBCATEGORY,
   accountDescendants,
+  accountUsage,
+  checkAccountIsLeaf,
   checkAccountNumber,
   listRows,
   checkCashBankAccount,
@@ -36,6 +38,7 @@ import {
   cleanupFixtures,
   disconnect,
   makeAccount,
+  makeMapping,
   parentCompanyId,
   prisma,
   systemUserId,
@@ -182,6 +185,90 @@ describe("a Cash & Bank resource may only post to an eligible account", () => {
   test("refuses an account that does not exist", async () => {
     const problem = await checkCashBankAccount(999_999_999, parent);
     assert.match(String(problem), /tidak ditemukan/);
+  });
+});
+
+describe("an account that gains a sub-account stops receiving postings", () => {
+  /**
+   * Becoming a parent revokes the posting privilege, permanently: a parent is a
+   * heading over where money lands, and its balance is whatever sits below it.
+   * `createRecord` writes `is_postable = false` on the parent in the same
+   * transaction as the child, and these are the checks underneath that flag —
+   * an account that somehow still carried it has to be refused anyway, which is
+   * why the rule is asked of the tree rather than of the boolean.
+   */
+  let postableParent = 0;
+
+  before(async () => {
+    postableParent = await makeAccount({
+      companyId: parent,
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+      postable: true,
+    });
+    await makeAccount({
+      companyId: parent,
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+      parentId: postableParent,
+    });
+  });
+
+  test("a leaf is still a leaf", async () => {
+    assert.equal(await checkAccountIsLeaf(bankLeaf), null);
+    assert.equal(await checkAccountIsLeaf(cash), null);
+  });
+
+  test("an account with children is refused, and says why", async () => {
+    assert.match(String(await checkAccountIsLeaf(bankHeader)), /sub-account/);
+  });
+
+  test("the flag is not what decides it", async () => {
+    const row = await prisma.accAccount.findUniqueOrThrow({
+      where: { id: postableParent },
+      select: { is_postable: true },
+    });
+    assert.equal(row.is_postable, true, "only the tree may stop this one");
+    assert.match(String(await checkAccountIsLeaf(postableParent)), /sub-account/);
+  });
+
+  test("a Cash & Bank resource may not post to it either", async () => {
+    // Every other condition passes: same Company, postable, active, and in
+    // kelompok 1.1.1. Only the sub-account underneath it refuses.
+    assert.match(
+      String(await checkCashBankAccount(postableParent, parent)),
+      /sub-account/
+    );
+  });
+});
+
+describe("an account already in use cannot be given a sub-account", () => {
+  /**
+   * The mirror rule. A sub-account revokes the parent's posting privilege, so
+   * anything already naming the account as somewhere money goes would be left
+   * naming a heading — and the postings already made to it would have no leaf
+   * accounting for them. A miscoded account is deactivated, never restructured.
+   */
+  test("an untouched account is free", async () => {
+    assert.deepEqual(await accountUsage(cash), []);
+  });
+
+  test("a mapping counts as use, and is named", async () => {
+    const mappingId = await makeMapping({
+      companyId: parent,
+      budgetCategoryLabel: "Prive",
+      partnerCategoryLabel: "Stakeholder",
+      accountId: await makeAccount({
+        companyId: parent,
+        subcategoryLabel: "1.1.3",
+      }),
+    });
+    // Read the account back off the mapping rather than assuming the fixture's
+    // own: `makeMapping` reuses a combination that already exists, because the
+    // three-part key is unique per Company.
+    const mapping = await prisma.accBudgetCategoryAccount.findUniqueOrThrow({
+      where: { id: mappingId },
+      select: { account_id: true },
+    });
+    assert.match((await accountUsage(mapping.account_id)).join(" "), /mapping/i);
   });
 });
 

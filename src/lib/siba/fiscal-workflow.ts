@@ -14,10 +14,12 @@
  * that claims never to have started.
  *
  * Closing is declared here but not yet executable. Closing a book means more
- * than writing a word into a column — it locks its periods against posting and
- * belongs with the journal and the general ledger, which are not built yet
- * (CLAUDE.md §13). The step is described so the screen can say so plainly
- * rather than offering a status change that would only pretend to close.
+ * than writing a word into a column — it locks its periods against posting,
+ * and nothing anywhere yet refuses a posting on the strength of a period's
+ * status. The Journal and the General Ledger it has to lock against now exist;
+ * the lock itself is the piece still outstanding (CLAUDE.md §13). The step is
+ * described so the screen can say so plainly rather than offering a status
+ * change that would only pretend to close.
  *
  * Client-safe on purpose — no `server-only`, no database import.
  */

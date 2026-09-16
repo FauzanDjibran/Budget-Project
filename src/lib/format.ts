@@ -102,6 +102,52 @@ export function formatNumber(
   });
 }
 
+/**
+ * An exchange rate: `15.500,00`, `15.500,50`, `15.500,123456`.
+ *
+ * A rate is not an amount, so it is not `formatMoney` with a different prefix.
+ * It is stored `Decimal(18,6)` and every digit of that is meaningful — a
+ * journal line valued at 15.500,123456 that reports as 15.500,12 misstates the
+ * rate the entry was actually made at. So the decimals shown are the decimals
+ * the rate has, floored at two so a whole rate still reads as a price rather
+ * than as a count.
+ *
+ * One function because the alternative was seven call sites each passing their
+ * own decimal count, and they had already drifted: every rate in the
+ * application rendered at two places except the Cash & Bank master's own
+ * acquisition kurs, which rendered at six.
+ */
+export function formatRate(
+  value: number | string | { toString(): string } | null | undefined
+): string {
+  const n = Number(value ?? 0);
+  return n.toLocaleString("id-ID", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  });
+}
+
+/**
+ * What a foreign amount was, beside the base figure it became: `USD 1.000,00 @
+ * 16.000,00`.
+ *
+ * One function because the pair had already drifted — the Journal rendered it
+ * with a middot between the two halves and the General Ledger with an `@`, so
+ * the same fact read two ways on two screens that link to each other. `@` is
+ * the one that says what the second figure *is*: a price, not another item in
+ * a list.
+ *
+ * Only ever called for a line whose currency is not the base one. A base
+ * amount at a rate of 1 would be stating itself twice.
+ */
+export function formatForeignFace(
+  amount: number | string | { toString(): string } | null | undefined,
+  currencyLabel: string,
+  rate: number | string | { toString(): string } | null | undefined
+): string {
+  return `${formatMoney(amount, currencyLabel)} @ ${formatRate(rate)}`;
+}
+
 /** IDR renders as `Rp 1.250.000` with no decimals; other currencies keep two. */
 export function formatMoney(
   value: number | string | { toString(): string } | null | undefined,

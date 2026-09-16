@@ -13,7 +13,9 @@ import type { CashBookSummary } from "@/lib/siba/cash-bank";
  *
  * The opening balance comes from the Cash Bank Book, so the recap reflects what
  * the resources actually hold. Each currency is recapped on its own line and
- * never combined, since there is no exchange rate to combine them with.
+ * never combined: a plan is denominated in the currency it will be settled in,
+ * and adding two of them would state a figure that is not what anybody holds
+ * or intends to spend.
  *
  * **The XLSX export is deliberately not built.** The picker is here so the
  * feature is visible and its selection behaviour can be exercised; the download

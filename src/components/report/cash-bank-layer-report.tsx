@@ -1,6 +1,6 @@
 import { Icon } from "@/components/icon";
 import { ReportSummary } from "@/components/report/report-summary";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatMoney, formatRate } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { LayerReport as Report } from "@/lib/siba/cash-bank-layers";
 
@@ -71,7 +71,7 @@ export function CashBankLayerReport({ report }: { report: Report }) {
                   value:
                     b.averageRate == null
                       ? "—"
-                      : formatNumber(b.averageRate, 2),
+                      : formatRate(b.averageRate),
                   zero: b.averageRate == null,
                 },
                 {
@@ -130,7 +130,7 @@ export function CashBankLayerReport({ report }: { report: Report }) {
                           </span>
                         )}
                       </td>
-                      <td className="num">{formatNumber(l.rate, 2)}</td>
+                      <td className="num">{formatRate(l.rate)}</td>
                       <td className="num">
                         {formatMoney(l.foreignOriginal, b.currencyLabel)}
                       </td>

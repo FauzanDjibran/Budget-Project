@@ -16,7 +16,10 @@ import type { ReportDef } from "@/lib/siba/reports";
  *      scrolled to. That is what a restatement underneath the bar used to buy,
  *      at the cost of a slab of vertical space on every run — so the `.critbar`
  *      is gone and the filter itself is the statement of what was run;
- *   3. a footnote explaining how to read the numbers, and the run timestamp.
+ *   3. a **one-sentence** footnote and the run timestamp. One sentence because
+ *      each of these had grown to four or five, restating rules the screen
+ *      already obeys, so the one clause that changed how a column should be
+ *      read was buried in a paragraph nobody finishes.
  *
  * The body is passed in, because report bodies genuinely differ — a ledger is
  * rows over time, a balance is a matrix over subjects. Only what is common is

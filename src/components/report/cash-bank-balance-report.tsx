@@ -8,8 +8,11 @@ import { reportHref } from "@/lib/siba/reports";
  * Saldo Kas & Bank — opening, movement and closing for every resource.
  *
  * One section per currency, each totalled on its own. Currencies are never
- * added together: there is no exchange rate in this system, so a single
- * combined figure would be invented rather than reported (CLAUDE.md §12).
+ * added together at face value: USD 3.500 and Rp 45.000.000 are quantities of
+ * different things, and a combined figure would be neither. The books do carry
+ * a base measure of every movement, but it answers a different question — what
+ * the currency cost — and the General Ledger is where that is read. This report
+ * says what each account holds.
  *
  * The four figures are the columns, so this is the one report whose block
  * header carries no summary strip: the totals belong in the footer row, lined

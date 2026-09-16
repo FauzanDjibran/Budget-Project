@@ -20,7 +20,6 @@ import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { subledgerReport, subledgerSubjects } from "@/lib/siba/subledger";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
-import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 
@@ -124,14 +123,8 @@ export default async function Page({
         runAt={runAt}
         footnote={
           <>
-            Hanya resource dalam mata uang selain {BASE_CURRENCY_LABEL} yang
-            memiliki layer: resource {BASE_CURRENCY_LABEL} memegang mata uang
-            dasar itu sendiri. Satu transaksi memakai tepat satu layer, sehingga
-            nominalnya dibatasi sisa layer yang dipilih. Layer yang sudah habis
-            tetap ditampilkan — tanpa itu laporan tidak dapat menjelaskan
-            posisinya sendiri. Kurs rata-rata hanya untuk dibaca: nilainya tidak
-            dipakai menghitung apa pun, dan umumnya bukan kurs yang pernah
-            ditransaksikan siapa pun.
+            Satu transaksi memakai tepat satu layer, sehingga nominalnya
+            dibatasi sisa layer yang dipilih.
           </>
         }
       >
@@ -154,12 +147,8 @@ export default async function Page({
         runAt={runAt}
         footnote={
           <>
-            Saldo awal adalah seluruh mutasi sebelum {formatDate(range.from)},
-            bukan entri tersendiri — karena itu tidak muncul sebagai baris.
-            Entri saldo awal dan penyesuaian ditandai pada kolom Keterangan; baris tanpa
-            tanda adalah transaksi biasa. Kolom Saldo menampilkan saldo tercatat pada setiap entri, dan Buku
-            Kas &amp; Bank bersifat append-only: koreksi dicatat sebagai entri
-            baru, bukan dengan mengubah entri lama.
+            Saldo awal adalah seluruh mutasi sebelum {formatDate(range.from)} dan
+            bukan entri tersendiri, sehingga tidak muncul sebagai baris.
           </>
         }
       >
@@ -188,11 +177,7 @@ export default async function Page({
       footnote={
         <>
           Setiap currency direkap terpisah dan tidak pernah dijumlahkan menjadi
-          satu angka, karena belum ada sumber kurs di sistem ini. Resource
-          non-aktif tetap muncul bila punya saldo awal atau mutasi pada periode
-          ini — tanpa itu laporan tidak akan cocok dengan buku yang dirangkumnya.
-          Klik nama resource untuk membuka Buku Kas &amp; Bank pada periode yang
-          sama.
+          satu angka.
         </>
       }
     >
@@ -260,14 +245,9 @@ async function subledgerPage({
       runAt={runAt}
       footnote={
         <>
-          Saldo awal adalah seluruh mutasi sebelum {formatDate(range.from)},
-          bukan entri tersendiri — karena itu tidak muncul sebagai baris. Kolom
-          Bertambah dan Berkurang mengikuti arah buku ini, bukan arah uang:{" "}
+          Kolom Bertambah dan Berkurang mengikuti arah buku ini, bukan arah uang:{" "}
           {data.book.closingLabel.toLowerCase()} bertambah saat{" "}
-          {data.book.raises === "In" ? "uang masuk" : "uang keluar"}. Buku
-          pembantu ditulis langsung dari Cash Bank Transaction saat diposting,
-          terpisah dari Journal, dan bersifat append-only: koreksi dicatat
-          sebagai entri baru, bukan dengan mengubah entri lama.
+          {data.book.raises === "In" ? "uang masuk" : "uang keluar"}.
         </>
       }
     >

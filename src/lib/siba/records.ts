@@ -5,6 +5,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney } from "@/lib/format";
 import { compareCodes } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
+import { journalLineCountForAccount } from "./journal";
 import {
   allowedPartnerCategories,
   budgetCategoryNeedsPartner,
@@ -267,10 +268,26 @@ function accountWhere(filter?: Field["refFilter"]) {
     case "cashBankAccount":
       return {
         is_postable: true,
+        children: { none: {} },
         account_subcategory: { subcategory_label: CASH_BANK_SUBCATEGORY },
       };
     case "postableAccount":
-      return { is_postable: true };
+      // `children: none` rather than `is_postable` alone: the flag is what the
+      // application writes when an account gains a sub-account, and the shape
+      // of the tree is what makes it true. An account holding both would be a
+      // heading somebody could still post to.
+      return { is_postable: true, children: { none: {} } };
+    case "parentAccount":
+      // An account already in use cannot be given a sub-account, because that
+      // would revoke the posting privilege whatever depends on it relies on.
+      // Narrower than the picker has to be and still not the enforcement —
+      // a System Default pointing at the account is not expressible as a
+      // `where`, so `validateAccount` is what actually refuses it.
+      return {
+        journal_lines: { none: {} },
+        cash_banks: { none: {} },
+        mappings: { none: {} },
+      };
     default:
       return {};
   }
@@ -285,6 +302,64 @@ function accountWhere(filter?: Field["refFilter"]) {
  * and everything below them all live in this group, at whatever depth.
  */
 export const CASH_BANK_SUBCATEGORY = "1.1.1";
+
+/**
+ * Whether an account is still a leaf, and so may still receive postings.
+ *
+ * An account that has gained a sub-account has stopped being a place money
+ * lands and become a heading over the places it lands: its balance is whatever
+ * is below it, and a posting made directly to it would be money in the chart
+ * that no leaf accounts for. So becoming a parent revokes the posting
+ * privilege, permanently — `is_postable` is set to false the moment a child is
+ * created, and this is the check underneath that flag, because an account that
+ * somehow still carried it would have to be refused anyway.
+ *
+ * The mirror rule lives in `validateAccount`: an account already in use cannot
+ * be given a sub-account in the first place, so the two can never contradict
+ * each other on an account that has already been posted to.
+ */
+export async function checkAccountIsLeaf(
+  accountId: number
+): Promise<string | null> {
+  const children = await prisma.accAccount.count({
+    where: { parent_account: accountId },
+  });
+  return children
+    ? "Account ini sudah memiliki sub-account dan tidak lagi menerima posting. Pilih salah satu sub-accountnya."
+    : null;
+}
+
+/**
+ * What already depends on an account, in the reader's own words.
+ *
+ * Read before an account is given a sub-account: that revokes its posting
+ * privilege, so anything already pointing at it as somewhere money goes would
+ * be left naming a heading. Returns one phrase per kind of use, or an empty
+ * list where the account is free. The System Default half is resolved by the
+ * caller, which is the only layer that may read both this and `sys_setting`.
+ */
+export async function accountUsage(accountId: number): Promise<string[]> {
+  const [lines, cashBanks, mappings] = await Promise.all([
+    // Asked of the Journal rather than read from its table: `acc_journal_line`
+    // is the Journal's, and the books are meant to stay liftable.
+    journalLineCountForAccount(accountId),
+    prisma.mCashBank.findMany({
+      where: { account_id: accountId },
+      select: { cash_bank_label: true },
+    }),
+    prisma.accBudgetCategoryAccount.count({ where: { account_id: accountId } }),
+  ]);
+
+  const used: string[] = [];
+  if (lines) used.push(`${lines} journal line`);
+  if (cashBanks.length) {
+    used.push(
+      `Cash & Bank ${cashBanks.map((c) => c.cash_bank_label).join(", ")}`
+    );
+  }
+  if (mappings) used.push(`${mappings} mapping Budget Category`);
+  return used;
+}
 
 /**
  * The account a Cash & Bank resource posts to, checked against every rule at
@@ -311,6 +386,8 @@ export async function checkCashBankAccount(
   if (!account.is_postable) {
     return "Account header tidak dapat menerima posting. Pilih account postable.";
   }
+  const notLeaf = await checkAccountIsLeaf(accountId);
+  if (notLeaf) return notLeaf;
   if (account.account_subcategory.subcategory_label !== CASH_BANK_SUBCATEGORY) {
     return `Account harus berada pada kelompok ${CASH_BANK_SUBCATEGORY} Kas / Setara Kas.`;
   }

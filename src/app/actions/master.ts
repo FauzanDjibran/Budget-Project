@@ -23,6 +23,8 @@ import { fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
 import {
   CASH_BANK_SUBCATEGORY,
   accountDescendants,
+  accountUsage,
+  checkAccountIsLeaf,
   checkAccountNumber,
   checkCashBankAccount,
   delegate,
@@ -31,6 +33,7 @@ import {
   refLabel,
   requireEntity,
 } from "@/lib/siba/records";
+import { systemDefaultsUsingAccount } from "@/lib/siba/system-settings";
 
 /**
  * Every action here is permission-gated before it touches anything, and every
@@ -413,8 +416,32 @@ async function validateAccount(
         // and the tree would contain a loop no renderer could terminate on.
         errors.parent_account =
           "Parent Account tidak boleh berada di bawah account ini.";
+      } else {
+        // Giving an account a sub-account revokes its posting privilege, so
+        // an account already in use cannot be given one: whatever points at
+        // it as a destination would be left naming a heading, and the
+        // postings already made to it would have no leaf accounting for them.
+        // A miscoded account is deactivated, never restructured (rule 45).
+        const used = [
+          ...(await accountUsage(parentId)),
+          ...(await systemDefaultsUsingAccount(parentId)),
+        ];
+        if (used.length) {
+          errors.parent_account =
+            `Account tersebut sudah dipakai (${used.join(", ")}), sehingga ` +
+            "tidak dapat diberi sub-account. Sub-account mencabut hak posting " +
+            "account induknya.";
+        }
       }
     }
+  }
+
+  // An account that has become a parent stays non-postable, whatever is
+  // submitted: the toggle is shown off and locked, and this is what refuses a
+  // request made directly against the action.
+  if (currentId && boolValue(values, "is_postable")) {
+    const notLeaf = await checkAccountIsLeaf(currentId);
+    if (notLeaf) errors.is_postable = notLeaf;
   }
 
   // An account that a Cash & Bank resource already posts to cannot be moved out
@@ -491,6 +518,11 @@ async function validateMapping(
       errors.account_id = "Account header tidak dapat menjadi tujuan posting.";
     } else if (!account.is_active) {
       errors.account_id = "Account tersebut non-aktif dan tidak dapat dipilih.";
+    } else {
+      // A parent account is a heading over where money lands, not a place it
+      // lands — so a mapping may never resolve to one.
+      const notLeaf = await checkAccountIsLeaf(accountId);
+      if (notLeaf) errors.account_id = notLeaf;
     }
   }
 
@@ -557,6 +589,24 @@ export async function createRecord(
         updated_by: null,
       },
     });
+
+    // An account that gains a sub-account stops being a place money lands and
+    // becomes a heading over the places it lands, so it gives up its posting
+    // privilege here — in the same transaction as the child, because a chart
+    // in which a parent is still postable is a chart somebody can post into
+    // twice. `validateAccount` has already refused a parent that anything
+    // depends on, so nothing is being pulled out from under a live reference,
+    // and it is one-way: nothing in the application makes an account postable
+    // again, because nothing removes the sub-account either.
+    if (entity.key === "acc_account") {
+      const parentId = refValue(values, "parent_account");
+      if (parentId) {
+        await tx.accAccount.update({
+          where: { id: parentId },
+          data: { is_postable: false, updated_by: actor.user.id },
+        });
+      }
+    }
 
     // A Cash & Bank resource gets its book in the same transaction it is
     // registered in, so no resource can ever exist without one. A non-zero
