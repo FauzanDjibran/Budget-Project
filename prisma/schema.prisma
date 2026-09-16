@@ -974,11 +974,26 @@ model FinCashBankTransaction {
   /// application logic — CLAUDE.md §12 rejects a `fin_purpose` table.
   purpose          String
   cash_bank_id     Int?
+  /// The currency the document is denominated in — a real input now, not a
+  /// figure read off the Cash & Bank. A foreign document may be paid from a
+  /// resource in its own currency or from a base-currency one, so the two are
+  /// no longer the same question.
   currency_id      Int
+  /// The kurs this document was valued at: its own currency to the base one.
+  /// Read off the chosen layer where one is consumed, typed where the bank did
+  /// the converting, and `1` only when the money is already base currency.
   exchange_rate    Decimal       @default(1) @db.Decimal(18, 6)
+  /// The rate layer this payment drew on. One transaction, one bank, one kurs
+  /// — so this is a header column rather than a join table, and the document is
+  /// capped at what this layer still holds.
+  ///
+  /// Null whenever no layer is involved: money coming in, a base-currency
+  /// resource, or a document still in Draft that has not chosen one.
+  cash_bank_layer_id Int?
   partner_id       Int?
 
   transaction_amount      Decimal @db.Decimal(18, 2)
+  /// What the document was worth in base currency. No longer the identity.
   transaction_base_amount Decimal @db.Decimal(18, 2)
 
   note   String?
@@ -1016,11 +1031,26 @@ model FinCashBankTransactionLine {
   outstanding_amount Decimal @db.Decimal(18, 2)
 
   settlement_amount        Decimal  @db.Decimal(18, 2)
+  /// What the **obligation released**: this line's share of the base value the
+  /// subject book gave up, at the rate that position was carried at. Where
+  /// nothing was on the books to relieve, the movement is the origin of the
+  /// value and this equals `transaction_base_amount`.
   settlement_base_amount   Decimal  @db.Decimal(18, 2)
   settlement_exchange_rate Decimal? @db.Decimal(18, 6)
 
   transaction_amount      Decimal @db.Decimal(18, 2)
+  /// What the **cash cost**: this line's share of the base value that actually
+  /// left the bank, at the layer's rate or the rate the bank converted at.
   transaction_base_amount Decimal @db.Decimal(18, 2)
+  /// `settlement_base_amount − transaction_base_amount`. Positive is a gain,
+  /// negative a loss, zero writes no journal line.
+  ///
+  /// Stored per line even though a SIBA document settles one position at one
+  /// rate, so the two are arithmetically identical: the analytic is what
+  /// answers "what did currency movement cost us on this plan", and keeping it
+  /// per line costs nothing while a document has one Partner and survives a
+  /// document that one day has two.
+  fx_difference           Decimal @default(0) @db.Decimal(18, 2)
 
   created_by Int
   updated_by Int?

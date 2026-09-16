@@ -6,6 +6,7 @@ import { type Actor } from "@/lib/siba/access";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
+import { roundBase } from "@/lib/siba/fx";
 import {
   applyPosting,
   budgetDocTypeId,
@@ -54,8 +55,12 @@ export type TransactionValues = {
   company_id: string;
   partner_id: string;
   cash_bank_id: string;
-  /** Only read on the funded route, where there is no resource to take it from. */
+  /** The document's own currency, on both routes. */
   currency_id: string;
+  /** Typed where the user states a kurs; empty where a layer supplies it. */
+  exchange_rate: string;
+  /** The rate layer a payment out of a foreign resource draws on. */
+  cash_bank_layer_id: string;
   note: string;
 };
 
@@ -95,7 +100,19 @@ const headerOf = (values: TransactionValues) => ({
   partner_id: num(values.partner_id),
   cash_bank_id: num(values.cash_bank_id),
   currency_id: num(values.currency_id),
+  exchange_rate: rateNum(values.exchange_rate),
+  cash_bank_layer_id: num(values.cash_bank_layer_id),
 });
+
+/**
+ * A kurs carries decimals, so it is not `num`, which exists for row ids.
+ */
+function rateNum(raw: string | undefined | null): number | null {
+  const value = String(raw ?? "").trim();
+  if (!value) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 /**
  * May this user write documents for that Company at all?
@@ -130,7 +147,6 @@ const asLines = (lines: TransactionLineValues[]): LineInput[] =>
  * Nothing reads or displays them; they exist because the schema carries the
  * columns the real rate source will one day fill. Never substitute a constant.
  */
-const IDENTITY_RATE = 1;
 
 /**
  * The Budgets a header may realize, for the form.
@@ -193,10 +209,13 @@ export async function createTransaction(
       purpose: checked.purpose.key,
       cash_bank_id: checked.cashBankId,
       currency_id: checked.currencyId,
-      exchange_rate: IDENTITY_RATE,
+      exchange_rate: checked.rate,
+      cash_bank_layer_id: checked.layerId,
       partner_id: checked.partnerId,
       transaction_amount: settled.total,
-      transaction_base_amount: settled.total,
+      // Both figures are provisional while the document is a Draft: a Draft has
+      // moved nothing, and Post re-reads the layer before it values anything.
+      transaction_base_amount: roundBase(settled.total * checked.rate),
       note: values.note?.trim() || null,
       status: "Draft",
       created_by: g.actor.user.id,
@@ -207,10 +226,10 @@ export async function createTransaction(
           source_doc_id: l.budgetId,
           outstanding_amount: l.outstanding,
           settlement_amount: l.amount,
-          settlement_base_amount: l.amount,
-          settlement_exchange_rate: IDENTITY_RATE,
+          settlement_base_amount: roundBase(l.amount * checked.rate),
+          settlement_exchange_rate: checked.rate,
           transaction_amount: l.amount,
-          transaction_base_amount: l.amount,
+          transaction_base_amount: roundBase(l.amount * checked.rate),
           created_by: g.actor.user.id,
         })),
       },
@@ -279,10 +298,11 @@ export async function updateTransaction(
         purpose: checked.purpose.key,
         cash_bank_id: checked.cashBankId,
         currency_id: checked.currencyId,
-        exchange_rate: IDENTITY_RATE,
+        exchange_rate: checked.rate,
+        cash_bank_layer_id: checked.layerId,
         partner_id: checked.partnerId,
         transaction_amount: settled.total,
-        transaction_base_amount: settled.total,
+        transaction_base_amount: roundBase(settled.total * checked.rate),
         note: values.note?.trim() || null,
         updated_by: g.actor.user.id,
         lines: {
@@ -292,10 +312,10 @@ export async function updateTransaction(
             source_doc_id: l.budgetId,
             outstanding_amount: l.outstanding,
             settlement_amount: l.amount,
-            settlement_base_amount: l.amount,
-            settlement_exchange_rate: IDENTITY_RATE,
+            settlement_base_amount: roundBase(l.amount * checked.rate),
+            settlement_exchange_rate: checked.rate,
             transaction_amount: l.amount,
-            transaction_base_amount: l.amount,
+            transaction_base_amount: roundBase(l.amount * checked.rate),
             created_by: g.actor.user.id,
           })),
         },

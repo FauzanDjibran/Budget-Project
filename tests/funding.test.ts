@@ -381,8 +381,11 @@ describe("the funded route is decided by the Company, not by a setting", () => {
   });
 
   test("the bridge is four settings, two per Company, all accounts", () => {
+    // Filtered by group, not merely by "has a Company": the FX difference
+    // accounts are Company-scoped too, and counting every Company-scoped
+    // setting would make this assertion drift every time one is added.
     const bridge = (SYSTEM_DEFAULTS as readonly SystemDefaultDef[]).filter(
-      (d) => d.company
+      (d) => d.group === "bridge_induk" || d.group === "bridge_anak"
     );
     assert.equal(bridge.length, 4);
     assert.equal(bridge.filter((d) => d.company === "induk").length, 2);
@@ -390,6 +393,22 @@ describe("the funded route is decided by the Company, not by a setting", () => {
     assert.ok(
       bridge.every((d) => d.ref === "acc_account"),
       "the intercompany position is journal, so the bridge names accounts only"
+    );
+  });
+
+  test("every Company-scoped setting names an account of that Company", () => {
+    const scoped = (SYSTEM_DEFAULTS as readonly SystemDefaultDef[]).filter(
+      (d) => d.company
+    );
+    assert.ok(
+      scoped.every((d) => d.ref === "acc_account"),
+      "a setting scoped to a Company points into that Company's chart"
+    );
+    assert.deepEqual(
+      scoped.filter((d) => d.company === "induk").length,
+      scoped.filter((d) => d.company === "anak").length,
+      "whatever the induk names, the anak names too — the two Companies keep " +
+        "their own charts and neither posts into the other's"
     );
   });
 });

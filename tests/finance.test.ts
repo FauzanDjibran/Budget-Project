@@ -20,7 +20,13 @@ import {
 } from "../src/lib/siba/transaction-workflow";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import { BUDGET_CATEGORY_RULES, PURPOSES, purposeOf } from "../src/lib/siba/rules";
-import { openCashBankBook, rebuildCashBankBalance } from "../src/lib/siba/cash-bank";
+import {
+  openCashBankBook,
+  rebuildCashBankBalance,
+  recordCashBankEntry,
+} from "../src/lib/siba/cash-bank";
+import { openLayer, openLayersOf } from "../src/lib/siba/cash-bank-layers";
+import { subledgerPosition } from "../src/lib/siba/subledger";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
   FIXTURE_PREFIX,
@@ -57,6 +63,7 @@ let anak = 0;
 let actor = 0;
 let currency = 0;
 let otherCurrency = 0;
+let fxAccount = 0;
 
 const cashBanks: number[] = [];
 const budgets: number[] = [];
@@ -142,6 +149,12 @@ async function makeDraft(options: {
   purpose: string;
   cashBankId: number;
   partnerId?: number | null;
+  /** The document's own currency; defaults to the resource's. */
+  currencyId?: number;
+  /** The kurs, where the user types one. */
+  rate?: number;
+  /** The layer a payment out of a foreign resource draws on. */
+  layerId?: number;
   lines: { budgetId: number; amount: number; outstanding: number }[];
 }): Promise<number> {
   const purpose = purposeOf(options.purpose)!;
@@ -151,6 +164,7 @@ async function makeDraft(options: {
   });
   const docType = await budgetDocTypeId();
   const total = options.lines.reduce((t, l) => t + l.amount, 0);
+  const rate = options.rate ?? 1;
 
   const row = await prisma.finCashBankTransaction.create({
     data: {
@@ -159,10 +173,12 @@ async function makeDraft(options: {
       company_id: cashBank.company_id,
       purpose: purpose.key,
       cash_bank_id: options.cashBankId,
-      currency_id: cashBank.currency_id,
+      currency_id: options.currencyId ?? cashBank.currency_id,
+      exchange_rate: rate,
+      cash_bank_layer_id: options.layerId ?? null,
       partner_id: options.partnerId ?? null,
       transaction_amount: total,
-      transaction_base_amount: total,
+      transaction_base_amount: total * rate,
       status: "Draft",
       created_by: actor,
       lines: {
@@ -235,9 +251,21 @@ before(async () => {
       }
     }
   }
+
+  // An FX difference has to land in a named account, and posting refuses by
+  // name until one is set. Configured here so the settlement cases can post at
+  // all; cleared again in `after`, because a setting pointing at a deleted
+  // fixture account would outlive this run.
+  fxAccount = await makeAccount({ companyId: induk, subcategoryLabel: "5.3.1" });
+  await prisma.sysSetting.upsert({
+    where: { setting_key: "induk_fx_account" },
+    update: { setting_value: String(fxAccount) },
+    create: { setting_key: "induk_fx_account", setting_value: String(fxAccount) },
+  });
 });
 
 after(async () => {
+  await prisma.sysSetting.deleteMany({ where: { setting_key: "induk_fx_account" } });
   if (transactions.length) {
     await prisma.finCashBankTransactionLine.deleteMany({
       where: { transaction_id: { in: transactions } },
@@ -253,6 +281,9 @@ after(async () => {
     await prisma.budBudget.deleteMany({ where: { id: { in: budgets } } });
   }
   if (cashBanks.length) {
+    await prisma.cashBankLayer.deleteMany({
+      where: { cash_bank_id: { in: cashBanks } },
+    });
     await prisma.cashBankLedger.deleteMany({
       where: { cash_bank_id: { in: cashBanks } },
     });
@@ -442,18 +473,52 @@ describe("the document header is enforced, not merely narrowed", () => {
     assert.ok(result.ok === false && result.errors.currency_id);
   });
 
-  test("an induk document still takes its currency from the resource", async () => {
+  test("the document names its own currency on both routes", async () => {
+    // It used to be read off the Cash & Bank on the self route, and a submitted
+    // value was ignored. That only worked while the two could not differ — a
+    // foreign document paid from a rupiah account is the case that separated
+    // them, so the document says what it is denominated in and the resource
+    // says what it holds.
     const result = await checkHeader({
       purpose: "BYA_OUT",
       company_id: induk,
       partner_id: null,
       cash_bank_id: await makeCashBank({}),
-      // Ignored on this route: the resource decides, not the submission.
-      currency_id: 999999,
+      currency_id: currency,
     });
     assert.equal(result.ok, true);
     assert.ok(result.ok === true && result.route === "self");
     assert.equal(result.ok === true && result.currencyId, currency);
+  });
+
+  test("a currency the resource cannot settle is refused by name", async () => {
+    // Crossing goes through the base currency only. A foreign document paid
+    // from a *different* foreign resource is the combination that does not
+    // exist in this system, and it is refused rather than silently narrowed.
+    const eur = await prisma.refCurrency.upsert({
+      where: { currency_code: "curr.TESTEUR" },
+      update: {},
+      create: {
+        currency_code: "curr.TESTEUR",
+        currency_label: "TEU",
+        currency_name: "Fixture Third Currency",
+        created_by: actor,
+      },
+      select: { id: true },
+    });
+    const foreignResource = await makeCashBank({ currencyId: otherCurrency });
+    const result = await checkHeader({
+      purpose: "BYA_OUT",
+      company_id: induk,
+      partner_id: null,
+      cash_bank_id: foreignResource,
+      currency_id: eur.id,
+    });
+    assert.equal(result.ok, false);
+    assert.match(
+      result.ok === false ? result.errors.cash_bank_id ?? "" : "",
+      /hanya dapat|tidak dapat/
+    );
   });
 
   test("the transacting company is resolved from is_parent, never hardcoded", async () => {
@@ -500,21 +565,108 @@ describe("the document header is enforced, not merely narrowed", () => {
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.equal(result.ok, false);
     assert.ok(result.ok === false && result.errors.cash_bank_id);
   });
 
-  test("a valid header resolves its currency from the cash & bank", async () => {
-    const cashBank = await makeCashBank({ currencyId: otherCurrency });
+  test("a base-currency document may be paid from a base-currency resource", async () => {
+    const cashBank = await makeCashBank({ currencyId: currency });
     const result = await checkHeader({
       purpose: "BYA_OUT",
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.ok(result.ok);
-    assert.equal(result.ok && result.currencyId, otherCurrency);
+    assert.equal(result.ok && result.currencyId, currency);
+    assert.equal(result.ok && result.rate, 1, "rupiah on rupiah is the identity");
+    assert.equal(result.ok && result.layerId, null, "and no layer is involved");
+  });
+
+  test("a foreign document paid from base currency needs a kurs typed", async () => {
+    const rupiahResource = await makeCashBank({ currencyId: currency });
+    const header = {
+      purpose: "BYA_OUT",
+      company_id: induk,
+      partner_id: null,
+      cash_bank_id: rupiahResource,
+      currency_id: otherCurrency,
+    };
+
+    const missing = await checkHeader(header);
+    assert.equal(missing.ok, false);
+    assert.ok(
+      missing.ok === false && missing.errors.exchange_rate,
+      "the bank converted at some rate, and only the user knows which"
+    );
+
+    const withRate = await checkHeader({ ...header, exchange_rate: 16_000 });
+    assert.ok(withRate.ok);
+    assert.equal(withRate.ok && withRate.rate, 16_000);
+    assert.equal(withRate.ok && withRate.layerId, null);
+  });
+
+  test("a payment out of a foreign resource must name a layer", async () => {
+    const foreignResource = await makeCashBank({ currencyId: otherCurrency });
+    const header = {
+      purpose: "BYA_OUT",
+      company_id: induk,
+      partner_id: null,
+      cash_bank_id: foreignResource,
+      currency_id: otherCurrency,
+    };
+
+    const missing = await checkHeader(header);
+    assert.equal(missing.ok, false);
+    assert.ok(missing.ok === false && missing.errors.cash_bank_layer_id);
+
+    const layer = await prisma.$transaction((tx) =>
+      openLayer(tx, {
+        cashBankId: foreignResource,
+        date: today,
+        rate: 15_500,
+        foreign: 1_000,
+        actorId: actor,
+      })
+    );
+    const chosen = await checkHeader({
+      ...header,
+      cash_bank_layer_id: layer.id,
+    });
+    assert.ok(chosen.ok);
+    assert.equal(
+      chosen.ok && chosen.rate,
+      15_500,
+      "the kurs is the layer's own — read, never typed"
+    );
+    assert.equal(chosen.ok && chosen.layerId, layer.id);
+  });
+
+  test("a layer belonging to another resource is refused", async () => {
+    const mine = await makeCashBank({ currencyId: otherCurrency });
+    const theirs = await makeCashBank({ currencyId: otherCurrency });
+    const layer = await prisma.$transaction((tx) =>
+      openLayer(tx, {
+        cashBankId: theirs,
+        date: today,
+        rate: 15_000,
+        foreign: 500,
+        actorId: actor,
+      })
+    );
+    const result = await checkHeader({
+      purpose: "BYA_OUT",
+      company_id: induk,
+      partner_id: null,
+      cash_bank_id: mine,
+      currency_id: otherCurrency,
+      cash_bank_layer_id: layer.id,
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.cash_bank_layer_id);
   });
 });
 
@@ -530,6 +682,7 @@ describe("only a budget the header admits is eligible", () => {
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     const mine = pool.find((b) => b.id === budget);
     assert.ok(mine, "the budget must be eligible");
@@ -549,6 +702,7 @@ describe("only a budget the header admits is eligible", () => {
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.ok(!pool.some((b) => b.id === draft));
   });
@@ -568,6 +722,7 @@ describe("only a budget the header admits is eligible", () => {
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.ok(!pool.some((b) => b.id === outward));
   });
@@ -585,6 +740,7 @@ describe("only a budget the header admits is eligible", () => {
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.ok(
       !pool.some((b) => b.id === foreign),
@@ -605,6 +761,7 @@ describe("only a budget the header admits is eligible", () => {
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.ok(!pool.some((b) => b.id === spent));
   });
@@ -635,6 +792,7 @@ describe("only a budget the header admits is eligible", () => {
       company_id: induk,
       partner_id: mine,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.ok(pool.some((b) => b.id === ours));
     assert.ok(!pool.some((b) => b.id === other));
@@ -664,6 +822,7 @@ describe("only a budget the header admits is eligible", () => {
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     assert.ok(
       pool.some((b) => b.id === old.id),
@@ -683,6 +842,7 @@ describe("lines are re-derived, never trusted", () => {
         company_id: induk,
         partner_id: null,
         cash_bank_id: cashBank,
+        currency_id: currency,
       },
       []
     );
@@ -704,6 +864,7 @@ describe("lines are re-derived, never trusted", () => {
         company_id: induk,
         partner_id: null,
         cash_bank_id: cashBank,
+        currency_id: currency,
       },
       [{ budget_id: foreign, amount: 100_000 }]
     );
@@ -720,6 +881,7 @@ describe("lines are re-derived, never trusted", () => {
         company_id: induk,
         partner_id: null,
         cash_bank_id: cashBank,
+        currency_id: currency,
       },
       [
         { budget_id: budget, amount: 100_000 },
@@ -739,6 +901,7 @@ describe("lines are re-derived, never trusted", () => {
         company_id: induk,
         partner_id: null,
         cash_bank_id: cashBank,
+        currency_id: currency,
       },
       [{ budget_id: budget, amount: 150_000 }]
     );
@@ -757,6 +920,7 @@ describe("lines are re-derived, never trusted", () => {
         company_id: induk,
         partner_id: null,
         cash_bank_id: cashBank,
+        currency_id: currency,
       },
       [
         { budget_id: a, amount: 300_000 },
@@ -804,6 +968,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
       company_id: induk,
       partner_id: null,
       cash_bank_id: cashBank,
+      currency_id: currency,
     });
     const mine = pool.find((b) => b.id === budget);
     assert.ok(mine);
@@ -1351,57 +1516,289 @@ describe("posting writes the subject book alongside the cash book", () => {
 });
 
 /**
- * The books now record what every movement was worth in base currency, and the
- * machinery that produces a real rate does not exist yet — there is no kurs on
- * the document and no layer to read one off.
+ * Valuing a document, now that there is something to value it with.
  *
- * So a foreign document is **refused by name** rather than posted at a rate
- * somebody invented. This suite exists so the refusal cannot be removed by
- * accident: when the document carries its own kurs, these tests are the ones
- * that have to be deliberately rewritten, and the coverage they leave behind is
- * the reminder that an append-only book cannot be corrected by editing.
+ * The temporary refusal these tests replaced is gone: a foreign document posts,
+ * because the kurs now has somewhere to come from. What is asserted instead is
+ * the thing that refusal was protecting — that no movement is ever written at a
+ * rate nobody transacted at.
  */
-describe("a document that cannot be valued is refused, not guessed at", () => {
-  test("a foreign-currency posting is refused, and moves nothing", async () => {
+describe("a foreign document is valued rather than refused", () => {
+  test("a payment out of a foreign resource takes the layer's kurs", async () => {
     const cashBank = await makeCashBank({ currencyId: otherCurrency });
+    const layer = await prisma.$transaction((tx) =>
+      openLayer(tx, {
+        cashBankId: cashBank,
+        date: today,
+        rate: 15_500,
+        foreign: 1_000,
+        actorId: actor,
+      })
+    );
+    // The book has to hold what the layer says it holds, or the two disagree
+    // from the start — which is what `reconcileLayers` exists to catch.
+    await recordCashBankEntry(prisma, {
+      cashBankId: cashBank,
+      date: today,
+      type: "Opening",
+      direction: "In",
+      amount: 1_000,
+      rate: 15_500,
+      actorId: actor,
+    });
+
     const budget = await makeBudget({
       categoryLabel: "Biaya",
-      amount: 900_000,
+      amount: 900,
       currencyId: otherCurrency,
     });
-    // makeDraft takes the currency from the resource, so this document is in
-    // the foreign currency by construction.
     const doc = await makeDraft({
       purpose: "BYA_OUT",
       cashBankId: cashBank,
-      lines: [{ budgetId: budget, amount: 400_000, outstanding: 900_000 }],
+      layerId: layer.id,
+      lines: [{ budgetId: budget, amount: 400, outstanding: 900 }],
+    });
+    await post(doc);
+
+    const entry = await prisma.cashBankLedger.findFirstOrThrow({
+      where: { cash_bank_id: cashBank, entry_type: "Transaction" },
+    });
+    assert.equal(entry.amount.toNumber(), 400, "the resource gave up 400");
+    assert.equal(entry.rate.toNumber(), 15_500, "at the layer's own kurs");
+    assert.equal(entry.base_amount.toNumber(), 6_200_000);
+
+    // The layer is drawn down by exactly what left it.
+    const after = await prisma.cashBankLayer.findUniqueOrThrow({
+      where: { id: layer.id },
+    });
+    assert.equal(after.foreign_remaining.toNumber(), 600);
+    assert.equal(after.base_remaining.toNumber(), 9_300_000);
+    assert.equal(
+      after.base_remaining.toNumber() / after.foreign_remaining.toNumber(),
+      15_500,
+      "and the layer's rate is unmoved by being spent"
+    );
+
+    const posted = await prisma.finCashBankTransaction.findUniqueOrThrow({
+      where: { id: doc },
+    });
+    assert.equal(posted.exchange_rate.toNumber(), 15_500);
+    assert.equal(posted.transaction_base_amount.toNumber(), 6_200_000);
+  });
+
+  test("a foreign document paid from rupiah converts at the rate typed", async () => {
+    const rupiah = await makeCashBank({ opening: 50_000_000 });
+    const budget = await makeBudget({
+      categoryLabel: "Biaya",
+      amount: 1_000,
+      currencyId: otherCurrency,
+    });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: rupiah,
+      currencyId: otherCurrency,
+      rate: 16_000,
+      lines: [{ budgetId: budget, amount: 500, outstanding: 1_000 }],
+    });
+    await post(doc);
+
+    const entry = await prisma.cashBankLedger.findFirstOrThrow({
+      where: { cash_bank_id: rupiah, entry_type: "Transaction" },
+    });
+    // What left the bank is rupiah, because that is what the bank holds.
+    assert.equal(entry.amount.toNumber(), 8_000_000, "500 at 16.000");
+    assert.equal(entry.rate.toNumber(), 1, "a rupiah account is worth its face");
+    assert.equal(entry.base_amount.toNumber(), 8_000_000);
+
+    // And the journal holds two currencies at once, balancing only in base.
+    const journal = await prisma.accJournal.findFirstOrThrow({
+      where: { source_doc_id: doc },
+      include: { lines: true },
+      orderBy: { id: "desc" },
+    });
+    assert.equal(
+      new Set(journal.lines.map((l) => l.currency_id)).size,
+      2,
+      "a rupiah cash line and a foreign counter line"
+    );
+    assert.equal(
+      journal.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0),
+      journal.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0)
+    );
+  });
+
+  test("money arriving into a foreign resource opens a layer", async () => {
+    const cashBank = await makeCashBank({ currencyId: otherCurrency });
+    const partner = await makePartner({
+      companyId: induk,
+      categoryLabel: "Stakeholder",
+    });
+    const budget = await makeBudget({
+      categoryLabel: "Hutang",
+      type: "In",
+      partnerId: partner,
+      amount: 2_000,
+      currencyId: otherCurrency,
+    });
+    const doc = await makeDraft({
+      purpose: "HTG_SH_IN",
+      cashBankId: cashBank,
+      partnerId: partner,
+      rate: 15_800,
+      lines: [{ budgetId: budget, amount: 2_000, outstanding: 2_000 }],
+    });
+    await post(doc);
+
+    const layers = await openLayersOf(cashBank);
+    assert.equal(layers.length, 1, "currency arriving is currency acquired");
+    assert.equal(layers[0].rate, 15_800);
+    assert.equal(layers[0].foreignRemaining, 2_000);
+    assert.equal(layers[0].baseRemaining, 31_600_000);
+  });
+
+  test("relieving a position releases what it was carried at, and the gap is recognised", async () => {
+    // The case the whole phase exists for. A debt taken on when a dollar cost
+    // 15.000 and settled with dollars that cost 16.000 releases at 15.000; the
+    // million-rupiah gap is a real loss and lands in the journal, not in either
+    // book.
+    const partner = await makePartner({
+      companyId: induk,
+      categoryLabel: "Stakeholder",
+    });
+    const borrowInto = await makeCashBank({ currencyId: otherCurrency });
+    const borrowed = await makeBudget({
+      categoryLabel: "Hutang",
+      type: "In",
+      partnerId: partner,
+      amount: 1_000,
+      currencyId: otherCurrency,
+    });
+    await post(
+      await makeDraft({
+        purpose: "HTG_SH_IN",
+        cashBankId: borrowInto,
+        partnerId: partner,
+        rate: 15_000,
+        lines: [{ budgetId: borrowed, amount: 1_000, outstanding: 1_000 }],
+      })
+    );
+
+    const position = await subledgerPosition("hutang", partner, otherCurrency);
+    assert.deepEqual(position, { foreign: 1_000, base: 15_000_000 });
+
+    // Repay from a layer that cost more.
+    const payFrom = await makeCashBank({ currencyId: otherCurrency });
+    const dear = await prisma.$transaction((tx) =>
+      openLayer(tx, {
+        cashBankId: payFrom,
+        date: today,
+        rate: 16_000,
+        foreign: 1_000,
+        actorId: actor,
+      })
+    );
+    await recordCashBankEntry(prisma, {
+      cashBankId: payFrom,
+      date: today,
+      type: "Opening",
+      direction: "In",
+      amount: 1_000,
+      rate: 16_000,
+      actorId: actor,
     });
 
-    const result = await applyPosting(doc, actor);
+    const repayment = await makeBudget({
+      categoryLabel: "Hutang",
+      type: "Out",
+      partnerId: partner,
+      amount: 1_000,
+      currencyId: otherCurrency,
+    });
+    const doc = await makeDraft({
+      purpose: "HTG_SH_OUT",
+      cashBankId: payFrom,
+      partnerId: partner,
+      layerId: dear.id,
+      lines: [{ budgetId: repayment, amount: 1_000, outstanding: 1_000 }],
+    });
+    await post(doc);
+
+    // The book released what it was carrying, not what the cash cost.
+    const relief = await prisma.subLedger.findFirstOrThrow({
+      where: { book: "hutang", partner_id: partner, direction: "Out" },
+      orderBy: { id: "desc" },
+    });
+    assert.equal(relief.amount.toNumber(), 1_000);
+    assert.equal(relief.base_amount.toNumber(), 15_000_000, "at 15.000");
+    assert.equal(relief.rate.toNumber(), 15_000);
+
+    // And the position closes at nothing on both measures.
+    assert.deepEqual(await subledgerPosition("hutang", partner, otherCurrency), {
+      foreign: 0,
+      base: 0,
+    });
+
+    // The gap is a loss, and it is in the journal.
+    const line = await prisma.finCashBankTransactionLine.findFirstOrThrow({
+      where: { transaction_id: doc },
+    });
+    assert.equal(line.settlement_base_amount.toNumber(), 15_000_000);
+    assert.equal(line.transaction_base_amount.toNumber(), 16_000_000);
+    assert.equal(line.fx_difference.toNumber(), -1_000_000, "a loss");
+
+    const journal = await prisma.accJournal.findFirstOrThrow({
+      where: { source_doc_id: doc },
+      include: { lines: true },
+      orderBy: { id: "desc" },
+    });
+    assert.equal(journal.lines.length, 3, "cash, the obligation, and the gap");
+    assert.equal(
+      journal.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0),
+      journal.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0),
+      "and it balances, in base"
+    );
+    assert.ok(
+      journal.lines.some(
+        (l) => l.debit_amount.toNumber() === 1_000_000 && l.trx_amount.toNumber() === 1_000_000
+      ),
+      "the loss sits on the debit side, as the balancing figure"
+    );
+  });
+
+  test("a document larger than its layer is refused", async () => {
+    const cashBank = await makeCashBank({ currencyId: otherCurrency });
+    const layer = await prisma.$transaction((tx) =>
+      openLayer(tx, {
+        cashBankId: cashBank,
+        date: today,
+        rate: 15_000,
+        foreign: 300,
+        actorId: actor,
+      })
+    );
+    const budget = await makeBudget({
+      categoryLabel: "Biaya",
+      amount: 1_000,
+      currencyId: otherCurrency,
+    });
+
+    const result = await checkLines(
+      {
+        purpose: "BYA_OUT",
+        company_id: induk,
+        partner_id: null,
+        cash_bank_id: cashBank,
+        currency_id: otherCurrency,
+        cash_bank_layer_id: layer.id,
+      },
+      [{ budget_id: budget, amount: 400 }]
+    );
     assert.equal(result.ok, false);
     assert.match(
-      result.ok ? "" : result.errors._form ?? "",
-      /belum dapat diposting/,
-      "the refusal names the reason rather than failing obscurely"
+      result.ok === false ? result.errors._lines ?? "" : "",
+      /melebihi sisa layer/,
+      "one transaction, one layer — the cap is the layer, not the account"
     );
-
-    // And nothing was written on the way to refusing.
-    assert.equal(
-      await prisma.cashBankLedger.count({ where: { cash_bank_id: cashBank } }),
-      0
-    );
-    const after = await prisma.finCashBankTransaction.findUniqueOrThrow({
-      where: { id: doc },
-      select: { status: true, document_date: true },
-    });
-    assert.equal(after.status, "Draft");
-    assert.equal(after.document_date, null);
-    const plan = await prisma.budBudget.findUniqueOrThrow({
-      where: { id: budget },
-      select: { realized_amount: true, status: true },
-    });
-    assert.equal(plan.realized_amount.toNumber(), 0);
-    assert.equal(plan.status, "Open");
   });
 
   test("a base-currency posting still values everything at 1", async () => {

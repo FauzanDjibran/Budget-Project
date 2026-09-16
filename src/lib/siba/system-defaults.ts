@@ -30,7 +30,9 @@ export type SystemDefaultKey =
   | "induk_bridge_ar_account"
   | "induk_bridge_ap_account"
   | "anak_bridge_ar_account"
-  | "anak_bridge_ap_account";
+  | "anak_bridge_ap_account"
+  | "induk_fx_account"
+  | "anak_fx_account";
 
 /** Which master a `ref` setting points at — a registry entity key. */
 export type SystemDefaultRef = "ref_currency" | "acc_account";
@@ -38,7 +40,8 @@ export type SystemDefaultRef = "ref_currency" | "acc_account";
 export type SystemDefaultGroupKey =
   | "application"
   | "bridge_induk"
-  | "bridge_anak";
+  | "bridge_anak"
+  | "fx";
 
 export type SystemDefaultGroup = {
   key: SystemDefaultGroupKey;
@@ -77,6 +80,15 @@ export const SYSTEM_DEFAULT_GROUPS = [
       "Account yang dipakai Company anak untuk mencatat posisinya terhadap " +
       "Company induk atas dana yang sama.",
     icon: "link",
+  },
+  {
+    key: "fx",
+    name: "Selisih Kurs",
+    desc:
+      "Account tempat selisih kurs dicatat: gap antara nilai kewajiban saat " +
+      "diakui dan harga currency yang dipakai melunasinya. Hanya terpakai " +
+      "ketika dokumen mata uang asing diposting.",
+    icon: "coin",
   },
 ] as const satisfies readonly SystemDefaultGroup[];
 
@@ -154,6 +166,33 @@ export const SYSTEM_DEFAULTS = [
     help: "saat pengeluaran anak dibiayai induk",
   },
 
+  // ------------------------------------------------------------------ fx
+  //
+  // One account per Company rather than a gain and a loss each. A gain and a
+  // loss are the same fact with opposite signs — the same payment produces one
+  // or the other depending on which kurs was used — so netting them in one
+  // account is what an accountant expects, and the Selisih Kurs analytic on the
+  // document lines is where the two are told apart.
+  {
+    key: "induk_fx_account",
+    name: "Account Selisih Kurs — Induk",
+    icon: "coin",
+    type: "ref",
+    ref: "acc_account",
+    group: "fx",
+    company: "induk",
+    help: "hanya terpakai saat dokumen mata uang asing diposting",
+  },
+  {
+    key: "anak_fx_account",
+    name: "Account Selisih Kurs — Anak",
+    icon: "coin",
+    type: "ref",
+    ref: "acc_account",
+    group: "fx",
+    company: "anak",
+    help: "hanya terpakai saat dokumen mata uang asing diposting",
+  },
 ] as const satisfies readonly SystemDefaultDef[];
 
 /** What each key is set to; a key that has never been set reads as null. */
@@ -165,6 +204,8 @@ export const EMPTY_SYSTEM_DEFAULTS: SystemDefaultValues = {
   induk_bridge_ap_account: null,
   anak_bridge_ar_account: null,
   anak_bridge_ap_account: null,
+  induk_fx_account: null,
+  anak_fx_account: null,
 };
 
 export function isSystemDefaultKey(key: string): key is SystemDefaultKey {

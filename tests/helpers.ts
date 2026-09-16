@@ -343,6 +343,29 @@ export async function cleanupFixtures(): Promise<void> {
     await prisma.accJournal.deleteMany({ where: { id: { in: journalIds } } });
   }
 
+  // A Cash & Bank resource points at an account, so a fixture resource left
+  // behind by an earlier failure blocks every later suite from clearing its own
+  // accounts — and the failure surfaces three suites away from its cause. Each
+  // suite still tears down the resources it made; this is the backstop for the
+  // run that did not get that far.
+  const orphans = await prisma.mCashBank.findMany({
+    where: { cash_bank_code: { startsWith: "test." } },
+    select: { id: true },
+  });
+  if (orphans.length) {
+    const ids = orphans.map((o) => o.id);
+    await prisma.finCashBankTransactionLine.deleteMany({
+      where: { transaction: { cash_bank_id: { in: ids } } },
+    });
+    await prisma.finCashBankTransaction.deleteMany({
+      where: { cash_bank_id: { in: ids } },
+    });
+    await prisma.cashBankLayer.deleteMany({ where: { cash_bank_id: { in: ids } } });
+    await prisma.cashBankLedger.deleteMany({ where: { cash_bank_id: { in: ids } } });
+    await prisma.cashBankBalance.deleteMany({ where: { cash_bank_id: { in: ids } } });
+    await prisma.mCashBank.deleteMany({ where: { id: { in: ids } } });
+  }
+
   const accounts = await prisma.accAccount.findMany({
     // Keyed on the system code, not the label: an account's label is now a
     // lineage code with no room for a fixture marker in it.

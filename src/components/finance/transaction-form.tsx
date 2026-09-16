@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
 import { MoneyInput } from "@/components/ui/money-input";
+import { RateInput } from "@/components/ui/rate-input";
+import { KursSelect } from "./kurs-select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
@@ -19,6 +21,7 @@ import {
 } from "@/app/actions/finance";
 import { requestFunding, withdrawFunding } from "@/app/actions/funding";
 import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { BASE_CURRENCY_LABEL, rateSource } from "@/lib/siba/currency";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetMapping } from "@/lib/siba/budget";
 import type {
@@ -136,13 +139,28 @@ export function TransactionForm({
     companyId && !refs.companies.find((c) => c.id === companyId)?.isParent
   );
 
-  const currencyLabel = editing
-    ? funded
-      ? refs.currencies.find((c) => String(c.id) === values.currency_id)?.label ??
-        "—"
-      : cashBank?.currencyLabel ?? "—"
-    : refs.currencies.find((c) => c.id === transaction?.currency_id)?.label ??
-      "IDR";
+  // The document's own currency, on both routes. It used to be read off the
+  // Cash & Bank on the self route; a foreign document paid from a rupiah
+  // account is the case that separated the two questions.
+  const currencyLabel =
+    (editing
+      ? refs.currencies.find((c) => String(c.id) === values.currency_id)?.label
+      : refs.currencies.find((c) => c.id === transaction?.currency_id)?.label) ??
+    "—";
+
+  /**
+   * Where this document's kurs comes from — the one question the header has
+   * gained. `null` means the pairing is not allowed at all, which the Server
+   * Action refuses by name.
+   */
+  const kursSource =
+    !funded && currencyLabel !== "—" && cashBank
+      ? rateSource(
+          (purpose?.direction ?? "Out") as "In" | "Out",
+          currencyLabel,
+          cashBank.currencyLabel
+        )
+      : null;
 
   const headerReady = Boolean(
     purpose &&
@@ -211,6 +229,10 @@ export function TransactionForm({
               partner_id,
               cash_bank_id,
               currency_id,
+              // Eligibility turns on the document's currency, not on the kurs,
+              // so neither of these narrows the pool.
+              exchange_rate: "",
+              cash_bank_layer_id: "",
               note: "",
             },
             transactionId ? { excludeTransactionId: transactionId } : {}
@@ -254,7 +276,12 @@ export function TransactionForm({
     ? draftLines.reduce((t, l) => t + (l.amount || 0), 0)
     : transaction?.transaction_amount ?? 0;
 
-  const account = useMemo(() => {
+  // Plain derivations, not `useMemo`. The React Compiler memoizes this
+  // component automatically, and hand-written memoization it cannot prove safe
+  // makes it skip the whole file — so the manual version bought nothing and
+  // cost the optimization it was imitating. The derivations beside these never
+  // had it either.
+  const account = (() => {
     if (!purpose || !companyId) return null;
     const category = refs.categories.find(
       (c) => c.label === purpose.budgetCategory
@@ -272,29 +299,25 @@ export function TransactionForm({
           m.partnerCategoryId === partnerCategoryId
       ) ?? null
     );
-  }, [purpose, companyId, refs.categories, refs.partnerCategories, mappings]);
+  })();
 
-  const partnerOptions = useMemo(() => {
+  const partnerOptions = (() => {
     if (!purpose?.partnerCategory || !companyId) return [];
     return refs.partners.filter(
       (p) =>
         p.companyId === companyId &&
         p.categoryLabel === purpose.partnerCategory
     );
-  }, [refs.partners, purpose, companyId]);
+  })();
 
-  const cashBankOptions = useMemo(
-    () =>
-      refs.cashBanks
-        .filter((c) => c.companyId === companyId)
-        .map((c) => ({
-          id: c.id,
-          label: c.label,
-          name: `${c.name} · ${c.currencyLabel} ${formatNumber(c.balance)}`,
-          active: c.active,
-        })),
-    [refs.cashBanks, companyId]
-  );
+  const cashBankOptions = refs.cashBanks
+    .filter((c) => c.companyId === companyId)
+    .map((c) => ({
+      id: c.id,
+      label: c.label,
+      name: `${c.name} · ${c.currencyLabel} ${formatNumber(c.balance)}`,
+      active: c.active,
+    }));
 
   const company = refs.companies.find((c) => c.id === companyId) ?? null;
   const selectableCompanies = refs.companies.filter((c) => c.selectable);
@@ -617,7 +640,7 @@ export function TransactionForm({
                       editing && funded
                         ? "dana diajukan ke induk"
                         : editing
-                          ? "menentukan Currency dan kas"
+                          ? "menentukan rute dan sumber kas"
                           : undefined
                     }
                     error={errors.company_id}
@@ -699,7 +722,7 @@ export function TransactionForm({
                       funded
                         ? "ditentukan induk saat konfirmasi"
                         : editing
-                          ? "Currency mengikuti resource ini"
+                          ? "boleh currency dokumen atau mata uang dasar"
                           : undefined
                     }
                     error={errors.cash_bank_id}
@@ -735,15 +758,11 @@ export function TransactionForm({
                   <Field
                     label="Currency"
                     span={4}
-                    required={editing && funded}
-                    help={
-                      editing && funded
-                        ? "menentukan Budget yang cocok"
-                        : undefined
-                    }
+                    required={editing}
+                    help={editing ? "menentukan Budget yang cocok" : undefined}
                     error={errors.currency_id}
                   >
-                    {editing && funded ? (
+                    {editing ? (
                       <Combobox
                         value={values.currency_id ? Number(values.currency_id) : null}
                         options={refs.currencies}
@@ -754,9 +773,7 @@ export function TransactionForm({
                     ) : (
                       <div className="ro">
                         <span className="lab">{currencyLabel}</span>
-                        <span>
-                          {funded ? "kebutuhan dana" : "mengikuti Cash & Bank"}
-                        </span>
+                        <span>{funded ? "kebutuhan dana" : "mata uang dokumen"}</span>
                       </div>
                     )}
                   </Field>
@@ -771,6 +788,73 @@ export function TransactionForm({
                     </div>
                   </Field>
                 </FormRow>
+
+                {/* The kurs, in whichever of its two modes this document is in.
+                    The row is absent entirely for rupiah on rupiah, where a
+                    rate would be a rate between the base currency and itself. */}
+                {kursSource && kursSource !== "identity" && (
+                  <FormRow>
+                    {kursSource === "layer" ? (
+                      <Field
+                        label="Kurs"
+                        span={8}
+                        required={editing}
+                        help={editing ? "satu transaksi memakai satu layer" : undefined}
+                        error={errors.cash_bank_layer_id}
+                      >
+                        {editing ? (
+                          <KursSelect
+                            value={
+                              values.cash_bank_layer_id
+                                ? Number(values.cash_bank_layer_id)
+                                : null
+                            }
+                            layers={cashBank?.layers ?? []}
+                            currencyLabel={currencyLabel}
+                            invalid={Boolean(errors.cash_bank_layer_id)}
+                            onChange={(v) =>
+                              set("cash_bank_layer_id", v ? String(v) : "")
+                            }
+                          />
+                        ) : (
+                          <div className="ro">
+                            <span className="mny">
+                              {formatNumber(transaction?.exchange_rate ?? 0, 2)}
+                            </span>
+                            <span>dari layer yang dipilih</span>
+                          </div>
+                        )}
+                      </Field>
+                    ) : (
+                      <Field
+                        label="Kurs"
+                        span={4}
+                        required={editing}
+                        help={
+                          editing
+                            ? `1 ${currencyLabel} dalam ${BASE_CURRENCY_LABEL}`
+                            : undefined
+                        }
+                        error={errors.exchange_rate}
+                      >
+                        {editing ? (
+                          <RateInput
+                            value={values.exchange_rate}
+                            pairLabel={`${currencyLabel} → ${BASE_CURRENCY_LABEL}`}
+                            invalid={Boolean(errors.exchange_rate)}
+                            onChange={(v) => set("exchange_rate", v)}
+                          />
+                        ) : (
+                          <div className="ro">
+                            <span className="mny">
+                              {formatNumber(transaction?.exchange_rate ?? 0, 2)}
+                            </span>
+                          </div>
+                        )}
+                      </Field>
+                    )}
+                  </FormRow>
+                )}
 
                 <FormRow>
                   {/* The account the Purpose resolves to. It used to sit in the
@@ -1228,6 +1312,8 @@ function initialValues(
       partner_id: "",
       cash_bank_id: "",
       currency_id: defaultCurrencyId ? String(defaultCurrencyId) : "",
+      exchange_rate: "",
+      cash_bank_layer_id: "",
       note: "",
     };
   }
@@ -1239,6 +1325,10 @@ function initialValues(
       ? String(transaction.cash_bank_id)
       : "",
     currency_id: String(transaction.currency_id),
+    exchange_rate: transaction.exchange_rate ? String(transaction.exchange_rate) : "",
+    cash_bank_layer_id: transaction.cash_bank_layer_id
+      ? String(transaction.cash_bank_layer_id)
+      : "",
     note: transaction.note ?? "",
   };
 }

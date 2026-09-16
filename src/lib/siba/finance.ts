@@ -9,12 +9,31 @@ import {
   realizeBudgets,
 } from "./budget";
 import { recordCashBankEntry } from "./cash-bank";
-import { isBaseCurrency } from "./currency";
+import {
+  drawFromLayer,
+  openLayer,
+  openLayersOf,
+  type LayerOption,
+} from "./cash-bank-layers";
+import {
+  BASE_CURRENCY_LABEL,
+  createsLayer,
+  isBaseCurrency,
+  maySettle,
+  rateSource,
+  settlementRefusal,
+} from "./currency";
+import { drawLayer, fxDifference, roundBase, settle } from "./fx";
 import { nextDocumentNumber } from "./document-number";
 import { postJournal, type JournalLineInput } from "./journal";
 import { PURPOSES, purposeOf, type Purpose } from "./rules";
-import { subledgerForCategory } from "./subledger-catalogue";
-import { recordSubledgerEntry } from "./subledger";
+import {
+  subledgerForCategory,
+  subledgerMovement,
+} from "./subledger-catalogue";
+import { recordSubledgerEntry, subledgerPosition } from "./subledger";
+import { systemDefaults } from "./system-settings";
+import { refValueOf } from "./system-defaults";
 import type { TransactionStatus } from "./transaction-workflow";
 
 /**
@@ -50,6 +69,9 @@ export type TransactionRow = {
   currency_id: number;
   partner_id: number | null;
   transaction_amount: number;
+  /** The kurs the document was valued at. */
+  exchange_rate: number;
+  cash_bank_layer_id: number | null;
   note: string | null;
   status: TransactionStatus;
   line_count: number;
@@ -88,6 +110,8 @@ type TxRecord = {
   currency_id: number;
   partner_id: number | null;
   transaction_amount: { toNumber(): number };
+  exchange_rate: { toNumber(): number };
+  cash_bank_layer_id: number | null;
   note: string | null;
   status: string;
   created_by: number;
@@ -110,6 +134,8 @@ function toRow(t: TxRecord): TransactionRow {
     currency_id: t.currency_id,
     partner_id: t.partner_id,
     transaction_amount: t.transaction_amount.toNumber(),
+    exchange_rate: t.exchange_rate.toNumber(),
+    cash_bank_layer_id: t.cash_bank_layer_id,
     note: t.note,
     status: t.status as TransactionStatus,
     line_count: t._count?.lines ?? 0,
@@ -258,6 +284,14 @@ export type CashBankOption = FinanceOption & {
   currencyLabel: string;
   type: string;
   balance: number;
+  /**
+   * The open rate layers this resource holds, oldest first. Empty for a
+   * base-currency resource, which has none by design.
+   *
+   * Carried on the resource rather than in a map beside it: layers belong to
+   * the resource that holds them, and that is the question the form asks.
+   */
+  layers: LayerOption[];
 };
 
 export type FinancePartnerOption = FinanceOption & {
@@ -318,6 +352,16 @@ export async function financeRefs(companyIds?: number[]): Promise<FinanceRefs> {
     partnerCategories.map((p) => [p.id, p.category_label])
   );
 
+  // The open layers of every foreign resource. A base-currency resource has
+  // none, so it simply gets an empty list and the form never asks for a kurs.
+  // Read here rather than when a resource is chosen: the form is a client
+  // component and the page is where the database is read (§3).
+  const layersOf = new Map<number, LayerOption[]>();
+  for (const c of cashBanks) {
+    if (isBaseCurrency(c.currency.currency_label)) continue;
+    layersOf.set(c.id, await openLayersOf(c.id));
+  }
+
   return {
     companies: companies.map((c) => ({
       id: c.id,
@@ -364,6 +408,7 @@ export async function financeRefs(companyIds?: number[]): Promise<FinanceRefs> {
       currencyLabel: c.currency.currency_label,
       type: c.cash_bank_type,
       balance: c.book_balance?.balance.toNumber() ?? 0,
+      layers: layersOf.get(c.id) ?? [],
     })),
     transactingCompanyId: companies.find((c) => c.is_parent)?.id ?? null,
   };
@@ -415,11 +460,24 @@ export type TransactionHeader = {
   partner_id: number | null;
   cash_bank_id: number | null;
   /**
-   * Only read on the funded route, where there is no resource to take a
-   * currency from. On the self-funded route the Cash & Bank decides it and a
-   * submitted value is ignored.
+   * The document's own currency, on **both** routes. It used to be read off the
+   * Cash & Bank on the self route, which only worked while the two could not
+   * differ — a foreign document paid from a rupiah account is the case that
+   * separated them.
    */
   currency_id?: number | null;
+  /**
+   * The kurs, where the user types one: a foreign document converted by the
+   * bank, or foreign currency arriving into a foreign resource. Read off the
+   * chosen layer instead when money is leaving a foreign resource, and ignored
+   * entirely when the document is already base currency.
+   */
+  exchange_rate?: number | null;
+  /**
+   * The rate layer this payment draws on. One transaction, one bank, one kurs —
+   * so the document is capped at what this layer still holds.
+   */
+  cash_bank_layer_id?: number | null;
 };
 
 /**
@@ -465,27 +523,45 @@ async function headerContext(header: TransactionHeader): Promise<
   const route = await fundingRoute(header.company_id);
   if (!route) return { ok: false };
 
+  // The document's currency is the document's own on both routes. It used to
+  // be read off the Cash & Bank, which only worked while the two could not
+  // differ — a foreign document paid from a rupiah account is the case that
+  // separated them.
+  const currencyId = header.currency_id ?? 0;
+  if (!currencyId) return { ok: false };
+
   if (route === "treasury") {
     if (header.cash_bank_id) return { ok: false };
-    const currencyId = header.currency_id ?? 0;
-    if (!currencyId) return { ok: false };
     return { ok: true, route, currencyId, cashBankId: null };
   }
 
   if (!header.cash_bank_id) return { ok: false };
   const cashBank = await prisma.mCashBank.findUnique({
     where: { id: header.cash_bank_id },
-    select: { currency_id: true, company_id: true },
+    select: {
+      company_id: true,
+      currency: { select: { currency_label: true } },
+    },
   });
   if (!cashBank || cashBank.company_id !== header.company_id) {
     return { ok: false };
   }
-  return {
-    ok: true,
-    route,
-    currencyId: cashBank.currency_id,
-    cashBankId: header.cash_bank_id,
-  };
+
+  // A resource that cannot settle this currency admits no Budgets at all,
+  // rather than admitting the resource's own. `checkHeader` refuses the pairing
+  // by name; this simply offers nothing.
+  const currency = await prisma.refCurrency.findUnique({
+    where: { id: currencyId },
+    select: { currency_label: true },
+  });
+  if (
+    !currency ||
+    !maySettle(currency.currency_label, cashBank.currency.currency_label)
+  ) {
+    return { ok: false };
+  }
+
+  return { ok: true, route, currencyId, cashBankId: header.cash_bank_id };
 }
 
 /** The Budget Category id a purpose realizes, or null if the label is unknown. */
@@ -510,8 +586,10 @@ async function categoryIdOf(purpose: Purpose): Promise<number | null> {
  * dimension (early or late realization), never a gate. A document in September
  * may settle an August plan.
  *
- * Currency is a filter because there is no exchange rate in this system: a
- * USD resource cannot settle an IDR plan without inventing one (CLAUDE.md §12).
+ * Currency is the **document's**, not the resource's. A USD document settles
+ * USD plans, whether it is paid from a USD account or from a rupiah one —
+ * which is exactly the distinction that did not exist while a document took
+ * its currency from the resource paying it.
  */
 export async function eligibleBudgets(
   header: TransactionHeader,
@@ -605,6 +683,14 @@ export type HeaderCheck =
       /** Null on the funded route: the anak has no resource of its own. */
       cashBankId: number | null;
       currencyId: number;
+      /** The document's own currency, which need not be the resource's. */
+      currencyLabel: string;
+      /** The paying resource's currency, or "" on the funded route. */
+      resourceCurrencyLabel: string;
+      /** The kurs this document is valued at — entered, read off a layer, or 1. */
+      rate: number;
+      /** The layer the payment draws on, where one is involved. */
+      layerId: number | null;
       partnerId: number | null;
       route: FundingRoute;
     }
@@ -647,6 +733,10 @@ export async function checkHeader(
   }
 
   let route: FundingRoute | null = null;
+  let currencyId = 0;
+  let cashBankId: number | null = null;
+  /** The paying resource's own currency, where there is a resource. */
+  let resourceCurrencyLabel = "";
   if (!header.company_id) {
     errors.company_id = "Company wajib dipilih.";
   } else {
@@ -684,8 +774,26 @@ export async function checkHeader(
     errors.partner_id = "Purpose yang dipilih tidak memakai Partner.";
   }
 
-  let currencyId = 0;
-  let cashBankId: number | null = null;
+  // The document's own currency, on both routes. It used to be read off the
+  // Cash & Bank on the self route, which stopped working the moment a foreign
+  // document could be paid from a base-currency resource: the two are no longer
+  // the same question.
+  let currencyLabel = "";
+  if (!header.currency_id) {
+    errors.currency_id = "Currency wajib dipilih.";
+  } else {
+    const currency = await prisma.refCurrency.findUnique({
+      where: { id: header.currency_id },
+      select: { id: true, status: true, currency_label: true },
+    });
+    if (!currency) errors.currency_id = "Currency tidak ditemukan.";
+    else if (currency.status !== "Active") {
+      errors.currency_id = "Currency tersebut non-aktif dan tidak dapat dipakai.";
+    } else {
+      currencyId = currency.id;
+      currencyLabel = currency.currency_label;
+    }
+  }
 
   if (route === "treasury") {
     if (header.cash_bank_id) {
@@ -693,27 +801,18 @@ export async function checkHeader(
         "Company anak tidak memiliki Cash & Bank sendiri. Dana disediakan " +
         "Company induk melalui Funding Request.";
     }
-    if (!header.currency_id) {
-      errors.currency_id = "Currency wajib dipilih.";
-    } else {
-      const currency = await prisma.refCurrency.findUnique({
-        where: { id: header.currency_id },
-        select: { id: true, status: true },
-      });
-      if (!currency) errors.currency_id = "Currency tidak ditemukan.";
-      else if (currency.status !== "Active") {
-        errors.currency_id = "Currency tersebut non-aktif dan tidak dapat dipakai.";
-      } else {
-        currencyId = currency.id;
-      }
-    }
   } else if (route === "self") {
     if (!header.cash_bank_id) {
       errors.cash_bank_id = "Cash & Bank wajib dipilih.";
     } else {
       const cashBank = await prisma.mCashBank.findUnique({
         where: { id: header.cash_bank_id },
-        select: { company_id: true, status: true, currency_id: true },
+        select: {
+          company_id: true,
+          status: true,
+          currency_id: true,
+          currency: { select: { currency_label: true } },
+        },
       });
       if (!cashBank) errors.cash_bank_id = "Cash & Bank tidak ditemukan.";
       else if (cashBank.company_id !== header.company_id) {
@@ -722,10 +821,74 @@ export async function checkHeader(
       } else if (cashBank.status !== "Active") {
         errors.cash_bank_id =
           "Cash & Bank tersebut non-aktif dan tidak dapat dipakai.";
+      } else if (
+        currencyLabel &&
+        !maySettle(currencyLabel, cashBank.currency.currency_label)
+      ) {
+        // Crossing goes through the base currency only: a foreign document is
+        // paid from its own currency or from rupiah, and never from a third
+        // currency. `lib/siba/currency.ts` is the one place that rule lives.
+        errors.cash_bank_id = settlementRefusal(
+          currencyLabel,
+          cashBank.currency.currency_label
+        )!;
       } else {
-        currencyId = cashBank.currency_id;
-        cashBankId = cashBank ? header.cash_bank_id : null;
+        cashBankId = header.cash_bank_id;
+        resourceCurrencyLabel = cashBank.currency.currency_label;
       }
+    }
+  }
+
+  // Where the kurs comes from, and therefore what the header must carry. One
+  // control on the form, three provenances — and a rate of `1` means the money
+  // is base currency, never that two foreign amounts happen to match.
+  let rate = 1;
+  let layerId: number | null = null;
+  if (route === "self" && currencyLabel && resourceCurrencyLabel) {
+    const source = rateSource(
+      purpose.direction,
+      currencyLabel,
+      resourceCurrencyLabel
+    );
+
+    if (source === "entered") {
+      const entered = header.exchange_rate ?? 0;
+      if (!(entered > 0)) {
+        errors.exchange_rate =
+          `Isi kurs — berapa nilai 1 ${currencyLabel} dalam ` +
+          `${BASE_CURRENCY_LABEL} pada transaksi ini.`;
+      } else {
+        rate = entered;
+      }
+      if (header.cash_bank_layer_id) {
+        errors.cash_bank_layer_id =
+          "Transaksi ini tidak mengambil dari layer kurs mana pun.";
+      }
+    } else if (source === "layer") {
+      if (!header.cash_bank_layer_id) {
+        errors.cash_bank_layer_id =
+          "Pilih layer kurs yang dipakai. Satu transaksi memakai tepat satu layer.";
+      } else {
+        const layer = await prisma.cashBankLayer.findUnique({
+          where: { id: header.cash_bank_layer_id },
+          select: { cash_bank_id: true, status: true, rate: true },
+        });
+        if (!layer || layer.cash_bank_id !== cashBankId) {
+          errors.cash_bank_layer_id =
+            "Layer kurs tersebut bukan milik Cash & Bank yang dipilih.";
+        } else if (layer.status !== "Open") {
+          errors.cash_bank_layer_id =
+            "Layer kurs tersebut sudah habis dan tidak dapat dipakai lagi.";
+        } else {
+          rate = layer.rate.toNumber();
+          layerId = header.cash_bank_layer_id;
+        }
+      }
+    } else if (header.exchange_rate && header.exchange_rate !== 1) {
+      // `identity`: rupiah moving through a rupiah account. A rate here would
+      // be a rate between the base currency and itself.
+      errors.exchange_rate =
+        `Dokumen dalam ${BASE_CURRENCY_LABEL} tidak memakai kurs.`;
     }
   }
 
@@ -737,6 +900,10 @@ export async function checkHeader(
     companyId: header.company_id!,
     cashBankId,
     currencyId,
+    currencyLabel,
+    resourceCurrencyLabel,
+    rate,
+    layerId,
     partnerId,
     route: route!,
   };
@@ -810,11 +977,38 @@ export async function checkLines(
     });
   }
 
-  return {
-    ok: true,
-    lines: resolved,
-    total: resolved.reduce((t, l) => t + l.amount, 0),
-  };
+  const total = resolved.reduce((t, l) => t + l.amount, 0);
+
+  // The layer cap. One transaction draws on one layer, so the document is
+  // limited to what that layer still holds — whatever the account holds
+  // overall. A resource with five layers of a million each holds five million
+  // and cannot pay one and a half in a single document.
+  //
+  // Checked here rather than only at Post because it couples two things the
+  // form keeps apart: the Budget lines being filled in, and the kurs chosen in
+  // the header. Whichever is chosen second has to validate against the first.
+  if (header.cash_bank_layer_id) {
+    const layer = await prisma.cashBankLayer.findUnique({
+      where: { id: header.cash_bank_layer_id },
+      select: { foreign_remaining: true, status: true, layer_no: true },
+    });
+    if (layer && layer.status === "Open") {
+      const remaining = layer.foreign_remaining.toNumber();
+      if (total > remaining) {
+        return {
+          ok: false,
+          errors: {
+            _lines:
+              `Total realisasi ${total} melebihi sisa layer ${layer.layer_no} ` +
+              `yang tinggal ${remaining}. Satu transaksi memakai tepat satu ` +
+              "layer — kurangi nominalnya, pilih layer lain, atau pecah dokumen.",
+          },
+        };
+      }
+    }
+  }
+
+  return { ok: true, lines: resolved, total };
 }
 
 // ------------------------------------------------------------------ posting
@@ -824,45 +1018,167 @@ export type PostingResult =
   | { ok: false; errors: Record<string, string> };
 
 /**
- * The kurs a posting values its movements at.
+ * How a document's movement is valued, and what leaves the bank.
  *
- * The books now carry a base measure, and every entry has to state the rate it
- * was valued at — but the machinery that produces a real rate does not exist
- * yet. There is no rate field on the document, no layer to read one off, and
- * nothing that could tell what a dollar was worth on the day it moved.
+ * A document has a currency; a resource has a currency; they need not be the
+ * same, but under the crossing rule one of them is always the base currency
+ * when they differ. Three cases, and `rateSource` in `lib/siba/currency.ts` is
+ * the one place they are told apart:
  *
- * So a base-currency document posts at `1`, which is true, and a foreign one is
- * **refused by name** rather than posted at a rate somebody invented. Writing
- * `1` for a USD document would record that a dollar is a rupiah, and it would
- * record it in an append-only book that cannot be corrected by editing.
+ *   * **foreign out of a foreign resource** — the kurs is the chosen layer's,
+ *     read rather than typed, and the base released is what that layer gives up.
+ *   * **foreign through a base-currency resource** — the kurs is the one the
+ *     bank actually converted at, typed on the document.
+ *   * **base on base** — the kurs is `1`, which here means what it always
+ *     should: the money is already the measure.
  *
- * This refusal is temporary and has a named end: it comes out when the document
- * carries its own kurs and a payment draws on a layer.
+ * `accountAmount` is what moves through the resource in **its own** currency,
+ * which is the document amount unless the bank did the converting.
  */
-async function postingRate(
-  currencyId: number
-): Promise<
-  { ok: true; rate: number } | { ok: false; errors: Record<string, string> }
-> {
-  const currency = await prisma.refCurrency.findUnique({
-    where: { id: currencyId },
-    select: { currency_label: true },
-  });
-  if (!currency) {
-    return { ok: false, errors: { _form: "Currency dokumen tidak ditemukan." } };
-  }
-  if (!isBaseCurrency(currency.currency_label)) {
+export type Valuation = {
+  /** Document currency to base. Never 1 unless the document is base currency. */
+  rate: number;
+  /** What the movement was worth in base. */
+  base: number;
+  /** What moves through the resource, in the resource's own currency. */
+  accountAmount: number;
+  /** The rate the *resource's* own currency was valued at — 1 when it is base. */
+  accountRate: number;
+  /** The layer drawn on, where one was. */
+  layerId: number | null;
+};
+
+export type ValuationCheck =
+  | { ok: true; valuation: Valuation }
+  | { ok: false; errors: Record<string, string> };
+
+/**
+ * Resolves a document's kurs before anything is written.
+ *
+ * Reads the layer rather than trusting the rate the document carries: a Draft
+ * may have chosen a layer that another document has since drawn to nothing, and
+ * the rate stored on the draft would then value the payment at a price the bank
+ * no longer holds.
+ */
+async function resolveValuation(doc: {
+  transaction_type: string;
+  transaction_amount: { toNumber(): number };
+  exchange_rate: { toNumber(): number };
+  cash_bank_layer_id: number | null;
+  currency: { currency_label: string };
+  cash_bank: { currency: { currency_label: string } } | null;
+}): Promise<ValuationCheck> {
+  const amount = doc.transaction_amount.toNumber();
+  const direction = doc.transaction_type as "In" | "Out";
+  const documentCurrency = doc.currency.currency_label;
+  const resourceCurrency = doc.cash_bank?.currency.currency_label ?? "";
+
+  const source = rateSource(direction, documentCurrency, resourceCurrency);
+  if (!source) {
     return {
       ok: false,
       errors: {
         _form:
-          `Dokumen dalam ${currency.currency_label} belum dapat diposting: ` +
-          "pencatatan nilai kurs terhadap mata uang dasar belum tersedia. " +
-          "Gunakan dokumen dalam mata uang dasar untuk sementara.",
+          settlementRefusal(documentCurrency, resourceCurrency) ??
+          "Kombinasi currency dokumen dan Cash & Bank tidak diperbolehkan.",
       },
     };
   }
-  return { ok: true, rate: 1 };
+
+  const resourceIsBase = isBaseCurrency(resourceCurrency);
+  // The bank converts only when the document and the resource differ, which
+  // under the crossing rule means the resource holds rupiah.
+  const accountAmount = resourceIsBase && documentCurrency !== resourceCurrency
+    ? roundBase(amount * doc.exchange_rate.toNumber())
+    : amount;
+
+  if (source === "identity") {
+    return {
+      ok: true,
+      valuation: { rate: 1, base: amount, accountAmount: amount, accountRate: 1, layerId: null },
+    };
+  }
+
+  if (source === "entered") {
+    const rate = doc.exchange_rate.toNumber();
+    if (!(rate > 0)) {
+      return {
+        ok: false,
+        errors: { exchange_rate: "Kurs wajib diisi untuk dokumen mata uang asing." },
+      };
+    }
+    return {
+      ok: true,
+      valuation: {
+        rate,
+        base: roundBase(amount * rate),
+        accountAmount,
+        // A base-currency resource is unlayered and worth its own face value.
+        accountRate: resourceIsBase ? 1 : rate,
+        layerId: null,
+      },
+    };
+  }
+
+  // `layer` — money leaving a foreign resource. The kurs is the layer's, and
+  // the base released is what the layer gives up rather than a product
+  // recomputed from it: drawing a layer to nothing releases its remainder
+  // exactly.
+  if (!doc.cash_bank_layer_id) {
+    return {
+      ok: false,
+      errors: {
+        cash_bank_layer_id:
+          "Pilih layer kurs yang dipakai. Satu transaksi memakai tepat satu layer.",
+      },
+    };
+  }
+  const layer = await prisma.cashBankLayer.findUnique({
+    where: { id: doc.cash_bank_layer_id },
+    select: { rate: true, foreign_remaining: true, base_remaining: true, status: true, layer_no: true },
+  });
+  if (!layer || layer.status !== "Open") {
+    return {
+      ok: false,
+      errors: {
+        cash_bank_layer_id:
+          "Layer kurs yang dipilih sudah tidak tersedia. Buka kembali dokumen dan pilih ulang.",
+      },
+    };
+  }
+  if (amount > layer.foreign_remaining.toNumber()) {
+    return {
+      ok: false,
+      errors: {
+        cash_bank_layer_id:
+          `Layer ${layer.layer_no} hanya menyisakan ` +
+          `${layer.foreign_remaining.toNumber()}, sedangkan dokumen ini bernilai ` +
+          `${amount}. Satu transaksi memakai tepat satu layer — pecah dokumen ` +
+          "atau pilih layer lain.",
+      },
+    };
+  }
+
+  const rate = layer.rate.toNumber();
+  const exact = drawLayer(
+    {
+      foreign: layer.foreign_remaining.toNumber(),
+      base: layer.base_remaining.toNumber(),
+      rate,
+    },
+    amount
+  );
+
+  return {
+    ok: true,
+    valuation: {
+      rate,
+      base: exact.base,
+      accountAmount: amount,
+      accountRate: rate,
+      layerId: doc.cash_bank_layer_id,
+    },
+  };
 }
 
 /**
@@ -959,20 +1275,197 @@ async function purposeAccountId(
   return { ok: true, accountId: mapping.account_id };
 }
 
-async function journalEntries(
+/**
+ * Splits one base figure across lines, keeping the total exact.
+ *
+ * Every line but the last takes its proportional share, rounded once; the last
+ * takes whatever is left. That is what makes the parts add back to the figure
+ * that actually moved rather than to a re-rounded approximation of it — the
+ * same reason a full relief releases a balance's remainder exactly.
+ */
+function allocate(total: number, weights: number[]): number[] {
+  if (!weights.length) return [];
+  const sum = weights.reduce((t, w) => t + w, 0);
+  if (!sum) return weights.map(() => 0);
+
+  const out: number[] = [];
+  let used = 0;
+  for (let i = 0; i < weights.length; i += 1) {
+    if (i === weights.length - 1) {
+      out.push(roundBase(total - used));
+      break;
+    }
+    const share = roundBase((total * weights[i]) / sum);
+    out.push(share);
+    used = roundBase(used + share);
+  }
+  return out;
+}
+
+export type PostingLine = {
+  budgetId: number;
+  amount: number;
+  transactionBase: number;
+  settlementBase: number;
+  fxDifference: number;
+};
+
+export type PostingPlan = {
+  valuation: Valuation;
+  /** The subject book this document writes into, where its Purpose keeps one. */
+  book: { key: string; partnerId: number } | null;
+  /** The rate the subject book records — its own, not the cash side's. */
+  settlementRate: number;
+  settlementBase: number;
+  /** `settlementBase − transactionBase`, signed. Zero writes no journal line. */
+  fxDifference: number;
+  fxAccountId: number | null;
+  lines: PostingLine[];
+};
+
+/**
+ * Everything a posting needs to know before it writes anything.
+ *
+ * The two sides of a settlement are determined independently: the cash gives up
+ * what it cost (the layer's rate, or the rate the bank converted at), and the
+ * obligation releases what it was carried at. Where they disagree the residual
+ * is the FX difference, and it is the balancing figure of the journal rather
+ * than a magnitude with a side chosen for it.
+ *
+ * Where there is nothing on the books to relieve — an expense, a Piutang raised
+ * by paying out, a first-ever Hutang — the movement *is* the origin of the
+ * value, so the two sides come from the same place and no difference can arise.
+ * The discriminator is whether base value already exists, never the Purpose.
+ */
+async function planPosting(
   doc: {
     id: number;
+    transaction_type: string;
+    transaction_amount: { toNumber(): number };
+    exchange_rate: { toNumber(): number };
+    cash_bank_layer_id: number | null;
+    company_id: number;
+    currency_id: number;
+    partner_id: number | null;
+    purpose: string;
+    currency: { currency_label: string };
+    cash_bank: { currency: { currency_label: string } } | null;
+    lines: { source_doc_id: number; settlement_amount: { toNumber(): number } }[];
+  },
+  options: { induk: boolean }
+): Promise<
+  { ok: true; plan: PostingPlan } | { ok: false; errors: Record<string, string> }
+> {
+  const resolved = await resolveValuation(doc);
+  if (!resolved.ok) return resolved;
+  const valuation = resolved.valuation;
+
+  const amount = doc.transaction_amount.toNumber();
+  const direction = doc.transaction_type as "In" | "Out";
+  const purpose = purposeOf(doc.purpose);
+  const catalogue = subledgerForCategory(purpose?.budgetCategory ?? null);
+  const book =
+    catalogue && doc.partner_id
+      ? { key: catalogue.key, partnerId: doc.partner_id }
+      : null;
+
+  // What the obligation releases. Only a movement that *lowers* an existing
+  // position relieves anything — one that raises it is creating value, and a
+  // book holding nothing has no rate to release at (core §9.3).
+  let settlementBase = valuation.base;
+  if (book && catalogue) {
+    const raises = subledgerMovement(catalogue, direction, amount) > 0;
+    if (!raises) {
+      const position = await subledgerPosition(
+        book.key,
+        book.partnerId,
+        doc.currency_id
+      );
+      const settled = settle({
+        position,
+        foreign: amount,
+        transactionBase: valuation.base,
+      });
+      settlementBase = settled.settlementBase;
+    }
+  }
+
+  const difference = fxDifference(settlementBase, valuation.base);
+
+  // An FX difference has to land somewhere named. The account is only looked
+  // up when a difference actually arises, so ordinary rupiah work is never
+  // blocked by a setting it does not use.
+  let fxAccountId: number | null = null;
+  if (difference.side) {
+    const settings = await systemDefaults();
+    fxAccountId = refValueOf(
+      settings,
+      options.induk ? "induk_fx_account" : "anak_fx_account"
+    );
+    if (!fxAccountId) {
+      return {
+        ok: false,
+        errors: {
+          _form:
+            "Selisih kurs muncul pada dokumen ini, tetapi Account Selisih Kurs " +
+            "belum diatur untuk Company ini. Lengkapi di Settings › System " +
+            "Default sebelum dokumen diposting.",
+        },
+      };
+    }
+  }
+
+  const weights = doc.lines.map((l) => l.settlement_amount.toNumber());
+  const transactionShares = allocate(valuation.base, weights);
+  const settlementShares = allocate(settlementBase, weights);
+
+  return {
+    ok: true,
+    plan: {
+      valuation,
+      book,
+      settlementRate: amount ? settlementBase / amount : valuation.rate,
+      settlementBase,
+      fxDifference: difference.amount,
+      fxAccountId,
+      lines: doc.lines.map((l, i) => ({
+        budgetId: l.source_doc_id,
+        amount: l.settlement_amount.toNumber(),
+        transactionBase: transactionShares[i],
+        settlementBase: settlementShares[i],
+        fxDifference: roundBase(settlementShares[i] - transactionShares[i]),
+      })),
+    },
+  };
+}
+
+/**
+ * The accounting entries a Cash Bank Transaction produces.
+ *
+ * Two sides plus a residual: the Cash & Bank resource's own account, the
+ * account its Purpose resolves to, and — only where the two disagree — the
+ * Company's FX difference account.
+ *
+ * Each line carries its own currency and its own rate, because they need not
+ * be the same one. A foreign document paid from a rupiah account produces a
+ * rupiah cash line and a foreign counter line in the same journal, and the
+ * entry balances in base alone.
+ *
+ * One counter line per document line rather than one aggregated line: every
+ * line realizes a named Budget, and keeping them apart is what lets a ledger
+ * entry be read back to the plan it settled.
+ */
+async function journalEntries(
+  doc: {
     transaction_no: string;
     purpose: string;
     company_id: number;
     partner_id: number | null;
     cash_bank_id: number | null;
+    currency_id: number;
     transaction_type: string;
-    transaction_amount: { toNumber(): number };
-    lines: { source_doc_id: number; settlement_amount: { toNumber(): number } }[];
   },
-  /** The kurs both sides of this journal are valued at. */
-  rate: number
+  plan: PostingPlan
 ): Promise<
   | { ok: true; lines: JournalLineInput[]; purposeLabel: string }
   | { ok: false; errors: Record<string, string> }
@@ -984,12 +1477,7 @@ async function journalEntries(
 
   const cashBank = await prisma.mCashBank.findUnique({
     where: { id: doc.cash_bank_id! },
-    select: {
-      account_id: true,
-      currency_id: true,
-      cash_bank_label: true,
-      account: { select: { account_label: true } },
-    },
+    select: { account_id: true, currency_id: true, cash_bank_label: true },
   });
   if (!cashBank) {
     return { ok: false, errors: { _form: "Cash & Bank dokumen tidak ditemukan." } };
@@ -997,41 +1485,79 @@ async function journalEntries(
 
   const mapped = await purposeAccountId(doc.company_id, purpose);
   if (!mapped.ok) return mapped;
-  const mapping = { account_id: mapped.accountId };
 
   const incoming = doc.transaction_type === "In";
-  const total = doc.lines.reduce((t, l) => t + l.settlement_amount.toNumber(), 0);
+  const { valuation } = plan;
 
   const lines: JournalLineInput[] = [
     {
+      // The cash side, in the resource's own currency and at its own rate.
       accountId: cashBank.account_id,
       currencyId: cashBank.currency_id,
-      rate,
-      debit: incoming ? total : 0,
-      credit: incoming ? 0 : total,
+      rate: valuation.accountRate,
+      debit: incoming ? valuation.accountAmount : 0,
+      credit: incoming ? 0 : valuation.accountAmount,
+      baseAmount: valuation.base,
       description: `${doc.transaction_no} — ${cashBank.cash_bank_label}`,
     },
-    ...doc.lines.map((l) => ({
-      accountId: mapping.account_id,
+    ...plan.lines.map((l) => ({
+      // The counter side, in the document's currency and at the rate the
+      // obligation was carried at — which is what makes the two differ.
+      accountId: mapped.accountId,
       partnerId: doc.partner_id,
-      currencyId: cashBank.currency_id,
-      rate,
-      debit: incoming ? 0 : l.settlement_amount.toNumber(),
-      credit: incoming ? l.settlement_amount.toNumber() : 0,
-      description: `${purpose.label} — Budget #${l.source_doc_id}`,
+      currencyId: doc.currency_id,
+      rate: l.amount ? l.settlementBase / l.amount : valuation.rate,
+      debit: incoming ? 0 : l.amount,
+      credit: incoming ? l.amount : 0,
+      baseAmount: l.settlementBase,
+      description: `${purpose.label} — Budget #${l.budgetId}`,
     })),
   ];
+
+  // The residual, and only when there is one. Its side is the balancing side,
+  // never chosen: a gain sits on the credit side because the obligation gave up
+  // more than the currency cost, and a loss on the debit side for the mirror
+  // reason. It is a base-currency line with no foreign face of its own.
+  if (plan.fxDifference !== 0 && plan.fxAccountId) {
+    const magnitude = Math.abs(plan.fxDifference);
+    const gain = plan.fxDifference > 0;
+    lines.push({
+      accountId: plan.fxAccountId,
+      currencyId: await baseCurrencyId(),
+      rate: 1,
+      debit: gain ? 0 : magnitude,
+      credit: gain ? magnitude : 0,
+      description: `Selisih kurs — ${doc.transaction_no}`,
+    });
+  }
 
   return { ok: true, lines, purposeLabel: purpose.label };
 }
 
+/** The base currency's row id, for the lines that have no foreign face. */
+async function baseCurrencyId(): Promise<number> {
+  const row = await prisma.refCurrency.findFirst({
+    where: { currency_label: BASE_CURRENCY_LABEL },
+    select: { id: true },
+  });
+  if (!row) {
+    throw new Error(
+      `Currency dasar ${BASE_CURRENCY_LABEL} tidak ada pada master. Jalankan db:seed.`
+    );
+  }
+  return row.id;
+}
 export async function applyPosting(
   transactionId: number,
   actorId: number
 ): Promise<PostingResult> {
   const doc = await prisma.finCashBankTransaction.findUnique({
     where: { id: transactionId },
-    include: { lines: true },
+    include: {
+      lines: true,
+      currency: { select: { currency_label: true } },
+      cash_bank: { select: { currency: { select: { currency_label: true } } } },
+    },
   });
   if (!doc) return { ok: false, errors: { _form: "Dokumen tidak ditemukan." } };
   if (doc.status !== "Draft") {
@@ -1086,36 +1612,70 @@ export async function applyPosting(
   const docTypeId = await transactionDocTypeId();
   let closed = 0;
 
-  // Both resolved before the transaction opens, so a document that cannot be
-  // journalled or cannot be valued refuses rather than aborting halfway: a
-  // posting that moves the book without writing accounting is exactly the
-  // split §12 forbids.
-  const valuation = await postingRate(doc.currency_id);
-  if (!valuation.ok) return { ok: false, errors: valuation.errors };
+  // Everything is resolved and checked before the transaction opens, so a
+  // document that cannot be valued, cannot be journalled, or has chosen a layer
+  // another document has since emptied refuses rather than aborting halfway: a
+  // posting that moves the book without writing accounting is exactly the split
+  // §12 forbids.
+  const planned = await planPosting(doc, { induk: true });
+  if (!planned.ok) return { ok: false, errors: planned.errors };
+  const plan = planned.plan;
 
-  const entries = await journalEntries(doc, valuation.rate);
+  const entries = await journalEntries(doc, plan);
   if (!entries.ok) return { ok: false, errors: entries.errors };
 
-  // Which subject book this document's Purpose writes into, if any. Resolved
-  // from the catalogue rather than from a table: a book is a screen somebody
-  // wrote (CLAUDE.md §12, subledger catalogue).
-  const subledger = subledgerForCategory(
-    purposeOf(doc.purpose)?.budgetCategory ?? null
-  );
-
   await prisma.$transaction(async (tx) => {
+    // The layer the payment drew on, taken down by exactly what left it. Done
+    // first so an exhausted layer refuses before anything else is written —
+    // `drawFromLayer` throws, and a throw in here takes the posting down.
+    if (plan.valuation.layerId) {
+      await drawFromLayer(tx, {
+        layerId: plan.valuation.layerId,
+        cashBankId: doc.cash_bank_id!,
+        foreign: plan.valuation.accountAmount,
+        actorId,
+      });
+    }
+
     await recordCashBankEntry(tx, {
       cashBankId: doc.cash_bank_id!,
       date: today,
       type: "Transaction",
       direction: doc.transaction_type as "In" | "Out",
-      amount: doc.transaction_amount.toNumber(),
-      rate: valuation.rate,
+      // In the **resource's** own currency, which is the document's amount
+      // unless the bank did the converting.
+      amount: plan.valuation.accountAmount,
+      rate: plan.valuation.accountRate,
+      // What the layer actually released, which can differ from the product by
+      // a rounding unit when a layer is drawn to nothing.
+      baseAmount: plan.valuation.base,
       sourceDocTypeId: docTypeId,
       sourceDocId: doc.id,
       note: doc.transaction_no,
       actorId,
     });
+
+    // Money arriving into a foreign resource is currency acquired, and it
+    // acquires a layer of its own at the rate it was bought in at. Never merged
+    // with an existing one, whatever its rate.
+    if (
+      createsLayer(
+        doc.transaction_type as "In" | "Out",
+        doc.currency.currency_label,
+        doc.cash_bank?.currency.currency_label ?? ""
+      )
+    ) {
+      await openLayer(tx, {
+        cashBankId: doc.cash_bank_id!,
+        date: today,
+        rate: plan.valuation.accountRate,
+        foreign: plan.valuation.accountAmount,
+        sourceDocTypeId: docTypeId,
+        sourceDocId: doc.id,
+        note: doc.transaction_no,
+        actorId,
+      });
+    }
 
     // The subject book, where the document's Budget Category keeps one. A
     // Partner's position is its own historical store (concept doc §11, §13),
@@ -1126,19 +1686,21 @@ export async function applyPosting(
     //
     // Asset and Biaya name no Partner and keep no book, so they simply produce
     // no entry — the Cash Bank Book and the Journal still record the movement.
-    if (subledger && doc.partner_id) {
+    if (plan.book) {
       await recordSubledgerEntry(tx, {
-        book: subledger.key,
-        partnerId: doc.partner_id,
+        book: plan.book.key,
+        partnerId: plan.book.partnerId,
         currencyId: doc.currency_id,
         date: today,
         type: "Transaction",
         direction: doc.transaction_type as "In" | "Out",
         amount: doc.transaction_amount.toNumber(),
-        // The book's own rate. Identical to the cash side's only because both
-        // are base currency today; once a position carries a rate of its own,
-        // a relief releases at that rate and the two diverge.
-        rate: valuation.rate,
+        // **This book's own rate**, not the cash side's. A relief releases what
+        // the position was carried at; only a movement that creates value takes
+        // the rate the money moved at. The gap between the two is the FX
+        // difference, and it lives in the journal rather than in either book.
+        rate: plan.settlementRate,
+        baseAmount: plan.settlementBase,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
         note: `${doc.transaction_no} — ${entries.purposeLabel}`,
@@ -1172,12 +1734,33 @@ export async function applyPosting(
       actorId,
     });
 
+    // What the document was worth, and what each line's share of that was —
+    // written at Post rather than at Draft, because a Draft has no kurs it can
+    // rely on and nothing to be worth anything against.
+    for (const [i, line] of doc.lines.entries()) {
+      const share = plan.lines[i];
+      await tx.finCashBankTransactionLine.update({
+        where: { id: line.id },
+        data: {
+          settlement_base_amount: share.settlementBase,
+          settlement_exchange_rate: share.amount
+            ? share.settlementBase / share.amount
+            : plan.valuation.rate,
+          transaction_base_amount: share.transactionBase,
+          fx_difference: share.fxDifference,
+          updated_by: actorId,
+        },
+      });
+    }
+
     await tx.finCashBankTransaction.update({
       where: { id: transactionId },
       data: {
         status: "Posted",
         document_date: new Date(`${today}T00:00:00Z`),
         posting_date: new Date(),
+        exchange_rate: plan.valuation.rate,
+        transaction_base_amount: plan.valuation.base,
         updated_by: actorId,
       },
     });
@@ -1363,8 +1946,30 @@ export async function prepareFundedPosting(
 
   // Both Companies' books value this movement, so both are refused together
   // when it cannot be valued at all.
-  const valuation = await postingRate(doc.currency_id);
-  if (!valuation.ok) return { ok: false, errors: valuation.errors };
+  //
+  // The funded route still values only base-currency documents. The whole
+  // machinery a foreign one needs — a kurs on the anak's draft, a layer chosen
+  // by the induk at confirmation, an FX difference in the anak's journal — is
+  // the next phase's, and a rate of `1` on a USD request would record that a
+  // dollar is a rupiah in two Companies' books at once.
+  const documentCurrency = await prisma.refCurrency.findUnique({
+    where: { id: doc.currency_id },
+    select: { currency_label: true },
+  });
+  if (!documentCurrency) {
+    return { ok: false, errors: { _form: "Currency dokumen tidak ditemukan." } };
+  }
+  if (!isBaseCurrency(documentCurrency.currency_label)) {
+    return {
+      ok: false,
+      errors: {
+        _form:
+          `Funding Request dalam ${documentCurrency.currency_label} belum dapat ` +
+          "dikonfirmasi: pemilihan kurs untuk rute intercompany belum tersedia.",
+      },
+    };
+  }
+  const valuation = { ok: true as const, rate: 1 };
 
   // Re-read now, not trusted from when the request was raised: another document
   // may have closed a Budget in the meantime, and funding a plan that is no

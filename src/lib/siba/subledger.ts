@@ -582,3 +582,36 @@ export async function subledgerPositions(
     };
   });
 }
+
+/**
+ * One subject's standing position, on both measures.
+ *
+ * What a settlement needs before it can decide whether it is relieving
+ * something or creating it: a position holding base value releases at its own
+ * carrying rate, and one holding nothing is originated by the movement itself
+ * (core concept §5.3). The discriminator is the base value, never the Purpose.
+ *
+ * Exported because Finance must not read `sub_ledger_balance` itself — the book
+ * owns its tables, and a caller reaching into them is what the module boundary
+ * exists to stop.
+ */
+export async function subledgerPosition(
+  book: string,
+  partnerId: number,
+  currencyId: number
+): Promise<{ foreign: number; base: number }> {
+  const row = await prisma.subLedgerBalance.findUnique({
+    where: {
+      book_partner_id_currency_id: {
+        book,
+        partner_id: partnerId,
+        currency_id: currencyId,
+      },
+    },
+    select: { balance: true, base_balance: true },
+  });
+  return {
+    foreign: row?.balance.toNumber() ?? 0,
+    base: row?.base_balance.toNumber() ?? 0,
+  };
+}
