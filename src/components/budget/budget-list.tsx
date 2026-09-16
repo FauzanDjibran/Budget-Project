@@ -46,6 +46,7 @@ export function BudgetList({
   cash,
   month,
   can,
+  initialStatus,
 }: {
   budgets: BudgetRow[];
   refs: BudgetRefs;
@@ -55,12 +56,14 @@ export function BudgetList({
   /** null when the page is showing every month at once. */
   month: { id: number; label: string; name: string } | null;
   can: BudgetAbilities;
+  /** Status the page was opened filtered to, from `?status=` — see the route. */
+  initialStatus?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
 
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(initialStatus ?? "");
   const [type, setType] = useState("");
   const [company, setCompany] = useState("");
   const [sort, setSort] = useState<{ field: string; dir: "asc" | "desc" }>({

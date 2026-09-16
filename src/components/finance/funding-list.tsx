@@ -29,17 +29,20 @@ export function FundingList({
   purposes,
   summary,
   canConfirm,
+  initialStatus,
 }: {
   requests: FundingRequestRow[];
   refs: FinanceRefs;
   purposes: PurposeOption[];
   summary: FundingSummary;
   canConfirm: boolean;
+  /** Status the page was opened filtered to, from `?status=` — see the route. */
+  initialStatus?: string;
 }) {
   const router = useRouter();
 
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(initialStatus ?? "");
 
   const purposeLabelOf = useMemo(() => {
     const byKey = new Map(purposes.map((p) => [p.key, p.label]));

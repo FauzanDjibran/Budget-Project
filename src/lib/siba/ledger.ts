@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { compareCodes } from "./account-code";
 import type { PeriodRange } from "./period";
 
@@ -333,4 +334,81 @@ export async function ledgerAccountOptions(companyId: number) {
       // last quarter's figures are exactly when one matters.
       active: true,
     }));
+}
+
+// -------------------------------------------------------- account positions
+
+/**
+ * Where a handful of named accounts stand right now, per currency.
+ *
+ * All of history, no period: this answers "what is the balance today", which
+ * is a different question from the General Ledger's "what happened between
+ * these dates". It exists for the intercompany bridge, whose two sides are a
+ * standing position rather than a period's movement — and which is otherwise
+ * readable only by someone who thinks to run the General Ledger for exactly
+ * the right account (CLAUDE.md §17).
+ *
+ * Signed by normal balance like every other figure here, and grouped per
+ * currency because nothing converts.
+ */
+export type AccountPosition = {
+  id: number;
+  label: string;
+  name: string;
+  companyId: number;
+  companyLabel: string;
+  normalBalance: string;
+  totals: MoneyTotal[];
+};
+
+export async function accountPositions(
+  accountIds: number[]
+): Promise<AccountPosition[]> {
+  if (!accountIds.length) return [];
+
+  const [accounts, lines] = await Promise.all([
+    prisma.accAccount.findMany({
+      where: { id: { in: accountIds } },
+      select: {
+        id: true,
+        account_label: true,
+        account_name: true,
+        normal_balance: true,
+        company_id: true,
+        company: { select: { company_label: true } },
+      },
+    }),
+    prisma.accJournalLine.findMany({
+      where: { account_id: { in: accountIds } },
+      select: {
+        account_id: true,
+        debit_amount: true,
+        kredit_amount: true,
+        currency_id: true,
+        currency: { select: { currency_label: true } },
+      },
+    }),
+  ]);
+
+  return accounts.map((a) => ({
+    id: a.id,
+    label: a.account_label,
+    name: a.account_name,
+    companyId: a.company_id,
+    companyLabel: a.company.company_label,
+    normalBalance: a.normal_balance,
+    totals: sumByCurrency(
+      lines
+        .filter((l) => l.account_id === a.id)
+        .map((l) => ({
+          currencyId: l.currency_id,
+          currencyLabel: l.currency.currency_label,
+          amount: signedMovement(
+            a.normal_balance,
+            l.debit_amount.toNumber(),
+            l.kredit_amount.toNumber()
+          ),
+        }))
+    ),
+  }));
 }

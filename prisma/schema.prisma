@@ -1040,11 +1040,26 @@ model AccJournalLine {
   @@map("acc_journal_line")
 }
 
+/// Every create, update and lifecycle transition in the application appends one
+/// row here, and nothing ever updates or deletes one.
+///
+/// `action` is the coarse verb and `event` is the specific thing that
+/// happened. The verb alone cannot answer what a history is opened for:
+/// submit, approve, reject, post and confirm are all writes, so all of them
+/// read as UPDATE. `event` carries the transition key the owning module's
+/// workflow table already declares — "submit", "approve", "post" — and the
+/// Indonesian label is read back from that table rather than stored here, so a
+/// new lifecycle step is a row in a workflow table and not a migration.
+///
+/// It is nullable because rows written before the column existed genuinely do
+/// not know which transition they were, and "Diubah" is the true answer for
+/// them. See `lib/siba/audit-events.ts`.
 model AuditLog {
   id         Int         @id @default(autoincrement())
   entity_key String
   row_id     Int
   action     AuditAction
+  event      String?
   at         DateTime    @default(now()) @db.Timestamptz(6)
   by         Int
 

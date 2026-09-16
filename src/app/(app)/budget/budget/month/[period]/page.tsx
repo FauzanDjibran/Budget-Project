@@ -19,13 +19,19 @@ export const dynamic = "force-dynamic";
  *
  * The month is a Fiscal Period id, and the filter is a date-range query rather
  * than a stored grouping key — which is what makes Budget Month derived.
+ *
+ * `?status=` opens the list already filtered, so a dashboard tile can name a
+ * queue rather than dropping the reader into every budget there is.
  */
 export default async function Page({
   params,
+  searchParams,
 }: {
   params: Promise<{ period: string }>;
+  searchParams: Promise<{ status?: string }>;
 }) {
   const { period } = await params;
+  const { status } = await searchParams;
 
   const actor = await requirePermission(
     "BUDGET_VIEW",
@@ -35,16 +41,17 @@ export default async function Page({
   const month = period === "all" ? null : await resolveMonth(period);
   if (period !== "all" && !month) notFound();
 
+  const companyIds = await accessibleCompanyIds(actor.permissions);
   const budgets = await listBudgets(
     month ? { startDate: month.startDate, endDate: month.endDate } : null,
-    await accessibleCompanyIds(actor.permissions)
+    companyIds
   );
 
   const [refs, mappings, summary, cash] = await Promise.all([
     budgetRefs(),
     budgetMappings(),
     summarise(budgets),
-    cashBookSummary(),
+    cashBookSummary(companyIds),
   ]);
 
   return (
@@ -56,6 +63,7 @@ export default async function Page({
       cash={cash}
       month={month ? { id: month.id, label: month.label, name: month.name } : null}
       can={budgetAbilities(actor.permissions)}
+      initialStatus={status}
     />
   );
 }

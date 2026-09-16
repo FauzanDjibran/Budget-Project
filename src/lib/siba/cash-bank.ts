@@ -203,10 +203,18 @@ export type CashBookSummary = {
  * Balances are reported per currency and never summed across them: converting
  * would need an exchange rate, and there is no authoritative source for one
  * yet. A single fabricated total is worse than four honest ones.
+ *
+ * `companyIds` is the reader's scope, handed in by the page exactly as the
+ * report readers take it (CLAUDE.md §12) — a resource belongs to a Company,
+ * and a summary that read every resource in the database would state the
+ * anak's cash to someone holding only induk access. An empty scope therefore
+ * summarises nothing rather than everything.
  */
-export async function cashBookSummary(): Promise<CashBookSummary> {
+export async function cashBookSummary(
+  companyIds: number[]
+): Promise<CashBookSummary> {
   const resources = await prisma.mCashBank.findMany({
-    where: { status: "Active" },
+    where: { status: "Active", company_id: { in: companyIds } },
     orderBy: [{ company_id: "asc" }, { id: "asc" }],
     select: {
       id: true,

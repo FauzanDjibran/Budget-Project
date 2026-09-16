@@ -46,7 +46,7 @@ export const MODULES: NavModule[] = [
     key: "dashboard",
     name: "Dashboard",
     icon: "grid",
-    desc: "Ringkasan data master dan hal yang perlu ditindaklanjuti.",
+    desc: "Komitmen yang berjalan, posisi kas, dan posisi terhadap pihak lain.",
     permission: "MENU_DASHBOARD_ACCESS",
   },
   {

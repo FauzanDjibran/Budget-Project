@@ -49,6 +49,7 @@ export function TransactionList({
   summary,
   cash,
   can,
+  initialStatus,
 }: {
   transactions: TransactionRow[];
   refs: FinanceRefs;
@@ -56,12 +57,14 @@ export function TransactionList({
   summary: TransactionSummary;
   cash: CashBookSummary;
   can: TransactionAbilities;
+  /** Status the page was opened filtered to, from `?status=` — see the route. */
+  initialStatus?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
 
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(initialStatus ?? "");
   const [type, setType] = useState("");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);

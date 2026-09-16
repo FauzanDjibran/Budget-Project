@@ -12,19 +12,27 @@ import { transactionAbilities } from "@/lib/siba/transaction-workflow";
 
 export const dynamic = "force-dynamic";
 
-export default async function Page() {
+/**
+ * `?status=` opens the register already filtered, so a link can name a queue
+ * rather than dropping the reader into the whole list.
+ */
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
   const actor = await requirePermission(
     "CASH_BANK_TRANSACTION_VIEW",
     "/finance/cash-bank-transaction"
   );
 
-  const transactions = await listTransactions(
-    await accessibleCompanyIds(actor.permissions)
-  );
+  const { status } = await searchParams;
+  const companyIds = await accessibleCompanyIds(actor.permissions);
+  const transactions = await listTransactions(companyIds);
   const [refs, summary, cash] = await Promise.all([
     financeRefs(),
     summariseTransactions(transactions),
-    cashBookSummary(),
+    cashBookSummary(companyIds),
   ]);
 
   return (
@@ -35,6 +43,7 @@ export default async function Page() {
       summary={summary}
       cash={cash}
       can={transactionAbilities(actor.permissions)}
+      initialStatus={status}
     />
   );
 }

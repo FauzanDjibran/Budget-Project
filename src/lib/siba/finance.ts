@@ -1496,6 +1496,10 @@ export async function writeFundedPosting(
       updated_by: actorId,
     },
   });
+  // Posted, but by the induk confirming rather than by this document's own Post
+  // button — the history says which, because for the anak those are different
+  // events with different hands on them.
+  await auditTransaction(tx, plan.transactionId, "post_funded", actorId);
 
   return { closed };
 }
@@ -1524,6 +1528,7 @@ export async function markTransactionPending(
     where: { id: transactionId },
     data: { status: "Pending", updated_by: actorId },
   });
+  await auditTransaction(tx, transactionId, "submit", actorId);
 }
 
 export async function markTransactionCancelled(
@@ -1534,6 +1539,33 @@ export async function markTransactionCancelled(
   await tx.finCashBankTransaction.update({
     where: { id: transactionId },
     data: { status: "Cancelled", updated_by: actorId },
+  });
+  await auditTransaction(tx, transactionId, "cancel", actorId);
+}
+
+/**
+ * A status write that another module triggers still belongs in the document's
+ * own history.
+ *
+ * It is written here rather than by the caller for the same reason the status
+ * is: fin_cash_bank_transaction is Finance's table, and the row has to move in
+ * the same transaction as the status it describes — otherwise a rolled-back
+ * funding would leave a history entry for something that never happened.
+ */
+async function auditTransaction(
+  tx: Prisma.TransactionClient,
+  transactionId: number,
+  event: string,
+  actorId: number
+): Promise<void> {
+  await tx.auditLog.create({
+    data: {
+      entity_key: "fin_cash_bank_transaction",
+      row_id: transactionId,
+      action: "UPDATE",
+      event,
+      by: actorId,
+    },
   });
 }
 
@@ -1639,4 +1671,119 @@ export function purposeOptions(): PurposeOption[] {
     budgetCategory: p.budgetCategory,
     partnerCategory: p.partnerCategory,
   }));
+}
+
+// ---------------------------------------------------- pending commitments
+
+/**
+ * A document frozen at `Pending`: the anak has asked for the money and the
+ * induk has not yet confirmed. Draft documents are deliberately not here — a
+ * draft is a preparation document that may never happen, and its claim on a
+ * Budget is released simply by deleting a line, so it commits nothing.
+ */
+export type PendingDocumentRow = {
+  id: number;
+  transactionNo: string;
+  companyId: number;
+  companyLabel: string;
+  currencyId: number;
+  currencyLabel: string;
+  transactionType: "In" | "Out";
+  purposeLabel: string;
+  amount: number;
+  lineCount: number;
+  /** When the document was submitted — `Pending` is written once and frozen. */
+  since: string;
+};
+
+export type PendingCommitments = {
+  count: number;
+  totals: MoneyTotal[];
+  inTotals: MoneyTotal[];
+  outTotals: MoneyTotal[];
+  rows: PendingDocumentRow[];
+  /**
+   * Budget id -> how much of it a pending document has already claimed.
+   *
+   * This is what stops the dashboard counting the same money twice.
+   * `realized_amount` is written at Post, so a Budget behind a pending
+   * document still reports its whole outstanding — and that outstanding is
+   * simultaneously sitting in this queue, waiting on the induk. The caller
+   * subtracts one from the other.
+   */
+  claims: Map<number, number>;
+};
+
+export async function pendingCommitments(
+  companyIds: number[]
+): Promise<PendingCommitments> {
+  const empty: PendingCommitments = {
+    count: 0,
+    totals: [],
+    inTotals: [],
+    outTotals: [],
+    rows: [],
+    claims: new Map(),
+  };
+  if (!companyIds.length) return empty;
+
+  const docs = await prisma.finCashBankTransaction.findMany({
+    where: { status: "Pending", company_id: { in: companyIds } },
+    include: {
+      company: { select: { company_label: true } },
+      currency: { select: { currency_label: true } },
+      _count: { select: { lines: true } },
+    },
+  });
+  if (!docs.length) return empty;
+
+  const budgetDocType = await budgetDocTypeId();
+  const lines = await prisma.finCashBankTransactionLine.findMany({
+    where: {
+      transaction_id: { in: docs.map((d) => d.id) },
+      source_doc_type_id: budgetDocType,
+    },
+    select: { source_doc_id: true, settlement_amount: true },
+  });
+
+  const claims = new Map<number, number>();
+  for (const l of lines) {
+    claims.set(
+      l.source_doc_id,
+      (claims.get(l.source_doc_id) ?? 0) + l.settlement_amount.toNumber()
+    );
+  }
+
+  const rows: PendingDocumentRow[] = docs.map((t) => ({
+    id: t.id,
+    transactionNo: t.transaction_no,
+    companyId: t.company_id,
+    companyLabel: t.company.company_label,
+    currencyId: t.currency_id,
+    currencyLabel: t.currency.currency_label,
+    transactionType: t.transaction_type as "In" | "Out",
+    purposeLabel: purposeOf(t.purpose)?.label ?? t.purpose,
+    amount: t.transaction_amount.toNumber(),
+    lineCount: t._count.lines,
+    since: t.updated_at.toISOString(),
+  }));
+
+  const money = (r: PendingDocumentRow) => ({
+    currencyId: r.currencyId,
+    currencyLabel: r.currencyLabel,
+    amount: r.amount,
+  });
+
+  return {
+    count: rows.length,
+    totals: sumByCurrency(rows.map(money)),
+    inTotals: sumByCurrency(
+      rows.filter((r) => r.transactionType === "In").map(money)
+    ),
+    outTotals: sumByCurrency(
+      rows.filter((r) => r.transactionType === "Out").map(money)
+    ),
+    rows: rows.sort((a, b) => a.since.localeCompare(b.since)),
+    claims,
+  };
 }

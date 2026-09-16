@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
+import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { nextDocumentNumber } from "./document-number";
 import type { PeriodRange } from "./period";
 import {
@@ -9,6 +10,7 @@ import {
   subledgerByKey,
   subledgerMovement,
   type SubledgerDef,
+  type SubledgerNature,
 } from "./subledger-catalogue";
 
 /**
@@ -420,4 +422,68 @@ export async function subledgerEntryCounts(): Promise<Map<string, number>> {
   const counts = new Map<string, number>(SUBLEDGERS.map((s) => [s.key as string, 0]));
   for (const r of rows) counts.set(r.book, r._count._all);
   return counts;
+}
+
+/**
+ * What each book adds up to, per currency.
+ *
+ * One figure per book per currency, never one figure per book: a Partner owing
+ * in two currencies holds two positions and nothing converts between them
+ * (CLAUDE.md §10 rule 56). Subjects whose position has settled to nil are
+ * dropped, so a book reports only where something is still standing.
+ *
+ * Scoped by Company through the Partner, which is what a subject *is* — the
+ * book itself stores no company, because the Partner it names already belongs
+ * to one.
+ */
+export type SubledgerPosition = {
+  key: string;
+  name: string;
+  slug: string;
+  icon: SubledgerDef["icon"];
+  permission: SubledgerDef["permission"];
+  nature: SubledgerNature;
+  closingLabel: string;
+  /** How many subjects still stand in this book. */
+  subjects: number;
+  totals: MoneyTotal[];
+};
+
+export async function subledgerPositions(
+  companyIds: number[]
+): Promise<SubledgerPosition[]> {
+  const balances = companyIds.length
+    ? await prisma.subLedgerBalance.findMany({
+        where: { partner: { company_id: { in: companyIds } } },
+        select: {
+          book: true,
+          balance: true,
+          currency_id: true,
+          currency: { select: { currency_label: true } },
+        },
+      })
+    : [];
+
+  return SUBLEDGERS.map((def) => {
+    const mine = balances.filter(
+      (b) => b.book === def.key && b.balance.toNumber() !== 0
+    );
+    return {
+      key: def.key,
+      name: def.name,
+      slug: def.slug,
+      icon: def.icon,
+      permission: def.permission,
+      nature: def.nature,
+      closingLabel: def.closingLabel,
+      subjects: mine.length,
+      totals: sumByCurrency(
+        mine.map((b) => ({
+          currencyId: b.currency_id,
+          currencyLabel: b.currency.currency_label,
+          amount: b.balance.toNumber(),
+        }))
+      ),
+    };
+  });
 }

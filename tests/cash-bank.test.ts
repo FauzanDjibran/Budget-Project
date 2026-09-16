@@ -213,7 +213,7 @@ describe("the balance never disagrees with the ledger", () => {
 describe("the summary reports per currency and never combines them", () => {
   test("a resource's balance appears under its own currency", async () => {
     const id = await makeCashBank(3_000_000);
-    const summary = await cashBookSummary();
+    const summary = await cashBookSummary([company]);
 
     const mine = summary.rows.find((r) => r.cashBankId === id);
     assert.ok(mine, "an active resource must appear in the summary");
@@ -233,11 +233,23 @@ describe("the summary reports per currency and never combines them", () => {
   test("an inactive resource is left out of spendable capacity", async () => {
     const id = await makeCashBank(7_000_000);
     await prisma.mCashBank.update({ where: { id }, data: { status: "Inactive" } });
-    const summary = await cashBookSummary();
+    const summary = await cashBookSummary([company]);
     assert.equal(
       summary.rows.some((r) => r.cashBankId === id),
       false
     );
     await prisma.mCashBank.update({ where: { id }, data: { status: "Active" } });
+  });
+
+  test("a resource outside the reader's Companies is not summarised", async () => {
+    const id = await makeCashBank(11_000_000);
+    const summary = await cashBookSummary([]);
+    assert.equal(
+      summary.rows.some((r) => r.cashBankId === id),
+      false,
+      "an empty scope summarises nothing, never everything — a cash balance " +
+        "belongs to a Company, and this reader may see none of them"
+    );
+    assert.equal(summary.resources, 0);
   });
 });

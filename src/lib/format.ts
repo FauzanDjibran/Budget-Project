@@ -46,6 +46,26 @@ export function formatTimestamp(value: Date | string | null | undefined): string
   return `${formatDate(d)} • ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
 }
 
+/**
+ * How long something has been waiting — `Hari ini`, `1 hari`, `12 hari`.
+ *
+ * Whole days only, counted from UTC midnight to UTC midnight, so a record
+ * created late yesterday reads as one day rather than as a fraction that
+ * rounds differently depending on when the page is opened. It lives here
+ * because it is date arithmetic turned into display text, and nothing outside
+ * this module formats either (CLAUDE.md §12).
+ */
+export function formatAgeDays(value: Date | string | null | undefined): string {
+  if (!value) return "";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const midnight = (x: Date) =>
+    Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
+  const days = Math.floor((midnight(new Date()) - midnight(d)) / 86_400_000);
+  if (days <= 0) return "Hari ini";
+  return `${formatNumber(days)} hari`;
+}
+
 /** `2026-09-02` -> `02/09/2026`, for a date field's editable text. */
 export function toDisplayDate(iso: string | null | undefined): string {
   if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return "";

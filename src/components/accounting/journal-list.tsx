@@ -4,8 +4,10 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { CompanyFilter, NoCompanyAccess } from "@/components/master/company-filter";
 import { SearchField } from "@/components/ui/search-field";
 import { formatDate, formatMoney } from "@/lib/format";
+import type { Company } from "@/lib/siba/company-access";
 import type { JournalRow } from "@/lib/siba/journal";
 
 /**
@@ -16,12 +18,27 @@ import type { JournalRow } from "@/lib/siba/journal";
  * button and no row actions beyond opening the entry. A correction is a new
  * business transaction, which produces a new journal of its own.
  *
+ * One Company at a time, named by the picker in the toolbar. Each Company
+ * keeps its own books, so a register holding both reads as duplicated rows —
+ * and with the Company stated once above the table, the column that repeated
+ * that same label on every row earned nothing.
+ *
  * Each row states both sides. They are always equal — `postJournal` refuses to
  * write a journal whose debits and credits differ — so a row where they are not
  * means something wrote the tables outside the application, and the row says so
  * rather than quietly showing two numbers.
  */
-export function JournalList({ journals }: { journals: JournalRow[] }) {
+export function JournalList({
+  journals,
+  companies,
+  companyId,
+}: {
+  journals: JournalRow[];
+  /** The Companies this reader may choose between. */
+  companies: Company[];
+  /** The one being shown, or null when the reader may see none. */
+  companyId: number | null;
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
 
@@ -31,8 +48,7 @@ export function JournalList({ journals }: { journals: JournalRow[] }) {
     return journals.filter(
       (j) =>
         j.journalNo.toLowerCase().includes(q) ||
-        j.description.toLowerCase().includes(q) ||
-        j.companyLabel.toLowerCase().includes(q)
+        j.description.toLowerCase().includes(q)
     );
   }, [journals, q]);
 
@@ -63,13 +79,21 @@ export function JournalList({ journals }: { journals: JournalRow[] }) {
         </p>
       </div>
 
+      {/* No Company open to this reader means nothing to filter or search, so
+          the card carries the refusal alone rather than an empty table that
+          would read as "belum ada journal". */}
+      {companyId == null ? (
+        <div className="card">
+          <NoCompanyAccess what="Journal" />
+        </div>
+      ) : (
       <div className="card">
         <div className="toolbar">
+          <CompanyFilter options={companies} selectedId={companyId} />
           <SearchField
-            grow
             value={query}
             onChange={setQuery}
-            placeholder="Cari nomor journal, keterangan, atau Company…"
+            placeholder="Cari nomor journal atau keterangan…"
           />
           <span className="count">
             <b>{rows.length}</b> journal
@@ -84,7 +108,6 @@ export function JournalList({ journals }: { journals: JournalRow[] }) {
                   <th style={{ width: 118 }}>Nomor</th>
                   <th style={{ width: 106 }}>Tanggal Posting</th>
                   <th>Keterangan</th>
-                  <th style={{ width: 96 }}>Company</th>
                   <th style={{ width: 150 }}>Sumber</th>
                   <th className="num" style={{ width: 64 }}>
                     Baris
@@ -113,9 +136,6 @@ export function JournalList({ journals }: { journals: JournalRow[] }) {
                       </td>
                       <td>{formatDate(j.postingDate)}</td>
                       <td className="pri">{j.description}</td>
-                      <td>
-                        <span className="bdg t-slate">{j.companyLabel}</span>
-                      </td>
                       <td className="mut">{j.sourceDocLabel ?? "—"}</td>
                       <td className="num">{j.lineCount}</td>
                       <td className="num">{formatMoney(j.debit, "")}</td>
@@ -154,6 +174,7 @@ export function JournalList({ journals }: { journals: JournalRow[] }) {
           </div>
         )}
       </div>
+      )}
     </>
   );
 }

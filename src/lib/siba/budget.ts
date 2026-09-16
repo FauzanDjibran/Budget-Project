@@ -518,11 +518,16 @@ export async function realizeBudgets(
         updated_by: actorId,
       },
     });
+    // Realization is a consequence of somebody posting a document, not a
+    // decision taken against the Budget, and closing is the same consequence
+    // reaching the planned amount (CLAUDE.md §10 rule 36). The history names
+    // which of the two happened so the trace does not read as a manual edit.
     await tx.auditLog.create({
       data: {
         entity_key: "bud_budget",
         row_id: row.id,
         action: "UPDATE",
+        event: willClose ? "close" : "realize",
         by: actorId,
       },
     });
@@ -588,4 +593,151 @@ export async function summarise(rows: BudgetRow[]): Promise<BudgetSummary> {
       unrealized.map((b) => money(b, b.budget_amount - b.realized_amount))
     ),
   };
+}
+
+// -------------------------------------------------------- commitment queues
+
+/**
+ * One budget as the dashboard's work queue states it: what it is, how much of
+ * it is still committed but not yet cash, and how long it has been sitting.
+ *
+ * `amount` is the committed figure for the stage the row is in — the whole
+ * plan while it is waiting for approval, and only what is left outstanding
+ * once it has been approved. That difference is what keeps the two queues from
+ * counting the same money twice.
+ */
+export type CommitmentRow = {
+  id: number;
+  budgetNo: string;
+  budgetDate: string;
+  description: string;
+  companyId: number;
+  companyLabel: string;
+  currencyId: number;
+  currencyLabel: string;
+  budgetType: "In" | "Out";
+  amount: number;
+  /** When the budget last moved — submission, approval, or a realization. */
+  since: string;
+};
+
+export type CommitmentQueue = {
+  count: number;
+  totals: MoneyTotal[];
+  /** Out minus In, per currency — what the queue does to cash if it all lands. */
+  outTotals: MoneyTotal[];
+  inTotals: MoneyTotal[];
+  rows: CommitmentRow[];
+};
+
+const emptyQueue = (): CommitmentQueue => ({
+  count: 0,
+  totals: [],
+  outTotals: [],
+  inTotals: [],
+  rows: [],
+});
+
+function toQueue(rows: CommitmentRow[]): CommitmentQueue {
+  const money = (r: CommitmentRow) => ({
+    currencyId: r.currencyId,
+    currencyLabel: r.currencyLabel,
+    amount: r.amount,
+  });
+  return {
+    count: rows.length,
+    totals: sumByCurrency(rows.map(money)),
+    outTotals: sumByCurrency(
+      rows.filter((r) => r.budgetType === "Out").map(money)
+    ),
+    inTotals: sumByCurrency(
+      rows.filter((r) => r.budgetType === "In").map(money)
+    ),
+    // Oldest first: a queue is read to find what has been waiting longest.
+    rows: [...rows].sort((a, b) => a.since.localeCompare(b.since)),
+  };
+}
+
+type QueueRecord = {
+  id: number;
+  budget_no: string;
+  budget_date: Date;
+  description: string;
+  company_id: number;
+  currency_id: number;
+  budget_type: string;
+  budget_amount: { toNumber(): number };
+  realized_amount: { toNumber(): number };
+  updated_at: Date;
+  company: { company_label: string };
+  currency: { currency_label: string };
+};
+
+const toCommitment = (b: QueueRecord, amount: number): CommitmentRow => ({
+  id: b.id,
+  budgetNo: b.budget_no,
+  budgetDate: day(b.budget_date),
+  description: b.description,
+  companyId: b.company_id,
+  companyLabel: b.company.company_label,
+  currencyId: b.currency_id,
+  currencyLabel: b.currency.currency_label,
+  budgetType: b.budget_type as "In" | "Out",
+  amount,
+  since: b.updated_at.toISOString(),
+});
+
+/**
+ * Budgets submitted and still waiting for a decision.
+ *
+ * This is the first stage of the commitment funnel: an intent somebody has
+ * committed to on paper, blocked on an approver. Draft and Rejected budgets
+ * are deliberately absent — a draft is a preparation document that may never
+ * happen, so counting it would inflate every figure below it.
+ */
+export async function submittedCommitments(
+  companyIds: number[]
+): Promise<CommitmentQueue> {
+  if (!companyIds.length) return emptyQueue();
+  const rows = await prisma.budBudget.findMany({
+    where: { status: "Submitted", company_id: { in: companyIds } },
+    include: {
+      company: { select: { company_label: true } },
+      currency: { select: { currency_label: true } },
+    },
+  });
+  return toQueue(rows.map((b) => toCommitment(b, b.budget_amount.toNumber())));
+}
+
+/**
+ * Approved budgets with money still to spend against them.
+ *
+ * The amount is what is left — `budget_amount - realized_amount` — because
+ * `realized_amount` is written only at Post, so a partly realized plan is
+ * partly cash already and only the remainder is still a commitment.
+ *
+ * What a *pending* document has claimed is subtracted by the caller
+ * (`dashboard.ts`), not here: this module knows nothing about documents, and
+ * Budget must not learn about Finance (CLAUDE.md §3).
+ */
+export async function approvedCommitments(
+  companyIds: number[]
+): Promise<CommitmentQueue> {
+  if (!companyIds.length) return emptyQueue();
+  const rows = await prisma.budBudget.findMany({
+    where: { status: "Open", company_id: { in: companyIds } },
+    include: {
+      company: { select: { company_label: true } },
+      currency: { select: { currency_label: true } },
+    },
+  });
+  return toQueue(
+    rows
+      .map((b) =>
+        toCommitment(b, b.budget_amount.toNumber() - b.realized_amount.toNumber())
+      )
+      // A plan realized to the last rupiah closes, so this is belt and braces
+      // for one over-realized by a rounding of its own.
+      .filter((r) => r.amount > 0)
+  );
 }

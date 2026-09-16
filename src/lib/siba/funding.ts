@@ -311,6 +311,7 @@ export async function raiseFundingRequest(
         entity_key: "fin_funding_request",
         row_id: created.id,
         action: "TAMBAH",
+        event: "request",
         by: actorId,
       },
     });
@@ -347,10 +348,25 @@ export async function withdrawFundingRequest(
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.finFundingRequest.updateMany({
+    const open = await tx.finFundingRequest.findFirst({
       where: { transaction_id: transactionId, status: "Open" },
-      data: { status: "Cancelled", updated_by: actorId },
+      select: { id: true },
     });
+    if (open) {
+      await tx.finFundingRequest.update({
+        where: { id: open.id },
+        data: { status: "Cancelled", updated_by: actorId },
+      });
+      await tx.auditLog.create({
+        data: {
+          entity_key: "fin_funding_request",
+          row_id: open.id,
+          action: "UPDATE",
+          event: "withdraw",
+          by: actorId,
+        },
+      });
+    }
     await markTransactionCancelled(tx, transactionId, actorId);
   });
 
@@ -442,6 +458,7 @@ export async function confirmFundingRequest(
         entity_key: "fin_funding_request",
         row_id: request.id,
         action: "UPDATE",
+        event: "confirm",
         by: actorId,
       },
     });
@@ -492,4 +509,30 @@ export async function providerCashBanks(currencyId: number): Promise<
     currencyLabel: c.currency.currency_label,
     balance: c.book_balance?.balance.toNumber() ?? 0,
   }));
+}
+
+// ------------------------------------------------------------ open requests
+
+/**
+ * Requests still waiting for the induk's confirmation, oldest first.
+ *
+ * Narrowed to the Companies the reader may see — unlike `listFundingRequests`,
+ * which is deliberately unscoped because the register must show both halves of
+ * every row. Here the scope is the point: the dashboard states this queue as
+ * part of an arithmetic that has to agree with the Budgets it is scoped to, so
+ * counting a request whose Budgets the reader cannot see would put money in
+ * the funnel that appears nowhere else on the page.
+ */
+export async function openFundingRequests(
+  companyIds: number[]
+): Promise<FundingRequestRow[]> {
+  if (!companyIds.length) return [];
+  const rows = await prisma.finFundingRequest.findMany({
+    where: { status: "Open" },
+    orderBy: [{ id: "asc" }],
+  });
+  const withDocs = await withTransactions(rows);
+  return withDocs.filter(
+    (r) => r.transaction && companyIds.includes(r.transaction.company_id)
+  );
 }
