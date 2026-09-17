@@ -638,12 +638,23 @@ export function TransactionForm({
                       <Select
                         value={values.purpose}
                         searchable
+                        listWidth="wide"
                         invalid={Boolean(errors.purpose)}
                         placeholder="Pilih Purpose…"
+                        // A Purpose *is* direction x Category x Partner
+                        // Category, and its label is that triple written as a
+                        // sentence — so the Category chip repeated a word the
+                        // label already said while starving it of the width it
+                        // needed to reach its last one, which is where every
+                        // label names the Partner Category. The group states
+                        // the Category once, the chip states the direction
+                        // (which "Pembayaran", "Pemberian" and "Pembelian" all
+                        // imply without spelling), and the label gets the rest.
                         options={purposes.map((p) => ({
                           value: p.key,
                           label: p.label,
-                          hint: `${TRANSACTION_TYPE_TEXT[p.direction]} · ${p.budgetCategory}`,
+                          group: p.budgetCategory,
+                          hint: TRANSACTION_TYPE_TEXT[p.direction],
                         }))}
                         onChange={(v) => set("purpose", v)}
                       />

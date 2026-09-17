@@ -579,7 +579,8 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Summary cards | **None.** Each fact sits where it is read; a closing note about the record's state is a `.fnote` at the foot of its card |
 | Read-only fields | `.ro` — presented as text, **never disabled inputs** |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options. **The control itself is the search box**: opening turns it into a text input in place, and the popup carries no filter bar of its own |
-| Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`). Searchable once the list is long, and searched the same way — in the trigger |
+| Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`). Searchable once the list is long, and searched the same way — in the trigger. A long list of combinations takes `group` on its options and `listWidth="wide"` |
+| Dropdown search | Every word must match, across label + hint + group. A list of facets is searched by naming facets — `pengeluaran cabang` — and one substring against the whole row finds nothing |
 | Popups | `AnchoredPopup` draws every list and calendar — portalled to `document.body`, placed from the trigger's rect, flipping and clamping to the room it has. **Never positioned inside its control** |
 | Dates | `DateInput` — **never `<input type="date">`**; types and shows `dd/mm/yyyy`, opens the app's own calendar |
 | Amounts | `MoneyInput` — **never `<input type="number">`**; mono, right-aligned, grouped in thousands as it is typed, currency label inside the box. `size="sm"` inside a table |
@@ -1267,6 +1268,41 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Do not change unless:** explicitly instructed. **Never put a filter box
   back inside a popup**, and do not give one screen's dropdown a search that
   works differently from the rest.
+- **Status:** Frozen, current.
+
+### A list of combinations is grouped, and searched by its facets (FROZEN)
+- **Decision:** A `Select` whose options are combinations rather than names
+  takes `group` on each option and `listWidth="wide"`. The list emits a heading
+  each time `group` changes — sticky, so the heading is on screen while its own
+  rows are read — and the search requires **every word** of the query to match
+  somewhere in label + hint + group, rather than the whole query to match as one
+  substring. `filterOptions` in `components/ui/select.tsx` is that rule, exported
+  and pure so it can be driven directly. Both are opt-in: a caller that passes
+  neither is byte-identical to before.
+- **Reason:** Transaction Purpose is 22 rows and showed why. A Purpose *is*
+  direction × Budget Category × Partner Category, and its label is that triple
+  written as a sentence — so the row put "Penerimaan Titipan dari Cabang" beside
+  a chip reading "Penerimaan · Titipan", saying each word twice while starving
+  the label of the width it needed to reach its **last** one. Every label ends
+  with its Partner Category, so the 320px cap truncated precisely the facet that
+  appeared nowhere else: "Penerimaan Titipan dari Stakeh…", on row after row.
+  The search failed the same way from the other side — an operator picks a
+  Purpose by naming facets, and "pengeluaran cabang" matched nothing, because no
+  row spells the two in that order.
+- **Impact:** The Category is stated once per group instead of 22 times, the
+  chip carries the direction alone — the one facet "Pembayaran", "Pemberian",
+  "Pembelian" and "Pengembalian" all imply without spelling — and the label gets
+  the rest of a 440px list. Options must arrive **already ordered by group**: the
+  list emits a heading on change rather than sorting, so the caller keeps the
+  order and a group filtered down to nothing simply never gets a heading.
+  `tests/purpose-picker.test.ts` holds the search over the real 22, and
+  `tests/design-system.test.ts` holds the heading — `.cbgh` is rendered only by
+  `Select`, and must stay `position:sticky` with an opaque background, because a
+  heading that scrolls away is not a landmark.
+- **Do not change unless:** explicitly instructed. **Never put a facet in a chip
+  that the label already spells**, never widen a list past what its longest
+  option needs, do not let a screen draw its own group headings, and do not
+  return the search to a single substring test.
 - **Status:** Frozen, current.
 
 ### An account with children is a heading, not a destination (FROZEN)
@@ -2951,6 +2987,10 @@ process allowed to restate positions, and it is not built.
 - Do **not** hand-edit applied migrations or use `prisma db push`.
 - Do **not** run `npm run db:reset` against data the user cares about — it drops the
   database. `npm run db:seed` is the safe one and destroys nothing.
+- Do **not** run `npm run db:truncate-transactions -- --confirm` without being asked to.
+  It empties the documents and the books, and a Cash & Bank's Saldo Awal cannot be
+  re-entered afterwards — it is create-only. The flagless form reports and deletes
+  nothing; that is the one to run when checking what is there.
 - Do **not** make operational books derive from journal lines.
 - Do **not** write a test that assumes a particular business row exists. Build the
   fixture (`tests/helpers.ts`) and clean it up.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { Fragment, useId, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { AnchoredPopup } from "@/components/ui/anchored-popup";
 
@@ -20,6 +20,14 @@ import { AnchoredPopup } from "@/components/ui/anchored-popup";
  * to. A list short enough not to need filtering keeps a plain trigger, because
  * an input that filters nothing is a control that does nothing.
  *
+ * A long list can carry **groups** and ask for a **wider list**. Both are opt-in
+ * and neither changes a caller that does not pass them: options arrive already
+ * ordered, a header is emitted each time `group` changes, and filtering leaves
+ * headers only over the groups that still have options. They exist because a
+ * list of combinations — 22 Transaction Purposes, each a direction x category x
+ * partner category — is read by its facets, and stating the category once over
+ * a run of rows is what gives the label the width to finish its sentence.
+ *
  * `variant` maps to the trigger class the surrounding layout already expects,
  * so swapping a `<select>` for this changes no spacing:
  *
@@ -34,6 +42,13 @@ export type SelectOption = {
   label: string;
   /** Secondary text shown after the label in the list. */
   hint?: string;
+  /**
+   * The heading this option sits under. Options carrying one are expected to
+   * arrive already ordered by it — the list emits a header each time the value
+   * changes rather than sorting, so the caller keeps control of the order and a
+   * group whose every option is filtered out simply never gets a header.
+   */
+  group?: string;
   disabled?: boolean;
 };
 
@@ -43,6 +58,36 @@ const TRIGGER_CLASS = {
   compact: "psel",
   ctx: "ctxsel",
 } as const;
+
+/**
+ * How wide the list may get. `wide` is for lists whose options are sentences
+ * rather than names: the Transaction Purpose list is 22 phrases of up to 46
+ * characters, and at the default every one of them was cut off at its last
+ * word — which is exactly where it names the Partner Category.
+ */
+const LIST_MAX_WIDTH = { default: 320, wide: 440 } as const;
+
+/**
+ * The options a query leaves, in the order they were given.
+ *
+ * Every word must match somewhere, rather than the whole query matching as one
+ * substring. A list whose options are a combination of facets is searched by
+ * naming facets — "pengeluaran cabang" — and under a single-substring test that
+ * finds nothing, because no row spells the two in that order. A row is its
+ * label, its hint and the group it sits under: all three are on screen, so all
+ * three are things a reader will type.
+ *
+ * Exported and pure so the rule can be driven directly, the way the amount
+ * field's parsing is.
+ */
+export function filterOptions(options: SelectOption[], query: string): SelectOption[] {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return options;
+  return options.filter((o) => {
+    const haystack = `${o.label} ${o.hint ?? ""} ${o.group ?? ""}`.toLowerCase();
+    return terms.every((t) => haystack.includes(t));
+  });
+}
 
 export function Select({
   value,
@@ -56,6 +101,7 @@ export function Select({
   invalid,
   disabled,
   searchable,
+  listWidth = "default",
   title,
   ariaLabel,
 }: {
@@ -69,6 +115,7 @@ export function Select({
   disabled?: boolean;
   /** Turns the trigger into a filter box. Defaults on once the list is long. */
   searchable?: boolean;
+  listWidth?: keyof typeof LIST_MAX_WIDTH;
   title?: string;
   ariaLabel?: string;
 }) {
@@ -81,11 +128,7 @@ export function Select({
   const withSearch = searchable ?? options.length > 8;
   const searching = open && withSearch && !disabled;
 
-  const visible = options.filter((o) => {
-    if (!query) return true;
-    const q = query.toLowerCase();
-    return `${o.label} ${o.hint ?? ""}`.toLowerCase().includes(q);
-  });
+  const visible = filterOptions(options, query);
 
   const cls = [
     TRIGGER_CLASS[variant],
@@ -181,29 +224,35 @@ export function Select({
           setQuery("");
         }}
         className="cbpop"
-        maxWidth={320}
+        maxWidth={LIST_MAX_WIDTH[listWidth]}
       >
         <div className="l" id={listId} role="listbox">
           {visible.length ? (
-            visible.map((o) => (
-              <div
-                key={o.value}
-                role="option"
-                aria-selected={o.value === value}
-                className={`cbo${o.value === value ? " sel" : ""}${o.disabled ? " off" : ""}`}
-                onClick={() => {
-                  if (o.disabled) return;
-                  pick(o.value);
-                }}
-              >
-                <span className="nm">{o.label}</span>
-                {o.hint && <span className="lab">{o.hint}</span>}
-                {o.value === value && (
-                  <span className="tick">
-                    <Icon name="check" size={13} />
-                  </span>
+            visible.map((o, i) => (
+              <Fragment key={o.value}>
+                {o.group && o.group !== visible[i - 1]?.group && (
+                  <div className="cbgh" role="presentation">
+                    {o.group}
+                  </div>
                 )}
-              </div>
+                <div
+                  role="option"
+                  aria-selected={o.value === value}
+                  className={`cbo${o.value === value ? " sel" : ""}${o.disabled ? " off" : ""}`}
+                  onClick={() => {
+                    if (o.disabled) return;
+                    pick(o.value);
+                  }}
+                >
+                  <span className="nm">{o.label}</span>
+                  {o.hint && <span className="lab">{o.hint}</span>}
+                  {o.value === value && (
+                    <span className="tick">
+                      <Icon name="check" size={13} />
+                    </span>
+                  )}
+                </div>
+              </Fragment>
             ))
           ) : (
             <div className="cbe">Tidak ada pilihan yang cocok.</div>

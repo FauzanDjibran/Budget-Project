@@ -173,6 +173,32 @@ describe("one way to do each thing", () => {
     );
   });
 
+  test("a grouped list's heading is drawn by `Select`, and it sticks", () => {
+    const bad = files.filter(
+      (f) =>
+        !f.rel.endsWith("ui/select.tsx") &&
+        /className=\{?"?cbgh/.test(code(f.text))
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Group a dropdown by passing `group` on its options — a list that draws its own headings is a second dropdown."
+    );
+
+    const rule = css.match(/^\.cbpop \.cbgh\{([^}]*)\}/m);
+    assert.ok(rule, "`.cbpop .cbgh` should declare the group heading's box.");
+    assert.match(
+      rule![1],
+      /position:sticky/,
+      "A group heading that scrolls away is not a landmark — it must stay on screen while its own rows are read."
+    );
+    assert.match(
+      rule![1],
+      /background:/,
+      "It needs an opaque background, or the rows scroll through it."
+    );
+  });
+
   test("a tinted dialog icon takes its tone from a class", () => {
     const bad = files.filter((f) =>
       /className="mi"\s*\n?\s*style=/.test(code(f.text))
