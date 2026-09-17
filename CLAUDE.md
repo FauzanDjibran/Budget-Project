@@ -302,6 +302,11 @@ scripts/
   backfill-subledger.ts  One-off: replays already-posted Cash Bank Transactions
                          into the subject books, in document order and
                          idempotently. Run by hand, never by install or CI
+  truncate-transactions.ts  Empties every transaction store and leaves master
+                         and system data standing — the documents, the books
+                         and their audit rows, in one transaction. Reports and
+                         refuses without `--confirm`. Run by hand, never by
+                         install or CI
   sample-data.ts         Dev convenience: plausible Partners, a Chart of Accounts
                          and the account mappings to test against. **Not** the
                          seeder — ordinary inserts, run by hand, never by
@@ -424,6 +429,9 @@ npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
 npm run db:sample            # dev only: sample Partners + Chart of Accounts (NOT the seeder)
 npm run db:backfill-subledger  # one-off: subject books for already-posted documents
+npm run db:truncate-transactions          # reports what it would delete, deletes nothing
+npm run db:truncate-transactions -- --confirm  # DESTRUCTIVE: empties the documents and
+                                               # the books, keeps master + system data
 npm run db:reset             # DESTRUCTIVE: drop, re-migrate, reseed
 npx prisma generate          # regenerate client after schema changes
 npx prisma migrate dev       # create + apply a migration
@@ -2921,6 +2929,10 @@ process allowed to restate positions, and it is not built.
   sub-account — the two only work as a pair (§10 rules 77–78, §12).
 - Do **not** put a filter box inside a dropdown's popup. The control itself is
   the search box, in the `Combobox` and in a searchable `Select` alike (§8, §12).
+- Do **not** repeat in an option's chip a facet its label already spells, and do
+  **not** let a screen draw its own group headings or return a dropdown's search
+  to a single substring test. A list of combinations is grouped and searched by
+  every word (§8, §12).
 - Do **not** give a rate layer a dropdown again, or show anything but the kurs
   in the field once one is chosen. Four attributes do not fit on one option line
   (§12).
