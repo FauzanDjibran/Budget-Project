@@ -1121,34 +1121,48 @@ model FinFundingRequest {
 
 /// One trail for every table. Referenced loosely by entity key and row id
 /// rather than by FK, since it spans every table.
-/// Every journal this application writes is Posted the moment it exists: a
-/// journal is *produced by* a posting, never drafted towards one. `Draft` is
-/// carried because the DBML declares it and a future import path might stage
-/// one, but nothing in the application writes it — see CLAUDE.md §12.
+/// A journal produced by a business posting is `Posted` the moment it exists —
+/// it is the record of something that has already happened. A **manual**
+/// journal is typed by a person, so it is saved `Draft` first and reaches
+/// `Posted` through the same posting engine; `Cancelled` retires a draft that
+/// should not exist, since nothing in this application is deleted.
+///
+/// Only a `Posted` journal is accounting: the General Ledger, the Trial Balance
+/// and every balance reader filter on it. See CLAUDE.md §12.
 enum JournalStatus {
   Draft
   Posted
+  Cancelled
 }
 
-/// The accounting journal. Append-only and immutable: once written, a journal
-/// and its lines are never updated and never deleted. A correction is a new
-/// journal, exactly as a corrected business transaction is a new document.
+/// The accounting journal. A `Posted` journal is append-only and immutable:
+/// once posted, a journal and its lines are never updated and never deleted. A
+/// correction is a new journal, exactly as a corrected business transaction is
+/// a new document.
+///
+/// A manual journal is editable while it is still `Draft`, and a draft is not
+/// accounting — it moves nothing and no report can see it.
 ///
 /// Only the General Ledger derives from these lines. The operational books —
-/// the Cash Bank Book today, the subject ledgers later — are independent
-/// historical stores written alongside the journal, never from it (§2.5).
+/// the Cash Bank Book and the subject ledgers — are independent historical
+/// stores written alongside the journal, never from it (§2.5).
 model AccJournal {
   id                 Int           @id @default(autoincrement())
   journal_no         String        @unique
   /// The day the journal was posted. Never back-dated: a journal records when
-  /// the books were written, which is the moment the posting happened.
-  posting_date       DateTime      @db.Date
+  /// the books were written, which is the moment the posting happened. Null
+  /// while a manual journal is still a draft — it has not been written yet.
+  posting_date       DateTime?     @db.Date
   /// What produced this journal, for traceability back to the document.
   source_doc_type_id Int?
   source_doc_id      Int?
   company_id         Int
   description        String
   status             JournalStatus @default(Posted)
+  /// Typed by a person rather than produced by a document's posting. It is the
+  /// only kind of journal that is ever a draft, the only one that is editable,
+  /// and the only one whose accounts are narrowed by the control-account rule.
+  is_manual          Boolean       @default(false)
 
   created_by Int
   updated_by Int?

@@ -1,8 +1,10 @@
 import { notFound } from "next/navigation";
 import { JournalDetail } from "@/components/accounting/journal-detail";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 import { requirePermission } from "@/lib/siba/auth";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { getJournal } from "@/lib/siba/journal";
+import { journalAbilities } from "@/lib/siba/journal-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -22,5 +24,10 @@ export default async function Page({
   );
   if (!journal) notFound();
 
-  return <JournalDetail journal={journal} />;
+  return (
+    <>
+      <JournalDetail journal={journal} can={journalAbilities(actor.permissions)} />
+      <RecordHistoryCard entityKey="acc_journal" rowId={journal.id} />
+    </>
+  );
 }

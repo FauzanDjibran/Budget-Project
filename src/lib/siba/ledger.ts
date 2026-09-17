@@ -39,6 +39,31 @@ import type { PeriodRange } from "./period";
 
 export type Balance = "Debit" | "Kredit";
 
+/**
+ * Only a **Posted** journal is accounting.
+ *
+ * A manual journal is typed by a person and is saved `Draft` first, so
+ * `acc_journal` now holds rows that are not yet anybody's books. Every query in
+ * this file carries this filter: a draft that reached the General Ledger would
+ * be a figure nobody posted, and a draft reaching the Trial Balance would read
+ * as an imbalance — which is the one thing that report exists to make
+ * meaningful. `Cancelled` is excluded by the same filter, for the same reason.
+ */
+const POSTED = { status: "Posted" } as const;
+
+/**
+ * A Posted journal always carries its posting date — that is what Posted means.
+ * The column is nullable only so a manual journal can exist before it has been
+ * written, and every read here filters those out, so this states the invariant
+ * rather than papering over it.
+ */
+function postedOn(date: Date | null): Date {
+  if (!date) {
+    throw new Error("Journal berstatus Posted tanpa tanggal posting.");
+  }
+  return date;
+}
+
 /** Which way this account's balance moves, given the two sides. */
 export function signedMovement(
   normalBalance: string,
@@ -136,7 +161,10 @@ export async function generalLedgerReport(
 
   const [before, within] = await Promise.all([
     prisma.accJournalLine.findMany({
-      where: { account_id: { in: ids }, journal: { posting_date: { lt: from } } },
+      where: {
+        account_id: { in: ids },
+        journal: { ...POSTED, posting_date: { lt: from } },
+      },
       select: {
         account_id: true,
         debit_amount: true,
@@ -147,7 +175,7 @@ export async function generalLedgerReport(
     prisma.accJournalLine.findMany({
       where: {
         account_id: { in: ids },
-        journal: { posting_date: { gte: from, lte: to } },
+        journal: { ...POSTED, posting_date: { gte: from, lte: to } },
       },
       orderBy: [{ journal: { posting_date: "asc" } }, { journal_id: "asc" }, { sequence_no: "asc" }],
       include: {
@@ -187,7 +215,7 @@ export async function generalLedgerReport(
       entries.push({
         journalId: l.journal.id,
         journalNo: l.journal.journal_no,
-        date: l.journal.posting_date.toISOString(),
+        date: postedOn(l.journal.posting_date).toISOString(),
         description: l.description,
         partnerLabel: l.partner?.partner_label ?? null,
         debit: d,
@@ -276,7 +304,11 @@ export async function trialBalanceReport(
 
   const lines = await prisma.accJournalLine.findMany({
     where: {
-      journal: { company_id: { in: companyIds }, posting_date: { lte: to } },
+      journal: {
+        ...POSTED,
+        company_id: { in: companyIds },
+        posting_date: { lte: to },
+      },
     },
     select: {
       account_id: true,
@@ -311,7 +343,7 @@ export async function trialBalanceReport(
     const c = l.kredit_amount.toNumber();
     const signed = signedMovement(l.account.normal_balance, d, c);
 
-    if (l.journal.posting_date < from) {
+    if (postedOn(l.journal.posting_date) < from) {
       row.opening += signed;
     } else {
       row.debit += d;
@@ -411,7 +443,7 @@ export async function accountPositions(
       },
     }),
     prisma.accJournalLine.findMany({
-      where: { account_id: { in: accountIds } },
+      where: { account_id: { in: accountIds }, journal: POSTED },
       select: {
         account_id: true,
         debit_amount: true,

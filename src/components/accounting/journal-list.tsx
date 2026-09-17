@@ -10,14 +10,21 @@ import { formatDate, formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { Company } from "@/lib/siba/company-access";
 import type { JournalRow } from "@/lib/siba/journal";
+import {
+  JOURNAL_STATUS_BADGE,
+  type JournalAbilities,
+  type JournalStatus,
+} from "@/lib/siba/journal-workflow";
 
 /**
- * The Journal register.
+ * The Journal register — every journal, however it came to exist.
  *
- * Read-only by construction: a journal is written by a posting and is never
- * edited, deleted or reversed afterwards, so this list carries no create
- * button and no row actions beyond opening the entry. A correction is a new
- * business transaction, which produces a new journal of its own.
+ * Most are written by a document being posted and are `Posted` the moment they
+ * exist; they are never edited, deleted or reversed, and a correction is a new
+ * business transaction producing a journal of its own. A **manual** journal is
+ * the other kind: typed here, saved as a Draft, and posted through the same
+ * engine. Drafts sort to the top, because they are the only rows anybody still
+ * has something to do about.
  *
  * One Company at a time, named by the picker in the toolbar. Each Company
  * keeps its own books, so a register holding both reads as duplicated rows —
@@ -33,12 +40,14 @@ export function JournalList({
   journals,
   companies,
   companyId,
+  can,
 }: {
   journals: JournalRow[];
   /** The Companies this reader may choose between. */
   companies: Company[];
   /** The one being shown, or null when the reader may see none. */
   companyId: number | null;
+  can: JournalAbilities;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -69,14 +78,19 @@ export function JournalList({
               <Icon name="book" size={16} />
             </span>
             Journal
-            <span className="bdg t-slate">Append-only</span>
           </h1>
-          <div className="ph-act" />
+          <div className="ph-act">
+            {can.create && (
+              <Link className="btn primary" href="/accounting/journal/new">
+                <Icon name="plus" size={15} /> Journal Manual
+              </Link>
+            )}
+          </div>
         </div>
         <p className="ph-sub">
-          Journal akuntansi dibuat otomatis setiap kali dokumen diposting, dan
-          tidak dapat diubah, dihapus, atau dibalik. Koreksi dilakukan dengan
-          transaksi baru yang menghasilkan journal baru.
+          Journal dari posting dokumen bersifat final dan tidak dapat diubah.
+          Journal manual — penyusutan, akrual, reklasifikasi — disimpan sebagai
+          Draft lebih dulu dan masuk buku besar saat diposting.
         </p>
       </div>
 
@@ -107,6 +121,7 @@ export function JournalList({
               <thead>
                 <tr>
                   <th style={{ width: 118 }}>Nomor</th>
+                  <th style={{ width: 96 }}>Status</th>
                   <th style={{ width: 106 }}>Tanggal Posting</th>
                   <th>Keterangan</th>
                   <th style={{ width: 150 }}>Sumber</th>
@@ -135,14 +150,35 @@ export function JournalList({
                           {j.journalNo}
                         </Link>
                       </td>
-                      <td>{formatDate(j.postingDate)}</td>
+                      <td>
+                        <span
+                          className={`bdg ${
+                            JOURNAL_STATUS_BADGE[j.status as JournalStatus] ??
+                            "s-mute"
+                          }`}
+                        >
+                          {j.status}
+                        </span>
+                      </td>
+                      <td>
+                        {j.postingDate ? (
+                          formatDate(j.postingDate)
+                        ) : (
+                          <span className="dash">—</span>
+                        )}
+                      </td>
                       <td className="pri">{j.description}</td>
-                      <td className="mut">{j.sourceDocLabel ?? "—"}</td>
+                      {/* A manual journal has no source document — it is the
+                          source. Saying so in the same column keeps the two
+                          kinds readable without a column of its own. */}
+                      <td className="mut">
+                        {j.sourceDocLabel ?? (j.isManual ? "Manual" : "—")}
+                      </td>
                       <td className="num">{j.lineCount}</td>
                       <td className="num">{formatMoney(j.debit, BASE_CURRENCY_LABEL)}</td>
                       <td className="num">
                         {formatMoney(j.credit, BASE_CURRENCY_LABEL)}
-                        {!balanced && (
+                        {!balanced && j.status === "Posted" && (
                           <span className="bdg s-bad" style={{ marginLeft: 6 }}>
                             Tidak seimbang
                           </span>
@@ -163,14 +199,22 @@ export function JournalList({
             <p>
               {q
                 ? "Tidak ada journal yang mengandung kata kunci tersebut."
-                : "Journal terbentuk otomatis saat dokumen Finance diposting. Posting sebuah Cash Bank Transaction untuk melihat journal pertama."}
+                : "Journal terbentuk otomatis saat dokumen Finance diposting, atau dibuat sendiri sebagai Journal Manual."}
             </p>
-            {q && (
+            {q ? (
               <div className="cta">
                 <button className="btn" onClick={() => setQuery("")}>
                   Bersihkan pencarian
                 </button>
               </div>
+            ) : (
+              can.create && (
+                <div className="cta">
+                  <Link className="btn primary" href="/accounting/journal/new">
+                    <Icon name="plus" size={15} /> Journal Manual
+                  </Link>
+                </div>
+              )
             )}
           </div>
         )}

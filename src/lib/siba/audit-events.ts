@@ -10,7 +10,8 @@
  *
  * **The label is not stored.** Each lifecycle event resolves through the
  * workflow table that already owns it — `BUDGET_TRANSITIONS`,
- * `TRANSACTION_TRANSITIONS`, `FISCAL_YEAR_TRANSITIONS` — so the word a button
+ * `TRANSACTION_TRANSITIONS`, `JOURNAL_TRANSITIONS`,
+ * `FISCAL_YEAR_TRANSITIONS` — so the word a button
  * says and the word its history entry says are the same string, and adding a
  * transition is a row in one table rather than a row in one table plus a label
  * here plus a migration.
@@ -23,6 +24,7 @@ import type { IconName } from "@/components/icon";
 import { BUDGET_TRANSITIONS } from "./budget-workflow";
 import { FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
 import type { ActionTone } from "./header-actions";
+import { JOURNAL_TRANSITIONS } from "./journal-workflow";
 import { TRANSACTION_TRANSITIONS } from "./transaction-workflow";
 
 /** How an entry is drawn: its words, its icon, and its weight. */
@@ -117,6 +119,21 @@ const FUNDING_EVENTS: Record<string, AuditEventLabel> = {
   withdraw: { label: "Ditarik pemohon", icon: "block", tone: "danger" },
 };
 
+/**
+ * Journal: written by a posting, or typed and then posted.
+ *
+ * `create` reads as "dibuat" either way, because it is: an automatic journal is
+ * created already posted, and a manual one is created as a draft. The `post`
+ * row is what separates the two histories — an automatic journal never has one,
+ * and a manual journal's is the moment it became accounting.
+ */
+const JOURNAL_EVENTS: Record<string, AuditEventLabel> = {
+  ...COMMON,
+  create: { label: "Journal dibuat", icon: "book", tone: "neutral" },
+  post: fromTransition(JOURNAL_TRANSITIONS.post, "Diposting"),
+  cancel: fromTransition(JOURNAL_TRANSITIONS.cancel, "Dibatalkan"),
+};
+
 /** Fiscal Year: Draft → Open. Closed is not reachable yet (§13). */
 const FISCAL_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
@@ -149,7 +166,7 @@ const BY_ENTITY: Record<string, Record<string, AuditEventLabel>> = {
   fin_cash_bank_transaction: TRANSACTION_EVENTS,
   fin_funding_request: FUNDING_EVENTS,
   acc_fiscal_year: FISCAL_EVENTS,
-  acc_journal: { ...COMMON, create: { label: "Jurnal dibuat", icon: "book", tone: "neutral" } },
+  acc_journal: JOURNAL_EVENTS,
   sys_user: USER_EVENTS,
   sys_role: ROLE_EVENTS,
 };

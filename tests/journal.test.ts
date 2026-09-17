@@ -223,6 +223,9 @@ describe("a posting date is the day it was posted", () => {
       where: { id: result.id },
       select: { posting_date: true },
     });
+    // The column is nullable only so a manual journal can be drafted before it
+    // is written. A journal `postJournal` produced is Posted, so it has one.
+    assert.ok(row.posting_date, "a posted journal carries its posting date");
     assert.equal(row.posting_date.toISOString().slice(0, 10), today);
   });
 
@@ -325,16 +328,35 @@ describe("the trial balance balances", () => {
   });
 });
 
-describe("the Journal has no write capability of its own", () => {
-  test("the catalogue grants viewing and nothing else", () => {
+describe("the Journal's capabilities are the manual journal's", () => {
+  test("the catalogue grants exactly view, create, edit, post and cancel", () => {
     const journalPermissions = PERMISSION_CODES.filter((c) =>
       c.startsWith("JOURNAL_")
     );
     assert.deepEqual(
       journalPermissions,
-      ["JOURNAL_VIEW"],
-      "a journal is written by posting; there is nothing to create, edit or delete"
+      [
+        "JOURNAL_VIEW",
+        "JOURNAL_CREATE",
+        "JOURNAL_EDIT",
+        "JOURNAL_POST",
+        "JOURNAL_CANCEL",
+      ],
+      "the four write capabilities reach a manual journal's Draft and nothing else"
     );
+  });
+
+  test("there is no delete and no reversal", () => {
+    // A posted journal is final (concept doc §15): a correction is a new
+    // journal. A draft that should not exist is cancelled, which leaves its
+    // number behind — nothing in this application deletes.
+    const codes: readonly string[] = PERMISSION_CODES;
+    for (const forbidden of ["JOURNAL_DELETE", "JOURNAL_REVERSE"]) {
+      assert.ok(
+        !codes.includes(forbidden),
+        `${forbidden} would make a posted journal editable after the fact`
+      );
+    }
   });
 
   test("the new reports are in the catalogue and in the menu", () => {

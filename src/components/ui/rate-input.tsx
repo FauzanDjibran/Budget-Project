@@ -27,6 +27,7 @@ export function RateInput({
   onChange,
   /** The pair this rate converts, shown inside the box: `USD → IDR`. */
   pairLabel,
+  size = "field",
   invalid,
   disabled,
   placeholder = "0",
@@ -36,6 +37,8 @@ export function RateInput({
   value: string;
   onChange: (value: string) => void;
   pairLabel?: string;
+  /** `sm` where the rate sits inside a table row, as on a journal line. */
+  size?: "field" | "sm";
   invalid?: boolean;
   disabled?: boolean;
   placeholder?: string;
@@ -46,7 +49,8 @@ export function RateInput({
       value={value}
       onChange={onChange}
       currencyLabel={pairLabel}
-      labelWidth="pair"
+      labelWidth={pairLabel ? "pair" : "code"}
+      size={size}
       decimals={RATE_DECIMALS}
       invalid={invalid}
       disabled={disabled}

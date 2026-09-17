@@ -5,21 +5,35 @@ import { formatDate, formatForeignFace, formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { reportHref } from "@/lib/siba/reports";
 import type { JournalDetail as Detail } from "@/lib/siba/journal";
+import {
+  JOURNAL_STATUS_BADGE,
+  type JournalAbilities,
+  type JournalStatus,
+} from "@/lib/siba/journal-workflow";
+import { JournalActions } from "./journal-actions";
 
 /**
- * One journal, as it was posted.
+ * One journal.
  *
- * A server component, because there is nothing to interact with: a journal is
- * immutable from the moment it exists. No edit, no delete, no reverse — the
- * header carries a lock chip saying so rather than a disabled button pretending
- * the capability exists somewhere.
+ * A server component holding one client island: the page itself has nothing to
+ * interact with, because a **posted** journal is immutable from the moment it
+ * exists — no edit, no delete, no reverse. A manual journal that is still a
+ * Draft is the exception, and the header carries its Ubah, Post and Batalkan
+ * buttons; everything else gets a lock chip saying why there are none.
  *
  * The totals row is the point of the page. Debits and credits are equal on
- * every journal this application writes, and the row states both so the reader
+ * every journal this application posts, and the row states both so the reader
  * can see it rather than trust it.
  */
-export function JournalDetail({ journal }: { journal: Detail }) {
+export function JournalDetail({
+  journal,
+  can,
+}: {
+  journal: Detail;
+  can: JournalAbilities;
+}) {
   const balanced = Math.round(journal.debit * 100) === Math.round(journal.credit * 100);
+  const status = journal.status as JournalStatus;
 
   return (
     <>
@@ -37,13 +51,24 @@ export function JournalDetail({ journal }: { journal: Detail }) {
               <Icon name="book" size={16} />
             </span>
             <span className="docno">{journal.journalNo}</span>
-            <span className="bdg s-ok">{journal.status}</span>
-            {!balanced && <span className="bdg s-bad">Tidak seimbang</span>}
+            <span className={`bdg ${JOURNAL_STATUS_BADGE[status] ?? "s-mute"}`}>
+              {journal.status}
+            </span>
+            {journal.isManual && <span className="bdg t-vio">Manual</span>}
+            {/* An unposted draft does not balance yet and is not supposed to,
+                so the warning belongs only on a journal that is in the books. */}
+            {!balanced && status === "Posted" && (
+              <span className="bdg s-bad">Tidak seimbang</span>
+            )}
           </h1>
           <div className="ph-act">
-            <span className="lockchip">
-              <Icon name="lock" size={13} /> Journal tidak dapat diubah
-            </span>
+            <JournalActions
+              id={journal.id}
+              subject={journal.journalNo}
+              status={status}
+              isManual={journal.isManual}
+              can={can}
+            />
           </div>
         </div>
       </div>
@@ -53,7 +78,15 @@ export function JournalDetail({ journal }: { journal: Detail }) {
           <FormSection>
             <FormRow>
               <Field label="Tanggal Posting" span={3}>
-                <div className="ro">{formatDate(journal.postingDate)}</div>
+                <div className="ro">
+                  {journal.postingDate ? (
+                    formatDate(journal.postingDate)
+                  ) : (
+                    // A draft has none: the date is written when the books are,
+                    // and a journal is never back-dated.
+                    <span className="dash">belum diposting</span>
+                  )}
+                </div>
               </Field>
               <Field label="Company" span={3}>
                 <div className="ro">
@@ -137,7 +170,9 @@ export function JournalDetail({ journal }: { journal: Detail }) {
                 <td colSpan={5}>
                   {balanced
                     ? "Total — debit dan kredit seimbang"
-                    : "Total — TIDAK SEIMBANG"}
+                    : status === "Posted"
+                      ? "Total — TIDAK SEIMBANG"
+                      : "Total — belum seimbang, tidak dapat diposting"}
                 </td>
                 <td className="num">
                   {formatMoney(journal.debit, BASE_CURRENCY_LABEL)}
@@ -152,8 +187,9 @@ export function JournalDetail({ journal }: { journal: Detail }) {
       </div>
 
       <p className="foot-note">
-        Journal bersifat append-only: koreksi dilakukan dengan transaksi bisnis
-        baru yang menghasilkan journal tersendiri.
+        {status === "Draft"
+          ? "Draft belum masuk buku besar: General Ledger dan Trial Balance baru membacanya setelah diposting."
+          : "Journal yang sudah diposting bersifat final: koreksi dilakukan dengan journal baru."}
       </p>
     </>
   );

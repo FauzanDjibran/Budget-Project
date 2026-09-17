@@ -4,8 +4,10 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
+import { markControlAccount } from "@/lib/siba/records";
 import {
   isSystemDefaultKey,
+  systemDefaultDef,
   type SystemDefaultKey,
 } from "@/lib/siba/system-defaults";
 import {
@@ -42,6 +44,7 @@ export async function saveSystemDefaults(
 
   const clean: Partial<Record<SystemDefaultKey, string | null>> = {};
   const errors: Record<string, string> = {};
+  const accountsNamed: { key: SystemDefaultKey; id: number }[] = [];
 
   for (const [key, raw] of Object.entries(values)) {
     // A key the catalogue does not declare is not a setting, so there is
@@ -67,11 +70,24 @@ export async function saveSystemDefaults(
       continue;
     }
     clean[key] = String(n);
+    accountsNamed.push({ key, id: n });
   }
 
   if (Object.keys(errors).length) return { ok: false, errors };
 
   const changed = await writeSystemDefaults(clean, actorId);
+
+  // The bridge and FX settings do not prefill a control — they name where a
+  // posting lands. An account that decides a posting is written to by the
+  // posting engine alone, so it becomes a control account here and stops being
+  // reachable from a manual journal. The same reasoning as a Cash & Bank
+  // resource's account: what a book or an engine owns, a person does not type
+  // into (CLAUDE.md §12).
+  for (const named of accountsNamed) {
+    if (!changed.includes(named.key)) continue;
+    if (systemDefaultDef(named.key).ref !== "acc_account") continue;
+    await markControlAccount(named.id, actorId);
+  }
 
   for (const key of changed) {
     const row = await prisma.sysSetting.findUnique({

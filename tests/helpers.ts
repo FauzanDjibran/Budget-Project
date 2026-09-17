@@ -213,6 +213,10 @@ export async function makeAccount(options: {
   active?: boolean;
   parentId?: number | null;
   normalBalance?: "Debit" | "Kredit";
+  /** Reconciled against a book outside the General Ledger — see §10 rule 79. */
+  controlAccount?: boolean;
+  /** Names a Partner on every line, of this category. */
+  partnerCategoryLabel?: string | null;
 }): Promise<number> {
   const key = nextFixture();
   // A fixture account carries a real lineage code: it continues its parent
@@ -238,6 +242,11 @@ export async function makeAccount(options: {
       is_postable: options.postable ?? true,
       is_active: options.active ?? true,
       normal_balance: options.normalBalance ?? "Debit",
+      is_control_account: options.controlAccount ?? false,
+      require_partner: Boolean(options.partnerCategoryLabel),
+      partner_category_id: options.partnerCategoryLabel
+        ? await partnerCategoryId(options.partnerCategoryLabel)
+        : null,
       created_by: await systemUserId(),
     },
     select: { id: true },

@@ -76,7 +76,7 @@ or invariants that assume a particular row exists.
 | Dashboard | Done — the commitment funnel (submitted → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
-| Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
+| Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
@@ -85,7 +85,7 @@ or invariants that assume a particular row exists.
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Default Currency, the four intercompany bridge accounts, and each Company's FX difference account |
-| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Cash Bank Book, subject book, rate layer, FX kernel, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
+| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
 
@@ -152,7 +152,7 @@ of its own.
 | Currency rules | `src/lib/siba/currency.ts` | The base currency, which resource may settle which document, and where a kurs comes from (`identity` / `layer` / `entered`); client-safe |
 | Account numbering | `src/lib/siba/account-code.ts` | The dotted lineage code — parsing, segments, ordering; client-safe |
 | Company access | `src/lib/siba/company-access.ts` | Permissions -> the Companies a user may read; `server-only` |
-| Journal | `src/lib/siba/journal.ts` | Writes the one balanced journal a posting produces, `JRN-` numbering, reads it back; `server-only` |
+| Journal | `src/lib/siba/journal.ts` | The posting engine and the shared balance rule — writes the journal a posting produces, and the draft CRUD a manual journal is edited through. `JRN-` / `JUR-` numbering; `server-only` |
 | General Ledger | `src/lib/siba/ledger.ts` | General Ledger and Trial Balance over journal lines; `server-only` |
 | Permission catalogue | `src/lib/siba/permissions.ts` | Every capability in the system; client-safe |
 | Seeded roles | `src/lib/siba/roles.ts` | ADMIN / STAFF and their grants |
@@ -179,6 +179,8 @@ of its own.
 | Rate layers | `src/lib/siba/cash-bank-layers.ts` | A foreign resource's parcels of currency — `openLayer`, `drawFromLayer`, `reconcileLayers`, the layer report, `CBLY-` numbering. Owned by the Cash Bank Book, so it imports only the kernel; `server-only` |
 | Subledger catalogue | `src/lib/siba/subledger-catalogue.ts` | Which categories keep a subject book, which way each one moves; client-safe |
 | Subject books | `src/lib/siba/subledger.ts` | Append-only `sub_ledger` writes on both measures, the materialised position, `SBL-` numbering, the six reports; `server-only` |
+| Manual journal | `src/lib/siba/manual-journal.ts` | Which account a person may write to by hand, which line needs a Partner, which needs a kurs — the control-account rule; `server-only` |
+| Journal lifecycle | `src/lib/siba/journal-workflow.ts` | A manual journal's Draft → Post / Cancel, one transition table; client-safe |
 | Transaction lifecycle | `src/lib/siba/transaction-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Finance data | `src/lib/siba/finance.ts` | Header and line enforcement, Budget eligibility, `applyPosting`, the funded posting both Companies share, `CBT-` numbering, realization trace; `server-only` |
 | Funding Request | `src/lib/siba/funding.ts` | Raising, withdrawing and confirming a request, `FR-` numbering; depends on Finance and never the reverse; `server-only` |
@@ -208,7 +210,7 @@ source scan and needs no database.
 | Funding | `fin_funding_request` | `lib/siba/funding.ts`, `app/actions/funding.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` |
-| Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22) |
+| Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22); the manual journal's rules sit above it in `lib/siba/manual-journal.ts` + `app/actions/journal.ts` |
 | Fiscal | `acc_fiscal_year`, `acc_fiscal_period` | `lib/siba/fiscal.ts` |
 
 Three rules, in force:
@@ -299,6 +301,10 @@ prisma/
   migrations/            Applied migrations
   seed.ts                System data only — idempotent, never touches business data
 scripts/
+  backfill-control-accounts.ts  One-off: marks the accounts a book already
+                         reconciles against, so `is_control_account` is true
+                         wherever the structure implies it. Idempotent, sets
+                         only, never clears. Run by hand, never by install or CI
   backfill-subledger.ts  One-off: replays already-posted Cash Bank Transactions
                          into the subject books, in document order and
                          idempotently. Run by hand, never by install or CI
@@ -335,6 +341,8 @@ src/
       dashboard/
       master/[entity]/   Dynamic: list, /new, /[id], /[id]/edit
       accounting/[entity]/ The same four registry pages — COA, mapping, Fiscal Year
+      accounting/journal/  The register, plus the manual journal: /new,
+                         /[id], /[id]/edit
       budget/budget/     Bespoke, not registry: month list, /month/[period],
                          /new, /[id], /[id]/edit
       finance/cash-bank-transaction/  Bespoke: list, /new, /[id], /[id]/edit
@@ -350,6 +358,7 @@ src/
       finance.ts         Cash Bank Transaction writes, plus Post
       funding.ts         Ajukan Dana, withdraw, and Confirm Funding
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
+      journal.ts         Manual journal writes: create, edit, Post / Batalkan
       settings.ts        System Default writes
       auth.ts            login / logout
       users.ts           User and role administration
@@ -376,7 +385,8 @@ src/
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     accounting/          FiscalPeriods (shown inside a Fiscal Year),
-                         FiscalYearActions, JournalList, JournalDetail
+                         FiscalYearActions, JournalList, JournalDetail,
+                         JournalActions, JournalForm (the manual journal)
     ui/                  form (FormBody/FormSection/FormRow/Field — every
                          form in the application is built from these),
                          Combobox, Select, DateInput, MoneyInput, RateInput,
@@ -395,7 +405,8 @@ src/
                          fx, currency,
                          permissions, roles, access, auth, auth-errors,
                          session, login, user-admin, profile, entity-access, fiscal,
-                         fiscal-workflow, budget, budget-workflow, cash-bank,
+                         fiscal-workflow, journal-workflow, manual-journal,
+                         budget, budget-workflow, cash-bank,
                          cash-bank-layers,
                          subledger, subledger-catalogue,
                          finance, transaction-workflow, funding, reports,
@@ -429,6 +440,7 @@ npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
 npm run db:sample            # dev only: sample Partners + Chart of Accounts (NOT the seeder)
 npm run db:backfill-subledger  # one-off: subject books for already-posted documents
+npm run db:backfill-control-accounts  # one-off: flag the accounts a book reconciles against
 npm run db:truncate-transactions          # reports what it would delete, deletes nothing
 npm run db:truncate-transactions -- --confirm  # DESTRUCTIVE: empties the documents and
                                                # the books, keeps master + system data
@@ -482,6 +494,14 @@ the same subject and period. It also pins the navigation change the report route
 so `/master/partner/12` and `/budget/budget/month/5` cannot silently stop resolving,
 and it holds the Company scope: a resource belonging to a Company the reader may not
 see is not a row, and its book reads as not found rather than as data.
+The manual journal suite holds the rule the feature exists for: that each of the
+three structural control-account sources refuses a hand-written line by itself
+and the refusal names the book, that a Biaya mapping target is deliberately
+**not** one, that the picker offers exactly what the check accepts, that a draft
+reaches neither ledger report and is not reported as unbalanced, that an account
+which became a control account after the draft was written refuses at Post and
+leaves the draft untouched, and that a posted journal — manual or automatic —
+cannot be edited, re-posted or cancelled.
 The fiscal suite also holds the Fiscal Year lifecycle —
 that `status` is not an isian, that Draft is the only status a year opens from, and
 that nothing writes Draft or Closed — and the settings suite holds what a System
@@ -843,6 +863,39 @@ Implemented and enforced:
    for them. `accountUsage` in `records.ts` and `systemDefaultsUsingAccount` in
    `system-settings.ts` report what depends on it, and the refusal **names
    them**. A miscoded account is deactivated, never restructured (rule 45).
+
+79. **A control account is one a book outside the General Ledger reconciles
+   against.** Two structures make one: a Cash & Bank resource posting to it,
+   which ties it to the Cash Bank Book and its rate layers, and a mapping from a
+   Budget Category that keeps a subject book, which ties it to that book. The
+   bridge and FX System Defaults make a third, because those accounts are
+   written by the posting engine alone. Each of them **sets
+   `is_control_account`** when it claims the account — `markControlAccount`,
+   called from the write paths — and `controlAccountReasons` in `records.ts` is
+   what can say which book, for the refusal to name. A Biaya or Asset mapping
+   target is **not** one: those categories keep no subject book, so the account
+   reconciles against the General Ledger and nothing else.
+80. **Whether an account may be written to is `is_postable` and
+   `is_control_account`.** The user's own rule, and every place an account is
+   chosen asks it. `checkAccountIsLeaf` sits under the first, because the tree
+   is what makes the flag true (rule 77). Nothing clears either flag
+   automatically: re-opening an account to manual entry is a decision somebody
+   takes on the form.
+81. **A manual journal is drafted before it is posted, and only it is ever a
+   Draft.** A journal a document produced is `Posted` the moment it exists,
+   because it records something that has already happened. A manual journal is
+   saved `Draft`, may be edited and cancelled while it is one, and reaches
+   `Posted` through the same engine — which is also when it acquires its posting
+   date. Nothing reverses a posted journal, manual or not.
+82. **A draft is not accounting.** It has no posting date, the General Ledger
+   and the Trial Balance filter it out, `unbalancedJournals` ignores it, and it
+   is allowed **not to balance** — a journal halfway through being typed does
+   not, and the balance is a rule about posting rather than about saving.
+83. **A manual journal's accounts are re-checked at Post.** A mapping made since
+   the draft was written can have turned one of them into a control account, and
+   posting against a chart that has moved on would write exactly the discrepancy
+   the rule exists to prevent. The same reasoning `applyPosting` uses for
+   re-reading its Budgets (rule 35).
 
 18. **Budget category → partner category → account.** Each budget category declares
    which partner categories are valid and which directions (In/Out) make sense.
@@ -1489,13 +1542,25 @@ Specified in the concept doc, **not yet implemented** (see §13):
   do not reorder `.ph-act` with CSS.
 - **Status:** Frozen, current.
 
-### The Journal is written by posting, balances, and never changes (FROZEN)
-- **Decision:** `postJournal` in `lib/siba/journal.ts` is the only thing that
-  writes `acc_journal` / `acc_journal_line`, it is only ever called inside the
-  posting transaction, and it **refuses** any journal whose two sides do not sum
-  equal **in base currency**. Nothing updates or deletes a journal. The posting
-  date is the day of posting. `applyPosting` calls it **alongside**
-  `recordCashBankEntry`, in the same `prisma.$transaction`.
+### A posted journal balances, and never changes (FROZEN)
+- **Decision:** Every journal reaches `Posted` through the posting engine in
+  `lib/siba/journal.ts`, which **refuses** any journal whose two sides do not
+  sum equal **in base currency**. A posted journal is immutable: nothing
+  updates, deletes or reverses one, and a correction is a new journal. The
+  posting date is the day of posting, never back-dated. An automatic journal —
+  one a business document produced — is written by `postJournal` inside that
+  document's posting transaction and is `Posted` the moment it exists;
+  `applyPosting` calls it **alongside** `recordCashBankEntry`, in the same
+  `prisma.$transaction`.
+- **A manual journal is the second way in, and it changes none of the above.**
+  See "A manual journal is drafted, posted, and may not touch a book" below.
+  `resolveJournalLines` is the shared validator, so the two paths cannot come
+  to different conclusions about what a balanced journal is.
+- **This supersedes the earlier wording** that a journal is "produced by a
+  posting, never drafted towards one" and that "viewing is the whole
+  capability". Both were true while every journal came from a document. What
+  survives unchanged is the part that matters: nothing is in the books until a
+  posting put it there, and once it is there it never moves.
 - **The journal is measured in base.** `debit_amount` and `kredit_amount` are
   rupiah; `trx_amount`, `currency_id` and `exchange_rate` carry the same line's
   transaction-currency face. Every line states the rate it was valued at, with
@@ -1517,9 +1582,71 @@ Specified in the concept doc, **not yet implemented** (see §13):
   not. `unbalancedJournals` exists so the Trial Balance can say "this is a
   system fault" rather than print a difference nobody can act on.
 - **Do not change unless:** explicitly instructed. **Never add an edit, delete
-  or reversal path for a journal**, never derive an operational book from
-  journal lines, never write a journal outside `postJournal`, and never
-  back-date one.
+  or reversal path for a *posted* journal**, never derive an operational book
+  from journal lines, never write a journal outside the posting engine, and
+  never back-date one.
+- **Status:** Frozen, current.
+
+### A manual journal is drafted, posted, and may not touch a book (FROZEN)
+- **Decision:** A journal may also be typed by a person — depreciation, an
+  accrual, a reclassification, an equity entry: the work that is real accounting
+  but is not a cash movement anybody could raise a Budget for. It is an
+  `acc_journal` row like any other, distinguished by `is_manual`, and it is the
+  **only** kind that is ever a `Draft`. Saving writes the draft; posting runs
+  the same validation an automatic posting does, stamps the posting date and
+  flips the status. `JUR-0001` is its own number series beside `JRN-0001`, so
+  which kind of journal a number names is readable without opening it.
+  `Cancelled` retires a draft that should not exist, because nothing here is
+  deleted.
+- **A manual journal may not create a discrepancy between the General Ledger and
+  a book.** That is the whole safety requirement, and it is the user's. The
+  operational books are written *alongside* the journal by one posting, which is
+  why they agree with it; a hand-written line touching an account one of them
+  reconciles against would move the General Ledger and leave the book behind,
+  and **nothing would error** — the application would simply stop being able to
+  prove its own figures.
+- **The check is two flags: `is_postable` and `is_control_account`.** Stated by
+  the user as the general rule for deciding whether an account may be used, and
+  it is the whole test here — plus active and same-Company, with
+  `checkAccountIsLeaf` as the structural backstop under `is_postable` (an
+  account that somehow still carried the flag is refused anyway). The refusal
+  **names the book**, because "tidak dapat dipilih" tells nobody which document
+  they should have raised instead.
+- **The structure sets the flag, so nobody has to remember to.**
+  `is_control_account` existed since the schema was written and nothing read it
+  or set it — it was a checkbox. It is now claimed by whatever makes an account
+  a book's counterpart: a Cash & Bank resource registered on it, a mapping from
+  a Budget Category that keeps a subject book, a bridge or FX System Default
+  naming it. The same shape as a parent account giving up `is_postable`. It
+  stays editable where nothing structural implies it, so an account can still be
+  declared one by hand, and nothing ever clears it automatically.
+- **Reason for the shape.** A separate document table was the alternative and
+  the user chose this one: the draft lives in `acc_journal`, and automatic
+  journals are categorised as instantly Posted. The cost is real and is paid in
+  one place — **every reader of journal lines filters `status: "Posted"`**: the
+  General Ledger's opening and movement reads, the Trial Balance's two, and
+  `unbalancedJournals`, which would otherwise report every half-finished draft
+  as a system fault. `tests/manual-journal.test.ts` pins that a draft reaches
+  neither report.
+- **Impact:** `posting_date` is nullable — a draft has none, because the date is
+  written when the books are. Debit and kredit are base currency as they always
+  were; a foreign line carries its own currency, kurs and face amount as extra
+  information on the same row, which is the user's own statement of the rule. A
+  draft is allowed **not to balance**: a journal halfway through being typed
+  does not, and enforcing it at save would put the rule at the wrong moment. The
+  accounts are **re-checked at Post**, not trusted from when the draft was
+  written — a mapping made in the meantime can have turned one into a control
+  account, which is the same reasoning `applyPosting` uses for re-reading its
+  Budgets.
+- **Where the rules live.** `lib/siba/manual-journal.ts` owns the account and
+  line rules and `lib/siba/journal.ts` owns the table, so the Journal stays a
+  leaf that imports only the shared kernel: deciding what a manual journal may
+  touch needs the Cash Bank Book, the subject books and the System Defaults, and
+  a book that imported those could not be lifted out. No new boundary crossing.
+- **Do not change unless:** explicitly instructed. **Never let a manual journal
+  reach a control account**, never let a draft be read by a ledger report, never
+  clear `is_control_account` automatically, never add a date field to the form,
+  and never add a reversal — a posted manual journal is as final as any other.
 - **Status:** Frozen, current.
 
 ### The subject books are one mechanism with six books (FROZEN)
@@ -2936,8 +3063,18 @@ process allowed to restate positions, and it is not built.
   (§12).
 - Do **not** re-embed the Cash Bank Book under the Cash & Bank master record. The
   master links into the report (§12).
-- Do **not** add an edit, delete or reversal path for a journal, do **not** write
-  one outside `postJournal`, and do **not** back-date one (§10, §12).
+- Do **not** add an edit, delete or reversal path for a **posted** journal, do
+  **not** write one outside the posting engine, and do **not** back-date one
+  (§10, §12).
+- Do **not** let a manual journal reach a control account, and do **not** decide
+  an account's usability by anything but `is_postable` and `is_control_account`
+  (§10 rules 79–80, §12).
+- Do **not** let a Draft journal be read by the General Ledger, the Trial
+  Balance or `unbalancedJournals`, and do **not** enforce the balance when a
+  draft is saved — a journal being typed does not balance yet (§10 rule 82).
+- Do **not** clear `is_control_account` automatically, and do **not** add a date
+  field to the manual journal form. The structure sets the flag; the engine
+  writes the date (§10 rules 79, 81).
 - Do **not** derive an operational book from journal lines. Only the General
   Ledger derives from the journal (§10, §12).
 - Do **not** sum across accounts in the General Ledger, and do **not** convert
@@ -3055,7 +3192,9 @@ process allowed to restate positions, and it is not built.
 | The FX difference on a payment is a user decision | Which layer the user picks sets the gain or loss recognised. Under averaging it would be deterministic. This is the feature working as intended — the source document calls layer selection an auditable control point — but it does mean two clerks can post the same payment to different results, and nothing flags that. |
 | A standing foreign position is never retranslated | A Hutang in USD keeps the base value it was carried at until something settles it. Without period-end revaluation (§13) there is no unrealised gain or loss anywhere in the system, so the base measure of an open position drifts from what it would be worth today — by design for now, and the one thing revaluation exists to fix. |
 | A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
-| Nothing refuses a posting on a period's status | `applyPosting` never consults the fiscal calendar, so a document can post into a period that is not Open — or into no period at all. Consistent with Fiscal Year closing not being built (§13); the lock belongs with that work. |
+| Nothing refuses a posting on a period's status | Neither `applyPosting` nor `postDraftJournal` consults the fiscal calendar, so a document or a manual journal can post into a period that is not Open — or into no period at all. Consistent with Fiscal Year closing not being built (§13); the lock belongs with that work, and it belongs on both paths. |
+| A control account is never un-flagged | `is_control_account` is set by the structure and cleared only by hand. A mapping repointed to another account leaves the old one flagged, so it stays closed to manual entry until somebody unticks it on the form. Deliberate: the conservative direction is the safe one, and re-opening an account that has a book's history behind it is a decision, not a cleanup. |
+| A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | `recentActivity()` has no caller | The cross-record audit *feed* is still off the dashboard, pending the user's own plan for where it belongs. The per-record history is a separate reader (`recordHistory`) and is now on every form; `recentActivity()` itself remains unused. |

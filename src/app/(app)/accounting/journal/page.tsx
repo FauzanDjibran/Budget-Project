@@ -2,13 +2,16 @@ import { JournalList } from "@/components/accounting/journal-list";
 import { requirePermission } from "@/lib/siba/auth";
 import { companyScope } from "@/lib/siba/company-access";
 import { listJournals } from "@/lib/siba/journal";
+import { journalAbilities } from "@/lib/siba/journal-workflow";
 
 export const dynamic = "force-dynamic";
 
 /**
- * The Journal register. Read-only: a journal is written by a posting and is
- * never edited afterwards, so there is no create route and no edit route —
- * `/accounting/journal/[id]` is the only thing below this page.
+ * The Journal register.
+ *
+ * Both kinds live here: journals a posting produced, which are final from the
+ * moment they exist, and manual journals, which are drafted below this page at
+ * `/new` and `/[id]/edit` and become the same thing once posted.
  *
  * One Company at a time, chosen from the Companies this reader's permissions
  * open. Each Company keeps its own books and its own chart of accounts, so a
@@ -29,6 +32,7 @@ export default async function Page({
       journals={journals}
       companies={scope.options}
       companyId={scope.selected?.id ?? null}
+      can={journalAbilities(actor.permissions)}
     />
   );
 }

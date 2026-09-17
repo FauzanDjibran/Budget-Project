@@ -28,11 +28,13 @@ import {
   checkAccountNumber,
   checkCashBankAccount,
   delegate,
+  markControlAccount,
   nextCode,
   partnerCategoriesForBudgetCategory,
   refLabel,
   requireEntity,
 } from "@/lib/siba/records";
+import { subledgerForCategory } from "@/lib/siba/subledger-catalogue";
 import { systemDefaultsUsingAccount } from "@/lib/siba/system-settings";
 
 /**
@@ -558,6 +560,45 @@ function buildData(entity: Entity, values: FormValues, applies: Set<string>) {
   return data;
 }
 
+/**
+ * A book's counterpart account declares itself.
+ *
+ * A Cash & Bank resource registered on an account makes that account the Cash
+ * Bank Book's counterpart; a mapping from a Budget Category that keeps a
+ * subject book makes its target that book's. Either way the account's balance
+ * is now reconciled against something outside the General Ledger, and writing
+ * to it by hand would put the two out of agreement — so the structure sets
+ * `is_control_account` rather than leaving it to somebody remembering to tick a
+ * box. The same shape as a parent account giving up `is_postable`.
+ *
+ * A mapping whose category keeps no book — Asset, Biaya — marks nothing. Its
+ * target reconciles against the General Ledger alone, which is exactly the kind
+ * of account a manual journal exists to reach.
+ */
+async function claimControlAccount(
+  entityKey: string,
+  values: FormValues,
+  actorId: number
+): Promise<void> {
+  const accountId = refValue(values, "account_id");
+  if (!accountId) return;
+
+  if (entityKey === "m_cash_bank") {
+    await markControlAccount(accountId, actorId);
+    return;
+  }
+
+  if (entityKey === "acc_budget_category_account") {
+    const categoryId = refValue(values, "budget_category_id");
+    const label = categoryId
+      ? await refLabel("sys_budget_category", categoryId)
+      : null;
+    if (label && subledgerForCategory(label)) {
+      await markControlAccount(accountId, actorId);
+    }
+  }
+}
+
 export async function createRecord(
   slug: string,
   values: FormValues
@@ -635,6 +676,8 @@ export async function createRecord(
     return row;
   });
 
+  await claimControlAccount(entity.key, values, actor.user.id);
+
   await prisma.auditLog.create({
     data: {
       entity_key: entity.key,
@@ -681,6 +724,8 @@ export async function updateRecord(
     where: { id },
     data: { ...data, updated_by: actor.user.id },
   });
+
+  await claimControlAccount(entity.key, values, actor.user.id);
 
   await prisma.auditLog.create({
     data: {

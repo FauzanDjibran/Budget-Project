@@ -248,7 +248,7 @@ export const MODULES: NavModule[] = [
             name: "Journal",
             single: "Journal",
             icon: "book",
-            desc: "Journal akuntansi yang dibuat otomatis setiap kali dokumen diposting. Append-only dan tidak dapat diubah.",
+            desc: "Journal dari posting dokumen, dan Journal Manual untuk entri yang tidak berasal dari dokumen. Final setelah diposting.",
             permission: "JOURNAL_VIEW",
           },
           {

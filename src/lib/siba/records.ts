@@ -6,6 +6,7 @@ import { formatMoney } from "@/lib/format";
 import { compareCodes } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
 import { journalLineCountForAccount } from "./journal";
+import { subledgerForCategory } from "./subledger-catalogue";
 import {
   allowedPartnerCategories,
   budgetCategoryNeedsPartner,
@@ -359,6 +360,115 @@ export async function accountUsage(accountId: number): Promise<string[]> {
   }
   if (mappings) used.push(`${mappings} mapping Budget Category`);
   return used;
+}
+
+// ------------------------------------------------------- control accounts
+
+/**
+ * Why an account is a **control account** — an account whose balance is
+ * reconciled against a book that lives outside the General Ledger.
+ *
+ * Two structures make one, and both are the same fact seen from either side:
+ *
+ *  * a **Cash & Bank** resource posts to it, so it must agree with the Cash
+ *    Bank Book and, for a foreign resource, with its rate layers;
+ *  * a **Budget Category that keeps a subject book** maps to it, so it must
+ *    agree with that book's positions.
+ *
+ * Writing to such an account by any route other than the posting that also
+ * writes the book would put the two out of agreement silently — nothing would
+ * error, the General Ledger would simply stop matching the Buku Hutang. That
+ * is what the manual journal is refused for.
+ *
+ * Returns one phrase per reason, in the reader's own words, or an empty list.
+ * The **System Default** half is resolved by the caller, which is the only
+ * layer that may read both this and `sys_setting` — the same split
+ * `accountUsage` already uses.
+ */
+export async function controlAccountReasons(
+  accountId: number
+): Promise<string[]> {
+  const [cashBanks, mappings] = await Promise.all([
+    prisma.mCashBank.findMany({
+      where: { account_id: accountId },
+      select: { cash_bank_label: true },
+    }),
+    prisma.accBudgetCategoryAccount.findMany({
+      where: { account_id: accountId },
+      select: { budget_category: { select: { category_label: true } } },
+    }),
+  ]);
+
+  const reasons: string[] = [];
+  if (cashBanks.length) {
+    reasons.push(
+      `Buku Kas & Bank ${cashBanks.map((c) => c.cash_bank_label).join(", ")}`
+    );
+  }
+
+  // Only a category that actually keeps a book makes its target a control
+  // account. Biaya and Asset map to an account too, and that account
+  // reconciles against nothing but the General Ledger itself — so an expense
+  // account stays open to manual entry, which is most of what one is for.
+  const books = new Set<string>();
+  for (const m of mappings) {
+    const book = subledgerForCategory(m.budget_category.category_label);
+    if (book) books.add(book.name);
+  }
+  reasons.push(...[...books].sort());
+
+  return reasons;
+}
+
+/**
+ * Every account the structure already makes a control account.
+ *
+ * One query pair rather than one per account: used by the backfill script,
+ * which has a whole chart to consider.
+ */
+export async function structuralControlAccountIds(): Promise<Set<number>> {
+  const [cashBanks, mappings] = await Promise.all([
+    prisma.mCashBank.findMany({ select: { account_id: true } }),
+    prisma.accBudgetCategoryAccount.findMany({
+      select: {
+        account_id: true,
+        budget_category: { select: { category_label: true } },
+      },
+    }),
+  ]);
+
+  const ids = new Set<number>(cashBanks.map((c) => c.account_id));
+  for (const m of mappings) {
+    if (subledgerForCategory(m.budget_category.category_label)) {
+      ids.add(m.account_id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Declares an account a control account, if it is not already one.
+ *
+ * Called when something claims the account as a book's counterpart: a Cash &
+ * Bank resource being registered on it, a subledger-bearing mapping pointing at
+ * it, a bridge or FX System Default naming it. This mirrors how creating a
+ * sub-account revokes the parent's posting privilege — the structure sets the
+ * flag, so nobody has to remember to.
+ *
+ * The flag is what the manual journal checks, and it stays editable where
+ * nothing structural implies it, so an account can still be declared one by
+ * hand. Nothing here ever clears it: an account that was a book's counterpart
+ * has history behind it, and re-opening it to manual entry is a decision
+ * somebody takes deliberately on the form.
+ */
+export async function markControlAccount(
+  accountId: number,
+  actorId: number
+): Promise<void> {
+  await prisma.accAccount.updateMany({
+    where: { id: accountId, is_control_account: false },
+    data: { is_control_account: true, updated_by: actorId },
+  });
 }
 
 /**
