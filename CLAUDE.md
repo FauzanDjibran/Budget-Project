@@ -169,7 +169,7 @@ of its own.
 | Audit reading | `src/lib/siba/audit.ts` | `entity_key` -> subject, `row_id` -> title, each resolved by the owning module; `server-only` |
 | Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, and reading them back; `server-only` |
 | Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open, its permission, and why Closed is not reachable; client-safe |
-| Startup check | `src/lib/siba/startup-check.ts` | Is the database the one this build expects; read at boot by `instrumentation.ts`; `server-only` |
+| Startup check | `src/lib/siba/startup-check.ts` | Is the database the one this build expects; read at boot by `instrumentation-node.ts`; `server-only` |
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
 | System Default store | `src/lib/siba/system-settings.ts` | Reads and writes `sys_setting`, resolves a default against its master; `server-only` |
 | Header button order | `src/lib/siba/header-actions.ts` | Where a button sits in `.ph-act` and how it is drawn — one tone, read by every lifecycle table; client-safe |
@@ -309,10 +309,14 @@ scripts/
 src/
   proxy.ts               Optimistic redirect to /login (NOT a security boundary);
                          lets /login and /api/health through without a cookie
-  instrumentation.ts     Runs once before the server serves. In production a
-                         schema behind the build exits the process rather than
-                         throwing — a thrown `register` leaves Next listening and
-                         answering 500, which a supervisor reads as healthy
+  instrumentation.ts     Runs once before the server serves. `register` runs in
+                         the Edge runtime too, so this file holds only the
+                         runtime check and a dynamic import — anything it can
+                         see is compiled for Edge and warned about there
+  instrumentation-node.ts  The check itself. In production a schema behind the
+                         build exits the process rather than throwing — a thrown
+                         `register` leaves Next listening and answering 500,
+                         which a supervisor reads as healthy
   app/
     layout.tsx           Root layout: fonts, metadata
     page.tsx             Sends a signed-in user to their first permitted page
