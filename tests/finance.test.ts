@@ -211,22 +211,27 @@ before(async () => {
     select: { id: true },
   });
   currency = currencies[0].id;
-  // A second currency is only needed to prove amounts are never mixed. The
-  // seed guarantees one currency, not two, so this creates its own.
-  if (currencies.length > 1) {
-    otherCurrency = currencies[1].id;
-  } else {
-    const made = await prisma.refCurrency.create({
-      data: {
-        currency_code: `test.${FIXTURE_PREFIX}CUR`,
-        currency_label: `${FIXTURE_PREFIX}X`,
-        currency_name: "Fixture currency",
-        created_by: actor,
-      },
-      select: { id: true },
-    });
-    otherCurrency = made.id;
-  }
+  // A second currency is only needed to prove amounts are never mixed, and it
+  // is **always this suite's own** rather than whichever row happens to sit
+  // second in the table. Taking `currencies[1]` made the fixture depend on what
+  // the database already held, and the row it eventually landed on was
+  // `curr.TESTEUR` — a fixture this same file creates and never removes. The
+  // third-currency test then built its resource and its document in the same
+  // currency, which is a perfectly legal settlement, so the refusal it asserts
+  // could not arise. Upserted, because nothing deletes a currency: the
+  // application never hard-deletes master data and `cleanupFixtures` follows it.
+  const made = await prisma.refCurrency.upsert({
+    where: { currency_code: `test.${FIXTURE_PREFIX}CUR` },
+    update: { status: "Active" },
+    create: {
+      currency_code: `test.${FIXTURE_PREFIX}CUR`,
+      currency_label: `${FIXTURE_PREFIX}X`,
+      currency_name: "Fixture currency",
+      created_by: actor,
+    },
+    select: { id: true },
+  });
+  otherCurrency = made.id;
 
   // Posting journals the document, and a journal needs an account to post
   // against — so every Budget Category the tests exercise needs a mapping.
