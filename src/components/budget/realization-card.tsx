@@ -4,7 +4,6 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { formatDate, formatMoney } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import { purposeLabel } from "@/lib/siba/rules";
 import type { budgetRealizations } from "@/lib/siba/finance";
 
 type Realization = Awaited<ReturnType<typeof budgetRealizations>>[number];
@@ -78,7 +77,7 @@ export function RealizationCard({
                       <span className="dash">belum diposting</span>
                     )}
                   </td>
-                  <td className="pri">{purposeLabel(r.purpose)}</td>
+                  <td className="pri">{r.purposeLabel}</td>
                   <td>
                     <span className={`bdg ${STATUS_CLASS[r.status] ?? "s-mute"}`}>
                       {STATUS_TEXT[r.status] ?? r.status}

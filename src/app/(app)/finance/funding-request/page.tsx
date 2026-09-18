@@ -32,7 +32,7 @@ export default async function Page({
     <FundingList
       requests={requests}
       refs={refs}
-      purposes={purposeOptions()}
+      purposes={await purposeOptions()}
       summary={summary}
       canConfirm={actorCan(actor, "FUNDING_REQUEST_CONFIRM")}
       initialStatus={status}

@@ -15,7 +15,6 @@
  */
 import type { IconName } from "@/components/icon";
 import type { PermissionCode } from "./permissions";
-import { SUBLEDGERS } from "./subledger-catalogue";
 
 /**
  * Which parameters a report takes.
@@ -50,8 +49,14 @@ export type ReportDef = {
   params: ReportParams;
   /** Whether the report can run without a subject chosen. */
   subjectRequired: boolean;
-  /** Which subject book this report reads, for the six subledgers. */
-  subledger?: string;
+  /**
+   * Whether this report reads a subject book. Which book is a **parameter**
+   * (`?book=bcat.0002`), not a property of the report: there is one Buku Subjek
+   * report and the books come from the Budget Categories, so a new category
+   * appears in its toggle without a report, a permission or a menu entry being
+   * written for it.
+   */
+  subledger?: boolean;
 };
 
 const FIXED_REPORTS = [
@@ -133,32 +138,29 @@ const FIXED_REPORTS = [
 ] as const satisfies readonly ReportDef[];
 
 /**
- * The six subject books, generated from their own catalogue.
+ * The subject books — **one** Report View for all of them.
  *
- * Written out here they would be six near-identical entries differing only in
- * name and permission, and a book added to the catalogue would silently have no
- * report. The catalogue is the one place a book is declared; this turns each
- * entry into the Report View that shows it.
+ * This was six near-identical entries generated from a six-entry catalogue, so
+ * a seventh book meant a code change, a new permission and a deploy. A book is
+ * now a Budget Category that names a Partner, and which book you are reading is
+ * a parameter on this one report. Nothing here enumerates them.
  */
-const SUBLEDGER_REPORTS: ReportDef[] = SUBLEDGERS.map((book) => ({
-  key: `${book.key.replace(/-/g, "_")}_ledger`,
-  slug: book.slug,
+const SUBLEDGER_REPORT: ReportDef = {
+  key: "subledger",
+  slug: "subledger",
   module: "finance",
-  name: book.name,
-  desc: book.desc,
-  icon: book.icon,
-  permission: book.permission,
+  name: "Buku Subjek",
+  desc: "Riwayat dan posisi setiap Partner pada buku yang dipilih, dalam rentang tanggal yang dipilih.",
+  icon: "book",
+  permission: "REPORT_SUBLEDGER_VIEW",
   params: "subledger-period",
-  // The book itself is the subject. A Partner narrows it, which is a filter
-  // rather than a precondition — every subject at once is the useful default.
+  // Neither the book nor the Partner is a precondition: the report opens on the
+  // first book with every subject in it, which is the useful default.
   subjectRequired: false,
-  subledger: book.key,
-}));
+  subledger: true,
+};
 
-export const REPORTS: readonly ReportDef[] = [
-  ...FIXED_REPORTS,
-  ...SUBLEDGER_REPORTS,
-];
+export const REPORTS: readonly ReportDef[] = [...FIXED_REPORTS, SUBLEDGER_REPORT];
 
 export type ReportKey = (typeof FIXED_REPORTS)[number]["key"];
 

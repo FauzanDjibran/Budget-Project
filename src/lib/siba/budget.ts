@@ -7,7 +7,10 @@ import {
   allowedPartnerCategories,
   budgetCategoryAllowsDirection,
   budgetCategoryNeedsPartner,
-} from "./entities";
+  directionText,
+  directionsOf,
+} from "./classification";
+import { loadClassification } from "./classification-data";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import {
   NOT_APPROVED,
@@ -251,14 +254,35 @@ export type BudgetRefs = {
  * against. The dialog is still only a convenience: `checkClassification` is
  * what enforces it.
  */
+/**
+ * How many Budgets each Budget Category holds, keyed by category id.
+ *
+ * Exported because `bud_budget` is Budget's table and the classification screen
+ * wants the number: a category about to be deactivated should say what still
+ * depends on it. The module contract is that another module asks for the figure
+ * rather than querying the table (CLAUDE.md §3).
+ */
+export async function budgetCountByCategory(): Promise<Map<number, number>> {
+  const groups = await prisma.budBudget.groupBy({
+    by: ["category_id"],
+    _count: { _all: true },
+  });
+  const out = new Map<number, number>();
+  for (const g of groups) {
+    if (g.category_id !== null) out.set(g.category_id, g._count._all);
+  }
+  return out;
+}
+
 export async function budgetRefs(): Promise<BudgetRefs> {
-  const [companies, currencies, categories, partners, partnerCategories] =
+  const [companies, currencies, categories, partners, partnerCategories, classification] =
     await Promise.all([
       prisma.sysCompany.findMany({ orderBy: { id: "asc" } }),
       prisma.refCurrency.findMany({ orderBy: { id: "asc" } }),
       prisma.sysBudgetCategory.findMany({ orderBy: { id: "asc" } }),
       prisma.mPartner.findMany({ orderBy: { id: "asc" } }),
       prisma.sysPartnerCategory.findMany(),
+      loadClassification(),
     ]);
 
   const categoryLabel = new Map(
@@ -278,17 +302,18 @@ export async function budgetRefs(): Promise<BudgetRefs> {
       name: c.currency_name,
       active: c.status === "Active",
     })),
-    categories: categories.map((c) => ({
-      id: c.id,
-      label: c.category_label,
-      name: c.category_name,
-      active: true,
-      directions: (["In", "Out"] as const).filter((d) =>
-        budgetCategoryAllowsDirection(c.category_label, d)
-      ),
-      needsPartner: budgetCategoryNeedsPartner(c.category_label),
-      partnerCategories: allowedPartnerCategories(c.category_label),
-    })),
+    categories: categories.map((c) => {
+      const rule = classification.find((r) => r.label === c.category_label);
+      return {
+        id: c.id,
+        label: c.category_label,
+        name: c.category_name,
+        active: c.status === "Active",
+        directions: rule ? directionsOf(rule) : [],
+        needsPartner: rule?.requirePartner ?? false,
+        partnerCategories: rule?.partnerCategories ?? [],
+      };
+    }),
     partners: partners.map((p) => ({
       id: p.id,
       label: p.partner_label,
@@ -365,14 +390,15 @@ export async function checkClassification(
   if (!category) return { category_id: "Budget Category tidak ditemukan." };
 
   const label = category.category_label;
-  if (!budgetCategoryAllowsDirection(label, budget.budget_type)) {
-    const arah = budget.budget_type === "In" ? "Penerimaan" : "Pengeluaran";
+  const classification = await loadClassification();
+  if (!budgetCategoryAllowsDirection(classification, label, budget.budget_type)) {
+    const arah = directionText(budget.budget_type);
     return {
       category_id: `Category ini tidak berlaku untuk budget bertipe ${arah}.`,
     };
   }
 
-  const needsPartner = budgetCategoryNeedsPartner(label);
+  const needsPartner = budgetCategoryNeedsPartner(classification, label);
   if (!needsPartner) {
     // A category that takes no subject must not carry one, or a subledger
     // would later be opened against a partner the classification never meant.
@@ -398,7 +424,11 @@ export async function checkClassification(
   if (partner.status !== "Active") {
     return { partner_id: "Partner tersebut non-aktif dan tidak dapat dipilih." };
   }
-  if (!allowedPartnerCategories(label).includes(partner.category.category_label)) {
+  if (
+    !allowedPartnerCategories(classification, label).includes(
+      partner.category.category_label
+    )
+  ) {
     return {
       partner_id: "Partner ini tidak berkategori yang diizinkan Category tersebut.",
     };

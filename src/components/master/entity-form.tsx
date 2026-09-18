@@ -29,7 +29,6 @@ import {
   STATUS_CLASS,
   STATUS_TEXT,
   TAG_CLASS,
-  allowedPartnerCategories,
   fieldApplies,
   isActiveStatus,
   prerequisitesOf,
@@ -37,6 +36,10 @@ import {
   type Entity,
   type Field,
 } from "@/lib/siba/entities";
+import {
+  type ClassificationCatalogue,
+  allowedPartnerCategories,
+} from "@/lib/siba/classification";
 import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
 import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
@@ -57,12 +60,20 @@ export function EntityForm({
   defaults,
   lockedFields,
   lockNote,
+  classification = [],
 }: {
   entity: Entity;
   mode: FormMode;
   row: Row | null;
   /** Keyed by field name, not by target table — see `refOptions` in records.ts. */
   refs: Record<string, RefOption[]>;
+  /**
+   * The Budget Category rules, loaded by the page. They are database rows now,
+   * so a client component cannot read them itself — and the narrowing they do
+   * here is convenience only: `applicableFields` and `validate` in
+   * `app/actions/master.ts` re-check the same rules against the same tables.
+   */
+  classification?: ClassificationCatalogue;
   /** Presentation only — the Server Actions check the same permissions. */
   can: EntityAbilities;
   /**
@@ -144,7 +155,7 @@ export function EntityForm({
     refs.currency_id?.find((o) => o.id === Number(id))?.label;
 
   const applies = (field: Field) =>
-    fieldApplies(field, values, budgetCategoryLabel, currencyLabel);
+    fieldApplies(field, values, budgetCategoryLabel, currencyLabel, classification);
 
   /**
    * The code a `segment` field continues — the first of its `inheritsFrom`
@@ -212,7 +223,7 @@ export function EntityForm({
       case "mappingPartnerCategory": {
         const label = budgetCategoryLabel(values.budget_category_id);
         if (!label) return [];
-        const allowed = allowedPartnerCategories(label);
+        const allowed = allowedPartnerCategories(classification, label);
         return all.filter((o) => allowed.includes(o.label));
       }
       default:
@@ -622,11 +633,18 @@ function readOnlyBody({
     );
   }
   if (field.type === "select") {
+    if (raw == null || raw === "") return <div className="ro nil">tidak diisi</div>;
     const s = String(raw);
+    // The field's own labels win over the global status vocabulary. They used
+    // not to be read here at all, so a select whose values happened not to be
+    // in STATUS_TEXT printed its raw stored value — "IN" where the form had
+    // just offered "Penerimaan", which is the one thing the direction rule
+    // forbids. Status still reads correctly because its values are in both.
+    const label = field.optionLabels?.[s] ?? STATUS_TEXT[s] ?? s;
     return (
       <div className="ro">
         <span className={`bdg ${STATUS_CLASS[s] ?? TAG_CLASS[s] ?? "t-slate"}`}>
-          {STATUS_TEXT[s] ?? s}
+          {label}
         </span>
       </div>
     );

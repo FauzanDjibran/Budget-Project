@@ -14,7 +14,7 @@ import {
   writeFundedPosting,
   type TransactionRow,
 } from "./finance";
-import { purposeLabel } from "./rules";
+import { purposeByKey } from "./purposes";
 import { intercompanyBridge } from "./system-settings";
 
 /**
@@ -296,7 +296,7 @@ export async function raiseFundingRequest(
         currency_id: doc.currency_id,
         request_amount: doc.transaction_amount,
         status: "Open",
-        note: `${doc.transaction_no} — ${purposeLabel(doc.purpose)}`,
+        note: `${doc.transaction_no} — ${(await purposeByKey(doc.purpose))?.label ?? doc.purpose}`,
         created_by: actorId,
       },
       select: { id: true, funding_request_no: true },

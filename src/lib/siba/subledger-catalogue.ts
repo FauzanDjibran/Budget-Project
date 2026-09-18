@@ -7,23 +7,37 @@
  * Transaction at Post, alongside the Cash Bank Book and the Journal — never
  * derived from journal lines (§13, §14).
  *
- * A category earns a book when its postings name a Partner: that is what gives
- * the book a subject. Of the eight Budget Categories in `rules.ts`, six do —
- * the four the concept doc names (Titipan, Hutang, Piutang, Prive) plus
- * Investasi and Hasil Investasi, which carry a Cabang and would otherwise move
- * a Partner with no subject history to show for it, failing the coherence test
- * of §23. Asset and Biaya take no Partner and therefore keep no book.
+ * **A book is a Budget Category, not an entry in a list.** This file used to
+ * declare six of them, each with its own key, slug, permission and nav entry, so
+ * a seventh category meant a code change, a new permission and a deploy. A
+ * category earns a book when its postings name a Partner — that is what gives
+ * the book a subject — and `require_partner` already says so. Everything else a
+ * book needs is either derived from the category row or stored on it, so a
+ * category created through the GUI has a working book the moment it is saved.
  *
- * Declared in code, for the same reason the permission catalogue and the 22
- * Purposes are: a book is a branch in the code and a screen somebody wrote, so
- * a row created at runtime would name a book that does not exist.
+ * What is derived, and why it is safe to derive:
  *
- * Client-safe on purpose — no `server-only`, no database import — so the
- * report route, the filter bar and the book writer all read the same entry.
+ *   - **name** — "Buku Hutang". The category already names itself.
+ *   - **nature** — a category that moves both ways holds a *position* that can
+ *     be settled to nil; one that moves a single way only accumulates, so its
+ *     closing figure is a running total. That is exactly `allows_in &&
+ *     allows_out`, and it matched all six hand-written entries.
+ *   - **desc** — the subject line, composed from the name.
+ *
+ * What is stored, because no derivation gets it right:
+ *
+ *   - **raises** — which cash direction raises the subject's position. Money out
+ *     raises a Piutang and lowers a Hutang; nothing else in the row predicts it.
+ *   - **icon** and **closingLabel** — presentation. "Sisa hutang" and "Investasi
+ *     tertanam" are not something a template produces. Both fall back, so a book
+ *     without them still works.
+ *
+ * Client-safe on purpose — no `server-only`, no database import — so the report
+ * route, the filter bar and the book writer all read the same definition. The
+ * rows come from `loadSubledgers` in `subledger-data.ts`.
  */
 import type { IconName } from "@/components/icon";
-import type { PermissionCode } from "./permissions";
-import type { Direction } from "./rules";
+import type { Direction } from "./classification";
 
 /**
  * How the closing figure should be read.
@@ -36,15 +50,30 @@ import type { Direction } from "./rules";
 export type SubledgerNature = "position" | "cumulative";
 
 export type SubledgerDef = {
-  /** Stored on every entry. Stable: the book is keyed on this, not on a row id. */
+  /**
+   * Stored on every entry, and the one identifier a book has.
+   *
+   * It is the owning category's **code** (`bcat.0002`), not its label and not
+   * its row id. The code because it is system-generated and never edited, so
+   * renaming "Hutang" cannot orphan a book — which is precisely what keying on
+   * the label used to risk. A string rather than a foreign key because
+   * `sub_ledger` is an independent store that must stay liftable: a book that
+   * declared a relation to the table classifying it could not be taken out on
+   * its own, and would invite being derived from it.
+   */
   key: string;
-  /** The `sys_budget_category` label whose postings land here. */
+  /**
+   * The owning Budget Category's row id — how the rest of the application finds
+   * its book, because that is the identifier already at hand everywhere: a
+   * Budget carries `category_id`, an account mapping carries
+   * `budget_category_id`. The stored `key` stays the code, which is what makes
+   * an entry readable without a join.
+   */
+  categoryId: number;
+  /** What the owning category is currently called. Display only. */
   budgetCategory: string;
   name: string;
-  /** URL segment under the module's `report/` namespace. */
-  slug: string;
   icon: IconName;
-  permission: PermissionCode;
   /** Which cash direction *raises* the subject's position. */
   raises: Direction;
   nature: SubledgerNature;
@@ -54,130 +83,99 @@ export type SubledgerDef = {
   desc: string;
 };
 
-export const SUBLEDGERS = [
-  {
-    key: "titipan",
-    budgetCategory: "Titipan",
-    name: "Buku Titipan",
-    slug: "titipan-ledger",
-    icon: "wallet",
-    permission: "REPORT_TITIPAN_LEDGER_VIEW",
-    // A liability: money received is money held for someone, so In raises it.
-    raises: "In",
-    nature: "position",
-    closingLabel: "Titipan dipegang",
-    desc:
-      "Riwayat titipan setiap Partner pada rentang tanggal — dana yang diterima, " +
-      "dikembalikan, dan yang masih dipegang.",
-  },
-  {
-    key: "hutang",
-    budgetCategory: "Hutang",
-    name: "Buku Hutang",
-    slug: "hutang-ledger",
-    icon: "coin",
-    permission: "REPORT_HUTANG_LEDGER_VIEW",
-    // A liability: receiving a loan raises the obligation, paying lowers it.
-    raises: "In",
-    nature: "position",
-    closingLabel: "Sisa hutang",
-    desc:
-      "Riwayat hutang kepada setiap Partner pada rentang tanggal — penerimaan " +
-      "pinjaman, pembayaran, dan sisa kewajiban.",
-  },
-  {
-    key: "piutang",
-    budgetCategory: "Piutang",
-    name: "Buku Piutang",
-    slug: "piutang-ledger",
-    icon: "clip",
-    permission: "REPORT_PIUTANG_LEDGER_VIEW",
-    // An asset: money lent out raises the claim, repayment lowers it.
-    raises: "Out",
-    nature: "position",
-    closingLabel: "Sisa piutang",
-    desc:
-      "Riwayat piutang kepada setiap Partner pada rentang tanggal — pemberian " +
-      "pinjaman, pelunasan, dan sisa tagihan.",
-  },
-  {
-    key: "prive",
-    budgetCategory: "Prive",
-    name: "Buku Prive",
-    slug: "prive-ledger",
-    icon: "user",
-    permission: "REPORT_PRIVE_LEDGER_VIEW",
-    // Contra-equity: a drawing raises it, a repayment by the owner lowers it.
-    raises: "Out",
-    nature: "position",
-    closingLabel: "Prive berjalan",
-    desc:
-      "Riwayat prive setiap Stakeholder pada rentang tanggal — pengambilan, " +
-      "pengembalian, dan saldo berjalan.",
-  },
-  {
-    key: "investasi",
-    budgetCategory: "Investasi",
-    name: "Buku Investasi",
-    slug: "investasi-ledger",
-    icon: "layers",
-    permission: "REPORT_INVESTASI_LEDGER_VIEW",
-    // An asset, but one-way today: `rules.ts` gives Investasi no In direction,
-    // so nothing lowers it. Divestment would be a new Purpose, not a new book.
-    raises: "Out",
-    nature: "cumulative",
-    closingLabel: "Investasi tertanam",
-    desc:
-      "Riwayat penyertaan dana ke setiap Cabang pada rentang tanggal, dan total " +
-      "yang sudah tertanam.",
-  },
-  {
-    key: "hasil-investasi",
-    budgetCategory: "Hasil Investasi",
-    name: "Buku Hasil Investasi",
-    slug: "hasil-investasi-ledger",
-    icon: "thumb",
-    permission: "REPORT_HASIL_INVESTASI_LEDGER_VIEW",
-    // Income, In only: a flow, so the closing figure is a total to date.
-    raises: "In",
-    nature: "cumulative",
-    closingLabel: "Hasil diterima",
-    desc:
-      "Riwayat hasil investasi yang diterima dari setiap Cabang pada rentang " +
-      "tanggal, dan total penerimaannya.",
-  },
-] as const satisfies readonly SubledgerDef[];
+/** The shape a Budget Category has to present for a book to be built from it. */
+export type BookSource = {
+  id: number;
+  category_code: string;
+  category_label: string;
+  category_name: string;
+  allows_in: boolean;
+  allows_out: boolean;
+  require_partner: boolean;
+  raises: string | null;
+  book_icon: string | null;
+  book_closing_label: string | null;
+};
 
-export type SubledgerKey = (typeof SUBLEDGERS)[number]["key"];
+const DEFAULT_ICON: IconName = "book";
 
-const BY_KEY = new Map<string, SubledgerDef>(SUBLEDGERS.map((s) => [s.key, s]));
-const BY_CATEGORY = new Map<string, SubledgerDef>(
-  SUBLEDGERS.map((s) => [s.budgetCategory, s])
-);
-const BY_SLUG = new Map<string, SubledgerDef>(SUBLEDGERS.map((s) => [s.slug, s]));
-
-export function subledgerByKey(key: string | null | undefined): SubledgerDef | null {
-  return key ? BY_KEY.get(key) ?? null : null;
+/**
+ * Whether this category keeps a book at all.
+ *
+ * Two conditions, and both are the category's own statement about itself: it
+ * must name a Partner, or the book would have no subject (§10 rule 52), and it
+ * must say which way the book runs. A category that names a Partner but has no
+ * `raises` is a **setup gap** rather than a category without a book — every
+ * screen that lists books simply does not list it yet.
+ */
+export function keepsBook(row: BookSource): boolean {
+  return row.require_partner && (row.raises === "In" || row.raises === "Out");
 }
 
-/** The book a Budget Category posts into, or null where it keeps none. */
-export function subledgerForCategory(
-  categoryLabel: string | null | undefined
+/** Builds the book a category keeps, or null where it keeps none. */
+export function bookFor(row: BookSource): SubledgerDef | null {
+  if (!keepsBook(row)) return null;
+
+  const name = `Buku ${row.category_label}`;
+  // Both ways = a position that can be settled to nil; one way = a total that
+  // only accumulates. This matched all six hand-written entries exactly.
+  const nature: SubledgerNature =
+    row.allows_in && row.allows_out ? "position" : "cumulative";
+
+  return {
+    key: row.category_code,
+    categoryId: row.id,
+    budgetCategory: row.category_label,
+    name,
+    icon: (row.book_icon as IconName) || DEFAULT_ICON,
+    raises: row.raises as Direction,
+    nature,
+    closingLabel:
+      row.book_closing_label?.trim() ||
+      (nature === "position" ? `Saldo ${row.category_label}` : `Total ${row.category_label}`),
+    desc: `Mutasi dan posisi ${name.toLowerCase()} per Partner, pada rentang tanggal yang dipilih.`,
+  };
+}
+
+export function booksFrom(rows: BookSource[]): SubledgerDef[] {
+  return rows.map(bookFor).filter((b): b is SubledgerDef => b !== null);
+}
+
+export function subledgerByKey(
+  books: SubledgerDef[],
+  key: string | null | undefined
 ): SubledgerDef | null {
-  return categoryLabel ? BY_CATEGORY.get(categoryLabel) ?? null : null;
-}
-
-export function subledgerBySlug(slug: string): SubledgerDef | null {
-  return BY_SLUG.get(slug) ?? null;
+  return key ? books.find((b) => b.key === key) ?? null : null;
 }
 
 /**
- * The signed movement one entry makes on its subject's position.
+ * The book a Budget Category's postings land in.
  *
- * The sign follows the **book's** own direction, not the cash direction: money
- * leaving the company raises a Piutang and lowers a Hutang, so a book that
- * simply mirrored the cash flow would report every balance backwards. This is
- * the subledger's counterpart to the General Ledger's normal-balance signing.
+ * Found by the category's **row id**, which is the identifier every caller
+ * already holds — a Budget's `category_id`, a mapping's
+ * `budget_category_id`. Never by its label: a label is display text the user
+ * may rename, and a rename would silently stop the book being written.
+ *
+ * A Transaction Purpose is **not** a way in here. A Purpose is the control an
+ * operator picks on a Cash Bank Transaction; it resolves to a Budget Category,
+ * and it is that category — not the Purpose — that owns the book.
+ */
+export function subledgerForCategory(
+  books: SubledgerDef[],
+  categoryId: number | null | undefined
+): SubledgerDef | null {
+  return categoryId == null
+    ? null
+    : books.find((b) => b.categoryId === categoryId) ?? null;
+}
+
+/**
+ * Which way a movement runs in this book's own terms.
+ *
+ * A subject book signs by its own direction, not by the cash direction: money
+ * leaving raises a Piutang and lowers a Hutang. This is the one place that sign
+ * is decided — the subledger's counterpart to the General Ledger's normal-balance
+ * signing (§10 rule 53).
  */
 export function subledgerMovement(
   book: SubledgerDef,

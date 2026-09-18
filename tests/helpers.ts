@@ -169,6 +169,21 @@ export async function budgetCategoryId(label: string): Promise<number> {
   return row.id;
 }
 
+/**
+ * The key a subject book is stored under: the owning Budget Category's code.
+ *
+ * Books stopped being a hardcoded catalogue of slugs ("hutang") and became the
+ * Budget Categories themselves, so a test that asserts against a book has to ask
+ * which key that category holds rather than spelling one.
+ */
+export async function bookKey(categoryLabel: string): Promise<string> {
+  const row = await prisma.sysBudgetCategory.findFirstOrThrow({
+    where: { category_label: categoryLabel },
+    select: { category_code: true },
+  });
+  return row.category_code;
+}
+
 export async function partnerCategoryId(label: string): Promise<number> {
   const row = await prisma.sysPartnerCategory.findFirstOrThrow({
     where: { category_label: label },

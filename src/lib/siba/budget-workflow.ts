@@ -23,6 +23,7 @@
 import type { IconName } from "@/components/icon";
 import type { ActionTone } from "./header-actions";
 import type { PermissionCode } from "./permissions";
+import { DIRECTION_TEXT } from "./classification";
 
 export type BudgetStatus =
   | "Draft"
@@ -161,7 +162,9 @@ export function availableActions(
 /** Statuses a budget counts as "not yet approved" in the KPI row. */
 export const NOT_APPROVED: BudgetStatus[] = ["Draft", "Submitted"];
 
-export const BUDGET_TYPE_TEXT: Record<string, string> = {
-  In: "Penerimaan",
-  Out: "Pengeluaran",
-};
+/**
+ * Kept as a name this module's callers already use, but no longer a second
+ * copy of the mapping: direction reads "Penerimaan" / "Pengeluaran" everywhere,
+ * and three identical two-entry maps is how that stops being true.
+ */
+export const BUDGET_TYPE_TEXT: Record<string, string> = DIRECTION_TEXT;

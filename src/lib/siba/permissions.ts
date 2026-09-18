@@ -89,6 +89,37 @@ export const PERMISSIONS = [
   { code: "CURRENCY_ACTIVATE", name: "Aktifkan Currency", module: "master" },
   { code: "CURRENCY_DEACTIVATE", name: "Nonaktifkan Currency", module: "master" },
 
+  // The classification chain. Separate from Partner and Budget on purpose:
+  // reshaping which Partner Categories a Budget Category admits changes what
+  // every future approval may classify, which is a different decision from
+  // maintaining the records classified by it.
+  { code: "BUDGET_CATEGORY_VIEW", name: "Lihat Budget Category", module: "master" },
+  { code: "BUDGET_CATEGORY_CREATE", name: "Tambah Budget Category", module: "master" },
+  { code: "BUDGET_CATEGORY_EDIT", name: "Ubah Budget Category", module: "master" },
+  { code: "BUDGET_CATEGORY_ACTIVATE", name: "Aktifkan Budget Category", module: "master" },
+  { code: "BUDGET_CATEGORY_DEACTIVATE", name: "Nonaktifkan Budget Category", module: "master" },
+
+  { code: "PARTNER_CATEGORY_VIEW", name: "Lihat Partner Category", module: "master" },
+  { code: "PARTNER_CATEGORY_CREATE", name: "Tambah Partner Category", module: "master" },
+  { code: "PARTNER_CATEGORY_EDIT", name: "Ubah Partner Category", module: "master" },
+  { code: "PARTNER_CATEGORY_ACTIVATE", name: "Aktifkan Partner Category", module: "master" },
+  { code: "PARTNER_CATEGORY_DEACTIVATE", name: "Nonaktifkan Partner Category", module: "master" },
+
+  // No PURPOSE_CREATE: a Purpose is generated from the classification, never
+  // authored. Creating one by hand could only duplicate a combination the
+  // matrix already implies or invent one it does not — both of which are how
+  // the Purpose list and the classification start disagreeing.
+  { code: "PURPOSE_VIEW", name: "Lihat Transaction Purpose", module: "master" },
+  { code: "PURPOSE_EDIT", name: "Ubah sebutan Transaction Purpose", module: "master" },
+  { code: "PURPOSE_ACTIVATE", name: "Aktifkan Transaction Purpose", module: "master" },
+  { code: "PURPOSE_DEACTIVATE", name: "Nonaktifkan Transaction Purpose", module: "master" },
+
+  { code: "BUDGET_PARTNER_CATEGORY_VIEW", name: "Lihat Klasifikasi Budget-Partner", module: "master" },
+  { code: "BUDGET_PARTNER_CATEGORY_CREATE", name: "Tambah Klasifikasi Budget-Partner", module: "master" },
+  { code: "BUDGET_PARTNER_CATEGORY_EDIT", name: "Ubah Klasifikasi Budget-Partner", module: "master" },
+  { code: "BUDGET_PARTNER_CATEGORY_ACTIVATE", name: "Aktifkan Klasifikasi Budget-Partner", module: "master" },
+  { code: "BUDGET_PARTNER_CATEGORY_DEACTIVATE", name: "Nonaktifkan Klasifikasi Budget-Partner", module: "master" },
+
   // ---------------------------------------------------------------- accounting
   { code: "MENU_ACCOUNTING_ACCESS", name: "Akses menu Accounting", module: "accounting" },
 
@@ -217,47 +248,26 @@ export const PERMISSIONS = [
       "masing-masing kurs perolehan.",
   },
 
-  // One permission per subject book, deliberately. A subledger holds a
-  // Partner's position, and who may read which position is a real distinction:
-  // Prive is the owners' drawings, while Hutang is ordinary operational
-  // information. A single "lihat subledger" permission would make those one
-  // decision, which is exactly the decision an administrator should be able to
-  // take separately.
+  // **One permission for every subject book**, which is a reversal of the
+  // decision above it and deserves saying why.
+  //
+  // A book used to be a screen somebody wrote, so a book meant a permission.
+  // A book is now a Budget Category that names a Partner — created through
+  // Master > Klasifikasi, with no deploy — so a permission per book would mean
+  // a permission created at runtime, which is the one thing the catalogue
+  // forbids: a row no code reads, with a code nobody can rely on.
+  //
+  // What that costs is real and is recorded in §17: whoever may read Hutang may
+  // also read Prive, the owners' drawings. Nothing in the seeded roles relied on
+  // the distinction, and the alternative was worse — either a permission family
+  // materialised from data, or a developer in the loop every time a category
+  // appears, which is the cost this change exists to remove.
   {
-    code: "REPORT_TITIPAN_LEDGER_VIEW",
-    name: "Lihat laporan Buku Titipan",
+    code: "REPORT_SUBLEDGER_VIEW",
+    name: "Lihat laporan Buku Subjek",
     module: "finance",
-    description: "Riwayat dan sisa titipan per Partner.",
-  },
-  {
-    code: "REPORT_HUTANG_LEDGER_VIEW",
-    name: "Lihat laporan Buku Hutang",
-    module: "finance",
-    description: "Riwayat dan sisa hutang per Partner.",
-  },
-  {
-    code: "REPORT_PIUTANG_LEDGER_VIEW",
-    name: "Lihat laporan Buku Piutang",
-    module: "finance",
-    description: "Riwayat dan sisa piutang per Partner.",
-  },
-  {
-    code: "REPORT_PRIVE_LEDGER_VIEW",
-    name: "Lihat laporan Buku Prive",
-    module: "finance",
-    description: "Riwayat dan saldo prive per Stakeholder.",
-  },
-  {
-    code: "REPORT_INVESTASI_LEDGER_VIEW",
-    name: "Lihat laporan Buku Investasi",
-    module: "finance",
-    description: "Riwayat dan total investasi yang tertanam per Cabang.",
-  },
-  {
-    code: "REPORT_HASIL_INVESTASI_LEDGER_VIEW",
-    name: "Lihat laporan Buku Hasil Investasi",
-    module: "finance",
-    description: "Riwayat dan total hasil investasi yang diterima per Cabang.",
+    description:
+      "Riwayat dan posisi setiap Partner pada seluruh buku subjek — Titipan, Hutang, Piutang, Prive, Investasi, dan kategori lain yang memakai Partner.",
   },
 
   // ---------------------------------------------------------------- settings

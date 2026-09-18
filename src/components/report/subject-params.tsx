@@ -41,6 +41,7 @@ export function SubjectParams({
   allPlaceholder,
   missingHint,
   companyId,
+  extraParams,
 }: {
   slug: string;
   subjects: RefOption[];
@@ -59,6 +60,13 @@ export function SubjectParams({
   missingHint: string;
   /** Carried through the URL so switching Company does not lose the run. */
   companyId?: number | null;
+  /**
+   * Parameters this report needs carried through that are not the subject or
+   * the period — the subject book on Buku Subjek. Without them, pressing
+   * *Tampilkan* would rebuild the URL without the book and quietly send the
+   * reader back to the first one.
+   */
+  extraParams?: Record<string, string | number | null | undefined>;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -85,6 +93,7 @@ export function SubjectParams({
       router.push(
         reportHref(slug, {
           company: companyId ?? null,
+          ...extraParams,
           [param]: selected.join(","),
           from: start,
           to: end,

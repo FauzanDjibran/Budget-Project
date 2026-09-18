@@ -833,3 +833,51 @@ describe("an account's postability is not something a user types", () => {
     );
   });
 });
+
+// ------------------------------------------------- a value reads as it was offered
+
+/**
+ * A field that offers "Penerimaan" must not display "In".
+ *
+ * `optionLabels` is what a `select` shows while it is being filled in, and the
+ * read-only view used to ignore it — falling back to the global `STATUS_TEXT`
+ * map and, failing that, to the raw stored value. Status happened to work
+ * because "Active" is in that map; the first select whose values were not
+ * printed its enum. Direction is the case that matters: `In` and `Out` are
+ * storage, and the interface says Penerimaan and Pengeluaran everywhere.
+ */
+describe("a select displays the label it offered", () => {
+  const form = readFileSync(
+    join(process.cwd(), "src/components/master/entity-form.tsx"),
+    "utf8"
+  );
+
+  test("the read-only branch reads the field's own optionLabels first", () => {
+    const branch = form.slice(form.indexOf(`if (field.type === "select")`));
+    const body = branch.slice(0, branch.indexOf("if (field.type === \"money\")"));
+    assert.ok(
+      body.includes("field.optionLabels?."),
+      "a read-only select must use the field's own optionLabels, not only STATUS_TEXT"
+    );
+    assert.ok(
+      body.indexOf("field.optionLabels?.") < body.indexOf("STATUS_TEXT["),
+      "the field's own labels must win over the global status vocabulary"
+    );
+  });
+
+  test("every select that stores a direction offers Indonesian labels", () => {
+    const entities = readFileSync(
+      join(process.cwd(), "src/lib/siba/entities.ts"),
+      "utf8"
+    );
+    // A registry field offering the raw In/Out enum must always name them.
+    const offers = entities.matchAll(/options:\s*\["(In|Out)",\s*"(In|Out)"\]/g);
+    for (const m of offers) {
+      const after = entities.slice(m.index ?? 0, (m.index ?? 0) + 400);
+      assert.ok(
+        after.includes("Pengeluaran") && after.includes("Penerimaan"),
+        "a direction select must carry optionLabels for Penerimaan and Pengeluaran"
+      );
+    }
+  });
+});

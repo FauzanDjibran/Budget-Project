@@ -19,9 +19,12 @@ import { companyScope } from "@/lib/siba/company-access";
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { subledgerReport, subledgerSubjects } from "@/lib/siba/subledger";
+import { loadSubledgers } from "@/lib/siba/subledger-data";
+import { BookFilter } from "@/components/report/book-filter";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
+import { Icon } from "@/components/icon";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +54,7 @@ export default async function Page({
   searchParams: Promise<{
     company?: string;
     cashBank?: string;
+    book?: string;
     partners?: string;
     from?: string;
     to?: string;
@@ -86,6 +90,7 @@ export default async function Page({
       report,
       slug,
       range,
+      bookKey: query.book,
       partnerIds: idList(query.partners),
       company,
       options: scope.options,
@@ -200,6 +205,7 @@ async function subledgerPage({
   report,
   slug,
   range,
+  bookKey,
   partnerIds,
   company,
   options,
@@ -207,6 +213,7 @@ async function subledgerPage({
   report: NonNullable<ReturnType<typeof reportBySlug>>;
   slug: string;
   range: PeriodRange;
+  bookKey?: string;
   partnerIds: number[];
   company: { id: number; label: string; name: string };
   options: { id: number; label: string; name: string }[];
@@ -214,20 +221,38 @@ async function subledgerPage({
   const runAt = new Date().toISOString();
   const companyIds = [company.id];
 
+  // Which book is a parameter, and the books come from the Budget Categories —
+  // so a category created this morning is in this list this afternoon.
+  const books = await loadSubledgers();
+  if (!books.length) {
+    return (
+      <ReportView report={report} filter={null} runAt={runAt}>
+        <NoBooks />
+      </ReportView>
+    );
+  }
+
+  // An unknown or absent book falls back to the first rather than 404ing: a
+  // bookmark that outlived its category should still answer with something, the
+  // same way an unreadable `?company=` falls back inside what is permitted.
+  const book = books.find((b) => b.key === bookKey) ?? books[0];
+
   const [subjects, data] = await Promise.all([
-    subledgerSubjects(report.subledger!, companyIds),
-    subledgerReport(report.subledger!, range, { partnerIds, companyIds }),
+    subledgerSubjects(books, book.key, companyIds),
+    subledgerReport(books, book.key, range, { partnerIds, companyIds }),
   ]);
   if (!data) notFound();
 
   return (
     <ReportView
-      report={report}
+      report={{ ...report, name: data.book.name, desc: data.book.desc }}
       filter={
         <>
           <CompanyFilter options={options} selectedId={company.id} />
+          <BookFilter books={books} selectedKey={book.key} />
           <SubjectParams
             slug={slug}
+            extraParams={{ book: book.key }}
             subjects={subjects}
             selectedIds={partnerIds}
             from={range.from}
@@ -253,6 +278,30 @@ async function subledgerPage({
     >
       <SubledgerReport report={data} />
     </ReportView>
+  );
+}
+
+/**
+ * No Budget Category keeps a book yet.
+ *
+ * Reachable rather than theoretical: a category keeps a book when it names a
+ * Partner **and** says which way that book runs, so a fresh chart of
+ * classifications — or one where nobody has set the direction — has no books at
+ * all. An empty table would read as "nothing has been posted", which is a
+ * different and misleading thing.
+ */
+function NoBooks() {
+  return (
+    <div className="empty">
+      <div className="ic">
+        <Icon name="book" size={20} />
+      </div>
+      <h4>Belum ada buku subjek</h4>
+      <p>
+        Sebuah Budget Category memiliki buku sendiri bila memakai Partner dan
+        sudah menyatakan arah posisinya. Atur pada Master › Klasifikasi.
+      </p>
+    </div>
   );
 }
 

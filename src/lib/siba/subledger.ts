@@ -7,7 +7,6 @@ import { nextDocumentNumber } from "./document-number";
 import { roundBase } from "./fx";
 import type { PeriodRange } from "./period";
 import {
-  SUBLEDGERS,
   subledgerByKey,
   subledgerMovement,
   type SubledgerDef,
@@ -43,8 +42,12 @@ type Db = Prisma.TransactionClient | typeof prisma;
 export type SubledgerEntryType = "Opening" | "Transaction" | "Adjustment";
 
 export type NewSubledgerEntry = {
-  /** Catalogue key — `hutang`, `prive`, and so on. */
-  book: string;
+  /**
+   * The book being written. The **definition**, not a key to look up: this
+   * module is a leaf that reads no other table, and the books now come from the
+   * Budget Categories, so the caller loads them and hands one in.
+   */
+  book: SubledgerDef;
   partnerId: number;
   currencyId: number;
   /** `YYYY-MM-DD`. */
@@ -105,13 +108,7 @@ async function nextEntryNo(db: Db): Promise<string> {
  * Bank Book and the Journal both recorded.
  */
 export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
-  const book = subledgerByKey(entry.book);
-  if (!book) {
-    throw new Error(
-      `Subledger "${entry.book}" tidak ada di katalog. ` +
-        "Katalog buku pembantu ada di lib/siba/subledger-catalogue.ts."
-    );
-  }
+  const book = entry.book;
 
   if (!(entry.rate > 0)) {
     throw new Error(
@@ -303,11 +300,12 @@ export type SubledgerReport = {
  * exactly `to` are inside the period; anything earlier folds into the opening.
  */
 export async function subledgerReport(
+  books: SubledgerDef[],
   bookKey: string,
   range: PeriodRange,
   options: { partnerIds?: number[]; companyIds: number[] }
 ): Promise<SubledgerReport | null> {
-  const book = subledgerByKey(bookKey);
+  const book = subledgerByKey(books, bookKey);
   if (!book) return null;
 
   const partnerWhere = {
@@ -465,10 +463,11 @@ export async function subledgerReport(
  * category might one day post here.
  */
 export async function subledgerSubjects(
+  books: SubledgerDef[],
   bookKey: string,
   companyIds: number[]
 ): Promise<{ id: number; label: string; name: string; active: boolean }[]> {
-  const book = subledgerByKey(bookKey);
+  const book = subledgerByKey(books, bookKey);
   if (!book) return [];
 
   const rows = await prisma.subLedgerBalance.findMany({
@@ -512,9 +511,11 @@ export async function subledgerSubjects(
  * Counts rather than balances: a total across subjects would have to cross
  * currencies, and the books never do that.
  */
-export async function subledgerEntryCounts(): Promise<Map<string, number>> {
+export async function subledgerEntryCounts(
+  books: SubledgerDef[]
+): Promise<Map<string, number>> {
   const rows = await prisma.subLedger.groupBy({ by: ["book"], _count: { _all: true } });
-  const counts = new Map<string, number>(SUBLEDGERS.map((s) => [s.key as string, 0]));
+  const counts = new Map<string, number>(books.map((s) => [s.key, 0]));
   for (const r of rows) counts.set(r.book, r._count._all);
   return counts;
 }
@@ -534,9 +535,7 @@ export async function subledgerEntryCounts(): Promise<Map<string, number>> {
 export type SubledgerPosition = {
   key: string;
   name: string;
-  slug: string;
   icon: SubledgerDef["icon"];
-  permission: SubledgerDef["permission"];
   nature: SubledgerNature;
   closingLabel: string;
   /** How many subjects still stand in this book. */
@@ -545,6 +544,7 @@ export type SubledgerPosition = {
 };
 
 export async function subledgerPositions(
+  books: SubledgerDef[],
   companyIds: number[]
 ): Promise<SubledgerPosition[]> {
   const balances = companyIds.length
@@ -559,16 +559,14 @@ export async function subledgerPositions(
       })
     : [];
 
-  return SUBLEDGERS.map((def) => {
+  return books.map((def) => {
     const mine = balances.filter(
       (b) => b.book === def.key && b.balance.toNumber() !== 0
     );
     return {
       key: def.key,
       name: def.name,
-      slug: def.slug,
       icon: def.icon,
-      permission: def.permission,
       nature: def.nature,
       closingLabel: def.closingLabel,
       subjects: mine.length,

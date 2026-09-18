@@ -336,41 +336,164 @@ model SysDocType {
   @@map("sys_doc_type")
 }
 
+/// The classification a Budget is approved into, and the rules that classification
+/// carries. `allows_in` / `allows_out` say which directions are meaningful for it —
+/// balance-sheet logic, not cash direction — and `require_partner` says whether it
+/// names a subject at all.
+///
+/// `require_partner = false` is a statement, not an absence: Asset and Biaya take no
+/// Partner by design, which is a different fact from a category whose admitted
+/// Partner Categories have simply not been configured yet. Without the flag an empty
+/// `partner_categories` cannot tell the two apart.
 model SysBudgetCategory {
-  id             Int     @id @default(autoincrement())
-  category_code  String  @unique
+  id             Int    @id @default(autoincrement())
+  category_code  String @unique
   category_label String
   category_name  String
-  note           String?
+
+  /// Direction follows balance-sheet logic. Two booleans rather than an enum
+  /// because the real answer is a set, and "Both" as a third enum value is a set
+  /// pretending to be a scalar.
+  allows_in       Boolean @default(false)
+  allows_out      Boolean @default(false)
+  /// False = this category names no Partner (Asset, Biaya). A mapping row is
+  /// then refused rather than merely unused.
+  require_partner Boolean @default(true)
+
+  /// Which cash direction *raises* this category's subject position — the one
+  /// fact a subject book needs that nothing else in the row predicts. Money out
+  /// raises a Piutang and lowers a Hutang, which is balance-sheet logic rather
+  /// than cash direction.
+  ///
+  /// Null where the category keeps no book. A category keeps one exactly when it
+  /// names a Partner (§10 rule 52), so `require_partner` decides whether a book
+  /// exists and this decides which way it runs.
+  raises FlowDirection?
+
+  /// Presentation for that book, both optional. The name, the subject line and
+  /// whether the closing figure is a position or a running total are all derived
+  /// from the row (see `subledger-catalogue.ts`); these two are the parts no
+  /// derivation gets right. A new category is a usable book without them, and a
+  /// better-worded one with them.
+  book_icon          String?
+  book_closing_label String?
+
+  note   String?
+  status ActiveStatus @default(Active)
 
   created_by Int
   updated_by Int?
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  budgets  BudBudget[]
-  mappings AccBudgetCategoryAccount[]
+  budgets            BudBudget[]
+  mappings           AccBudgetCategoryAccount[]
+  partner_categories SysBudgetPartnerCategoryMapping[]
+  purposes           SysPurpose[]
 
   @@map("sys_budget_category")
 }
 
 model SysPartnerCategory {
-  id             Int     @id @default(autoincrement())
-  category_code  String  @unique
+  id             Int          @id @default(autoincrement())
+  category_code  String       @unique
   category_label String
   category_name  String
   note           String?
+  status         ActiveStatus @default(Active)
 
   created_by Int
   updated_by Int?
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  partners MPartner[]
-  accounts AccAccount[]
-  mappings AccBudgetCategoryAccount[]
+  partners          MPartner[]
+  accounts          AccAccount[]
+  mappings          AccBudgetCategoryAccount[]
+  budget_categories SysBudgetPartnerCategoryMapping[]
+  purposes          SysPurpose[]
 
   @@map("sys_partner_category")
+}
+
+/// A Transaction Purpose: exactly one Budget Category x one Partner Category x
+/// one direction, which is what lets it resolve to a single account.
+///
+/// These were 22 constants in `src/lib/siba/rules.ts`. They are rows now because
+/// the Budget Categories they classify are rows: a category created through the
+/// GUI that no Purpose named could be planned and booked but never actually
+/// transacted, which is the one link that still needed a developer.
+///
+/// **Generated, not authored.** The 22 were exactly the cross product of the
+/// categories, their admitted Partner Categories and their directions — no more
+/// and no fewer — so `syncPurposes` derives the rows from that matrix and nothing
+/// creates one by hand. What a person edits is the `label`, because that is the
+/// only part no derivation gets right: "Penerimaan Pinjaman dari Cabang" for a
+/// Hutang receipt, where a template would say "Hutang".
+model SysPurpose {
+  id Int @id @default(autoincrement())
+
+  /// What a document stores in `fin_cash_bank_transaction.purpose`. Opaque and
+  /// immutable: the original 22 keep their historical mnemonics (`TTP_CAB_IN`)
+  /// and generated ones carry a system code, because a posted document must go
+  /// on resolving whatever the key looked like when it was written. Nothing
+  /// parses it.
+  purpose_key String @unique
+
+  budget_category_id  Int
+  /// Null where the Purpose takes no Partner — Asset and Biaya.
+  partner_category_id Int?
+  direction           FlowDirection
+
+  /// The Indonesian sentence naming the business event, not the classification.
+  /// Editable, and the only field that is.
+  label String
+
+  note   String?
+  status ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  budget_category  SysBudgetCategory   @relation(fields: [budget_category_id], references: [id])
+  partner_category SysPartnerCategory? @relation(fields: [partner_category_id], references: [id])
+
+  /// One Purpose per combination — the statement that a Purpose *is* the triple.
+  @@unique([budget_category_id, partner_category_id, direction])
+  @@index([partner_category_id])
+  @@map("sys_purpose")
+}
+
+/// Which Partner Categories a Budget Category admits — the chain
+/// Budget Category -> Partner Category -> Partner, held as data rather than in code
+/// so it can be reshaped through the GUI while the model is still being discovered.
+///
+/// One row per admitted pair, each carrying its own status, because narrowing a
+/// category must not rewrite history: deactivating a pair stops it being offered on
+/// new records and leaves every Budget already classified by it intact. That is the
+/// whole reason this is a table of rows rather than a list held on the category.
+model SysBudgetPartnerCategoryMapping {
+  id                  Int    @id @default(autoincrement())
+  mapping_code        String @unique
+  budget_category_id  Int
+  partner_category_id Int
+
+  note   String?
+  status ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  budget_category  SysBudgetCategory  @relation(fields: [budget_category_id], references: [id])
+  partner_category SysPartnerCategory @relation(fields: [partner_category_id], references: [id])
+
+  @@unique([budget_category_id, partner_category_id])
+  @@index([partner_category_id])
+  @@map("sys_budget_partner_category_mapping")
 }
 
 // ---------------------------------------------------------------- ref

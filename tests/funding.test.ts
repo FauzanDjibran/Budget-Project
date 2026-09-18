@@ -9,7 +9,7 @@ import {
   withdrawFundingRequest,
 } from "../src/lib/siba/funding";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
-import { purposeOf } from "../src/lib/siba/rules";
+import { purposeByKey } from "../src/lib/siba/purposes";
 import { openCashBankBook } from "../src/lib/siba/cash-bank";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import { MODULES } from "../src/lib/siba/nav";
@@ -25,6 +25,7 @@ import {
 } from "../src/lib/siba/system-settings";
 import {
   FIXTURE_PREFIX,
+  bookKey,
   budgetCategoryId,
   childCompanyId,
   cleanupFixtures,
@@ -157,7 +158,7 @@ async function makeAnakDraft(options: {
   currencyId?: number;
   lines: { budgetId: number; amount: number }[];
 }): Promise<number> {
-  const purpose = purposeOf(options.purpose)!;
+  const purpose = (await purposeByKey(options.purpose))!;
   const docType = await budgetDocTypeId();
   const total = options.lines.reduce((t, l) => t + l.amount, 0);
 
@@ -629,7 +630,7 @@ describe("confirmation posts both Companies, at once", () => {
     //    positions against each other are accounts, not subjects, so the
     //    confirmation writes exactly one subject-book entry.
     assert.equal(
-      await subledgerBalance("hutang", supplier),
+      await subledgerBalance(await bookKey("Hutang"), supplier),
       -300_000,
       "paying a supplier lowers what the anak owes it"
     );
@@ -729,7 +730,7 @@ describe("confirmation posts both Companies, at once", () => {
 
     assert.equal(await bookBalance(cashBank), 250_000, "the induk holds it now");
     assert.equal(
-      await subledgerBalance("piutang", debtor),
+      await subledgerBalance(await bookKey("Piutang"), debtor),
       -200_000,
       "being repaid lowers what the debtor owes the anak"
     );

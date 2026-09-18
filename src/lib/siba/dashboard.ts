@@ -14,6 +14,7 @@ import { unbalancedJournals } from "./journal";
 import { accountPositions, type AccountPosition } from "./ledger";
 import { companyStructure } from "./records";
 import { subledgerPositions, type SubledgerPosition } from "./subledger";
+import { loadSubledgers } from "./subledger-data";
 import { intercompanyBridge } from "./system-settings";
 
 /**
@@ -164,7 +165,7 @@ export async function dashboardData(
       pendingCommitments(companyIds),
       openFundingRequests(companyIds),
       cashBookSummary(companyIds),
-      subledgerPositions(companyIds),
+      loadSubledgers().then((books) => subledgerPositions(books, companyIds)),
       intercompanyBridge(),
     ]);
 

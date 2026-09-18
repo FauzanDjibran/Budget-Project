@@ -189,7 +189,35 @@ table sys_budget_category {
   category_label              varchar(255) [not null]
   category_name               varchar(255) [not null]
 
+  // Which directions are meaningful for this category. Balance-sheet logic,
+  // not cash direction. Two booleans rather than an enum because the real
+  // answer is a set, and "Both" as a third value is a set pretending to be a
+  // scalar. Shown as Penerimaan / Pengeluaran; In and Out are storage only.
+  allows_in                   boolean [not null, default: false]
+  allows_out                  boolean [not null, default: false]
+
+  // False = this category names no subject at all (Asset, Biaya). A statement,
+  // not an absence: a category that requires a Partner but has none configured
+  // yet is a setup gap, which an empty mapping list alone cannot distinguish.
+  require_partner             boolean [not null, default: true]
+
+  // A category that names a Partner keeps a subject book, and these three are
+  // that book. `raises` is which cash direction raises the subject's position —
+  // money out raises a Piutang and lowers a Hutang — and is the only fact
+  // nothing else in the row predicts; null means no book yet. The other two are
+  // presentation and fall back, so a book works without them.
+  //
+  // The book's own key is this row's `category_code`, which is what
+  // `sub_ledger.book` holds. Its name, its subject line and whether its closing
+  // figure is a position or a running total are all derived — see
+  // `src/lib/siba/subledger-catalogue.ts`.
+  raises                      enum('In', 'Out')
+  book_icon                   varchar(255)
+  book_closing_label          varchar(255)
+
   note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
 
   created_by                  int [not null]
   updated_by                  int
@@ -208,11 +236,90 @@ table sys_partner_category {
 
   note                        text
 
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
   created_by                  int [not null]
   updated_by                  int
 
   created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+// A Transaction Purpose: exactly one Budget Category x one Partner Category x
+// one direction, which is what lets it resolve to a single account.
+//
+// These were 22 constants in src/lib/siba/rules.ts. They are rows because the
+// Budget Categories they classify are rows: a category created through the GUI
+// that no Purpose named could be planned and booked but never transacted.
+//
+// Generated, not authored. The original 22 were exactly the cross product of
+// the categories, their admitted Partner Categories and their directions, so
+// syncPurposes derives the rows and nothing creates one by hand. What a person
+// edits is the label, and the generator never overwrites it.
+table sys_purpose {
+  id                          int [pk, increment, not null]
+
+  // What a document stores in fin_cash_bank_transaction.purpose. Opaque and
+  // immutable: the original 22 keep their historical mnemonics (TTP_CAB_IN) and
+  // generated ones carry a system code. Nothing parses it.
+  purpose_key                 varchar(255) [not null, unique]
+
+  budget_category_id          int [not null, ref : > sys_budget_category.id]
+  // Null where the Purpose takes no Partner — Asset and Biaya.
+  partner_category_id         int [ref : > sys_partner_category.id]
+  direction                   enum('In', 'Out') [not null]
+
+  // The Indonesian sentence naming the business event, not the classification.
+  // Editable, and the only field that is.
+  label                       varchar(255) [not null]
+
+  note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (budget_category_id, partner_category_id, direction) [unique]
+    partner_category_id
+  }
+}
+
+// Which Partner Categories a Budget Category admits — the chain
+// Budget Category -> Partner Category -> Partner. Held as data rather than in
+// code so it can be reshaped through Master > Klasifikasi while the model is
+// still being discovered.
+//
+// One row per admitted pair, each carrying its own status, because narrowing a
+// category must not rewrite history: deactivating a pair stops it being offered
+// on new records and leaves every Budget already classified by it intact. That
+// is the whole reason this is a table of rows and not a list on the category.
+table sys_budget_partner_category_mapping {
+  id                          int [pk, increment, not null]
+
+  mapping_code                varchar(255) [not null, unique]
+
+  budget_category_id          int [not null, ref : > sys_budget_category.id]
+  partner_category_id         int [not null, ref : > sys_partner_category.id]
+
+  note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (budget_category_id, partner_category_id) [unique]
+    partner_category_id
+  }
 }
 
 //----------------------------------

@@ -6,7 +6,7 @@ import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import {
   financeRefs,
   getTransaction,
-  purposeOptions,
+  availablePurposeOptions,
   transactionLines,
 } from "@/lib/siba/finance";
 import {
@@ -50,7 +50,7 @@ export default async function Page({
         transaction={transaction}
         lines={lines}
         refs={refs}
-        purposes={purposeOptions()}
+        purposes={await availablePurposeOptions(transaction.purpose)}
         mappings={mappings}
         can={transactionAbilities(actor.permissions)}
       />

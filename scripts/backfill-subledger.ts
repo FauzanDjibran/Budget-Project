@@ -28,8 +28,9 @@
 import "dotenv/config";
 import { prisma } from "@/lib/prisma";
 import { isBaseCurrency } from "@/lib/siba/currency";
-import { purposeOf } from "@/lib/siba/rules";
+import { purposeByKey } from "@/lib/siba/purposes";
 import { subledgerForCategory } from "@/lib/siba/subledger-catalogue";
+import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { recordSubledgerEntry } from "@/lib/siba/subledger";
 
 async function main() {
@@ -73,14 +74,19 @@ async function main() {
   let noBook = 0;
   let unvalued = 0;
 
+  const books = await loadSubledgers();
   for (const doc of posted) {
     if (already.has(doc.id)) {
       skipped += 1;
       continue;
     }
 
-    const purpose = purposeOf(doc.purpose);
-    const book = subledgerForCategory(purpose?.budgetCategory ?? null);
+    const purpose = await purposeByKey(doc.purpose);
+    // The Budget Category owns the book; the Purpose only names which category
+    // this document carries. Resolved by id, never by the label the Purpose
+    // holds a copy of.
+    const categoryId = purpose?.budgetCategoryId ?? null;
+    const book = subledgerForCategory(books, categoryId);
     if (!book || !doc.partner_id) {
       noBook += 1;
       continue;
@@ -105,7 +111,7 @@ async function main() {
 
     await prisma.$transaction((tx) =>
       recordSubledgerEntry(tx, {
-        book: book.key,
+        book,
         partnerId: doc.partner_id!,
         currencyId: doc.currency_id,
         date,

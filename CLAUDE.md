@@ -72,13 +72,15 @@ or invariants that assume a particular row exists.
 | Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered |
 | Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. Period-end revaluation is **not** built (§13) |
 | Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows them and says when they stop reconciling with the book |
-| Subject books (subledgers) | Done — append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. Six Report Views under Finance › Laporan. No manual entry and no Opening path yet |
+| Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. Six Report Views under Finance › Laporan. No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done — the commitment funnel (submitted → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
+| Klasifikasi (Budget Category, Partner Category, their pairing) | Done — the Budget Category rules are rows now, not a constant: which directions a category allows, whether it names a Partner, and which Partner Categories it admits. Three registry entities under Master › Klasifikasi, each deactivable. Retiring a pair withdraws the Purposes resting on it from the picker while leaving every record already classified by it readable |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
+| Transaction Purpose | Done — generated from the classification into `sys_purpose`, so a new Budget Category is transactable with no code change. GUI under Master › Klasifikasi; only the label is editable |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
@@ -150,7 +152,10 @@ of its own.
 | --- | --- | --- |
 | Entity registry | `src/lib/siba/entities.ts` | Field + column config driving list, detail and form |
 | Navigation model | `src/lib/siba/nav.ts` | Modules → groups → entities; rail and submenu |
-| Business rules | `src/lib/siba/rules.ts` | Budget categories and the 22 transaction purposes |
+| Purpose seed data | `src/lib/siba/rules.ts` | `SEED_PURPOSES`: the historical 22, planted once. **Not a runtime source** |
+| Purposes | `src/lib/siba/purposes.ts` | `syncPurposes` generates them from the classification; `allPurposes` / `availablePurposes` read them; `server-only` |
+| Classification rules | `src/lib/siba/classification.ts` | Budget Category -> Partner Category -> Partner, as pure functions over a catalogue, plus `DIRECTION_TEXT`. Client-safe |
+| Classification data | `src/lib/siba/classification-data.ts` | `loadClassification` — the catalogue read from `sys_budget_category` and `sys_budget_partner_category_mapping`; `server-only` |
 | FX kernel | `src/lib/siba/fx.ts` | `originate` / `relieve` / `drawLayer` / `settle` / `fxDifference` — pure arithmetic over numbers, no database, no module dependency; client-safe so the form previews exactly what the Server Action computes |
 | Currency rules | `src/lib/siba/currency.ts` | The base currency, which resource may settle which document, and where a kurs comes from (`identity` / `layer` / `entered`); client-safe |
 | Account numbering | `src/lib/siba/account-code.ts` | The dotted lineage code — parsing, segments, ordering; client-safe |
@@ -217,7 +222,7 @@ source scan and needs no database.
 | Funding | `fin_funding_request` | `lib/siba/funding.ts`, `app/actions/funding.ts` |
 | Transfer | `fin_cash_bank_transfer(_line)` | `lib/siba/transfer.ts`, `app/actions/transfer.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
-| Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` |
+| Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` (+ `subledger-data.ts`, which reads the Budget Categories the books are) |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22); the manual journal's rules sit above it in `lib/siba/manual-journal.ts` + `app/actions/journal.ts` |
 | Fiscal | `acc_fiscal_year`, `acc_fiscal_period` | `lib/siba/fiscal.ts` |
 
@@ -412,7 +417,8 @@ src/
                          generated class, so `prisma generate` retires it (§12)
     format.ts            Date/number/money/rate formatting (UTC-based). The only
                          place a date, an amount or a kurs is formatted (§12)
-    siba/                entities, nav, rules, records, users, account-code,
+    siba/                entities, nav, rules, purposes, classification,
+                         classification-data, records, users, account-code,
                          header-actions,
                          company-access, journal, ledger,
                          fx, currency,
@@ -421,7 +427,7 @@ src/
                          fiscal-workflow, journal-workflow, manual-journal,
                          budget, budget-workflow, cash-bank,
                          cash-bank-layers,
-                         subledger, subledger-catalogue,
+                         subledger, subledger-catalogue, subledger-data,
                          finance, transaction-workflow, funding,
                          transfer, transfer-catalogue, transfer-valuation,
                          transfer-workflow, reports,
@@ -453,6 +459,8 @@ npm run start:standalone     # run that artifact exactly as a server would
 npm run lint                 # ESLint
 npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
+                             # (runs under --conditions=react-server: it imports
+                             #  `purposes.ts`, which is server-only)
 npm run db:sample            # dev only: sample Partners + Chart of Accounts (NOT the seeder)
 npm run db:backfill-subledger  # one-off: subject books for already-posted documents
 npm run db:backfill-account-flags  # one-off: resync Postable + Control Account to the structure
@@ -643,6 +651,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`). Searchable once the list is long, and searched the same way — in the trigger. A long list of combinations takes `group` on its options and `listWidth="wide"` |
 | Dropdown search | Every word must match, across label + hint + group. A list of facets is searched by naming facets — `pengeluaran cabang` — and one substring against the whole row finds nothing |
 | Popups | `AnchoredPopup` draws every list and calendar — portalled to `document.body`, placed from the trigger's rect, flipping and clamping to the room it has. **Never positioned inside its control** |
+| Direction | Always **Penerimaan** (`In`) and **Pengeluaran** (`Out`), everywhere. `directionText` in `lib/siba/classification.ts` is the one map; the raw enum is never shown |
 | Dates | `DateInput` — **never `<input type="date">`**; types and shows `dd/mm/yyyy`, opens the app's own calendar |
 | Amounts | `MoneyInput` — **never `<input type="number">`**; mono, right-aligned, grouped in thousands as it is typed, currency label inside the box. `size="sm"` inside a table |
 | Rates | `RateInput` — a thin wrapper over `MoneyInput`, never a second control. `decimals={6}` and the pair inside the box (`USD → IDR`, `labelWidth="pair"`) are the whole difference (§12) |
@@ -841,7 +850,16 @@ Implemented and enforced:
    Reporting raw debit-minus-credit would print every payable as negative,
    which is not how a ledger reads.
 
-52. **A Budget Category keeps a subject book exactly when it names a Partner.**
+52. **A subject book is a Budget Category, and it keeps one exactly when it
+   names a Partner *and* says which way it runs.** `require_partner` decides
+   whether a book exists; `raises` decides which cash direction raises the
+   subject's position, and without it the category has a **setup gap** rather
+   than no book — a book running the wrong way is worse than none, so it is
+   never guessed. A book's key is the category's immutable code, its lookup is
+   the category's row id, and neither a Purpose nor a label is a way in. There
+   is **one** Report View over all of them with the book as a parameter, so a
+   category created through the GUI is readable immediately. Superseded wording
+   below, kept because the reasoning still holds:
    Six of the eight do: Titipan, Hutang, Piutang, Prive, Investasi and Hasil
    Investasi. Asset and Biaya name no Partner, so a book of them would have no
    subject. The catalogue is `lib/siba/subledger-catalogue.ts`, and
@@ -947,6 +965,42 @@ Implemented and enforced:
    posting against a chart that has moved on would write exactly the discrepancy
    the rule exists to prevent. The same reasoning `applyPosting` uses for
    re-reading its Budgets (rule 35).
+
+90. **A Budget Category's rules are rows, and a pair is retired rather than
+   removed.** `allows_in` / `allows_out` say which directions are meaningful,
+   `require_partner` says whether the category names a subject at all, and
+   `sys_budget_partner_category_mapping` holds one row per admitted Partner
+   Category. Deactivating a pair withdraws it from every picker at once and
+   leaves every Budget already classified by it intact — which is the whole
+   reason it is a row with a status rather than an entry in a list.
+   `loadClassification` in `classification-data.ts` is the only reader, and it
+   drops a pair whose row, or whose Partner Category, is inactive.
+93. **A combination that produces nothing useful is refused, not reported.**
+   The user's rule, and it decided two states that had been left reachable. A
+   Budget Category that names a Partner **keeps a book**, so `raises` is
+   mandatory the moment `require_partner` is on — leaving it optional produced
+   a category that could be transacted while its subject book silently recorded
+   nothing. And a category that names a Partner but has **no Partner Category
+   paired to it** may not be Active: no Purpose is generated for it, so no
+   document can name it, and its book can never receive an entry.
+   `strandedCategories` in `records.ts` is the one question behind that
+   refusal, asked from **all four directions** that reach the state — saving the
+   category, activating it, retiring its last pairing, and deactivating the
+   Partner Category that pairing points at. Three CHECK constraints are the
+   backstop under the first half, because it fails silently rather than loudly.
+
+91. **A Budget Category must be able to classify something.** A category
+   allowing neither direction is refused, because it could classify no Budget
+   at all. So is clearing `require_partner` while active pairs still point at
+   it, and the refusal **names them** — the mirror rule, without which the flag
+   and the pairs would contradict each other.
+92. **A Purpose is withdrawn with the classification it rests on.** The 22
+   Purposes stayed in code (§12) and each names a Budget Category and a Partner
+   Category. Retiring that pair withdraws its Purposes from every picker —
+   `availablePurposeOptions` — while `purposeOptions` stays unfiltered, because
+   a posted document must keep naming its own Purpose afterwards. A draft
+   already carrying one keeps it, for the same reason a deactivated record stays
+   visible in the picker that already selected it.
 
 18. **Budget category → partner category → account.** Each budget category declares
    which partner categories are valid and which directions (In/Out) make sense.
@@ -1150,11 +1204,14 @@ Implemented and enforced:
     its planned amount — is marked as automatic rather than attributed to the
     person who posted.
 
-19. **22 transaction purposes.** A purpose is exactly one budget category × one partner
-    category × one direction, which is what lets it resolve to a single account. It is
+19. **A Transaction Purpose is one Budget Category × one Partner Category ×
+    one direction**, which is what lets it resolve to a single account. It is
     the field a Cash Bank Transaction's header starts from, and it decides the
-    document's direction, its Budget Category, and whether a Partner is required.
-    Purposes are **application logic, never a master table** — see §12.
+    document's direction, its Budget Category, and whether a Partner is
+    required. Purposes are **rows in `sys_purpose`, generated from the
+    classification and never authored** — so a Budget Category created through
+    the GUI can be transacted immediately, which is the whole reason they
+    stopped being constants. The label is the only editable field. §12.
 
 22. **Operational books are independent append-only stores** — never views over
     journal lines. Only the General Ledger derives from journals.
@@ -1826,46 +1883,70 @@ Specified in the concept doc, **not yet implemented** (see §13):
   — a posted manual journal is as final as any other.
 - **Status:** Frozen, current.
 
-### The subject books are one mechanism with six books (FROZEN)
-- **Decision:** The subledgers — the concept doc's Prive / Titipan / Hutang / Piutang
-  Ledgers, plus Investasi and Hasil Investasi — are **one** append-only table
-  (`sub_ledger`) with a `book` discriminator, one materialised position table
-  (`sub_ledger_balance`), one writer (`recordSubledgerEntry`), one reader
-  (`subledgerReport`) and one report body. What differs per book is a catalogue entry
-  in `src/lib/siba/subledger-catalogue.ts`: its name, its icon, its permission, and
-  **which cash direction raises its subject's position**. `reports.ts` and `nav.ts`
-  both generate their six entries from that catalogue.
-- **Which categories, and why six rather than four.** A category earns a book when its
-  postings name a Partner, because that is what gives the book a subject. The concept
-  doc (§11.3–§11.6) names four; it was written before `rules.ts` grew Investasi and
-  Hasil Investasi, which also carry a Cabang. Without books of their own, four of the
-  22 Purposes would move a Partner with no subject history to show for it, and §23's
-  coherence test — "Partner mana yang bergerak?" — would have no answer for them.
-  Asset and Biaya take no Partner and keep no book; their postings still reach the
-  Cash Bank Book and the Journal. Confirmed with the user before implementation.
-- **`book` is a catalogue key, not a foreign key.** A row says `hutang`, not a
-  `sys_budget_category` id. The book is meant to be liftable and its subject is the
-  Partner; tying every row to a classification table it does not otherwise need would
-  make the book unreadable without the module that owns that table. It is the same
-  reasoning that keeps the 22 Purposes out of a `fin_purpose` table (§12).
-- **Reason:** Six tables would be six copies of one shape differing only in a sign,
-  and the seventh would arrive as a migration instead of a line of config. The books
-  are genuinely the same thing — the Cash Bank Book with a Partner as its subject —
-  and the one place they differ is exactly what the catalogue records.
-- **Impact:** A book is added by adding a catalogue entry, a permission, and a
-  mapping; no table, no route, no component. Each book carries **its own** permission,
-  because who may read the owners' Prive is a different decision from who may read
-  Hutang. `applyPosting` writes the entry alongside `recordCashBankEntry` and
-  `postJournal`, inside the same transaction — the fan-out of concept doc §13.
+### A subject book is a Budget Category (FROZEN)
+- **Decision:** The subledgers — the concept doc's Prive / Titipan / Hutang /
+  Piutang Ledgers, plus Investasi and Hasil Investasi — are **one** append-only
+  table (`sub_ledger`) with a `book` discriminator, one materialised position
+  table (`sub_ledger_balance`), one writer (`recordSubledgerEntry`), one reader
+  (`subledgerReport`), one report body — and **one Report View, one permission
+  and one menu entry for all of them**. A book *is* a Budget Category that names
+  a Partner. Which book you are reading is a parameter (`?book=bcat.0002`), not
+  a report of its own.
+- **This supersedes the six-entry catalogue.** `subledger-catalogue.ts` used to
+  declare six books, each with its own key, slug, permission, nav entry and
+  Report View — so a seventh category meant a code change, a new permission and
+  a deploy. The categories are data now (see the decision above), and the user
+  asked for a new one to have its book without a developer in the loop.
+  **Confirmed with the user before implementation.**
+- **What a book derives, and what it stores.** Derived: its **name** (`Buku
+  Hutang`), its **subject line**, and its **nature** — a category that moves
+  both ways holds a *position* that settles to nil, one that moves a single way
+  only accumulates, which is exactly `allows_in && allows_out` and matched all
+  six hand-written entries. Stored on the category: **`raises`**, which cash
+  direction raises the subject's position, the one fact nothing else predicts;
+  and **`book_icon`** / **`book_closing_label`**, presentation that falls back.
+- **A book exists when the category names a Partner *and* says which way it
+  runs.** A category with a Partner but no `raises` is a **setup gap**, not a
+  category without a book: the list says `arah belum diatur` rather than a dash,
+  because the two are different things somebody would act on differently. A book
+  running the wrong way is worse than no book, so it is not guessed.
+- **The key is the category's code, and the lookup is by its id.**
+  `sub_ledger.book` holds `bcat.0002` — the code, because it is
+  system-generated and never edited, so renaming "Hutang" cannot orphan a book,
+  which is exactly what keying on the label used to risk. It stays a **string,
+  not a foreign key**: `sub_ledger` is an independent store that must stay
+  liftable, and a book declaring a relation to the table classifying it would
+  invite being derived from it. In code, `subledgerForCategory` takes the
+  category's **row id**, which is what every caller already holds.
+- **A Purpose is not a way in.** The Purpose is the control an operator picks on
+  a Cash Bank Transaction; it resolves to a Budget Category, and the **category**
+  owns the book. Resolving a book through the Purpose's own copy of the category
+  label is the mistake this rule exists to prevent — the user's own correction.
+- **Which categories, and why six became "however many".** A category earns a
+  book when its postings name a Partner, because that is what gives the book a
+  subject. The concept doc (§11.3–§11.6) names four; `rules.ts` grew Investasi
+  and Hasil Investasi, which carry a Cabang. Asset and Biaya take no Partner and
+  keep no book; their postings still reach the Cash Bank Book and the Journal.
+- **One permission, which is a reversal.** Each book used to carry its own
+  `REPORT_<BOOK>_LEDGER_VIEW`, on the reasoning that who may read the owners'
+  Prive is a different decision from who may read Hutang. A book is now created
+  through the GUI, so a permission per book would be a permission created at
+  runtime — the one thing the catalogue forbids. `REPORT_SUBLEDGER_VIEW` covers
+  all of them. **The cost is real and is recorded in §17**: whoever may read
+  Hutang may read Prive. Nothing in the seeded roles relied on the distinction.
 - **Menu placement deviates from the concept doc, deliberately.** §21 lists the
-  ledgers under Accounting › Ledger beside the General Ledger. They live under
-  **Finance › Laporan** instead, on the user's instruction: the books are written by
-  Finance's Post, and Accounting's two reports are the ones that derive from journals.
-- **Do not change unless:** explicitly instructed. **Never add an update, delete or
-  reversal path to `sub_ledger`**, never derive a subject book from a journal line,
-  never write one outside `recordSubledgerEntry`, and do not split the six into
-  separate tables or give one its own bespoke report.
-- **Status:** Frozen, current.
+  ledgers under Accounting › Ledger beside the General Ledger. The one entry
+  lives under **Finance › Laporan** instead, on the user's instruction: the books
+  are written by Finance's Post, and Accounting's two reports are the ones that
+  derive from journals.
+- **Do not change unless:** explicitly instructed. **Never add an update, delete
+  or reversal path to `sub_ledger`**, never derive a subject book from a journal
+  line, never write one outside `recordSubledgerEntry`, do not split the books
+  into separate tables or give one its own report, **do not go back to one report
+  or one permission per book**, and do not resolve a book through a Purpose or a
+  category label.
+- **Status:** Frozen, current. Supersedes "The subject books are one mechanism
+  with six books".
 
 ### The ledger reports take several accounts, one Company at a time (FROZEN)
 - **Decision:** General Ledger and Trial Balance are Report Views in the
@@ -2144,16 +2225,102 @@ changed later through the **seeder / seed data**, without touching application c
 exposing a GUI. It is *not* a mechanism for configuring how many companies exist or how
 they relate. Keep the table; keep it out of the UI's write path.
 
-### Transaction purposes stay application logic
-- **Decision:** The 22 purposes live in `src/lib/siba/rules.ts` as typed constants plus
-  helper functions. **Do not create a `fin_purpose` master/config table.**
-- **Reason:** Each purpose carries behaviour a generic table cannot express — purpose
-  category, whether a partner is required, document/reference requirements, and
-  transaction-specific rules. Application logic decides required fields and behaviour.
-- **Impact:** `fin_cash_bank_transaction.purpose` stays a string key resolved in code.
-- **Do not change unless:** explicitly instructed. This supersedes the mockup's own
-  suggestion of a `fin_purpose` table.
+### The classification chain is data; the purposes are not (FROZEN)
+- **Decision:** Which Partner Categories a Budget Category admits, and which
+  directions are meaningful for it, are **rows**: `sys_budget_category` gains
+  `allows_in`, `allows_out` and `require_partner`, and
+  `sys_budget_partner_category_mapping` holds one row per admitted pair. Both
+  category tables gain `status`. `BUDGET_CATEGORY_RULES` in `rules.ts` is
+  **gone**; `classification.ts` holds the same rules as pure functions over a
+  catalogue, and `classification-data.ts` loads it. Master > Klasifikasi is the
+  GUI: three registry entities, no bespoke page.
+- **Reason:** The user is still discovering the model and needs to reshape it
+  and see what pops up downstream, which a constant compiled into the build
+  cannot do. The three shapes were weighed — a join table, an array column on
+  the category, and a pointer on the partner category — and the join table is
+  the only one that supports deactivating a pair, which is the behaviour the
+  user chose: narrowing a category must not rewrite history.
+- **A pair is deactivated, never deleted.** A retired pair leaves the catalogue
+  and stops being offered everywhere at once; the row survives so every Budget
+  already classified by it still reads. The same holds for a deactivated Partner
+  Category, which drops out of every category that admitted it without any of
+  them being edited.
+- **`require_partner` is a flag rather than `partnerCategories.length === 0`**,
+  and that distinction is load-bearing: a category that names no subject by
+  design (Asset, Biaya) is finished, while one that requires a Partner and has
+  none configured is a setup gap. The list says "Tanpa Partner" for the first
+  and "belum diatur" for the second. Clearing the flag while active pairs point
+  at the category is **refused, by name** — the mirror rule, the same pairing
+  `is_postable` and its sub-account rule use.
+- **The catalogue is loaded whole and passed down.** `classification.ts` is
+  client-safe for the reason `currency.ts` is: the form narrowing a picker and
+  the Server Action refusing a value must read the identical rule. `EntityForm`
+  takes it as a prop; `applicableFields` and `validate` in
+  `app/actions/master.ts` re-check the same rows.
+- **Impact:** `loadClassification` lives in its own module rather than in
+  `records.ts`, because the Budget-count column on the classification screen has
+  to ask `budget.ts` for its own table's figure (the module contract) and that
+  would otherwise be a cycle. `tests/module-boundaries.test.ts` caught exactly
+  that and `KNOWN_CROSSINGS` stays at two.
+- **Do not change unless:** explicitly instructed. **Never delete a pair** —
+  deactivate it; never let a category allow neither direction; never put the
+  rules back in code; and never let a `require_partner = false` category hold a
+  pair.
 - **Status:** Frozen, current.
+
+### A Transaction Purpose is generated from the classification (FROZEN)
+- **Decision:** The Purposes live in `sys_purpose`, one row per combination of
+  Budget Category x Partner Category x direction, **generated** by
+  `syncPurposes` in `lib/siba/purposes.ts` and never authored. The GUI is a
+  registry entity under Master › Klasifikasi where the only editable field is
+  the **label**. There is no PURPOSE_CREATE.
+- **This supersedes "Transaction purposes stay application logic"**, which
+  froze the opposite and forbade exactly this table. **Confirmed with the user
+  before implementation.** The reason it no longer holds: the Budget Categories
+  became rows, and a category created through the GUI could be planned against,
+  mapped to an account and given a subject book — and still never reach a Cash
+  Bank Transaction, because no Purpose named it. That was the last link needing
+  a developer, which is the thing the whole sequence of changes was removing.
+  The old decision's stated reason — that a Purpose carries behaviour a generic
+  table cannot express — had already stopped being true: `purposeNeedsPartner`
+  was `partnerCategory != null` and everything else was plain data.
+- **Generated, because the set was always the cross product.** The original 22
+  were *exactly* category x admitted Partner Category x allowed direction — no
+  more and no fewer, verified entry by entry. So the set is derived and a new
+  category's Purposes appear the moment it is saved. Authoring them would mean
+  the Purpose list and the classification could disagree, with nothing to catch
+  it.
+- **The label is the one thing a person edits, and the generator never touches
+  it.** "Penerimaan Pinjaman dari Cabang" is a Hutang receipt and "Pemberian
+  Advance kepada Karyawan" is a Piutang payment: the sentence names the business
+  event, not the classification. 21 of the 22 fit a template; that one does not,
+  which is the proof that generated labels must be overridable. `syncPurposes`
+  writes a serviceable default (`Pengeluaran Produksi ke Cabang`) and leaves it
+  alone for ever after.
+- **The key is opaque and permanent.** `fin_cash_bank_transaction.purpose` holds
+  it, and a posted document is permanent — so the original 22 keep their
+  historical mnemonics (`TTP_CAB_IN`), transcribed verbatim from
+  `SEED_PURPOSES` in `rules.ts`, and generated ones carry `purp.NNNN`. Nothing
+  parses either.
+- **Additive, and nothing is deleted.** A combination the matrix no longer
+  implies is **deactivated**, so documents posted against it still resolve; a
+  combination that comes back reopens the same row rather than creating a
+  second. `purposeOptions` is unfiltered and is what a list reads a posted
+  document back through; `availablePurposeOptions` is what a picker reads.
+- **Kept in step by the write path.** `syncPurposesFor` in
+  `app/actions/master.ts` runs after every create, edit and status toggle on a
+  Budget Category, a Partner Category or a pairing — the three things that can
+  move the matrix.
+- **`rules.ts` is seed data now, not a runtime source.** It holds
+  `SEED_PURPOSES` and the `Purpose` type and nothing else. **Do not add an entry
+  to it** — a new Purpose comes from a new Budget Category or a new pairing.
+- **Do not change unless:** explicitly instructed. **Never author a Purpose by
+  hand**, never let the generator overwrite a label, never delete one, never
+  change a Purpose's category, Partner Category or direction (that would make it
+  a different Purpose against which documents are already posted), and do not
+  filter `purposeOptions`.
+- **Status:** Frozen, current. Supersedes "Transaction purposes stay application
+  logic".
 
 ### The Cash Bank Book is the only source of a balance (FROZEN)
 - **Decision:** `m_cash_bank` has **no** balance column. Every movement is an entry in
@@ -3118,8 +3285,24 @@ process allowed to restate positions, and it is not built.
   company-to-company relationship table. `is_parent` is the whole model.
 - Do **not** generalise the two-company structure into a configurable multi-company
   architecture, or build a configurable funding-provider mechanism.
-- Do **not** create a `fin_purpose` table, an exchange-rate master table, a rate-fetching
-  service, or a Budget Month table. Budget Month is a date-range query over
+- Do **not** delete a Budget Category x Partner Category pair, let a category allow
+  neither direction, or let a `require_partner = false` category hold a pair. A pair
+  is deactivated, and the mirror rule is refused by name (§12).
+- Do **not** put the Budget Category rules back in code, or read them anywhere but
+  `loadClassification`. `BUDGET_CATEGORY_RULES` is gone (§12).
+- Do **not** show a direction as `In` or `Out`, or invent a second Indonesian pair
+  for it. It is Penerimaan and Pengeluaran, through `directionText` (§8).
+- Do **not** filter `purposeOptions` — that is what a posted document is read back
+  through. A picker uses `availablePurposeOptions` (§12).
+- Do **not** resolve a Budget Category from a Purpose's label. A Purpose row carries
+  `budgetCategoryId`; the category owns the book and the mapping (§12).
+- Do **not** author a Transaction Purpose by hand, delete one, change its category,
+  Partner Category or direction, or let the generator overwrite a label. Purposes are
+  generated from the classification and retired by deactivation (§12).
+- Do **not** add an entry to `SEED_PURPOSES` in `rules.ts`. It is the historical 22,
+  planted once; a new Purpose comes from a new Budget Category or pairing (§12).
+- Do **not** create an exchange-rate master table, a rate-fetching service, or a
+  Budget Month table. Budget Month is a date-range query over
   `acc_fiscal_period`; do not add a month column to `bud_budget` either.
 - Do **not** add a Budget Close or Budget Delete action, or move Budget into the entity
   registry. The lifecycle is create → approve and lives in `budget-workflow.ts`; a
@@ -3130,9 +3313,13 @@ process allowed to restate positions, and it is not built.
   **not** compute a balance anywhere but `src/lib/siba/cash-bank.ts` (§9, §12).
 - Do **not** add an update or delete path to `cash_bank_ledger` or `sub_ledger`.
   A book is append-only; a correction is a further entry.
-- Do **not** split the six subject books into separate tables, give one its own
-  bespoke report, or add a book for a Budget Category that names no Partner. A
-  book is a catalogue entry in `subledger-catalogue.ts` (§12).
+- Do **not** split the subject books into separate tables, give one its own bespoke
+  report, or add a book for a Budget Category that names no Partner. A book **is** a
+  Budget Category, derived by `subledger-catalogue.ts` from the row (§12).
+- Do **not** go back to one Report View, one permission or one menu entry **per**
+  subject book. That is what put a deploy between a new category and its book (§12).
+- Do **not** resolve a book through a Transaction Purpose or a category label. The
+  Budget Category owns the book, and the lookup takes its id (§12).
 - Do **not** sign a subject book by the cash direction. Each book declares which
   direction raises it, and `subledgerMovement` is the only place that is decided
   (§10 rule 53).
@@ -3415,6 +3602,8 @@ process allowed to restate positions, and it is not built.
 
 | Issue | Detail |
 | --- | --- |
+| The classification sync runs only on writes through the app | `syncPurposesFor` is called by `createRecord`, `updateRecord` and `toggleStatus`, so editing `sys_budget_category` or its pairings directly in SQL leaves the Purposes behind. There is no "sync now" button. `tests/purposes.test.ts` pins that all three call sites still exist, which is what caught one of them silently missing. |
+| Every subject book shares one permission | `REPORT_SUBLEDGER_VIEW` covers all of them, so whoever may read Hutang may also read Prive — the owners' drawings. It replaced six per-book permissions, which could not survive books being created through the GUI: a permission per book would be a permission created at runtime (§12). Nothing in the seeded roles relied on the distinction. If it is wanted back, the shape that fits is a `sensitive` flag on the category gated by one **further static** permission, which keeps a new category developer-free while re-fencing Prive. |
 | An audit entry names a record by its current name | `audit_log` stores no snapshot, so a record renamed since it changed reads under the name it has now. Inventing a snapshot would be worse than saying nothing, but it does mean the panel is not a record of what a thing was called at the time. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The subject books have no manual entry path, and no opening balance | A subledger entry is only ever written by posting a Cash Bank Transaction. `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated — that belongs with Opening Balance (§13). `Adjustment` is in the same position as the Cash Bank Book's. |

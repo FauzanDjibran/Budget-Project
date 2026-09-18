@@ -44,6 +44,34 @@ const ENTITY_PERMISSIONS: Record<string, EntityPermissions> = {
     activate: "CURRENCY_ACTIVATE",
     deactivate: "CURRENCY_DEACTIVATE",
   },
+  sys_budget_category: {
+    view: "BUDGET_CATEGORY_VIEW",
+    create: "BUDGET_CATEGORY_CREATE",
+    edit: "BUDGET_CATEGORY_EDIT",
+    activate: "BUDGET_CATEGORY_ACTIVATE",
+    deactivate: "BUDGET_CATEGORY_DEACTIVATE",
+  },
+  sys_partner_category: {
+    view: "PARTNER_CATEGORY_VIEW",
+    create: "PARTNER_CATEGORY_CREATE",
+    edit: "PARTNER_CATEGORY_EDIT",
+    activate: "PARTNER_CATEGORY_ACTIVATE",
+    deactivate: "PARTNER_CATEGORY_DEACTIVATE",
+  },
+  // No create: generated, not authored.
+  sys_purpose: {
+    view: "PURPOSE_VIEW",
+    edit: "PURPOSE_EDIT",
+    activate: "PURPOSE_ACTIVATE",
+    deactivate: "PURPOSE_DEACTIVATE",
+  },
+  sys_budget_partner_category_mapping: {
+    view: "BUDGET_PARTNER_CATEGORY_VIEW",
+    create: "BUDGET_PARTNER_CATEGORY_CREATE",
+    edit: "BUDGET_PARTNER_CATEGORY_EDIT",
+    activate: "BUDGET_PARTNER_CATEGORY_ACTIVATE",
+    deactivate: "BUDGET_PARTNER_CATEGORY_DEACTIVATE",
+  },
   acc_account: {
     view: "ACCOUNT_VIEW",
     create: "ACCOUNT_CREATE",

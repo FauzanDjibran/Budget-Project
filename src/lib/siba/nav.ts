@@ -5,7 +5,6 @@
  */
 import type { IconName } from "@/components/icon";
 import type { PermissionCode } from "./permissions";
-import { SUBLEDGERS } from "./subledger-catalogue";
 
 export type NavEntity = {
   key: string;
@@ -83,6 +82,45 @@ export const MODULES: NavModule[] = [
             icon: "wallet",
             desc: "Resource tempat uang berada. Setiap Cash Bank memiliki Cash Bank Book sendiri.",
             permission: "CASH_BANK_VIEW",
+          },
+        ],
+      },
+      {
+        key: "klasifikasi",
+        name: "Klasifikasi",
+        entities: [
+          {
+            key: "sys_budget_category",
+            slug: "budget-category",
+            name: "Budget Category",
+            icon: "tags",
+            desc: "Klasifikasi yang diberikan saat Budget disetujui: arah yang berlaku, apakah memakai Partner, dan Partner Category mana yang boleh dipilih.",
+            permission: "BUDGET_CATEGORY_VIEW",
+          },
+          {
+            key: "sys_partner_category",
+            slug: "partner-category",
+            name: "Partner Category",
+            icon: "users",
+            desc: "Jenis Partner. Menentukan Partner mana yang boleh dipilih untuk sebuah Budget Category.",
+            permission: "PARTNER_CATEGORY_VIEW",
+          },
+          {
+            key: "sys_purpose",
+            slug: "purpose",
+            name: "Transaction Purpose",
+            icon: "tags",
+            desc: "Arah × Budget Category × Partner Category. Dibuat otomatis dari Klasifikasi, sehingga Budget Category baru langsung dapat ditransaksikan.",
+            permission: "PURPOSE_VIEW",
+          },
+          {
+            key: "sys_budget_partner_category_mapping",
+            slug: "budget-partner-category",
+            name: "Partner Category per Budget Category",
+            single: "Klasifikasi",
+            icon: "link",
+            desc: "Pasangan yang diizinkan: rantai Budget Category ke Partner Category ke Partner.",
+            permission: "BUDGET_PARTNER_CATEGORY_VIEW",
           },
         ],
       },
@@ -191,20 +229,19 @@ export const MODULES: NavModule[] = [
             desc: "Layer kurs setiap resource mata uang asing dan sisa pada masing-masing kurs.",
             permission: "REPORT_CASH_BANK_LAYER_VIEW",
           },
-          // The six subject books, from the one catalogue that declares them.
-          // Listed individually rather than behind a single entry with a book
-          // picker, because each carries its own permission: who may read the
-          // owners' Prive is a different decision from who may read Hutang.
-          ...SUBLEDGERS.map(
-            (book): NavEntity => ({
-              key: `report_${book.key.replace(/-/g, "_")}_ledger`,
-              slug: `report/${book.slug}`,
-              name: book.name,
-              icon: book.icon,
-              desc: book.desc,
-              permission: book.permission,
-            })
-          ),
+          // One entry for every subject book, with the book as a toggle on the
+          // report itself. It was six entries generated from a six-entry
+          // catalogue; a book is now a Budget Category that names a Partner, so
+          // enumerating them here would put a deploy between a new category and
+          // its book — which is the thing this arrangement exists to remove.
+          {
+            key: "report_subledger",
+            slug: "report/subledger",
+            name: "Buku Subjek",
+            icon: "book",
+            desc: "Riwayat dan posisi setiap Partner pada Titipan, Hutang, Piutang, Prive, Investasi, dan kategori lain yang memakai Partner.",
+            permission: "REPORT_SUBLEDGER_VIEW",
+          },
         ],
       },
     ],

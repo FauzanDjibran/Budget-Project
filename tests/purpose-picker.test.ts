@@ -1,7 +1,7 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { filterOptions, type SelectOption } from "../src/components/ui/select";
-import { PURPOSES } from "../src/lib/siba/rules";
+import { SEED_PURPOSES } from "../src/lib/siba/rules";
 import { TRANSACTION_TYPE_TEXT } from "../src/lib/siba/transaction-workflow";
 
 /**
@@ -16,11 +16,15 @@ import { TRANSACTION_TYPE_TEXT } from "../src/lib/siba/transaction-workflow";
  * three are searchable, because an operator picks a Purpose by naming facets
  * ("pengeluaran cabang") rather than by recalling a sentence.
  *
- * Pure string work over the real 22, so this needs no database and no renderer.
+ * Pure string work over the historical 22, so this needs no database and no
+ * renderer. It reads `SEED_PURPOSES` rather than the table deliberately: the
+ * property under test is how the *picker* searches, and those 22 are the
+ * hardest realistic set — five verbs, every label ending in its Partner
+ * Category. A generated label is a strictly easier case.
  */
 
 /** The options exactly as `transaction-form.tsx` builds them. */
-const options: SelectOption[] = PURPOSES.map((p) => ({
+const options: SelectOption[] = SEED_PURPOSES.map((p) => ({
   value: p.key,
   label: p.label,
   group: p.budgetCategory,
@@ -68,7 +72,7 @@ describe("a Purpose is findable by any facet a reader can see", () => {
     // Every label that takes a Partner ends with its category, which is exactly
     // where the old 320px list truncated. These are the rows that were
     // unreadable, so they are the ones worth pinning.
-    for (const p of PURPOSES) {
+    for (const p of SEED_PURPOSES) {
       if (!p.partnerCategory) continue;
       assert.match(
         p.label,

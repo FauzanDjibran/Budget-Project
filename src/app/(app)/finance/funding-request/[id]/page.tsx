@@ -8,7 +8,7 @@ import {
   getFundingRequest,
   providerCashBanks,
 } from "@/lib/siba/funding";
-import { purposeLabel } from "@/lib/siba/rules";
+import { purposeByKey } from "@/lib/siba/purposes";
 import { intercompanyBridge } from "@/lib/siba/system-settings";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
@@ -69,7 +69,7 @@ export default async function Page({
         currencyLabel={
           refs.currencies.find((c) => c.id === request.currency_id)?.label ?? "IDR"
         }
-        purposeLabel={doc ? purposeLabel(doc.purpose) : "—"}
+        purposeLabel={doc ? (await purposeByKey(doc.purpose))?.label ?? doc.purpose : "—"}
         partnerLabel={
           partner ? `${partner.partner_label} - ${partner.partner_name}` : null
         }

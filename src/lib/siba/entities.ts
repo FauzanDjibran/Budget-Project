@@ -8,7 +8,10 @@
  * form stay generic.
  */
 import type { IconName } from "@/components/icon";
-import { BUDGET_CATEGORY_RULES, type Direction } from "./rules";
+import {
+  type ClassificationCatalogue,
+  budgetCategoryNeedsPartner,
+} from "./classification";
 import { isBaseCurrency } from "./currency";
 import type { SystemDefaultKey } from "./system-defaults";
 
@@ -544,6 +547,270 @@ export const ENTITIES: Entity[] = [
     ],
   },
 
+  // ---------------------------------------------------- master · klasifikasi
+  //
+  // The classification chain, as three editable entities. These are `sys_`
+  // tables the seeder still plants, but the model they describe is the part of
+  // the business still being discovered — so they are read from the database
+  // rather than compiled in, and reshaped here. See `classification.ts`.
+
+  {
+    key: "sys_budget_category",
+    slug: "budget-category",
+    module: "master",
+    name: "Budget Category",
+    icon: "tags",
+    desc: "Klasifikasi yang diberikan saat Budget disetujui. Menentukan arah yang berlaku, apakah memakai Partner, dan Partner Category mana yang boleh dipilih.",
+    codeField: "category_code",
+    codePrefix: "bcat",
+    labelField: "category_label",
+    nameField: "category_name",
+    statusModel: ACTIVE_STATUS,
+    fields: [
+      {
+        name: "category_label",
+        label: "Label",
+        type: "text",
+        required: true,
+        unique: true,
+        ident: true,
+        span: 4,
+        placeholder: "Hutang",
+        help: identHelp,
+      },
+      {
+        name: "category_name",
+        label: "Nama Budget Category",
+        type: "text",
+        required: true,
+        span: 8,
+        placeholder: "Hutang kepada pihak lain",
+        help: "nama lengkap",
+      },
+      {
+        name: "allows_out",
+        label: "Berlaku untuk Pengeluaran",
+        type: "bool",
+        span: 4,
+        help: "arah mengikuti logika neraca, bukan arah kas",
+      },
+      {
+        name: "allows_in",
+        label: "Berlaku untuk Penerimaan",
+        type: "bool",
+        span: 4,
+        help: "boleh keduanya",
+      },
+      {
+        name: "require_partner",
+        label: "Memakai Partner",
+        type: "bool",
+        span: 4,
+        resets: ["raises", "book_closing_label"],
+        help: "matikan bila kategori ini tidak punya subjek",
+      },
+      // A category that names a Partner keeps a subject book, and these two are
+      // what that book needs. `raises` is the only fact nothing else predicts:
+      // money out raises a Piutang and lowers a Hutang, which is balance-sheet
+      // logic rather than cash direction. Without it the category has no book —
+      // deliberately, because a book running the wrong way is worse than none.
+      {
+        name: "raises",
+        label: "Posisi Naik Saat",
+        type: "select",
+        options: ["Out", "In"],
+        optionLabels: { Out: "Pengeluaran", In: "Penerimaan" },
+        // Required *because* of `visibleWhen`, not despite it: a field that
+        // does not apply is skipped by `validate`, so this reads as "mandatory
+        // exactly when the category names a Partner". Naming a Partner means
+        // keeping a book, and a book has to know which way it runs — leaving it
+        // optional produced a category that could be transacted while its
+        // subject book silently recorded nothing.
+        required: true,
+        visibleWhen: "accountRequiresPartner",
+        span: 4,
+        help: "arah yang menambah posisi subjek",
+      },
+      {
+        name: "book_closing_label",
+        label: "Sebutan Saldo Akhir",
+        type: "text",
+        visibleWhen: "accountRequiresPartner",
+        span: 8,
+        placeholder: "Sisa hutang",
+        help: "opsional, dipakai pada laporan Buku Subjek",
+      },
+      STATUS_FIELD,
+      NOTE_FIELD,
+    ],
+    columns: [
+      { field: "category_label", label: "Label", isLabel: true, width: "130px", filter: "text" },
+      { field: "category_name", label: "Nama Budget Category", primary: true, filter: "text" },
+      { field: "directions", label: "Arah", computed: true, width: "170px" },
+      { field: "partner_categories", label: "Partner Category", computed: true, width: "210px" },
+      { field: "book", label: "Buku Subjek", computed: true, width: "150px" },
+      { field: "budget_count", label: "Budget", computed: true, numeric: true, width: "86px" },
+      { field: "status", label: "Status", isStatus: true, width: "104px", filter: "enum" },
+    ],
+  },
+
+  {
+    key: "sys_partner_category",
+    slug: "partner-category",
+    module: "master",
+    name: "Partner Category",
+    icon: "users",
+    desc: "Jenis Partner — Cabang, Karyawan, Stakeholder. Menentukan Partner mana yang boleh dipilih untuk sebuah Budget Category.",
+    codeField: "category_code",
+    codePrefix: "pcat",
+    labelField: "category_label",
+    nameField: "category_name",
+    statusModel: ACTIVE_STATUS,
+    fields: [
+      {
+        name: "category_label",
+        label: "Label",
+        type: "text",
+        required: true,
+        unique: true,
+        ident: true,
+        span: 4,
+        placeholder: "Karyawan",
+        help: identHelp,
+      },
+      {
+        name: "category_name",
+        label: "Nama Partner Category",
+        type: "text",
+        required: true,
+        span: 8,
+        placeholder: "Pegawai perusahaan",
+        help: "nama lengkap",
+      },
+      STATUS_FIELD,
+      NOTE_FIELD,
+    ],
+    columns: [
+      { field: "category_label", label: "Label", isLabel: true, width: "130px", filter: "text" },
+      { field: "category_name", label: "Nama Partner Category", primary: true, filter: "text" },
+      { field: "budget_categories", label: "Dipakai Budget Category", computed: true, width: "260px" },
+      { field: "partner_count", label: "Partner", computed: true, numeric: true, width: "92px" },
+      { field: "status", label: "Status", isStatus: true, width: "110px", filter: "enum" },
+    ],
+  },
+
+  {
+    key: "sys_budget_partner_category_mapping",
+    slug: "budget-partner-category",
+    module: "master",
+    name: "Partner Category per Budget Category",
+    single: "Klasifikasi",
+    icon: "link",
+    desc: "Partner Category mana yang boleh dipilih untuk setiap Budget Category — rantai Budget Category ke Partner Category ke Partner.",
+    codeField: "mapping_code",
+    codePrefix: "bpcm",
+    titleRefs: ["budget_category_id", "partner_category_id"],
+    statusModel: ACTIVE_STATUS,
+    fields: [
+      {
+        name: "budget_category_id",
+        label: "Budget Category",
+        type: "ref",
+        ref: "sys_budget_category",
+        required: true,
+        locked: true,
+        resets: ["partner_category_id"],
+        help: "hanya kategori yang memakai Partner",
+      },
+      {
+        name: "partner_category_id",
+        label: "Partner Category",
+        type: "ref",
+        ref: "sys_partner_category",
+        required: true,
+        locked: true,
+        help: "boleh dipilih saat Budget kategori ini disetujui",
+      },
+      STATUS_FIELD,
+      NOTE_FIELD,
+    ],
+    columns: [
+      { field: "budget_category_id", label: "Budget Category", isRef: true, refLabelOnly: true, width: "190px", filter: "ref" },
+      { field: "partner_category_id", label: "Partner Category", isRef: true, primary: true, filter: "ref" },
+      { field: "status", label: "Status", isStatus: true, width: "110px", filter: "enum" },
+      { field: "note", label: "Catatan", muted: true, truncate: true },
+    ],
+  },
+
+  {
+    key: "sys_purpose",
+    slug: "purpose",
+    module: "master",
+    name: "Transaction Purpose",
+    single: "Purpose",
+    icon: "tags",
+    desc: "Arah × Budget Category × Partner Category, sebagaimana dipilih pada Cash Bank Transaction. Dibuat otomatis dari Klasifikasi; yang dapat diubah hanya sebutannya.",
+    codeField: "purpose_key",
+    codePrefix: "purp",
+    nameField: "label",
+    statusModel: ACTIVE_STATUS,
+    fields: [
+      // Everything but the label is locked. A Purpose *is* the triple
+      // direction × Budget Category × Partner Category, so editing one of them
+      // would not change this Purpose — it would silently make it a different
+      // one, against which documents have already been posted.
+      {
+        name: "budget_category_id",
+        label: "Budget Category",
+        type: "ref",
+        ref: "sys_budget_category",
+        required: true,
+        locked: true,
+        span: 4,
+        help: "menentukan Budget yang dapat direalisasikan",
+      },
+      {
+        name: "partner_category_id",
+        label: "Partner Category",
+        type: "ref",
+        ref: "sys_partner_category",
+        locked: true,
+        span: 4,
+        help: "kosong bila Purpose ini tanpa Partner",
+      },
+      {
+        name: "direction",
+        label: "Arah",
+        type: "select",
+        options: ["Out", "In"],
+        optionLabels: { Out: "Pengeluaran", In: "Penerimaan" },
+        required: true,
+        locked: true,
+        span: 4,
+        help: "arah kas dokumen",
+      },
+      {
+        name: "label",
+        label: "Sebutan",
+        type: "text",
+        required: true,
+        full: true,
+        placeholder: "Pembayaran Hutang ke Cabang",
+        help: "menamai peristiwa bisnis, bukan klasifikasinya",
+      },
+      STATUS_FIELD,
+      NOTE_FIELD,
+    ],
+    columns: [
+      { field: "label", label: "Sebutan", primary: true, filter: "text" },
+      { field: "direction", label: "Arah", computed: true, width: "128px" },
+      { field: "budget_category_id", label: "Budget Category", isRef: true, refLabelOnly: true, width: "160px", filter: "ref" },
+      { field: "partner_category_id", label: "Partner Category", isRef: true, refLabelOnly: true, width: "150px", filter: "ref" },
+      { field: "purpose_key", label: "Key", muted: true, width: "120px", filter: "text" },
+      { field: "status", label: "Status", isStatus: true, width: "104px", filter: "enum" },
+    ],
+  },
+
   // ------------------------------------------------- accounting · chart of accounts
 
   {
@@ -861,12 +1128,20 @@ export function waitingClause(missing: Field[]): string | null {
   return `Pilih ${list} dulu…`;
 }
 
-/** Whether a field applies, given the values currently entered. */
+/**
+ * Whether a field applies, given the values currently entered.
+ *
+ * The classification catalogue is passed in rather than read here: this module
+ * is client-safe and the rules now live in the database, so the page loads them
+ * once and hands them down. An absent catalogue answers "does not apply",
+ * which is the safe direction — the Server Action re-checks regardless.
+ */
 export function fieldApplies(
   field: Field,
   values: Record<string, unknown>,
   categoryLabelOf?: (id: unknown) => string | undefined,
-  currencyLabelOf?: (id: unknown) => string | undefined
+  currencyLabelOf?: (id: unknown) => string | undefined,
+  classification?: ClassificationCatalogue
 ): boolean {
   if (!field.visibleWhen) return true;
   if (field.visibleWhen === "accountRequiresPartner") {
@@ -881,35 +1156,15 @@ export function fieldApplies(
   }
   // budgetCategoryRequiresPartner
   const label = categoryLabelOf?.(values.budget_category_id);
-  return label ? budgetCategoryNeedsPartner(label) : false;
+  return label && classification
+    ? budgetCategoryNeedsPartner(classification, label)
+    : false;
 }
 
-/**
- * Whether a Budget Category is classified per Partner Category.
- * `BUDGET_CATEGORY_RULES` in `rules.ts` is the source of truth.
- */
-export function budgetCategoryNeedsPartner(categoryLabel: string): boolean {
-  return (BUDGET_CATEGORY_RULES[categoryLabel]?.partnerCategories.length ?? 0) > 0;
-}
-
-export function allowedPartnerCategories(categoryLabel: string): string[] {
-  return BUDGET_CATEGORY_RULES[categoryLabel]?.partnerCategories ?? [];
-}
-
-/**
- * Whether a Budget Category makes sense for a budget going this way.
- *
- * Direction follows balance-sheet logic, not cash direction: Biaya and Asset
- * only ever go Out, Hasil Investasi only ever comes In, while the four subject
- * categories move in both directions. `BUDGET_CATEGORY_RULES` is the source.
- */
-export function budgetCategoryAllowsDirection(
-  categoryLabel: string,
-  direction: string
-): boolean {
-  const rule = BUDGET_CATEGORY_RULES[categoryLabel];
-  return rule ? rule.directions.includes(direction as Direction) : false;
-}
+// The Budget Category rules themselves moved to `classification.ts` and are
+// loaded from the database — see `loadClassification` in `records.ts`. They
+// left this file because a registry of field definitions should not also be
+// where a business rule lives, and because they stopped being constants.
 
 export const STATUS_TEXT: Record<string, string> = {
   Active: "Aktif",

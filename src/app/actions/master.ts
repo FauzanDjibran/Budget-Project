@@ -32,8 +32,10 @@ import {
   partnerCategoriesForBudgetCategory,
   refLabel,
   requireEntity,
+  strandedCategories,
   syncControlAccounts,
 } from "@/lib/siba/records";
+import { syncPurposes } from "@/lib/siba/purposes";
 import {
   systemDefaultAccountIds,
   systemDefaultsUsingAccount,
@@ -301,6 +303,12 @@ async function validate(
   if (entity.key === "acc_budget_category_account") {
     Object.assign(errors, await validateMapping(values, currentId, errors, applies));
   }
+  if (entity.key === "sys_budget_category") {
+    Object.assign(errors, await validateBudgetCategory(values, currentId));
+  }
+  if (entity.key === "sys_budget_partner_category_mapping") {
+    Object.assign(errors, await validateClassification(values, currentId, errors));
+  }
   if (entity.key === "acc_fiscal_year" && !parseYear(String(values.year_label ?? ""))) {
     // Everything else about a fiscal year is derived from this, so a value the
     // picker could not have produced has to stop here.
@@ -470,6 +478,134 @@ async function validateAccount(
   return errors;
 }
 
+/**
+ * A Budget Category has to be able to classify something.
+ *
+ * Both halves are refusals rather than silent corrections, because either one
+ * would otherwise produce a category that reads as configured and admits
+ * nothing. A category allowing neither direction can classify no Budget at all;
+ * one that has stopped requiring a Partner while pairs still point at it would
+ * contradict its own mapping rows the moment an approver opened the picker.
+ */
+async function validateBudgetCategory(
+  values: FormValues,
+  currentId: number | null
+): Promise<Record<string, string>> {
+  const errors: Record<string, string> = {};
+
+  const allowsIn = boolValue(values, "allows_in");
+  const allowsOut = boolValue(values, "allows_out");
+  if (!allowsIn && !allowsOut) {
+    errors.allows_out =
+      "Pilih minimal satu arah: Pengeluaran atau Penerimaan.";
+  }
+
+  // The subject book has to rise in a direction the category actually moves.
+  // A book set to rise on Penerimaan under a Pengeluaran-only category would
+  // record every posting as a *fall*: the position would grow negative, and the
+  // report would read exactly backwards with nothing to say so.
+  const raises = String(values.raises ?? "");
+  if (raises === "In" && !allowsIn) {
+    errors.raises =
+      "Category ini tidak berlaku untuk Penerimaan, sehingga posisinya tidak dapat naik saat Penerimaan.";
+  }
+  if (raises === "Out" && !allowsOut) {
+    errors.raises =
+      "Category ini tidak berlaku untuk Pengeluaran, sehingga posisinya tidak dapat naik saat Pengeluaran.";
+  }
+
+  // A category that names a Partner keeps a book and needs Purposes, and both
+  // come from its pairings. Active with none is a record that can do nothing.
+  if (
+    boolValue(values, "require_partner") &&
+    String(values.status ?? "Active") === "Active"
+  ) {
+    const stranded = currentId
+      ? await strandedCategories({ onlyCategoryId: currentId })
+      : ["baru"];
+    if (stranded.length) {
+      errors.status = currentId
+        ? "Category ini belum memiliki Partner Category, sehingga belum dapat diaktifkan."
+        : "Simpan dulu dengan status Non Aktif, tambahkan Partner Category pada menu Partner Category per Budget Category, lalu aktifkan.";
+    }
+  }
+
+  // The mirror of the rule below, and what stops the two contradicting each
+  // other — the same pairing `is_postable` and its sub-account rule use.
+  if (currentId && !boolValue(values, "require_partner")) {
+    const pairs = await prisma.sysBudgetPartnerCategoryMapping.findMany({
+      where: { budget_category_id: currentId, status: "Active" },
+      include: { partner_category: { select: { category_label: true } } },
+    });
+    if (pairs.length) {
+      const names = pairs.map((m) => m.partner_category.category_label).join(", ");
+      errors.require_partner =
+        `Nonaktifkan dulu Partner Category yang masih terpasang: ${names}.`;
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * A pair is only meaningful for a category that names a subject, and only one
+ * pair may exist per combination — the unique index is the backstop, this is
+ * the message that says which record already holds it.
+ */
+async function validateClassification(
+  values: FormValues,
+  currentId: number | null,
+  existing: Record<string, string>
+): Promise<Record<string, string>> {
+  const errors: Record<string, string> = {};
+  const budgetCategoryId = refValue(values, "budget_category_id");
+  const partnerCategoryId = refValue(values, "partner_category_id");
+  if (existing.budget_category_id || existing.partner_category_id) return errors;
+  if (!budgetCategoryId || !partnerCategoryId) return errors;
+
+  const category = await prisma.sysBudgetCategory.findUnique({
+    where: { id: budgetCategoryId },
+    select: { category_label: true, require_partner: true },
+  });
+  if (!category) {
+    errors.budget_category_id = "Budget Category tidak ditemukan.";
+    return errors;
+  }
+  if (!category.require_partner) {
+    errors.budget_category_id = `${category.category_label} tidak memakai Partner, sehingga tidak dapat dipasangkan dengan Partner Category.`;
+    return errors;
+  }
+
+  // A pairing can also be retired by editing its status, which reaches the same
+  // stranded state as the toggle.
+  if (currentId && String(values.status ?? "Active") !== "Active") {
+    const stranded = await strandedCategories({ ignorePairingId: currentId });
+    if (stranded.length) {
+      errors.status =
+        `Ini satu-satunya Partner Category untuk ${stranded.join(", ")}, ` +
+        "sehingga belum dapat dinonaktifkan.";
+      return errors;
+    }
+  }
+
+  const clash = await prisma.sysBudgetPartnerCategoryMapping.findFirst({
+    where: {
+      budget_category_id: budgetCategoryId,
+      partner_category_id: partnerCategoryId,
+      ...(currentId ? { id: { not: currentId } } : {}),
+    },
+    select: { mapping_code: true, status: true },
+  });
+  if (clash) {
+    errors.partner_category_id =
+      clash.status === "Active"
+        ? `Kombinasi ini sudah ada (${clash.mapping_code}).`
+        : `Kombinasi ini sudah ada tetapi non-aktif (${clash.mapping_code}) — aktifkan record itu.`;
+  }
+
+  return errors;
+}
+
 async function validateMapping(
   values: FormValues,
   currentId: number | null,
@@ -573,6 +709,31 @@ function buildData(entity: Entity, values: FormValues, applies: Set<string>) {
  * target reconciles against the General Ledger alone, which is exactly the
  * kind of account a manual journal exists to reach.
  */
+/**
+ * Regenerates the Transaction Purposes after a change to the classification.
+ *
+ * This is the link that makes a Budget Category created through the GUI
+ * actually usable. A category can be planned against, mapped to an account and
+ * given a subject book, and still never reach a Cash Bank Transaction unless a
+ * Purpose names it — so every write that can change the matrix re-derives it:
+ * the category itself, and the Partner Category pairings under it.
+ *
+ * Additive and label-preserving (`syncPurposes`), so running it after somebody
+ * has reworded a Purpose leaves their wording alone. A combination that is no
+ * longer implied is deactivated rather than deleted, because documents have
+ * been posted against it.
+ */
+const CLASSIFICATION_ENTITIES = new Set([
+  "sys_budget_category",
+  "sys_budget_partner_category_mapping",
+  "sys_partner_category",
+]);
+
+async function syncPurposesFor(entityKey: string, actorId: number): Promise<void> {
+  if (!CLASSIFICATION_ENTITIES.has(entityKey)) return;
+  await syncPurposes(prisma, actorId);
+}
+
 async function syncControlAccountsFor(
   entityKey: string,
   values: FormValues,
@@ -685,6 +846,7 @@ export async function createRecord(
   });
 
   await syncControlAccountsFor(entity.key, values, actor.user.id);
+  await syncPurposesFor(entity.key, actor.user.id);
 
   await prisma.auditLog.create({
     data: {
@@ -739,6 +901,7 @@ export async function updateRecord(
   });
 
   await syncControlAccountsFor(entity.key, values, actor.user.id, previousAccountId);
+  await syncPurposesFor(entity.key, actor.user.id);
 
   await prisma.auditLog.create({
     data: {
@@ -784,6 +947,50 @@ export async function toggleStatus(
   if (!guard.ok) return { ok: false, message: guard.denial.errors._form };
   const actor = guard.actor;
 
+  // Activating a Budget Category that names a Partner but has none paired to it
+  // would produce a record that generates no Purpose and keeps a book nothing
+  // can post to — configured-looking and inert.
+  if (entity.key === "sys_budget_category" && nextActive) {
+    if (row.require_partner === true) {
+      const stranded = await strandedCategories({ onlyCategoryId: id });
+      if (stranded.length) {
+        return {
+          ok: false,
+          message:
+            "Category ini memakai Partner tetapi belum memiliki Partner Category. " +
+            "Tambahkan minimal satu pada menu Partner Category per Budget Category sebelum mengaktifkannya.",
+        };
+      }
+    }
+  }
+
+  // Retiring the last pairing of an Active category strands it the same way,
+  // reached from the other side.
+  if (entity.key === "sys_budget_partner_category_mapping" && !nextActive) {
+    const stranded = await strandedCategories({ ignorePairingId: id });
+    if (stranded.length) {
+      return {
+        ok: false,
+        message:
+          `Ini satu-satunya Partner Category untuk ${stranded.join(", ")}. ` +
+          "Nonaktifkan Budget Category tersebut lebih dulu, atau tambahkan Partner Category lain.",
+      };
+    }
+  }
+
+  // And so does deactivating the Partner Category those pairings point at.
+  if (entity.key === "sys_partner_category" && !nextActive) {
+    const stranded = await strandedCategories({ ignorePartnerCategoryId: id });
+    if (stranded.length) {
+      return {
+        ok: false,
+        message:
+          `Partner Category ini satu-satunya yang dipakai ${stranded.join(", ")}. ` +
+          "Nonaktifkan Budget Category tersebut lebih dulu, atau tambahkan Partner Category lain.",
+      };
+    }
+  }
+
   // Deactivating an account that a Cash & Bank resource posts to would leave
   // that resource pointing at an account it could no longer have chosen.
   if (entity.key === "acc_account" && !nextActive) {
@@ -821,6 +1028,12 @@ export async function toggleStatus(
       by: actor.user.id,
     },
   });
+
+  // Deactivating a Budget Category, a Partner Category or a pairing withdraws
+  // the Purposes resting on it; reactivating brings the same rows back. The
+  // matrix moved, so the Purposes have to follow — exactly as on create and
+  // edit.
+  await syncPurposesFor(entity.key, actor.user.id);
 
   revalidatePath(`/${entity.module}/${entity.slug}`);
   revalidatePath(`/${entity.module}/${entity.slug}/${id}`);

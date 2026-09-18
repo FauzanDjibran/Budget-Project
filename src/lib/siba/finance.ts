@@ -26,11 +26,19 @@ import {
 import { drawLayer, fxDifference, roundBase, settle } from "./fx";
 import { nextDocumentNumber } from "./document-number";
 import { postJournal, type JournalLineInput } from "./journal";
-import { PURPOSES, purposeOf, type Purpose } from "./rules";
+import type { Purpose } from "./rules";
 import {
+  type PurposeRow,
+  allPurposes,
+  availablePurposes,
+  purposeByKey,
+} from "./purposes";
+import {
+  type SubledgerDef,
   subledgerForCategory,
   subledgerMovement,
 } from "./subledger-catalogue";
+import { loadSubledgers } from "./subledger-data";
 import { recordSubledgerEntry, subledgerPosition } from "./subledger";
 import { systemDefaults } from "./system-settings";
 import { refValueOf } from "./system-defaults";
@@ -229,10 +237,13 @@ export async function budgetRealizations(budgetId: number): Promise<
     date: string | null;
     status: TransactionStatus;
     purpose: string;
+    /** Resolved here, because a Purpose is a row a client component cannot read. */
+    purposeLabel: string;
     amount: number;
   }[]
 > {
   const docType = await budgetDocTypeId();
+  const labels = new Map((await allPurposes()).map((p) => [p.key, p.label]));
   const lines = await prisma.finCashBankTransactionLine.findMany({
     where: { source_doc_type_id: docType, source_doc_id: budgetId },
     include: { transaction: true },
@@ -244,6 +255,7 @@ export async function budgetRealizations(budgetId: number): Promise<
     date: l.transaction.document_date ? day(l.transaction.document_date) : null,
     status: l.transaction.status as TransactionStatus,
     purpose: l.transaction.purpose,
+    purposeLabel: labels.get(l.transaction.purpose) ?? l.transaction.purpose,
     amount: l.settlement_amount.toNumber(),
   }));
 }
@@ -569,13 +581,9 @@ async function headerContext(header: TransactionHeader): Promise<
 }
 
 /** The Budget Category id a purpose realizes, or null if the label is unknown. */
-async function categoryIdOf(purpose: Purpose): Promise<number | null> {
-  const row = await prisma.sysBudgetCategory.findFirst({
-    where: { category_label: purpose.budgetCategory },
-    select: { id: true },
-  });
-  return row?.id ?? null;
-}
+// `categoryIdOf` is gone: a Purpose is a row now and carries
+// `budgetCategoryId` itself, so nothing looks a category up by the label the
+// Purpose used to hold a copy of.
 
 /**
  * The Budgets one header may realize — concept doc §9, in full.
@@ -599,15 +607,14 @@ export async function eligibleBudgets(
   header: TransactionHeader,
   options: { excludeTransactionId?: number } = {}
 ): Promise<EligibleBudget[]> {
-  const purpose = purposeOf(header.purpose);
+  const purpose = await purposeByKey(header.purpose);
   if (!purpose || !header.company_id) return [];
   if (purpose.partnerCategory && !header.partner_id) return [];
 
   const context = await headerContext(header);
   if (!context.ok) return [];
 
-  const categoryId = await categoryIdOf(purpose);
-  if (!categoryId) return [];
+  const categoryId = purpose.budgetCategoryId;
 
   const budgets = await openBudgetsMatching({
     companyId: header.company_id,
@@ -720,7 +727,7 @@ export async function checkHeader(
 ): Promise<HeaderCheck> {
   const errors: Record<string, string> = {};
 
-  const purpose = purposeOf(header.purpose);
+  const purpose = await purposeByKey(header.purpose);
   if (!purpose) {
     return {
       ok: false,
@@ -1196,23 +1203,12 @@ async function resolveValuation(doc: {
  */
 async function purposeAccountId(
   companyId: number,
-  purpose: Purpose
+  purpose: PurposeRow
 ): Promise<
   { ok: true; accountId: number } | { ok: false; errors: Record<string, string> }
 > {
-  const categoryId = await categoryIdOf(purpose);
-  if (!categoryId) {
-    return { ok: false, errors: { _form: "Budget Category Purpose tidak dikenali." } };
-  }
-
-  const partnerCategoryId = purpose.partnerCategory
-    ? (
-        await prisma.sysPartnerCategory.findFirst({
-          where: { category_label: purpose.partnerCategory },
-          select: { id: true },
-        })
-      )?.id ?? null
-    : null;
+  const categoryId = purpose.budgetCategoryId;
+  const partnerCategoryId = purpose.partnerCategoryId;
 
   const mapping = await prisma.accBudgetCategoryAccount.findFirst({
     where: {
@@ -1276,8 +1272,8 @@ export type PostingLine = {
 
 export type PostingPlan = {
   valuation: Valuation;
-  /** The subject book this document writes into, where its Purpose keeps one. */
-  book: { key: string; partnerId: number } | null;
+  /** The subject book this document writes into, where its Budget Category keeps one. */
+  book: { def: SubledgerDef; partnerId: number } | null;
   /** The rate the subject book records — its own, not the cash side's. */
   settlementRate: number;
   settlementBase: number;
@@ -1326,12 +1322,13 @@ async function planPosting(
 
   const amount = doc.transaction_amount.toNumber();
   const direction = doc.transaction_type as "In" | "Out";
-  const purpose = purposeOf(doc.purpose);
-  const catalogue = subledgerForCategory(purpose?.budgetCategory ?? null);
+  const purpose = await purposeByKey(doc.purpose);
+  const catalogue = subledgerForCategory(
+    await loadSubledgers(),
+    purpose?.budgetCategoryId ?? null
+  );
   const book =
-    catalogue && doc.partner_id
-      ? { key: catalogue.key, partnerId: doc.partner_id }
-      : null;
+    catalogue && doc.partner_id ? { def: catalogue, partnerId: doc.partner_id } : null;
 
   // What the obligation releases. Only a movement that *lowers* an existing
   // position relieves anything — one that raises it is creating value, and a
@@ -1341,7 +1338,7 @@ async function planPosting(
     const raises = subledgerMovement(catalogue, direction, amount) > 0;
     if (!raises) {
       const position = await subledgerPosition(
-        book.key,
+        book.def.key,
         book.partnerId,
         doc.currency_id
       );
@@ -1434,7 +1431,7 @@ async function journalEntries(
   | { ok: true; lines: JournalLineInput[]; purposeLabel: string }
   | { ok: false; errors: Record<string, string> }
 > {
-  const purpose = purposeOf(doc.purpose);
+  const purpose = await purposeByKey(doc.purpose);
   if (!purpose) {
     return { ok: false, errors: { _form: "Purpose dokumen tidak dikenali." } };
   }
@@ -1684,7 +1681,7 @@ export async function applyPosting(
     // no entry — the Cash Bank Book and the Journal still record the movement.
     if (plan.book) {
       await recordSubledgerEntry(tx, {
-        book: plan.book.key,
+        book: plan.book.def,
         partnerId: plan.book.partnerId,
         currencyId: doc.currency_id,
         date: today,
@@ -1810,7 +1807,7 @@ export type FundedPostingPlan = {
     companyId: number;
     purposeAccountId: number;
     /** The subject book the Purpose itself keeps, where it keeps one. */
-    purposeBook: string | null;
+    purposeBook: SubledgerDef | null;
     purposePartnerId: number | null;
     bridgeAccountId: number;
   };
@@ -1881,7 +1878,7 @@ export async function prepareFundedPosting(
     };
   }
 
-  const purpose = purposeOf(doc.purpose);
+  const purpose = await purposeByKey(doc.purpose);
   if (!purpose) {
     return { ok: false, errors: { _form: "Purpose dokumen tidak dikenali." } };
   }
@@ -1991,7 +1988,10 @@ export async function prepareFundedPosting(
   if (!mapped.ok) return mapped;
 
   const outgoing = doc.transaction_type === "Out";
-  const subledger = subledgerForCategory(purpose.budgetCategory);
+  const subledger = subledgerForCategory(
+    await loadSubledgers(),
+    purpose.budgetCategoryId
+  );
 
   return {
     ok: true,
@@ -2010,7 +2010,7 @@ export async function prepareFundedPosting(
       anak: {
         companyId: doc.company_id,
         purposeAccountId: mapped.accountId,
-        purposeBook: subledger?.key ?? null,
+        purposeBook: subledger ?? null,
         purposePartnerId: doc.partner_id,
         bridgeAccountId: outgoing
           ? input.bridge.anak.apAccountId
@@ -2334,15 +2334,44 @@ export type PurposeOption = {
   partnerCategory: string | null;
 };
 
-/** The 22 purposes as the form needs them — application logic, never a table. */
-export function purposeOptions(): PurposeOption[] {
-  return PURPOSES.map((p) => ({
+/**
+ * Every Purpose, including retired ones.
+ *
+ * Unfiltered on purpose: this is what a list or a detail page reads a posted
+ * document's `purpose` key back through, and a document must go on naming its
+ * own Purpose after that Purpose has been withdrawn. Use
+ * `availablePurposeOptions` for anything a user picks from.
+ */
+export async function purposeOptions(): Promise<PurposeOption[]> {
+  return (await allPurposes()).map(toOption);
+}
+
+/**
+ * The Purposes a **new** document may be raised for.
+ *
+ * Active, and belonging to a Budget Category that is itself active — so
+ * retiring a classification withdraws its Purposes with it and the form cannot
+ * offer one the approval chain would then refuse.
+ *
+ * `keep` is the Purpose a document already carries. It survives the filter for
+ * the same reason a deactivated record stays visible in the picker that already
+ * selected it (CLAUDE.md §12): editing a draft must not silently drop a value
+ * the user never touched.
+ */
+export async function availablePurposeOptions(
+  keep?: string | null
+): Promise<PurposeOption[]> {
+  return (await availablePurposes(keep)).map(toOption);
+}
+
+function toOption(p: PurposeRow): PurposeOption {
+  return {
     key: p.key,
     label: p.label,
     direction: p.direction,
     budgetCategory: p.budgetCategory,
     partnerCategory: p.partnerCategory,
-  }));
+  };
 }
 
 // ---------------------------------------------------- pending commitments
@@ -2426,6 +2455,8 @@ export async function pendingCommitments(
     );
   }
 
+  const purposeLabels = new Map((await allPurposes()).map((p) => [p.key, p.label]));
+
   const rows: PendingDocumentRow[] = docs.map((t) => ({
     id: t.id,
     transactionNo: t.transaction_no,
@@ -2434,7 +2465,7 @@ export async function pendingCommitments(
     currencyId: t.currency_id,
     currencyLabel: t.currency.currency_label,
     transactionType: t.transaction_type as "In" | "Out",
-    purposeLabel: purposeOf(t.purpose)?.label ?? t.purpose,
+    purposeLabel: purposeLabels.get(t.purpose) ?? t.purpose,
     amount: t.transaction_amount.toNumber(),
     lineCount: t._count.lines,
     since: t.updated_at.toISOString(),

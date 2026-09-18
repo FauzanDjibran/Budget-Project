@@ -7,13 +7,16 @@ import { compareCodes } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
 import { journalLineCountForAccount } from "./journal";
 import { subledgerForCategory } from "./subledger-catalogue";
+import { loadSubledgers } from "./subledger-data";
+import { loadClassification } from "./classification-data";
+import { budgetCountByCategory } from "./budget";
+import { type Entity, type Field, entityBySlug } from "./entities";
 import {
   allowedPartnerCategories,
   budgetCategoryNeedsPartner,
-  type Entity,
-  type Field,
-  entityBySlug,
-} from "./entities";
+  directionText,
+  directionsText,
+} from "./classification";
 
 /**
  * Generic record access for registry-driven entities.
@@ -31,6 +34,9 @@ const DELEGATES = {
   ref_currency: (db: Client) => db.refCurrency,
   sys_partner_category: (db: Client) => db.sysPartnerCategory,
   sys_budget_category: (db: Client) => db.sysBudgetCategory,
+  sys_budget_partner_category_mapping: (db: Client) =>
+    db.sysBudgetPartnerCategoryMapping,
+  sys_purpose: (db: Client) => db.sysPurpose,
   acc_account: (db: Client) => db.accAccount,
   acc_account_subcategory: (db: Client) => db.accAccountSubcategory,
   acc_budget_category_account: (db: Client) => db.accBudgetCategoryAccount,
@@ -181,7 +187,7 @@ export async function optionsFor(
         id: r.id,
         label: r.category_label,
         name: r.category_name,
-        active: true,
+        active: r.status === "Active",
       }));
     }
     case "sys_budget_category": {
@@ -190,7 +196,7 @@ export async function optionsFor(
         id: r.id,
         label: r.category_label,
         name: r.category_name,
-        active: true,
+        active: r.status === "Active",
       }));
     }
     case "ref_currency": {
@@ -395,7 +401,7 @@ export async function controlAccountReasons(
     }),
     prisma.accBudgetCategoryAccount.findMany({
       where: { account_id: accountId },
-      select: { budget_category: { select: { category_label: true } } },
+      select: { budget_category_id: true },
     }),
   ]);
 
@@ -410,9 +416,10 @@ export async function controlAccountReasons(
   // account. Biaya and Asset map to an account too, and that account
   // reconciles against nothing but the General Ledger itself — so an expense
   // account stays open to manual entry, which is most of what one is for.
+  const catalogue = await loadSubledgers();
   const books = new Set<string>();
   for (const m of mappings) {
-    const book = subledgerForCategory(m.budget_category.category_label);
+    const book = subledgerForCategory(catalogue, m.budget_category_id);
     if (book) books.add(book.name);
   }
   reasons.push(...[...books].sort());
@@ -430,16 +437,14 @@ export async function structuralControlAccountIds(): Promise<Set<number>> {
   const [cashBanks, mappings] = await Promise.all([
     prisma.mCashBank.findMany({ select: { account_id: true } }),
     prisma.accBudgetCategoryAccount.findMany({
-      select: {
-        account_id: true,
-        budget_category: { select: { category_label: true } },
-      },
+      select: { account_id: true, budget_category_id: true },
     }),
   ]);
 
+  const catalogue = await loadSubledgers();
   const ids = new Set<number>(cashBanks.map((c) => c.account_id));
   for (const m of mappings) {
-    if (subledgerForCategory(m.budget_category.category_label)) {
+    if (subledgerForCategory(catalogue, m.budget_category_id)) {
       ids.add(m.account_id);
     }
   }
@@ -587,15 +592,68 @@ export async function partnerCategoriesForBudgetCategory(
     select: { category_label: true },
   });
   if (!category) return null;
-  const labels = allowedPartnerCategories(category.category_label);
+  const catalogue = await loadClassification();
+  const labels = allowedPartnerCategories(catalogue, category.category_label);
   const rows = await prisma.sysPartnerCategory.findMany({
-    where: { category_label: { in: labels } },
+    where: { category_label: { in: labels }, status: "Active" },
     select: { id: true },
   });
   return {
-    needsPartner: budgetCategoryNeedsPartner(category.category_label),
+    needsPartner: budgetCategoryNeedsPartner(catalogue, category.category_label),
     allowedIds: rows.map((r) => r.id),
   };
+}
+
+/**
+ * Active Budget Categories that name a Partner but have no Partner Category
+ * paired to them.
+ *
+ * Such a category is **inert**: no Purpose is generated for it, so no document
+ * can ever be raised against it, and the subject book it keeps can never
+ * receive an entry. It reads as configured and does nothing — which is exactly
+ * the kind of state a user reaches by accident and then trusts.
+ *
+ * Asked from four directions, because a rule enforced one way is reachable the
+ * other: saving the category, activating it, retiring its last pairing, and
+ * deactivating the Partner Category that pairing points at.
+ *
+ * It lives here rather than in the Server Action so the suite can exercise the
+ * real rule — an action resolves its caller from a session cookie, which a test
+ * process does not have. The same reason `checkCashBankAccount` and
+ * `accountUsage` sit beside it.
+ */
+export async function strandedCategories(
+  options: {
+    ignorePairingId?: number;
+    ignorePartnerCategoryId?: number;
+    onlyCategoryId?: number;
+  } = {}
+): Promise<string[]> {
+  const categories = await prisma.sysBudgetCategory.findMany({
+    where: {
+      status: "Active",
+      require_partner: true,
+      ...(options.onlyCategoryId ? { id: options.onlyCategoryId } : {}),
+    },
+    select: {
+      category_label: true,
+      partner_categories: {
+        where: { status: "Active", partner_category: { status: "Active" } },
+        select: { id: true, partner_category_id: true },
+      },
+    },
+  });
+
+  return categories
+    .filter((c) => {
+      const surviving = c.partner_categories.filter(
+        (m) =>
+          m.id !== options.ignorePairingId &&
+          m.partner_category_id !== options.ignorePartnerCategoryId
+      );
+      return surviving.length === 0;
+    })
+    .map((c) => c.category_label);
 }
 
 /**
@@ -632,6 +690,76 @@ export async function computedValues(
         cash_bank_count: pick(cashBanks, r.id),
         account_count: pick(accounts, r.id),
       };
+    }
+  }
+
+  // The classification chain, stated on the row that owns it. A Budget
+  // Category's admitted Partner Categories are the whole point of the screen,
+  // so they are a column rather than something reached by opening the record.
+  if (entity.key === "sys_budget_category") {
+    const [mappings, budgets] = await Promise.all([
+      prisma.sysBudgetPartnerCategoryMapping.findMany({
+        where: { status: "Active", partner_category: { status: "Active" } },
+        include: { partner_category: { select: { category_label: true } } },
+        orderBy: { partner_category_id: "asc" },
+      }),
+      budgetCountByCategory(),
+    ]);
+    for (const r of rows) {
+      const admitted = mappings
+        .filter((m) => m.budget_category_id === r.id)
+        .map((m) => m.partner_category.category_label);
+      out[r.id] = {
+        directions: directionsText({
+          allowsIn: r.allows_in === true,
+          allowsOut: r.allows_out === true,
+        }),
+        // "Tanpa Partner" and "belum diatur" are different facts, and the
+        // difference is the whole reason `require_partner` is a flag: one is
+        // a finished category, the other is a setup gap.
+        partner_categories: !r.require_partner
+          ? "Tanpa Partner"
+          : admitted.length
+            ? admitted.join(" · ")
+            : "belum diatur",
+        budget_count: budgets.get(r.id) ?? 0,
+        // A category keeps a book when it names a Partner *and* says which way
+        // that book runs. Saying which of the two is missing is the point: the
+        // second is a setup gap somebody can close, the first is a decision.
+        book: !r.require_partner
+          ? "—"
+          : r.raises
+            ? `Buku ${r.category_label}`
+            : "arah belum diatur",
+      };
+    }
+  }
+
+  if (entity.key === "sys_partner_category") {
+    const [mappings, partners] = await Promise.all([
+      prisma.sysBudgetPartnerCategoryMapping.findMany({
+        where: { status: "Active", budget_category: { status: "Active" } },
+        include: { budget_category: { select: { category_label: true } } },
+        orderBy: { budget_category_id: "asc" },
+      }),
+      prisma.mPartner.groupBy({ by: ["category_id"], _count: { _all: true } }),
+    ]);
+    for (const r of rows) {
+      const used = mappings
+        .filter((m) => m.partner_category_id === r.id)
+        .map((m) => m.budget_category.category_label);
+      out[r.id] = {
+        budget_categories: used.length ? used.join(" · ") : "—",
+        partner_count:
+          partners.find((g) => g.category_id === r.id)?._count._all ?? 0,
+      };
+    }
+  }
+
+  // Direction is stored as In/Out and never shown that way (§8).
+  if (entity.key === "sys_purpose") {
+    for (const r of rows) {
+      out[r.id] = { direction: directionText(String(r.direction)) };
     }
   }
 

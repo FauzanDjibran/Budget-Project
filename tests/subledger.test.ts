@@ -4,19 +4,21 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import {
-  SUBLEDGERS,
+  type SubledgerDef,
   subledgerByKey,
-  subledgerBySlug,
   subledgerForCategory,
   subledgerMovement,
 } from "../src/lib/siba/subledger-catalogue";
+import { loadSubledgers } from "../src/lib/siba/subledger-data";
 import {
   recordSubledgerEntry,
   rebuildSubledgerBalance,
   subledgerReport,
   subledgerSubjects,
 } from "../src/lib/siba/subledger";
-import { BUDGET_CATEGORY_RULES, PURPOSES } from "../src/lib/siba/rules";
+import { allPurposes } from "../src/lib/siba/purposes";
+import { loadClassification } from "../src/lib/siba/classification-data";
+import { directionsOf, ruleFor } from "../src/lib/siba/classification";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import { REPORTS, reportBySlug } from "../src/lib/siba/reports";
 import { MODULES } from "../src/lib/siba/nav";
@@ -54,10 +56,23 @@ import {
 let induk = 0;
 let actor = 0;
 let currency = 0;
+/**
+ * The books, loaded once. They are Budget Categories now rather than a constant,
+ * so the suite reads them the same way the application does.
+ */
+let books: SubledgerDef[] = [];
+
+/** A book by the category it belongs to. Tests name categories, not codes. */
+const bookOf = (categoryLabel: string): SubledgerDef => {
+  const book = books.find((b) => b.budgetCategory === categoryLabel);
+  assert.ok(book, `no subject book for Budget Category "${categoryLabel}"`);
+  return book;
+};
 
 before(async () => {
   induk = await parentCompanyId();
   actor = await systemUserId();
+  books = await loadSubledgers();
   currency = (
     await prisma.refCurrency.findFirstOrThrow({
       orderBy: { id: "asc" },
@@ -73,124 +88,156 @@ after(async () => {
 
 // ----------------------------------------------------------- the catalogue
 
+// The rules these three assertions read used to be a constant in rules.ts and
+// are now rows. The properties are unchanged — a book still exists exactly where
+// a category names a subject — but they are now checked against what the
+// database actually holds, which is also what the application reads.
 describe("a category keeps a book exactly when it names a Partner", () => {
-  test("every book names a real Budget Category", () => {
-    for (const book of SUBLEDGERS) {
+  test("every book names a real Budget Category", async () => {
+    const catalogue = await loadClassification();
+    for (const book of books) {
       assert.ok(
-        BUDGET_CATEGORY_RULES[book.budgetCategory],
-        `${book.name} names Budget Category "${book.budgetCategory}", which rules.ts does not declare`
+        ruleFor(catalogue, book.budgetCategory),
+        `${book.name} names Budget Category "${book.budgetCategory}", which no row declares`
       );
     }
   });
 
-  test("every category that takes a Partner has a book, and no other does", () => {
-    for (const [label, rule] of Object.entries(BUDGET_CATEGORY_RULES)) {
-      const book = subledgerForCategory(label);
-      if (rule.partnerCategories.length) {
+  test("every category that takes a Partner has a book, and no other does", async () => {
+    for (const rule of await loadClassification()) {
+      const book = subledgerForCategory(books, rule.id);
+      if (rule.requirePartner) {
         assert.ok(
           book,
-          `${label} names a Partner, so its postings move a subject — that subject needs a book`
+          `${rule.label} names a Partner, so its postings move a subject — that subject needs a book`
         );
       } else {
         assert.equal(
           book,
           null,
-          `${label} takes no Partner, so a book of it would have no subject`
+          `${rule.label} takes no Partner, so a book of it would have no subject`
         );
       }
     }
   });
 
-  test("a book rises in a direction its category actually allows", () => {
-    for (const book of SUBLEDGERS) {
-      const rule = BUDGET_CATEGORY_RULES[book.budgetCategory];
+  test("a book rises in a direction its category actually allows", async () => {
+    const catalogue = await loadClassification();
+    for (const book of books) {
+      const rule = ruleFor(catalogue, book.budgetCategory);
+      assert.ok(rule, `${book.budgetCategory} has no row`);
       assert.ok(
-        rule.directions.includes(book.raises),
+        directionsOf(rule!).includes(book.raises),
         `${book.name} claims to rise on ${book.raises}, which ${book.budgetCategory} never does`
       );
     }
   });
 
-  test("every Purpose that names a Partner posts into a book", () => {
-    for (const purpose of PURPOSES) {
+  test("every Purpose that names a Partner posts into a book", async () => {
+    // The Purpose names a Budget Category; the **category** owns the book, so
+    // this resolves through the category's id rather than through the label the
+    // Purpose carries a copy of.
+    const catalogue = await loadClassification();
+    for (const purpose of await allPurposes()) {
       if (!purpose.partnerCategory) continue;
+      const rule = ruleFor(catalogue, purpose.budgetCategory);
+      assert.ok(rule, `${purpose.label} names an unknown Budget Category`);
       assert.ok(
-        subledgerForCategory(purpose.budgetCategory),
+        subledgerForCategory(books, rule.id),
         `${purpose.label} moves a Partner but lands in no subject book`
       );
     }
   });
 
-  test("keys, slugs and permissions are unique and catalogued", () => {
+  test("a book is identified by its category, on both keys", () => {
     const keys = new Set<string>();
-    const slugs = new Set<string>();
-    for (const book of SUBLEDGERS) {
+    const ids = new Set<number>();
+    for (const book of books) {
       assert.ok(!keys.has(book.key), `duplicate book key ${book.key}`);
-      assert.ok(!slugs.has(book.slug), `duplicate book slug ${book.slug}`);
+      assert.ok(!ids.has(book.categoryId), `duplicate category id ${book.categoryId}`);
       keys.add(book.key);
-      slugs.add(book.slug);
+      ids.add(book.categoryId);
 
-      assert.ok(
-        PERMISSION_CODES.includes(book.permission),
-        `${book.permission} is not in the permission catalogue — a capability is a catalogue entry first`
-      );
-      assert.equal(subledgerByKey(book.key)?.key, book.key);
-      assert.equal(subledgerBySlug(book.slug)?.key, book.key);
+      // The stored key is the category's immutable code, which is what makes a
+      // rename unable to orphan a book.
+      assert.match(book.key, /^bcat\./);
+      assert.equal(subledgerByKey(books, book.key)?.key, book.key);
+      assert.equal(subledgerForCategory(books, book.categoryId)?.key, book.key);
     }
   });
 
-  test("every book has a Report View and a menu entry that reaches it", () => {
+  test("one Report View covers every book, and one menu entry reaches it", () => {
+    // This is the property the whole arrangement rests on: a book added through
+    // Master › Klasifikasi needs no report, no permission and no menu entry
+    // written for it. If this ever becomes one-report-per-book again, a new
+    // category silently has no way to be read.
+    const subledgerReports = REPORTS.filter((r) => r.subledger);
+    assert.equal(
+      subledgerReports.length,
+      1,
+      "one Report View for every book — the book is a parameter, not a report"
+    );
+
+    const report = reportBySlug("subledger");
+    assert.ok(report, "the Buku Subjek report is missing from reports.ts");
+    assert.equal(report.module, "finance");
+    assert.equal(report.params, "subledger-period");
+    assert.equal(report.subledger, true);
+    assert.equal(report.permission, "REPORT_SUBLEDGER_VIEW");
+    assert.ok(
+      PERMISSION_CODES.includes(report.permission),
+      "a capability is a catalogue entry first"
+    );
+
     const menu = MODULES.find((m) => m.key === "finance")!
       .groups!.find((g) => g.key === "report")!.entities;
+    const entries = menu.filter((e) => e.slug === "report/subledger");
+    assert.equal(entries.length, 1, "exactly one menu entry reaches the books");
+    assert.equal(entries[0].permission, report.permission);
 
-    for (const book of SUBLEDGERS) {
-      const report = reportBySlug(book.slug);
-      assert.ok(report, `${book.name} has no entry in reports.ts`);
-      assert.equal(report.module, "finance");
-      assert.equal(report.permission, book.permission);
-      assert.equal(report.params, "subledger-period");
-      assert.equal(report.subledger, book.key);
-
-      const entry = menu.find((e) => e.slug === `report/${book.slug}`);
-      assert.ok(entry, `${book.name} is not in Finance › Laporan`);
-      assert.equal(entry.permission, book.permission);
+    // And no menu entry still points at a per-book report that no longer exists.
+    for (const e of menu) {
+      assert.ok(
+        ![
+          "report/titipan",
+          "report/hutang",
+          "report/piutang",
+          "report/prive",
+          "report/investasi",
+          "report/hasil-investasi",
+        ].includes(e.slug),
+        `${e.slug} is a per-book report route that no longer exists`
+      );
     }
-
-    assert.equal(
-      REPORTS.filter((r) => r.subledger).length,
-      SUBLEDGERS.length,
-      "one Report View per book, no more and no fewer"
-    );
   });
 });
 
 // ------------------------------------------------------------------ signing
 
 describe("a book signs by its own direction, not by the cash direction", () => {
-  const cases: [key: string, direction: "In" | "Out", expected: number][] = [
+  const cases: [category: string, direction: "In" | "Out", expected: number][] = [
     // Liabilities: money received raises what is owed.
-    ["hutang", "In", 100],
-    ["hutang", "Out", -100],
-    ["titipan", "In", 100],
-    ["titipan", "Out", -100],
+    ["Hutang", "In", 100],
+    ["Hutang", "Out", -100],
+    ["Titipan", "In", 100],
+    ["Titipan", "Out", -100],
     // Assets and contra-equity: money paid out raises the position.
-    ["piutang", "Out", 100],
-    ["piutang", "In", -100],
-    ["prive", "Out", 100],
-    ["prive", "In", -100],
-    ["investasi", "Out", 100],
-    ["hasil-investasi", "In", 100],
+    ["Piutang", "Out", 100],
+    ["Piutang", "In", -100],
+    ["Prive", "Out", 100],
+    ["Prive", "In", -100],
+    ["Investasi", "Out", 100],
+    ["Hasil Investasi", "In", 100],
   ];
 
-  for (const [key, direction, expected] of cases) {
-    test(`${key} ${direction} moves ${expected}`, () => {
-      const book = subledgerByKey(key)!;
-      assert.equal(subledgerMovement(book, direction, 100), expected);
+  for (const [category, direction, expected] of cases) {
+    test(`${category} ${direction} moves ${expected}`, () => {
+      assert.equal(subledgerMovement(bookOf(category), direction, 100), expected);
     });
   }
 
   test("an amount's sign never comes from the caller", () => {
-    const book = subledgerByKey("hutang")!;
+    const book = bookOf("Hutang");
     assert.equal(
       subledgerMovement(book, "In", -100),
       100,
@@ -232,7 +279,7 @@ describe("the book is append-only, and its total is derived", () => {
     const entry = (date: string, direction: "In" | "Out", amount: number) =>
       prisma.$transaction((tx) =>
         recordSubledgerEntry(tx, {
-          book: "hutang",
+          book: bookOf("Hutang"),
           partnerId: partner,
           currencyId: currency,
           date,
@@ -255,32 +302,31 @@ describe("the book is append-only, and its total is derived", () => {
       "10.000.000 borrowed, 4.000.000 repaid, 1.500.000 borrowed again"
     );
     assert.equal(
-      (await rebuildSubledgerBalance("hutang", partner, currency)).balance,
+      (await rebuildSubledgerBalance(bookOf("Hutang").key, partner, currency)).balance,
       7_500_000,
       "and recomputing from the entries agrees with the stored total"
     );
   });
 
-  test("an unknown book is refused rather than written", async () => {
-    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
-    await assert.rejects(
-      () =>
-        prisma.$transaction((tx) =>
-          recordSubledgerEntry(tx, {
-            book: "tidak-ada",
-            partnerId: partner,
-            currencyId: currency,
-            date: "2026-01-01",
-            type: "Transaction",
-            direction: "In",
-            amount: 1_000,
-            rate: 1,
-            actorId: actor,
-          })
-        ),
-      /katalog/i
+  test("a category that keeps no book yields none to write to", async () => {
+    // The writer used to take a key and throw on one it did not recognise.
+    // It takes the book itself now, so an unwritable book is unrepresentable
+    // rather than refused — the check moved to where the book is resolved.
+    const catalogue = await loadClassification();
+    for (const label of ["Asset", "Biaya"]) {
+      const rule = ruleFor(catalogue, label);
+      assert.ok(rule, `${label} has no row`);
+      assert.equal(
+        subledgerForCategory(books, rule.id),
+        null,
+        `${label} names no Partner, so there is no book to post its subject into`
+      );
+    }
+    assert.equal(
+      subledgerForCategory(books, -1),
+      null,
+      "an unknown category resolves to no book rather than to the first one"
     );
-    assert.equal(await prisma.subLedger.count({ where: { partner_id: partner } }), 0);
   });
 
   test("two currencies are two positions, never one blended figure", async () => {
@@ -302,7 +348,7 @@ describe("the book is append-only, and its total is derived", () => {
       ] as const) {
         await prisma.$transaction((tx) =>
           recordSubledgerEntry(tx, {
-            book: "titipan",
+            book: bookOf("Titipan"),
             partnerId: partner,
             currencyId,
             date: "2026-03-01",
@@ -316,7 +362,8 @@ describe("the book is append-only, and its total is derived", () => {
       }
 
       const report = await subledgerReport(
-        "titipan",
+        books,
+        bookOf("Titipan").key,
         { from: "2026-01-01", to: "2026-12-31" },
         { partnerIds: [partner], companyIds: [induk] }
       );
@@ -350,7 +397,7 @@ describe("a subledger report reconciles on its own page", () => {
     for (const [date, direction, amount] of entries) {
       await prisma.$transaction((tx) =>
         recordSubledgerEntry(tx, {
-          book: "prive",
+          book: bookOf("Prive"),
           partnerId: partner,
           currencyId: currency,
           date,
@@ -367,7 +414,7 @@ describe("a subledger report reconciles on its own page", () => {
   const january = { from: "2026-01-01", to: "2026-01-31" };
 
   test("opening + naik − turun = closing", async () => {
-    const report = await subledgerReport("prive", january, {
+    const report = await subledgerReport(books, bookOf("Prive").key, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -384,7 +431,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("both ends of the range are inside it, and earlier rows are not listed", async () => {
-    const report = await subledgerReport("prive", january, {
+    const report = await subledgerReport(books, bookOf("Prive").key, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -393,7 +440,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("the stored running balance agrees with the report's arithmetic", async () => {
-    const report = await subledgerReport("prive", january, {
+    const report = await subledgerReport(books, bookOf("Prive").key, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -402,7 +449,8 @@ describe("a subledger report reconciles on its own page", () => {
 
   test("a period with no movement still reports its position", async () => {
     const report = await subledgerReport(
-      "prive",
+      books,
+      bookOf("Prive").key,
       { from: "2026-06-01", to: "2026-06-30" },
       { partnerIds: [partner], companyIds: [induk] }
     );
@@ -417,7 +465,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("a Company the reader may not see is not reported", async () => {
-    const report = await subledgerReport("prive", january, {
+    const report = await subledgerReport(books, bookOf("Prive").key, january, {
       partnerIds: [partner],
       companyIds: [-1],
     });
@@ -425,12 +473,12 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("the filter offers only subjects the book actually holds", async () => {
-    const subjects = await subledgerSubjects("prive", [induk]);
+    const subjects = await subledgerSubjects(books, bookOf("Prive").key, [induk]);
     assert.ok(
       subjects.some((s) => s.id === partner),
       "a Partner with entries is offered"
     );
-    const hutang = await subledgerSubjects("hutang", [induk]);
+    const hutang = await subledgerSubjects(books, bookOf("Hutang").key, [induk]);
     assert.ok(
       !hutang.some((s) => s.id === partner),
       "and is not offered by a book it never moved in"
@@ -439,10 +487,10 @@ describe("a subledger report reconciles on its own page", () => {
 
   test("an unknown book answers with nothing rather than guessing", async () => {
     assert.equal(
-      await subledgerReport("tidak-ada", january, { companyIds: [induk] }),
+      await subledgerReport(books, "bcat.9999", january, { companyIds: [induk] }),
       null
     );
-    assert.deepEqual(await subledgerSubjects("tidak-ada", [induk]), []);
+    assert.deepEqual(await subledgerSubjects(books, "bcat.9999", [induk]), []);
   });
 });
 
@@ -456,7 +504,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
         () =>
           prisma.$transaction((tx) =>
             recordSubledgerEntry(tx, {
-              book: "hutang",
+              book: bookOf("Hutang"),
               partnerId: partner,
               currencyId: currency,
               date: "2026-03-01",
@@ -479,7 +527,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
     // or a position could reach zero foreign against a base nobody can explain.
     await prisma.$transaction((tx) =>
       recordSubledgerEntry(tx, {
-        book: "hutang",
+        book: bookOf("Hutang"),
         partnerId: partner,
         currencyId: currency,
         date: "2026-03-01",
@@ -491,14 +539,14 @@ describe("a position carries a rate, and it is derived from what built it", () =
       })
     );
     const raised = await prisma.subLedger.findFirstOrThrow({
-      where: { book: "hutang", partner_id: partner },
+      where: { book: bookOf("Hutang").key, partner_id: partner },
     });
     assert.equal(raised.movement.toNumber(), 1_000);
     assert.equal(raised.base_movement.toNumber(), 15_000_000);
 
     await prisma.$transaction((tx) =>
       recordSubledgerEntry(tx, {
-        book: "hutang",
+        book: bookOf("Hutang"),
         partnerId: partner,
         currencyId: currency,
         date: "2026-03-02",
@@ -510,7 +558,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
       })
     );
     const lowered = await prisma.subLedger.findFirstOrThrow({
-      where: { book: "hutang", partner_id: partner, direction: "Out" },
+      where: { book: bookOf("Hutang").key, partner_id: partner, direction: "Out" },
     });
     assert.equal(lowered.movement.toNumber(), -400);
     assert.equal(lowered.base_movement.toNumber(), -6_000_000);
@@ -520,7 +568,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
       "the amount itself stays positive on both measures"
     );
 
-    const rebuilt = await rebuildSubledgerBalance("hutang", partner, currency);
+    const rebuilt = await rebuildSubledgerBalance(bookOf("Hutang").key, partner, currency);
     assert.deepEqual(rebuilt, { balance: 600, baseBalance: 9_000_000 });
   });
 
@@ -535,7 +583,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
     ] as const) {
       await prisma.$transaction((tx) =>
         recordSubledgerEntry(tx, {
-          book: "hutang",
+          book: bookOf("Hutang"),
           partnerId: partner,
           currencyId: currency,
           date: "2026-03-05",
@@ -549,7 +597,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
     }
 
     const march = { from: "2026-03-01", to: "2026-03-31" };
-    const report = await subledgerReport("hutang", march, {
+    const report = await subledgerReport(books, bookOf("Hutang").key, march, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -562,7 +610,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
     // Settle it to nothing. The position then has no rate at all.
     await prisma.$transaction((tx) =>
       recordSubledgerEntry(tx, {
-        book: "hutang",
+        book: bookOf("Hutang"),
         partnerId: partner,
         currencyId: currency,
         date: "2026-03-20",
@@ -574,7 +622,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
         actorId: actor,
       })
     );
-    const cleared = await subledgerReport("hutang", march, {
+    const cleared = await subledgerReport(books, bookOf("Hutang").key, march, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -597,7 +645,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
     ] as const) {
       await prisma.$transaction((tx) =>
         recordSubledgerEntry(tx, {
-          book: "hutang",
+          book: bookOf("Hutang"),
           partnerId: partner,
           currencyId: currency,
           date,
@@ -612,7 +660,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
 
     // February only, so January folds into the opening on both measures.
     const february = { from: "2026-02-01", to: "2026-02-28" };
-    const report = await subledgerReport("hutang", february, {
+    const report = await subledgerReport(books, bookOf("Hutang").key, february, {
       partnerIds: [partner],
       companyIds: [induk],
     });

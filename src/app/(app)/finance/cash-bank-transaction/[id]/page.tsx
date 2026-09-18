@@ -43,7 +43,7 @@ export default async function Page({
         transaction={transaction}
         lines={lines}
         refs={refs}
-        purposes={purposeOptions()}
+        purposes={await purposeOptions()}
         mappings={mappings}
         fundingRequestNo={request?.funding_request_no ?? null}
         can={transactionAbilities(actor.permissions)}

@@ -20,6 +20,7 @@ import {
   listRows,
   refOptions,
 } from "@/lib/siba/records";
+import { loadClassification } from "@/lib/siba/classification-data";
 import { cashBankBookSummary } from "@/lib/siba/cash-bank";
 import { fiscalYearPeriods } from "@/lib/siba/fiscal";
 import { defaultCurrencyId } from "@/lib/siba/system-settings";
@@ -134,7 +135,10 @@ export async function EntityNewPage({
   if (!create) notFound();
   const actor = await requirePermission(create, `/${entity.module}/${entity.slug}/new`);
 
-  const refs = await refOptions(entity);
+  const [refs, classification] = await Promise.all([
+    refOptions(entity),
+    loadClassification(),
+  ]);
 
   return (
     <EntityForm
@@ -142,6 +146,7 @@ export async function EntityNewPage({
       mode="new"
       row={null}
       refs={refs}
+      classification={classification}
       can={abilitiesFor(entity.key, actor.permissions)}
       defaults={{ default_currency: await defaultCurrencyId() }}
     />
@@ -202,6 +207,7 @@ export async function EntityDetailPage({
       mode="view"
       row={row}
       refs={refs}
+      classification={await loadClassification()}
       can={abilitiesFor(entity.key, actor.permissions)}
       headerActions={headerActions}
       editTone={editTone}
@@ -306,6 +312,7 @@ export async function EntityEditPage({
         mode="edit"
         row={row}
         refs={refs}
+        classification={await loadClassification()}
         can={abilitiesFor(entity.key, actor.permissions)}
         {...(await accountParentLock(entity, row))}
       />

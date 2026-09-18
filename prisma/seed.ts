@@ -31,6 +31,8 @@ import { PERMISSIONS } from "../src/lib/siba/permissions";
 import { SEEDED_ROLES, ADMIN_ROLE, adminPermissionCodes } from "../src/lib/siba/roles";
 import { parentCode } from "../src/lib/siba/account-code";
 import { BASE_CURRENCY_LABEL } from "../src/lib/siba/currency";
+import { SEED_PURPOSES } from "../src/lib/siba/rules";
+import { syncPurposes } from "../src/lib/siba/purposes";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -145,15 +147,38 @@ const DOC_TYPES: [label: string, table: string][] = [
   ["Cash Bank Transfer Line", "fin_cash_bank_transfer_line"],
 ];
 
-const BUDGET_CATEGORIES: [label: string, note: string][] = [
-  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder."],
-  ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder."],
-  ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder."],
-  ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder."],
-  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran."],
-  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran."],
-  ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran."],
-  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan."],
+/**
+ * The eight Budget Categories and the rules each one carries: which directions
+ * are meaningful for it, whether it names a Partner at all, and which Partner
+ * Categories it admits.
+ *
+ * Direction follows balance-sheet logic rather than cash direction:
+ *
+ *   Liability (Titipan, Hutang)   In = obligation up,  Out = obligation down
+ *   Asset (Piutang, Investasi)    Out = asset up,      In  = asset down
+ *   Contra-equity (Prive)         Out = drawing up,    In  = drawing down
+ *   Expense / Fixed asset         Out only
+ *   Income                        In only
+ *
+ * This is the **starting point**, not the running rule. Once seeded, the tables
+ * are what the application reads, and the user reshapes them through
+ * Master > Klasifikasi. The sync below is written so that it never overwrites
+ * an edit made there — see `ensureBudgetCategoryRules`.
+ */
+const BUDGET_CATEGORIES: [
+  label: string,
+  note: string,
+  directions: ("In" | "Out")[],
+  partnerCategories: string[],
+][] = [
+  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder.", ["In", "Out"], ["Cabang", "Stakeholder"]],
+  ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"]],
+  ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"]],
+  ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder.", ["In", "Out"], ["Stakeholder"]],
+  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], []],
+  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], []],
+  ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran.", ["Out"], ["Cabang"]],
+  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan.", ["In"], ["Cabang"]],
 ];
 
 const PARTNER_CATEGORIES: [label: string, name: string, note: string][] = [
@@ -533,7 +558,7 @@ async function ensureReferenceData(
     tally("document types", made);
   }
 
-  for (const [i, [label, note]] of BUDGET_CATEGORIES.entries()) {
+  for (const [i, [label, note, directions, _partners]] of BUDGET_CATEGORIES.entries()) {
     const made = await create(
       () => prisma.sysBudgetCategory.findFirst({ where: { category_label: label } }),
       () =>
@@ -542,6 +567,9 @@ async function ensureReferenceData(
             category_code: code("bcat", i + 1),
             category_label: label,
             category_name: label,
+            allows_in: directions.includes("In"),
+            allows_out: directions.includes("Out"),
+            require_partner: _partners.length > 0,
             note,
             ...audit,
           },
@@ -566,6 +594,9 @@ async function ensureReferenceData(
     );
     tally("partner categories", made);
   }
+
+  await ensureBudgetCategoryRules(audit);
+  await ensurePurposes(audit.created_by);
 
   const typeId = new Map(
     (await prisma.sysAccountType.findMany({ select: { id: true, type_label: true } })).map((t) => [
@@ -639,6 +670,151 @@ async function ensureReferenceData(
 }
 
 /** Creates the row when the lookup finds nothing. Returns 1 if it created one. */
+/**
+ * Brings the Budget Category rules and the Budget Category x Partner Category
+ * mappings up to what `BUDGET_CATEGORIES` declares — **without ever overwriting
+ * a rule the user has already shaped through the GUI.**
+ *
+ * That distinction is the whole difficulty here. These rows are system data by
+ * origin but user data by intent: the seed states where the model starts, and
+ * Master > Klasifikasi is where it goes next. A sync that simply wrote the
+ * declared rules back would silently undo a morning's work the first time
+ * anyone ran `npm run db:seed` to pick up a new permission.
+ *
+ * So each half asks a question whose answer distinguishes "never set" from
+ * "set to something else":
+ *
+ *   - Direction is backfilled only when **both** flags are false, which no real
+ *     category ever is — a category that moves in no direction could classify
+ *     nothing. That state means the row predates the column.
+ *   - Mappings are seeded only when the category has **no rows at all**. One
+ *     row, even a deactivated one, means somebody has been here.
+ *
+ * Neither half deletes anything, in keeping with the seeder's contract.
+ */
+async function ensureBudgetCategoryRules(audit: {
+  created_by: number;
+  updated_by: null;
+}): Promise<void> {
+  const partnerId = new Map(
+    (
+      await prisma.sysPartnerCategory.findMany({
+        select: { id: true, category_label: true },
+      })
+    ).map((c) => [c.category_label, c.id])
+  );
+
+  for (const [label, , directions, partners] of BUDGET_CATEGORIES) {
+    const category = await prisma.sysBudgetCategory.findFirst({
+      where: { category_label: label },
+      select: { id: true, allows_in: true, allows_out: true },
+    });
+    // A category the declaration names but the database does not is not this
+    // function's to create — the loop above owns that, and reaching here means
+    // somebody renamed a label.
+    if (!category) continue;
+
+    if (!category.allows_in && !category.allows_out) {
+      await prisma.sysBudgetCategory.update({
+        where: { id: category.id },
+        data: {
+          allows_in: directions.includes("In"),
+          allows_out: directions.includes("Out"),
+          require_partner: partners.length > 0,
+        },
+      });
+      tally("budget category rules backfilled");
+    }
+
+    if (!partners.length) continue;
+    const existing = await prisma.sysBudgetPartnerCategoryMapping.count({
+      where: { budget_category_id: category.id },
+    });
+    if (existing) continue;
+
+    for (const partnerLabel of partners) {
+      const id = partnerId.get(partnerLabel);
+      if (!id) continue;
+      const seq =
+        (await prisma.sysBudgetPartnerCategoryMapping.count()) + 1;
+      await prisma.sysBudgetPartnerCategoryMapping.create({
+        data: {
+          mapping_code: code("bpcm", seq),
+          budget_category_id: category.id,
+          partner_category_id: id,
+          ...audit,
+        },
+      });
+      tally("budget-partner category mappings");
+    }
+  }
+}
+
+/**
+ * Plants the 22 historical Purposes, then lets the generator fill in anything
+ * else the classification implies.
+ *
+ * Two steps rather than one, because the two halves have different sources of
+ * truth. The original 22 carry keys that posted documents already reference and
+ * labels that name business events rather than classifications — neither is
+ * regenerable, so they are transcribed from `SEED_PURPOSES`. Everything after
+ * them is the cross product of Budget Categories, their admitted Partner
+ * Categories and their directions, which `syncPurposes` derives.
+ *
+ * Both halves are additive and neither overwrites a label. Re-running after
+ * somebody has reworded a Purpose leaves their wording alone.
+ */
+async function ensurePurposes(system: number): Promise<void> {
+  const categoryId = new Map(
+    (
+      await prisma.sysBudgetCategory.findMany({
+        select: { id: true, category_label: true },
+      })
+    ).map((c) => [c.category_label, c.id])
+  );
+  const partnerId = new Map(
+    (
+      await prisma.sysPartnerCategory.findMany({
+        select: { id: true, category_label: true },
+      })
+    ).map((c) => [c.category_label, c.id])
+  );
+
+  for (const purpose of SEED_PURPOSES) {
+    const budgetCategoryId = categoryId.get(purpose.budgetCategory);
+    // A label renamed since the first seed. The Purpose it named is already in
+    // the table under its own key, so skipping is right — planting a second row
+    // against a category that no longer answers to this name would be worse.
+    if (!budgetCategoryId) continue;
+    const partnerCategoryId = purpose.partnerCategory
+      ? partnerId.get(purpose.partnerCategory) ?? null
+      : null;
+    if (purpose.partnerCategory && !partnerCategoryId) continue;
+
+    const made = await create(
+      () => prisma.sysPurpose.findFirst({ where: { purpose_key: purpose.key } }),
+      () =>
+        prisma.sysPurpose.create({
+          data: {
+            purpose_key: purpose.key,
+            budget_category_id: budgetCategoryId,
+            partner_category_id: partnerCategoryId,
+            direction: purpose.direction,
+            label: purpose.label,
+            created_by: system,
+            updated_by: null,
+          },
+        })
+    );
+    tally("purposes", made);
+  }
+
+  const { created, retired, restored } = await syncPurposes(prisma, system);
+  tally("purposes generated", created);
+  tally("purposes retired", retired);
+  tally("purposes reopened", restored);
+}
+
 async function create<T>(find: () => Promise<T | null>, make: () => Promise<T>): Promise<number> {
   if (await find()) return 0;
   await make();

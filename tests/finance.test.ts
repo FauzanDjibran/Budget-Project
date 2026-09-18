@@ -19,7 +19,8 @@ import {
   type TransactionStatus,
 } from "../src/lib/siba/transaction-workflow";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
-import { BUDGET_CATEGORY_RULES, PURPOSES, purposeOf } from "../src/lib/siba/rules";
+import { allPurposes, purposeByKey } from "../src/lib/siba/purposes";
+import { loadClassification } from "../src/lib/siba/classification-data";
 import {
   openCashBankBook,
   rebuildCashBankBalance,
@@ -30,6 +31,7 @@ import { subledgerPosition } from "../src/lib/siba/subledger";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
   FIXTURE_PREFIX,
+  bookKey,
   budgetCategoryId,
   childCompanyId,
   cleanupFixtures,
@@ -157,7 +159,7 @@ async function makeDraft(options: {
   layerId?: number;
   lines: { budgetId: number; amount: number; outstanding: number }[];
 }): Promise<number> {
-  const purpose = purposeOf(options.purpose)!;
+  const purpose = (await purposeByKey(options.purpose))!;
   const cashBank = await prisma.mCashBank.findUniqueOrThrow({
     where: { id: options.cashBankId },
     select: { currency_id: true, company_id: true },
@@ -242,7 +244,8 @@ before(async () => {
       companyId,
       subcategoryLabel: "5.3.1",
     });
-    for (const [label, rule] of Object.entries(BUDGET_CATEGORY_RULES)) {
+    for (const rule of await loadClassification()) {
+      const label = rule.label;
       const partnerCategories = rule.partnerCategories.length
         ? rule.partnerCategories
         : [null];
@@ -385,7 +388,7 @@ describe("a purpose resolves to exactly one classification", () => {
         })
       ).map((c) => c.category_label)
     );
-    for (const p of PURPOSES) {
+    for (const p of await allPurposes()) {
       assert.ok(
         labels.has(p.budgetCategory),
         `${p.key} names budget category ${p.budgetCategory}, which is not seeded`
@@ -401,7 +404,7 @@ describe("a purpose resolves to exactly one classification", () => {
         })
       ).map((c) => c.category_label)
     );
-    for (const p of PURPOSES) {
+    for (const p of await allPurposes()) {
       if (!p.partnerCategory) continue;
       assert.ok(
         labels.has(p.partnerCategory),
@@ -1415,7 +1418,7 @@ describe("posting writes the subject book alongside the cash book", () => {
     await post(doc);
 
     const entries = await prisma.subLedger.findMany({
-      where: { source_doc_id: doc, book: "hutang" },
+      where: { source_doc_id: doc, book: await bookKey("Hutang") },
     });
     assert.equal(entries.length, 1, "one document, one entry in its subject book");
     assert.equal(entries[0].partner_id, partner);
@@ -1429,7 +1432,7 @@ describe("posting writes the subject book alongside the cash book", () => {
     const balance = await prisma.subLedgerBalance.findUniqueOrThrow({
       where: {
         book_partner_id_currency_id: {
-          book: "hutang",
+          book: await bookKey("Hutang"),
           partner_id: partner,
           currency_id: currency,
         },
@@ -1457,7 +1460,7 @@ describe("posting writes the subject book alongside the cash book", () => {
     await post(doc);
 
     const entry = await prisma.subLedger.findFirstOrThrow({
-      where: { source_doc_id: doc, book: "piutang" },
+      where: { source_doc_id: doc, book: await bookKey("Piutang") },
     });
     assert.equal(entry.direction, "Out", "the money left");
     assert.equal(
@@ -1691,7 +1694,7 @@ describe("a foreign document is valued rather than refused", () => {
       })
     );
 
-    const position = await subledgerPosition("hutang", partner, otherCurrency);
+    const position = await subledgerPosition(await bookKey("Hutang"), partner, otherCurrency);
     assert.deepEqual(position, { foreign: 1_000, base: 15_000_000 });
 
     // Repay from a layer that cost more.
@@ -1733,7 +1736,7 @@ describe("a foreign document is valued rather than refused", () => {
 
     // The book released what it was carrying, not what the cash cost.
     const relief = await prisma.subLedger.findFirstOrThrow({
-      where: { book: "hutang", partner_id: partner, direction: "Out" },
+      where: { book: await bookKey("Hutang"), partner_id: partner, direction: "Out" },
       orderBy: { id: "desc" },
     });
     assert.equal(relief.amount.toNumber(), 1_000);
@@ -1741,7 +1744,7 @@ describe("a foreign document is valued rather than refused", () => {
     assert.equal(relief.rate.toNumber(), 15_000);
 
     // And the position closes at nothing on both measures.
-    assert.deepEqual(await subledgerPosition("hutang", partner, otherCurrency), {
+    assert.deepEqual(await subledgerPosition(await bookKey("Hutang"), partner, otherCurrency), {
       foreign: 0,
       base: 0,
     });

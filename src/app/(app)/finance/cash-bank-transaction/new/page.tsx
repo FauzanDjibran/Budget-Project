@@ -2,7 +2,7 @@ import { TransactionForm } from "@/components/finance/transaction-form";
 import { requirePermission } from "@/lib/siba/auth";
 import { budgetMappings } from "@/lib/siba/budget";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import { financeRefs, purposeOptions } from "@/lib/siba/finance";
+import { availablePurposeOptions, financeRefs } from "@/lib/siba/finance";
 import { defaultCurrencyId } from "@/lib/siba/system-settings";
 import { transactionAbilities } from "@/lib/siba/transaction-workflow";
 
@@ -30,7 +30,7 @@ export default async function Page() {
       transaction={null}
       lines={[]}
       refs={refs}
-      purposes={purposeOptions()}
+      purposes={await availablePurposeOptions()}
       mappings={mappings}
       defaultCurrencyId={currencyId}
       can={transactionAbilities(actor.permissions)}

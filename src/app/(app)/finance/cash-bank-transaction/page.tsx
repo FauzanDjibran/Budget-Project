@@ -39,7 +39,7 @@ export default async function Page({
     <TransactionList
       transactions={transactions}
       refs={refs}
-      purposes={purposeOptions()}
+      purposes={await purposeOptions()}
       summary={summary}
       cash={cash}
       can={transactionAbilities(actor.permissions)}
