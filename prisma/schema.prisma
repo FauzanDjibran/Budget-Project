@@ -290,6 +290,7 @@ model SysCompany {
   mappings     AccBudgetCategoryAccount[]
   budgets      BudBudget[]
   transactions FinCashBankTransaction[]
+  transfers    FinCashBankTransfer[]
 
   journals AccJournal[]
 
@@ -390,6 +391,7 @@ model RefCurrency {
   cash_banks         MCashBank[]
   budgets            BudBudget[]
   transactions       FinCashBankTransaction[]
+  transfers          FinCashBankTransfer[]
   journal_lines      AccJournalLine[]
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
@@ -451,6 +453,8 @@ model MCashBank {
   account  AccAccount  @relation(fields: [account_id], references: [id])
 
   transactions     FinCashBankTransaction[]
+  transfers_out    FinCashBankTransfer[]
+  transfers_in     FinCashBankTransferLine[]
   ledger           CashBankLedger[]
   layers           CashBankLayer[]
   book_balance     CashBankBalance?
@@ -614,9 +618,9 @@ model CashBankLayer {
   acquisition_seq  Int
 
   /// The kurs this currency was acquired at, to the base currency. Immutable.
-  rate             Decimal @db.Decimal(18, 6)
-  foreign_original Decimal @db.Decimal(18, 2)
-  base_original    Decimal @db.Decimal(18, 2)
+  rate              Decimal @db.Decimal(18, 6)
+  foreign_original  Decimal @db.Decimal(18, 2)
+  base_original     Decimal @db.Decimal(18, 2)
   /// What is left. Drawn down by payments; never edited by hand.
   foreign_remaining Decimal @db.Decimal(18, 2)
   base_remaining    Decimal @db.Decimal(18, 2)
@@ -961,28 +965,28 @@ model BudBudget {
 // ---------------------------------------------------------------- finance
 
 model FinCashBankTransaction {
-  id               Int           @id @default(autoincrement())
-  transaction_no   String        @unique
+  id                 Int           @id @default(autoincrement())
+  transaction_no     String        @unique
   /// Null until the document is posted. The DBML declared this NOT NULL, but a
   /// document only acquires a date when the money actually moves.
-  document_date    DateTime?     @db.Date
-  posting_date     DateTime?     @db.Timestamptz(6)
-  transaction_type FlowDirection
-  company_id       Int
+  document_date      DateTime?     @db.Date
+  posting_date       DateTime?     @db.Timestamptz(6)
+  transaction_type   FlowDirection
+  company_id         Int
   /// Purpose key (e.g. `PRV_SH_OUT`), resolved in `src/lib/siba/rules.ts`. A
   /// purpose carries behaviour a config table cannot express, so it stays
   /// application logic — CLAUDE.md §12 rejects a `fin_purpose` table.
-  purpose          String
-  cash_bank_id     Int?
+  purpose            String
+  cash_bank_id       Int?
   /// The currency the document is denominated in — a real input now, not a
   /// figure read off the Cash & Bank. A foreign document may be paid from a
   /// resource in its own currency or from a base-currency one, so the two are
   /// no longer the same question.
-  currency_id      Int
+  currency_id        Int
   /// The kurs this document was valued at: its own currency to the base one.
   /// Read off the chosen layer where one is consumed, typed where the bank did
   /// the converting, and `1` only when the money is already base currency.
-  exchange_rate    Decimal       @default(1) @db.Decimal(18, 6)
+  exchange_rate      Decimal       @default(1) @db.Decimal(18, 6)
   /// The rate layer this payment drew on. One transaction, one bank, one kurs
   /// — so this is a header column rather than a join table, and the document is
   /// capped at what this layer still holds.
@@ -990,7 +994,7 @@ model FinCashBankTransaction {
   /// Null whenever no layer is involved: money coming in, a base-currency
   /// resource, or a document still in Draft that has not chosen one.
   cash_bank_layer_id Int?
-  partner_id       Int?
+  partner_id         Int?
 
   transaction_amount      Decimal @db.Decimal(18, 2)
   /// What the document was worth in base currency. No longer the identity.
@@ -1115,6 +1119,149 @@ model FinFundingRequest {
   @@index([status])
   @@index([transaction_id])
   @@map("fin_funding_request")
+}
+
+// ------------------------------------------------- cash bank transfer
+
+/// How a transfer's two accounts relate, which is the whole of what a transfer
+/// Purpose says. Deliberately **not** a `rules.ts` Purpose: those are one Budget
+/// Category x one Partner Category x one direction, and a transfer has none of
+/// the three. It moves the Company's own money between its own resources, so it
+/// realizes no Budget, names no Partner and keeps no subject book.
+///
+/// The catalogue is `src/lib/siba/transfer-catalogue.ts`; this enum is stored so
+/// a posted document still says what it was even if the catalogue is reworded.
+enum TransferPurpose {
+  /// Both resources hold the same currency. Base value is conserved and no
+  /// difference can arise.
+  Transfer
+  /// Foreign out, base in — selling foreign currency. The **only** purpose that
+  /// can produce an FX difference: what the layer released and what the bank
+  /// actually credited are two independently determined base values.
+  Pencairan
+  /// Base out, foreign in — buying foreign currency. Origination: there is
+  /// nothing on the books to disagree with, so no difference can arise.
+  PembelianValas
+}
+
+/// A movement of the Company's own money between its own Cash & Bank resources.
+///
+/// The header names the **source** and the lines name the destinations, so one
+/// document can split one withdrawal across several accounts. Its own module
+/// and its own tables rather than a third `transaction_type` on
+/// `fin_cash_bank_transaction`: a Cash Bank Transaction line settles a Budget,
+/// a transfer line names a Cash & Bank, and the two documents share neither a
+/// classification chain, a subject book, nor a realization.
+///
+/// Both Companies' charts are irrelevant here — the anak holds no Cash & Bank
+/// by design (concept doc §25, §32), so every transfer is the induk's, and
+/// `company_id` is derived from the source rather than picked.
+///
+/// **Base value is conserved** (CORE multi-currency §5.8, invariant 18) and
+/// **layers propagate one-for-one** (SIBA multi-currency §6): three destination
+/// lines out of one source layer create three destination layers, never one
+/// blended one.
+model FinCashBankTransfer {
+  id            Int       @id @default(autoincrement())
+  transfer_no   String    @unique
+  /// Null until the document is posted — a Draft has moved nothing and so has
+  /// no date, exactly as a Cash Bank Transaction has none.
+  document_date DateTime? @db.Date
+  posting_date  DateTime? @db.Timestamptz(6)
+
+  /// The source resource's Company. Both legs belong to it: a movement between
+  /// two Companies is the intercompany bridge, which is Funding Request's.
+  company_id Int
+  purpose    TransferPurpose
+
+  /// The source. Money always leaves this resource.
+  from_cash_bank_id Int
+
+  /// The document currency: the foreign currency of the pair, or the shared
+  /// currency where both sides hold the same one. Derived from the source for
+  /// Transfer and Pencairan; chosen for Pembelian Valas, which is the one case
+  /// where the source is rupiah and the currency being bought is the input.
+  currency_id Int
+
+  /// The source layer this document draws on, where the source holds foreign
+  /// currency. One document, one layer — the same narrowing a Cash Bank
+  /// Transaction takes, and for the same reason.
+  cash_bank_layer_id Int?
+
+  /// Total in the document currency, and what the source released in base.
+  transfer_amount      Decimal @db.Decimal(18, 2)
+  transfer_base_amount Decimal @db.Decimal(18, 2)
+
+  note   String?
+  status TransactionStatus @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company        SysCompany  @relation(fields: [company_id], references: [id])
+  currency       RefCurrency @relation(fields: [currency_id], references: [id])
+  from_cash_bank MCashBank   @relation(fields: [from_cash_bank_id], references: [id])
+
+  lines FinCashBankTransferLine[]
+
+  @@index([company_id])
+  @@index([status])
+  @@map("fin_cash_bank_transfer")
+}
+
+/// One destination of a transfer: where part of the money lands, and what it
+/// was worth on each side of the move.
+///
+/// Both faces are stored rather than derived. They are two independently
+/// determined facts — what the source gave up and what the destination received
+/// — and on a Pencairan they genuinely differ, which is the realized gain or
+/// loss. Re-deriving either at a later rate would destroy the only figure that
+/// says what the conversion actually cost (CLAUDE.md §12).
+model FinCashBankTransferLine {
+  id          Int @id @default(autoincrement())
+  transfer_id Int
+  sequence_no Int
+
+  /// Where the money lands. Never the source, and never twice in one document.
+  to_cash_bank_id Int
+
+  /// In the **document** currency: the foreign amount on a cross-currency
+  /// transfer, the shared amount otherwise.
+  amount        Decimal @db.Decimal(18, 2)
+  /// Document currency to base. Entered where the pair crosses — per line, so
+  /// proceeds split across two accounts may carry the two rates the bank
+  /// actually used. Read off the source layer or `1` otherwise.
+  exchange_rate Decimal @db.Decimal(18, 6)
+
+  /// What left the source, in the source resource's own currency, and the base
+  /// value it released.
+  out_amount      Decimal @db.Decimal(18, 2)
+  out_base_amount Decimal @db.Decimal(18, 2)
+
+  /// What arrived at the destination, in that resource's own currency, and the
+  /// base value it received.
+  in_amount      Decimal @db.Decimal(18, 2)
+  in_base_amount Decimal @db.Decimal(18, 2)
+
+  /// `in_base_amount − out_base_amount`. Non-zero only on a Pencairan, where
+  /// the sale rate and the layer's carrying rate are two different figures.
+  /// Positive is a gain on the credit side, negative a loss on the debit side,
+  /// and zero writes no journal line at all.
+  fx_difference Decimal @default(0) @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  transfer     FinCashBankTransfer @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+  to_cash_bank MCashBank           @relation(fields: [to_cash_bank_id], references: [id])
+
+  @@unique([transfer_id, sequence_no])
+  @@index([to_cash_bank_id])
+  @@map("fin_cash_bank_transfer_line")
 }
 
 // ---------------------------------------------------------------- audit

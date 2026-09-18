@@ -157,6 +157,23 @@ export const PERMISSIONS = [
       "Hanya berlaku bagi Company yang tidak memiliki Cash & Bank sendiri.",
   },
 
+  // Cash Bank Transfer: the Company's own money moving between its own
+  // resources. Its own capabilities rather than the transaction's, because
+  // moving money internally and paying a third party are different authorities
+  // — a treasury clerk may do the first and not the second.
+  { code: "CASH_BANK_TRANSFER_VIEW", name: "Lihat Cash Bank Transfer", module: "finance" },
+  { code: "CASH_BANK_TRANSFER_CREATE", name: "Tambah Cash Bank Transfer", module: "finance" },
+  { code: "CASH_BANK_TRANSFER_EDIT", name: "Ubah Cash Bank Transfer", module: "finance" },
+  {
+    code: "CASH_BANK_TRANSFER_POST",
+    name: "Post Cash Bank Transfer",
+    module: "finance",
+    description:
+      "Memindahkan uangnya: saldo sumber turun, saldo setiap tujuan naik, dan " +
+      "Journal tercatat. Pencairan valuta asing mengakui selisih kurs di sini.",
+  },
+  { code: "CASH_BANK_TRANSFER_CANCEL", name: "Batalkan Cash Bank Transfer", module: "finance" },
+
   // Funding is the induk's side of the same business event, and a separate
   // capability on purpose: raising a request is the anak's clerk, confirming it
   // releases the induk's money. Nobody should hold one because they hold the

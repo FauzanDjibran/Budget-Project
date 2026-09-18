@@ -59,6 +59,18 @@ export type NewLayer = {
   rate: number;
   /** Foreign amount acquired. Must be positive: a layer of nothing is not one. */
   foreign: number;
+  /**
+   * The exact base value, when the caller already knows it.
+   *
+   * A transfer **conserves base value** (CORE multi-currency §5.8): a
+   * destination layer receives exactly the base its source layer released,
+   * which can differ from `foreign × rate` by a rounding unit — that rate is
+   * itself derived as `base ÷ foreign`, so re-multiplying by it is not the
+   * identity. The caller passes what was actually released; everything else
+   * lets this module multiply. The same escape `recordCashBankEntry` takes,
+   * for the same reason.
+   */
+  baseAmount?: number;
   sourceDocTypeId?: number | null;
   sourceDocId?: number | null;
   note?: string | null;
@@ -82,7 +94,9 @@ export async function openLayer(db: Db, input: NewLayer) {
     throw new Error(`Kurs layer harus lebih besar dari nol (diterima ${input.rate}).`);
   }
 
-  const { foreign, base } = originate(input.foreign, input.rate);
+  const originated = originate(input.foreign, input.rate);
+  const foreign = originated.foreign;
+  const base = input.baseAmount ?? originated.base;
 
   const sameDay = await db.cashBankLayer.count({
     where: { cash_bank_id: input.cashBankId, acquisition_date: asDate(input.date) },

@@ -146,6 +146,14 @@ export const MODULES: NavModule[] = [
             permission: "CASH_BANK_TRANSACTION_VIEW",
           },
           {
+            key: "fin_cash_bank_transfer",
+            slug: "cash-bank-transfer",
+            name: "Cash Bank Transfer",
+            icon: "link",
+            desc: "Pemindahan dana antar Cash & Bank milik Company sendiri: transfer mata uang sama, pencairan valuta asing, dan pembelian valas.",
+            permission: "CASH_BANK_TRANSFER_VIEW",
+          },
+          {
             key: "fin_funding_request",
             slug: "funding-request",
             name: "Funding Request",

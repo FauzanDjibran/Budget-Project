@@ -369,6 +369,19 @@ export async function cleanupFixtures(): Promise<void> {
     await prisma.finCashBankTransaction.deleteMany({
       where: { cash_bank_id: { in: ids } },
     });
+    // A transfer names a resource on both sides, so both references have to
+    // go before the resources do.
+    await prisma.finCashBankTransferLine.deleteMany({
+      where: {
+        OR: [
+          { to_cash_bank_id: { in: ids } },
+          { transfer: { from_cash_bank_id: { in: ids } } },
+        ],
+      },
+    });
+    await prisma.finCashBankTransfer.deleteMany({
+      where: { from_cash_bank_id: { in: ids } },
+    });
     await prisma.cashBankLayer.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.cashBankLedger.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.cashBankBalance.deleteMany({ where: { cash_bank_id: { in: ids } } });

@@ -128,12 +128,21 @@ const tally = (what: string, n = 1) => {
 // into. Renaming a label here without renaming it there silently breaks a
 // business rule.
 
+/**
+ * **Append only.** Each row's `doc_code` is `dtyp.<index + 1>`, so inserting a
+ * type in the middle renumbers every one after it and the seed then collides
+ * with the codes already in the database — which is a unique-constraint error
+ * on a seeder whose whole contract is that it is safe to re-run. A new
+ * document type goes at the end, whatever the reading order would prefer.
+ */
 const DOC_TYPES: [label: string, table: string][] = [
   ["Budget", "bud_budget"],
   ["Cash Bank Transaction", "fin_cash_bank_transaction"],
   ["Cash Bank Transaction Line", "fin_cash_bank_transaction_line"],
   ["Funding Request", "fin_funding_request"],
   ["Journal", "acc_journal"],
+  ["Cash Bank Transfer", "fin_cash_bank_transfer"],
+  ["Cash Bank Transfer Line", "fin_cash_bank_transfer_line"],
 ];
 
 const BUDGET_CATEGORIES: [label: string, note: string][] = [

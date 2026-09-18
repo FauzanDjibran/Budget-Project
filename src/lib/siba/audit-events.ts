@@ -26,6 +26,7 @@ import { FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
 import type { ActionTone } from "./header-actions";
 import { JOURNAL_TRANSITIONS } from "./journal-workflow";
 import { TRANSACTION_TRANSITIONS } from "./transaction-workflow";
+import { TRANSFER_TRANSITIONS } from "./transfer-workflow";
 
 /** How an entry is drawn: its words, its icon, and its weight. */
 export type AuditEventLabel = {
@@ -111,6 +112,13 @@ const TRANSACTION_EVENTS: Record<string, AuditEventLabel> = {
   },
 };
 
+/** Cash Bank Transfer: Draft → Posted, or Draft → Cancelled. */
+const TRANSFER_EVENTS: Record<string, AuditEventLabel> = {
+  ...COMMON,
+  post: fromTransition(TRANSFER_TRANSITIONS.post, "Diposting"),
+  cancel: fromTransition(TRANSFER_TRANSITIONS.cancel, "Dibatalkan"),
+};
+
 /** Funding Request: Open → Closed, or withdrawn by the requester. */
 const FUNDING_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
@@ -164,6 +172,7 @@ const ROLE_EVENTS: Record<string, AuditEventLabel> = {
 const BY_ENTITY: Record<string, Record<string, AuditEventLabel>> = {
   bud_budget: BUDGET_EVENTS,
   fin_cash_bank_transaction: TRANSACTION_EVENTS,
+  fin_cash_bank_transfer: TRANSFER_EVENTS,
   fin_funding_request: FUNDING_EVENTS,
   acc_fiscal_year: FISCAL_EVENTS,
   acc_journal: JOURNAL_EVENTS,

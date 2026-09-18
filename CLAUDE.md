@@ -56,7 +56,9 @@ or invariants that assume a particular row exists.
   stores — the **Funding Request** flow that carries the anak's realization across to
   the induk, **multi-currency** end to end (every book carries a base measure beside
   its own, foreign resources hold rate layers, and a settlement recognises its FX
-  difference), and the **Report Views** over all of it.
+  difference), the **Cash Bank Transfer** — moving the Company's own money between
+  its own resources, including selling and buying foreign currency — and the
+  **Report Views** over all of it.
 - **Not yet built** — Opening Balance, Fiscal Year closing, report output (print and
   export), intercompany settlement (the anak paying the induk back), and revaluation
   of standing foreign positions at a period end. Full list in §13.
@@ -80,12 +82,13 @@ or invariants that assume a particular row exists.
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
+| Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
 | Report Views | Done — the screen type plus nine reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs` and the six subject books under Finance › Laporan, and General Ledger + Trial Balance under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Default Currency, the four intercompany bridge accounts, and each Company's FX difference account |
-| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
+| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
 
@@ -184,6 +187,10 @@ of its own.
 | Transaction lifecycle | `src/lib/siba/transaction-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Finance data | `src/lib/siba/finance.ts` | Header and line enforcement, Budget eligibility, `applyPosting`, the funded posting both Companies share, `CBT-` numbering, realization trace; `server-only` |
 | Funding Request | `src/lib/siba/funding.ts` | Raising, withdrawing and confirming a request, `FR-` numbering; depends on Finance and never the reverse; `server-only` |
+| Transfer catalogue | `src/lib/siba/transfer-catalogue.ts` | The three transfer Purposes and the currency relation each asserts; client-safe |
+| Transfer valuation | `src/lib/siba/transfer-valuation.ts` | What one transfer line is worth on each side — pure, so the form previews exactly what the posting computes; client-safe |
+| Transfer lifecycle | `src/lib/siba/transfer-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
+| Transfer data | `src/lib/siba/transfer.ts` | Header and destination enforcement, `applyTransfer`, `TRF-` numbering; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
 | Dashboard composition | `src/lib/siba/dashboard.ts` | The commitment funnel, the cash position and the setup gaps, asked of each owning module; names no table itself; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
@@ -208,6 +215,7 @@ source scan and needs no database.
 | Budget | `bud_budget` | `lib/siba/budget.ts`, `app/actions/budget.ts` |
 | Finance | `fin_cash_bank_transaction(_line)` | `lib/siba/finance.ts`, `app/actions/finance.ts` |
 | Funding | `fin_funding_request` | `lib/siba/funding.ts`, `app/actions/funding.ts` |
+| Transfer | `fin_cash_bank_transfer(_line)` | `lib/siba/transfer.ts`, `app/actions/transfer.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22); the manual journal's rules sit above it in `lib/siba/manual-journal.ts` + `app/actions/journal.ts` |
@@ -346,6 +354,7 @@ src/
       budget/budget/     Bespoke, not registry: month list, /month/[period],
                          /new, /[id], /[id]/edit
       finance/cash-bank-transaction/  Bespoke: list, /new, /[id], /[id]/edit
+      finance/cash-bank-transfer/  Bespoke: list, /new, /[id], /[id]/edit
       finance/funding-request/  The induk's queue: list and /[id] (confirm)
       finance/report/[report]/  Every Report View, driven by `reports.ts`
       settings/user/     Admin-only user management (bespoke, not registry)
@@ -357,6 +366,7 @@ src/
       budget.ts          Budget writes: create, edit, lifecycle transitions
       finance.ts         Cash Bank Transaction writes, plus Post
       funding.ts         Ajukan Dana, withdraw, and Confirm Funding
+      transfer.ts        Cash Bank Transfer writes, plus Post
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
       journal.ts         Manual journal writes: create, edit, Post / Batalkan
       settings.ts        System Default writes
@@ -375,7 +385,8 @@ src/
                          RealizationCard
     finance/             TransactionList, TransactionForm, BudgetPicker,
                          KursSelect (which rate layer a payment draws on),
-                         FundingList, FundingDetail
+                         FundingList, FundingDetail,
+                         TransferList, TransferForm
     report/              ReportView chrome, ReportSummary, its two filter bars
                          (ReportParams for one subject, SubjectParams for
                          several), and the report bodies: Cash Bank Ledger,
@@ -409,10 +420,12 @@ src/
                          budget, budget-workflow, cash-bank,
                          cash-bank-layers,
                          subledger, subledger-catalogue,
-                         finance, transaction-workflow, funding, reports,
+                         finance, transaction-workflow, funding,
+                         transfer, transfer-catalogue, transfer-valuation,
+                         transfer-workflow, reports,
                          system-defaults, system-settings
   generated/prisma/      Prisma client output — gitignored, never edit
-tests/                   Security, Accounting, Budget, Finance, Funding, the books,
+tests/                   Security, Accounting, Budget, Finance, Funding, Transfer, the books,
                          fx, layers, money-input, reports, fiscal, settings, schema
                          and design-system suites (node:test); helpers.ts builds
                          and cleans up its own business fixtures
@@ -448,6 +461,14 @@ npm run db:reset             # DESTRUCTIVE: drop, re-migrate, reseed
 npx prisma generate          # regenerate client after schema changes
 npx prisma migrate dev       # create + apply a migration
 npx prisma studio            # browse the database
+
+# Against the DEPLOYED database rather than the local one. Both read the
+# connection from `.env.neon` through `scripts/with-remote.js`.
+npm run db:neon-seed         # sync system data on Neon; idempotent, destroys nothing
+npm run db:neon-reset        # reports what it would destroy, destroys nothing
+npm run db:neon-reset -- --confirm  # DESTRUCTIVE: drops and re-migrates the deployed
+                                    # database. Run db:neon-seed afterwards — reset
+                                    # does not seed (there is no `prisma.seed` config)
 ```
 
 **First-time setup:** install PostgreSQL, `cp .env.example .env`, set `DATABASE_URL`,
@@ -485,6 +506,18 @@ payment — that it writes **no** subject-book entry for the intercompany leg wh
 still writing the anak's own, and that an unfinished bridge, a resource in the wrong
 currency, an anak resource and a Budget closed since each refuse before anything is
 written.
+The transfer suite holds the three properties a transfer lives or dies by, none
+of which is visible on the screen: that base value is **conserved** to the cent,
+including when a layer is drawn to nothing and its remainder is released rather
+than recomputed; that an FX difference arises on a Pencairan and on nothing
+else, with the gain on the credit side and the loss on the debit side; and that
+layers propagate one-for-one, so three destinations make three destination
+layers at the source layer's rate. It also holds the refusals — a Purpose
+contradicted by its source, a destination in a third currency, the source as its
+own destination, a destination in the other Company, a document larger than its
+one layer — and the atomicity: a Pencairan whose FX account has gone missing
+refuses *after* the layer was drawn inside the transaction, and the rollback
+must leave that layer unspent.
 The reports suite holds the one property a money report lives or dies by —
 `opening + in − out = closing` — pushed at from the edges: entries dated exactly on each
 boundary, entries before the period folding into the opening rather than appearing as
@@ -1007,6 +1040,55 @@ Implemented and enforced:
 62. **The bridge is four System Defaults, and nothing guesses them.** Each Company
     names the account for what it is owed and the account for what it owes. A
     confirmation is refused, by name, until every one is set — see §12.
+84. **A transfer moves the Company's own money, and settles nothing.** It
+    realizes no Budget, names no Partner and writes no subject book — there is
+    no counterparty, so there is no subject whose position moved. It is
+    therefore its own module with its own tables rather than a third
+    `transaction_type` on `fin_cash_bank_transaction`, whose every line settles
+    a Budget. Both legs belong to one Company: a movement between the two is
+    the intercompany bridge, which is Funding Request's (§36). And because the
+    anak holds no Cash & Bank at all, every transfer is in practice the
+    induk's — which falls out of the resource rather than being configured.
+85. **A transfer Purpose states how the two currencies relate, and nothing
+    else.** `Transfer` is the same currency on both sides, `Pencairan` is
+    foreign out and base in, `Pembelian Valas` is base out and foreign in.
+    There is no fourth: one foreign currency to another is refused by
+    `maySettle` (rule 67) and is done as a Pencairan followed by a Pembelian
+    Valas, which is also how a bank does it. The relation is derivable from the
+    two resources, so the Purpose is **redundant as data and kept as an input**
+    — the user states what they mean and the resources are checked against it,
+    which is what turns picking the wrong account into a refusal rather than a
+    silent currency sale.
+86. **A transfer conserves base value, and layers propagate one-for-one.** CORE
+    multi-currency §5.8 and SIBA multi-currency §6. What the destinations
+    receive in base is exactly what the source released — never a product
+    recomputed from a derived rate — and each line draws its own amount out of
+    the source layer and opens its own layer on the destination. Three
+    destinations make three destination layers at the source layer's rate,
+    never one blended layer: blending would let an unwanted rate be laundered
+    into a fresh average, which is the whole thing layering exists to prevent.
+87. **Pencairan is the only transfer that can recognise a difference.** Selling
+    foreign currency resolves two independently determined base values — what
+    the layer was carried at, and what the bank actually credited at the sale
+    rate — so the residual is a **realized** gain or loss, and it is the
+    balancing figure of the journal exactly as it is for a settlement (rule 74).
+    A Transfer conserves by construction. A Pembelian Valas is origination:
+    nothing is on the books to disagree with, so the rupiah spent *is* the base
+    value of the currency bought (rule 73). The difference lands in the
+    Company's existing Account Selisih Kurs, resolved only when one arises.
+88. **A transfer's kurs is stated per line, and only ever multiplies.** The
+    entered rate always values the **foreign** side into base: on a Pencairan
+    the line states the foreign amount sold, on a Pembelian Valas the foreign
+    amount bought, and the rupiah side is the product. Nothing is ever divided
+    by a kurs, which is what keeps the foreign amount a figure somebody stated
+    rather than a quotient that does not round cleanly. Per line rather than
+    per document because proceeds split across two accounts may carry the two
+    rates the bank actually used.
+89. **The source gives up once, however many destinations there are.** One Cash
+    Bank Book entry out and one per destination in — the money left the source
+    once, and a book that showed one withdrawal per destination would not read
+    like the bank statement it is reconciled against.
+
 39. **A report states what it was run for.** Every Report View restates its subject,
     its period and when it was produced, on the output itself. A page of figures that
     does not say what it covers cannot be checked by anyone who did not run it, and a
@@ -1220,6 +1302,21 @@ Specified in the concept doc, **not yet implemented** (see §13):
   how a newly added permission reaches it. The one exception is the permission
   catalogue, which is re-synced from code because code is its source of truth.
   `npm run db:reset` is the separate, explicitly destructive path.
+- **The named administrators are the one deviation, and it is deliberate.**
+  `ADDITIONAL_ADMINS` in `prisma/seed.ts` seeds two further accounts beside the
+  bootstrap one. They are named people, and `/settings/user` creates exactly this
+  kind of record through the GUI — so by the rule above they do not belong here.
+  They are here on the user's explicit instruction, because the deployed database
+  is rebuilt from this file and an operator who must be re-created by hand after
+  every reset is the step that gets forgotten. What keeps it inside the seeder's
+  stated scope at all is that they are `sys_*` rows, like the bootstrap
+  administrator and the Sistem account already in the seed. They share one
+  password, which **costs the audit trail its meaning** — `audit_log` attributes
+  each write to a person and people sharing a password are indistinguishable in
+  it — so each is expected to change it from the profile page. The seed never
+  touches an account that already exists, so that change is permanent.
+  **This is not a precedent for seeding business data**; adding a Partner, an
+  account or a Currency here is still the thing this decision forbids.
 - **Do not change unless:** explicitly instructed. **Never add business data to the
   seed, and never add a delete step to it.**
 - **Status:** Frozen, current.
@@ -2652,6 +2749,43 @@ below in outline because the half of it that still holds is easy to lose.**
   import Funding to close a request.
 - **Status:** Frozen, current.
 
+### A transfer is its own module, and it settles nothing (FROZEN)
+- **Decision:** Cash Bank Transfer moves the Company's own money between its own
+  Cash & Bank resources. It has its own tables (`fin_cash_bank_transfer(_line)`),
+  its own permissions, its own routes and its own `TRF-` series. The header names
+  the **source** and each line a destination, so one document splits one
+  withdrawal across several accounts. Three Purposes, and they say only how the
+  two currencies relate: `Transfer`, `Pencairan`, `Pembelian Valas` (§10 rule 85).
+- **This supersedes the planned `Transfer` transaction type** recorded in §13,
+  which read Transfer as a third value of `transaction_type` on
+  `fin_cash_bank_transaction`. **Confirmed with the user before implementation.**
+  A Cash Bank Transaction line settles a *Budget*; a transfer line names a *Cash
+  & Bank*. The two documents share no classification chain, no Partner, no
+  account mapping, no subject book and no realization — forcing them into one
+  table would put an "unless it is a transfer" clause on every Finance rule in
+  §12, which is the cost that decision was avoiding in the first place.
+- **Reason:** the module contract (§3). A transfer owns its tables and reaches
+  the books through the functions they export; it imports only the books and the
+  shared kernel, and nothing imports it. It adds **no** boundary crossing, so
+  `KNOWN_CROSSINGS` stays at two.
+- **Impact:** `valueTransferLine` in `transfer-valuation.ts` is pure and
+  client-safe, so the form previews *exactly* what the posting computes rather
+  than an approximation of it — the same reason `fx.ts` and `currency.ts` are
+  client-safe. Post writes the source's one book entry, each destination's entry
+  and layer, and one balanced journal, in a single transaction. The layer draw is
+  a write, so a refusal that depends on it is raised as a throw and converted
+  back — the rollback is what makes drawing inside the transaction safe.
+- **No Budget, by decision.** A transfer has no counterparty, so there is nothing
+  to plan against and nothing to realize. Confirmed with the user.
+- **A transfer records as `Transaction` in the Cash Bank Book**, not as a fourth
+  entry type. Confirmed with the user: the book's enum is untouched and a
+  transfer is told apart by its note, which carries `TRF-0001 — <Purpose>`.
+- **Do not change unless:** explicitly instructed. **Never let a transfer settle
+  a Budget or write a subject book**, never merge it back into
+  `fin_cash_bank_transaction`, never blend the layers it creates, and never
+  divide by a kurs to derive a foreign amount.
+- **Status:** Frozen, current. Supersedes §13's `Transfer` transaction type.
+
 ### One confirmation, one transaction, two Companies (FROZEN)
 - **Decision:** `prepareFundedPosting` resolves and checks everything before anything
   is written; `writeFundedPosting` then writes, inside the transaction `funding.ts`
@@ -2877,7 +3011,7 @@ decisions now that foreclose them.
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
-| `Transfer` transaction type | Extend the transaction-type enum, UI and logic. Note `transaction_type` currently shares the `FlowDirection` enum with `budget_type`, so this likely needs a separate enum rather than a third member |
+
 | Fiscal Year closing | The closing process that moves a year Open → Closed, locking its periods against posting. Belongs with the journal and the general ledger. **Add `FISCAL_YEAR_CLOSE` to the catalogue in the same change that builds it, never before** — §12 |
 | Opening Balance | `acc_opening_balance(_line)` tables and UI — the accounting opening balance per account, distinct from a cash resource's opening entry, which already exists |
 | Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
@@ -3014,6 +3148,16 @@ process allowed to restate positions, and it is not built.
   the posting engine calls `recordCashBankEntry` alongside it (§10, §12).
 - Do **not** filter eligible Budgets by Budget Date, and do **not** treat the picker as
   the enforcement — `checkHeader` and `checkLines` are (§10).
+- Do **not** let a Cash Bank Transfer settle a Budget, name a Partner or write a
+  subject book, and do **not** merge it back into `fin_cash_bank_transaction` as
+  a third `transaction_type`. A transfer has no counterparty (§10 rule 84, §12).
+- Do **not** blend the layers a transfer creates, or let a destination layer
+  carry anything but the base its source released and the rate that source
+  layer held. A transfer conserves base value (§10 rule 86).
+- Do **not** divide by a kurs to derive a foreign amount. The entered rate
+  always values the foreign side into base, in one multiplication (§10 rule 88).
+- Do **not** add a fourth transfer Purpose for one foreign currency to another.
+  That is a Pencairan followed by a Pembelian Valas (§10 rule 85).
 - Do **not** give the anak a Cash & Bank resource, or let its document name one. It
   names a Currency and reaches money through Funding Request (§10 rule 38, §12).
 - Do **not** add a rejection, a partial funding, or a second open request for one
@@ -3186,6 +3330,7 @@ process allowed to restate positions, and it is not built.
 | An audit entry names a record by its current name | `audit_log` stores no snapshot, so a record renamed since it changed reads under the name it has now. Inventing a snapshot would be worse than saying nothing, but it does mean the panel is not a record of what a thing was called at the time. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The subject books have no manual entry path, and no opening balance | A subledger entry is only ever written by posting a Cash Bank Transaction. `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated — that belongs with Opening Balance (§13). `Adjustment` is in the same position as the Cash Bank Book's. |
+| A transfer shows in the Cash Bank Book by number, not as a link | `sourceDocumentNumbers` in `cash-bank.ts` resolves only `fin_cash_bank_transaction`, which is already the baselined crossing this table records below. A transfer entry therefore carries `TRF-0001 — <Purpose>` in its note and has no drill-through. Extending that function to a second table would deepen the debt; the clean fix is to make labelling a `(doc_type_id, doc_id)` pair the caller's job, which is a decision in its own right. |
 | A subject book's report shows a document's note, not a link | An entry carries its source as the weak `(doc_type_id, doc_id)` pair and its document number inside `note`. Resolving that to a link would mean the book importing Finance, which is the boundary crossing `cash-bank.ts` already has and that has not been decided. |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
 | Layers can go stale, and that is accepted | Nothing forces the oldest layer to be consumed, so an unselected layer persists indefinitely. The source document names this as a consequence of the design rather than a defect: period-end revaluation is what absorbs them, and it is not built (§13). |

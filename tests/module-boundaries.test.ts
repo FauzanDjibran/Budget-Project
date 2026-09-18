@@ -79,6 +79,14 @@ const TABLE_OWNERS: Record<string, string[]> = {
     "src/lib/siba/finance.ts",
     "src/app/actions/finance.ts",
   ],
+  finCashBankTransfer: [
+    "src/lib/siba/transfer.ts",
+    "src/app/actions/transfer.ts",
+  ],
+  finCashBankTransferLine: [
+    "src/lib/siba/transfer.ts",
+    "src/app/actions/transfer.ts",
+  ],
   finFundingRequest: ["src/lib/siba/funding.ts", "src/app/actions/funding.ts"],
   cashBankLedger: ["src/lib/siba/cash-bank.ts"],
   cashBankBalance: ["src/lib/siba/cash-bank.ts"],
