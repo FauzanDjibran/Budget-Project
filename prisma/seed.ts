@@ -47,6 +47,28 @@ const ADMIN_EMAIL = process.env.SIBA_ADMIN_EMAIL?.trim().toLowerCase() || "admin
 const ADMIN_NAME = process.env.SIBA_ADMIN_NAME?.trim() || "Administrator";
 const ADMIN_INITIALS = process.env.SIBA_ADMIN_INITIALS?.trim().toUpperCase() || "AD";
 
+/**
+ * Further administrators, seeded beside the bootstrap one.
+ *
+ * A deliberate deviation from "the seeder seeds system data only" (CLAUDE.md
+ * §12), and the only one: these are named people, and `/settings/user` can
+ * create them through the GUI exactly as that rule intends. They are here
+ * because the deployed database is rebuilt from this file, and an operator who
+ * has to be re-created by hand after every reset is the step that gets
+ * forgotten. They are `sys_*` rows, which is the one thing that keeps this
+ * inside the seeder's stated scope rather than outside it.
+ *
+ * They share the bootstrap password, which was an explicit instruction. Note
+ * what it costs: `audit_log` attributes every write to a person, and people
+ * who share a password are not distinguishable in it. Each account is expected
+ * to set its own password from the profile page after first sign-in — the seed
+ * never touches an account that already exists, so doing so is permanent.
+ */
+const ADDITIONAL_ADMINS = [
+  { email: "rizal@siba.app", name: "Rizal", initials: "RZ" },
+  { email: "mikhael@siba.app", name: "Mikhael", initials: "MK" },
+] as const;
+
 const DEV_PASSWORD = "siba123";
 
 function resolveAdminPassword(): string {
@@ -276,22 +298,31 @@ async function nextUserCode(): Promise<string> {
  * reactivate an account somebody deliberately disabled.
  */
 async function bootstrapAdministrator(): Promise<void> {
-  const existing = await prisma.sysUser.findUnique({
-    where: { email: ADMIN_EMAIL },
-    select: { id: true },
-  });
-  if (existing) return;
+  const password_hash = await hash(resolveAdminPassword(), 10);
 
-  await prisma.sysUser.create({
-    data: {
-      user_code: await nextUserCode(),
-      email: ADMIN_EMAIL,
-      name: ADMIN_NAME,
-      initials: ADMIN_INITIALS,
-      password_hash: await hash(resolveAdminPassword(), 10),
-    },
-  });
-  tally("administrator");
+  const people = [
+    { email: ADMIN_EMAIL, name: ADMIN_NAME, initials: ADMIN_INITIALS, tallyAs: "administrator" },
+    ...ADDITIONAL_ADMINS.map((person) => ({ ...person, tallyAs: "additional administrator" })),
+  ];
+
+  for (const person of people) {
+    const existing = await prisma.sysUser.findUnique({
+      where: { email: person.email },
+      select: { id: true },
+    });
+    if (existing) continue;
+
+    await prisma.sysUser.create({
+      data: {
+        user_code: await nextUserCode(),
+        email: person.email,
+        name: person.name,
+        initials: person.initials,
+        password_hash,
+      },
+    });
+    tally(person.tallyAs);
+  }
 }
 
 /**
@@ -403,26 +434,30 @@ async function syncRoles(system: number): Promise<void> {
     }
   }
 
-  // The bootstrap administrator holds the ADMIN role. Re-checked every run so a
+  // Every seeded administrator holds the ADMIN role. Re-checked each run so a
   // fresh catalogue entry cannot leave the system unadministrable.
-  const admin = await prisma.sysUser.findUnique({
-    where: { email: ADMIN_EMAIL },
-    select: { id: true },
-  });
   const adminRole = await prisma.sysRole.findUnique({
     where: { role_label: ADMIN_ROLE },
     select: { id: true },
   });
-  if (admin && adminRole) {
-    const assigned = await prisma.sysUserRole.findUnique({
-      where: { user_id_role_id: { user_id: admin.id, role_id: adminRole.id } },
-      select: { id: true },
-    });
-    if (!assigned) {
-      await prisma.sysUserRole.create({
-        data: { user_id: admin.id, role_id: adminRole.id, created_by: system },
+  if (adminRole) {
+    for (const email of [ADMIN_EMAIL, ...ADDITIONAL_ADMINS.map((p) => p.email)]) {
+      const user = await prisma.sysUser.findUnique({
+        where: { email },
+        select: { id: true },
       });
-      tally("administrator role assignment");
+      if (!user) continue;
+
+      const assigned = await prisma.sysUserRole.findUnique({
+        where: { user_id_role_id: { user_id: user.id, role_id: adminRole.id } },
+        select: { id: true },
+      });
+      if (!assigned) {
+        await prisma.sysUserRole.create({
+          data: { user_id: user.id, role_id: adminRole.id, created_by: system },
+        });
+        tally("administrator role assignment");
+      }
     }
   }
 }
@@ -611,6 +646,9 @@ function report(): void {
   }
 
   console.log(`\nAdministrator : ${ADMIN_EMAIL}`);
+  for (const person of ADDITIONAL_ADMINS) {
+    console.log(`                ${person.email}  (${person.name})`);
+  }
   if (!process.env.SIBA_ADMIN_PASSWORD) {
     console.log(`Password      : ${DEV_PASSWORD}   <-- DEVELOPMENT ONLY`);
     console.log("                Set SIBA_ADMIN_PASSWORD before seeding anywhere real.");
