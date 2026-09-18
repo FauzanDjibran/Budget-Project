@@ -386,6 +386,11 @@ td.acts{width:88px;padding-right:7px}
 .inp,.ta{width:100%;height:34px;border:1px solid var(--line);border-radius:var(--r);background:#fff;padding:0 11px;
   font-size:12.5px;font-weight:500;color:var(--ink)}
 .inp.idf{font-family:var(--f-mono);font-size:12px;font-weight:600}
+/* A line table's row is built for a 32px control — `.ltab tbody td` is 46px
+   high with 7px of padding — and `.mwrap.sm` already sizes an amount field to
+   it. This is the same size for a text field, so every control in a journal or
+   document line sits on one height instead of four. */
+.inp.sm{height:32px;padding:0 10px;font-size:12px}
 .inp::placeholder,.ta::placeholder{color:var(--muted-3);font-weight:400}
 .ta{height:auto;min-height:58px;padding:9px 11px;resize:vertical;line-height:1.55}
 /* There was a `.slc` here, styling a native `<select>`. Nothing renders one
@@ -429,6 +434,11 @@ td.acts{width:88px;padding-right:7px}
   gap:8px;padding:0 8px 0 11px;cursor:pointer;text-align:left;font:inherit}
 .cbx:hover{border-color:var(--muted-3)}
 .cbx.open{border-color:var(--accent-s);box-shadow:0 0 0 3px var(--accent-50)}
+/* The same 32px a line table's other controls take. It is still a field — a
+   picker inside a row must not turn into the toolbar pill (`.psel`), which is
+   uppercase, letter-spaced and only as wide as its own text. */
+.cbx.sm{height:32px;padding:0 6px 0 10px;gap:6px}
+.cbx.sm .ph,.cbx.sm .nm,.cbx.sm .cbq{font-size:12px}
 .cbx .v{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden}
 .cbx .ph{color:var(--muted-3);font-size:12.5px}
 .cbx .nm{font-size:12.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

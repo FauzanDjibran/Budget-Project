@@ -94,6 +94,7 @@ export function Select({
   options,
   onChange,
   variant = "field",
+  size = "field",
   /** Always phrased `Pilih <what>…`, the same prompt a Combobox shows. */
   placeholder = "Pilih…",
   /** Marks the control as carrying an active filter (`.set`). */
@@ -109,6 +110,8 @@ export function Select({
   options: SelectOption[];
   onChange: (value: string) => void;
   variant?: keyof typeof TRIGGER_CLASS;
+  /** `sm` sizes the **field** trigger for a line table's 32px row. */
+  size?: "field" | "sm";
   placeholder?: string;
   set?: boolean;
   invalid?: boolean;
@@ -132,6 +135,10 @@ export function Select({
 
   const cls = [
     TRIGGER_CLASS[variant],
+    // Only the field trigger has a small size: `sm` is the 32px a line table's
+    // row is built for. The toolbar and context triggers are already their own
+    // heights and are never put inside a row.
+    size === "sm" && variant === "field" ? "sm" : "",
     set ? "set" : "",
     invalid ? "bad" : "",
     open ? "open" : "",

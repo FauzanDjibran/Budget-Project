@@ -211,6 +211,118 @@ describe("one way to do each thing", () => {
   });
 });
 
+/**
+ * Whole class names a file writes literally.
+ *
+ * Plain `className="a b"`, plus the complete words inside a template literal.
+ * A fragment touching `${` is only part of a name the code builds at runtime —
+ * `t-${tone}` — so it is dropped rather than guessed at.
+ */
+function literalClasses(text: string): Set<string> {
+  const found = new Set<string>();
+
+  for (const m of text.matchAll(/className="([^"{}]*)"/g)) {
+    for (const tok of m[1].split(/\s+/).filter(Boolean)) found.add(tok);
+  }
+
+  for (const m of text.matchAll(/className=\{`([^`]*)`\}/g)) {
+    const segments = m[1].split(/\$\{[^}]*\}/g);
+    segments.forEach((seg, i) => {
+      const parts = seg.split(/\s+/);
+      parts.forEach((part, j) => {
+        if (!part) return;
+        // Touching an interpolation on either side means this is half a name.
+        if (j === 0 && i > 0) return;
+        if (j === parts.length - 1 && i < segments.length - 1) return;
+        found.add(part);
+      });
+    });
+  }
+
+  return found;
+}
+
+describe("a class name a component writes is a class the stylesheet has", () => {
+  test("no component styles itself with a rule that does not exist", () => {
+    // The manual journal shipped a delete button reading `className="ibtn dg"`.
+    // `.ibtn` had never existed: the row-remove control is `.iact.del`. Nothing
+    // caught it — an invented class name breaks no build, fails no type check
+    // and throws at runtime never. It simply renders an unstyled browser
+    // button in the middle of a finished table, and only someone holding every
+    // screen in their head notices.
+    const orphans: string[] = [];
+
+    for (const f of files) {
+      for (const token of literalClasses(code(f.text))) {
+        const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (new RegExp(`\\.${escaped}(?![a-zA-Z0-9_-])`).test(css)) continue;
+        orphans.push(`${f.rel}: .${token}`);
+      }
+    }
+
+    assert.deepEqual(
+      orphans.sort(),
+      [],
+      "These class names appear in a component and in no rule in globals.css. " +
+        "Either the class is misremembered — reuse the one that exists — or a " +
+        "genuinely new shape needs its own rule in the sheet's own section."
+    );
+  });
+});
+
+describe("a text field is the one the design system draws", () => {
+  /**
+   * The two inputs styled through their wrapper rather than by their own
+   * class. Both are deliberate and both have a rule — `.srch input` and
+   * `.segf input` — so they are named here rather than left to weaken the
+   * check for everything else. Anything new must carry `.inp`.
+   */
+  const PARENT_STYLED = [
+    "src/components/ui/search-field.tsx",
+    "src/components/master/entity-form.tsx",
+  ];
+
+  /** Every `<input …>` tag body, brace-aware so an arrow function's `>` does not end it. */
+  function inputTags(text: string): string[] {
+    const tags: string[] = [];
+    let i = 0;
+    while ((i = text.indexOf("<input", i)) !== -1) {
+      let depth = 0;
+      let j = i + 6;
+      for (; j < text.length; j++) {
+        const c = text[j];
+        if (c === "{") depth++;
+        else if (c === "}") depth--;
+        else if (c === ">" && depth === 0) break;
+      }
+      tags.push(text.slice(i, j + 1));
+      i = j + 1;
+    }
+    return tags;
+  }
+
+  test("no input is rendered with no styling at all", () => {
+    // The manual journal's Keterangan fields were bare `<input>`s, so the
+    // browser drew its own ~170px box in a 12-column form row and in a table
+    // cell — the single most visible way a screen can stop looking like the
+    // rest of the application.
+    const bare = files
+      .filter((f) => !PARENT_STYLED.includes(f.rel))
+      .filter((f) =>
+        inputTags(code(f.text)).some(
+          (tag) => !/className/.test(tag) && !/type=["']checkbox["']/.test(tag)
+        )
+      );
+
+    assert.deepEqual(
+      bare.map((f) => f.rel),
+      [],
+      "A text field is `.inp` — `.inp sm` inside a line table. An input with no " +
+        "class is drawn by the browser at its own width and height."
+    );
+  });
+});
+
 describe("dates and money are formatted in one place", () => {
   test("nothing formats a number or a date outside `lib/format.ts`", () => {
     const bad = files.filter(

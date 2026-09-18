@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
@@ -91,8 +91,13 @@ export function JournalForm({
   const router = useRouter();
   const toast = useToast();
 
+  // A new journal starts on the **first** Company this reader may write for,
+  // which is the one the page already loaded the accounts of. Starting on
+  // nothing would leave the Account pickers holding a chart the form does not
+  // claim to be on, and "Tambah Baris" disabled until the Company was picked
+  // again. The picker is still there; this is a starting point, not a lock.
   const [companyId, setCompanyId] = useState<number | null>(
-    journal?.companyId ?? (companies.length === 1 ? companies[0].id : null)
+    journal?.companyId ?? companies[0]?.id ?? null
   );
   const [description, setDescription] = useState(journal?.description ?? "");
   const [options, setOptions] = useState(initialOptions);
@@ -118,8 +123,13 @@ export function JournalForm({
   // which accounts exist at all. Lines that named an account from the previous
   // chart are cleared rather than carried across — an account number means a
   // different account in the other Company (CLAUDE.md §10 rule 8).
+  const loadedFor = useRef(companyId);
   useEffect(() => {
-    if (mode !== "new" || !companyId) return;
+    // The options the page handed over already belong to the Company the form
+    // starts on, so the first render asks for nothing. Only a *change* of
+    // Company needs a new chart.
+    if (mode !== "new" || !companyId || loadedFor.current === companyId) return;
+    loadedFor.current = companyId;
     let cancelled = false;
     void listJournalOptions(companyId).then((result) => {
       if (cancelled || !result.ok) return;
@@ -154,7 +164,8 @@ export function JournalForm({
   const totalDebit = lines.reduce((t, l) => t + baseOf(l, "debit"), 0);
   const totalCredit = lines.reduce((t, l) => t + baseOf(l, "credit"), 0);
   const difference = Math.round((totalDebit - totalCredit) * 100) / 100;
-  const balanced = difference === 0 && totalDebit > 0;
+  const untouched = totalDebit === 0 && totalCredit === 0;
+  const balanced = difference === 0 && !untouched;
 
   const status = (journal?.status ?? "Draft") as JournalStatus;
 
@@ -271,6 +282,8 @@ export function JournalForm({
         </div>
       )}
 
+      <div className="fgrid solo">
+        <div>
       <div className="card">
         <div className="card-h">
           <span className="ci">
@@ -329,7 +342,9 @@ export function JournalForm({
                 error={errors.description}
               >
                 <input
-                  className={errors.description ? "bad" : undefined}
+                  className={`inp${errors.description ? " bad" : ""}`}
+                  type="text"
+                  autoComplete="off"
                   value={description}
                   placeholder="Penyusutan peralatan kantor bulan ini"
                   onChange={(e) => {
@@ -370,11 +385,11 @@ export function JournalForm({
             <thead>
               <tr>
                 <th style={{ width: 34 }}>No</th>
-                <th style={{ width: 210 }}>Account</th>
-                <th style={{ width: 150 }}>Partner</th>
+                <th style={{ width: 190 }}>Account</th>
+                <th style={{ width: 140 }}>Partner</th>
                 <th>Keterangan</th>
-                <th style={{ width: 96 }}>Currency</th>
-                <th className="num" style={{ width: 130 }}>
+                <th style={{ width: 110 }}>Currency</th>
+                <th className="num" style={{ width: 120 }}>
                   Kurs
                 </th>
                 <th className="num" style={{ width: 150 }}>
@@ -408,6 +423,7 @@ export function JournalForm({
                       <Combobox
                         value={l.account_id}
                         placeholder="Pilih Account…"
+                        size="sm"
                         invalid={Boolean(errors[`lines.${i}.account_id`])}
                         options={options.accounts.map((a) => ({
                           id: a.id,
@@ -432,6 +448,7 @@ export function JournalForm({
                           <Combobox
                             value={l.partner_id}
                             placeholder="Pilih Partner…"
+                            size="sm"
                             invalid={Boolean(errors[`lines.${i}.partner_id`])}
                             options={partners.map((p) => ({
                               id: p.id,
@@ -457,6 +474,9 @@ export function JournalForm({
                     </td>
                     <td>
                       <input
+                        className="inp sm"
+                        type="text"
+                        autoComplete="off"
                         value={l.description}
                         placeholder="Opsional"
                         aria-label="Keterangan baris"
@@ -467,10 +487,11 @@ export function JournalForm({
                     </td>
                     <td>
                       <Select
-                        variant="compact"
+                        size="sm"
                         value={l.currency_id ? String(l.currency_id) : ""}
                         invalid={Boolean(errors[`lines.${i}.currency_id`])}
                         placeholder="Pilih…"
+                        ariaLabel="Currency baris"
                         options={options.currencies.map((c) => ({
                           value: String(c.id),
                           label: c.label,
@@ -536,9 +557,9 @@ export function JournalForm({
                         </div>
                       )}
                     </td>
-                    <td>
+                    <td className="acts">
                       <button
-                        className="ibtn dg"
+                        className="iact del"
                         aria-label="Hapus baris"
                         disabled={lines.length <= 2}
                         title={
@@ -555,14 +576,22 @@ export function JournalForm({
                 );
               })}
 
+            </tbody>
+            <tfoot>
               <tr className="totrow">
+                {/* An untouched form has no difference to state — saying
+                    "selisih Rp 0" would report a fault where nothing has been
+                    entered yet. The balance is spoken about only once there is
+                    something to balance (§12, report convention). */}
                 <td colSpan={6}>
-                  {balanced
-                    ? "Total — debit dan kredit seimbang"
-                    : `Total — selisih ${formatMoney(
-                        Math.abs(difference),
-                        BASE_CURRENCY_LABEL
-                      )}`}
+                  {untouched
+                    ? "Total"
+                    : balanced
+                      ? "Total — debit dan kredit seimbang"
+                      : `Total — selisih ${formatMoney(
+                          Math.abs(difference),
+                          BASE_CURRENCY_LABEL
+                        )}`}
                 </td>
                 <td className="num">
                   {formatMoney(totalDebit, BASE_CURRENCY_LABEL)}
@@ -572,7 +601,7 @@ export function JournalForm({
                 </td>
                 <td />
               </tr>
-            </tbody>
+            </tfoot>
           </table>
         </div>
       </div>
@@ -581,6 +610,8 @@ export function JournalForm({
         Draft belum masuk buku besar: General Ledger dan Trial Balance baru
         membacanya setelah diposting.
       </p>
+        </div>
+      </div>
     </>
   );
 }

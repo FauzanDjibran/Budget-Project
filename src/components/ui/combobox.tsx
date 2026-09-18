@@ -27,6 +27,7 @@ export function Combobox({
   value,
   options,
   placeholder,
+  size = "field",
   invalid,
   disabled,
   onChange,
@@ -34,6 +35,13 @@ export function Combobox({
   value: number | null;
   options: RefOption[];
   placeholder: string;
+  /**
+   * `sm` is the 32px a line table's row is built for, the same height
+   * `MoneyInput size="sm"` takes. It is still a field: a picker inside a row
+   * must not become the toolbar pill, which is uppercase and only as wide as
+   * its own text.
+   */
+  size?: "field" | "sm";
   invalid?: boolean;
   disabled?: boolean;
   onChange: (value: number | null) => void;
@@ -56,7 +64,7 @@ export function Combobox({
 
   if (disabled) {
     return (
-      <div className="cbx" style={{ background: "var(--line-3)", cursor: "not-allowed" }}>
+      <div className={`cbx${size === "sm" ? " sm" : ""} dis`}>
         <span className="v">
           {selected ? (
             <>
@@ -85,7 +93,7 @@ export function Combobox({
         aria-controls={listId}
         aria-haspopup="listbox"
         tabIndex={open ? -1 : 0}
-        className={`cbx${invalid ? " bad" : ""}${open ? " open" : ""}`}
+        className={`cbx${size === "sm" ? " sm" : ""}${invalid ? " bad" : ""}${open ? " open" : ""}`}
         onMouseDown={(e) => {
           // The popup ignores clicks on its own anchor, so closing again has to
           // happen here — but a click *into* the search input is a click in
