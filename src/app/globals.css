@@ -1070,6 +1070,12 @@ a{color:inherit;text-decoration:none}
 .cbx.dis,.tsel.dis,.psel.dis,.ctxsel.dis{background-color:var(--line-3);color:var(--muted-2);
   cursor:not-allowed;border-color:var(--line)}
 .cbx.dis .cv{opacity:.5}
+/* Waiting for its prerequisite, not locked against one. `.dis` means never
+   and `.wait` means not yet, so the clause naming what to choose first is set
+   the way the segment input's "menunggu induk" prefix is — italic, muted, and
+   plainly not a value. */
+.cbx.wait,.tsel.wait,.psel.wait,.ctxsel.wait{cursor:default}
+.cbx.wait .ph,.tsel.wait .tv,.psel.wait .tv,.ctxsel.wait .tv{font-style:italic;font-size:11.5px}
 
 /* ============================================================ report view
    A Report View gives the viewport to its figures. Two pieces make that

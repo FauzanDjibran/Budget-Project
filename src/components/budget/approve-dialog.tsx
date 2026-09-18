@@ -204,14 +204,12 @@ export function ApproveDialog({
           <Select
             value={partnerId}
             invalid={Boolean(errors.partner_id)}
-            disabled={busy || !needsPartner}
-            placeholder={
-              needsPartner
-                ? "Pilih Partner…"
-                : categoryId
-                  ? "Tidak diperlukan"
-                  : "Pilih Category dulu"
-            }
+            disabled={busy || (Boolean(categoryId) && !needsPartner)}
+            // Which Partner may be chosen is decided by the Budget Category,
+            // so until one is picked the field says so rather than greying out
+            // and leaving the reader to work out which other control did it.
+            waitingFor={categoryId ? null : "Pilih Budget Category dulu…"}
+            placeholder={needsPartner ? "Pilih Partner…" : "Tidak diperlukan"}
             options={partners.map((p) => ({
               value: String(p.id),
               label: `${p.label} - ${p.name}`,

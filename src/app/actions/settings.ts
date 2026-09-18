@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
-import { markControlAccount } from "@/lib/siba/records";
+import { syncControlAccounts } from "@/lib/siba/records";
 import {
   isSystemDefaultKey,
   systemDefaultDef,
@@ -12,6 +12,7 @@ import {
 } from "@/lib/siba/system-defaults";
 import {
   checkSystemDefaultValue,
+  systemDefaultAccountIds,
   writeSystemDefaults,
 } from "@/lib/siba/system-settings";
 
@@ -75,18 +76,26 @@ export async function saveSystemDefaults(
 
   if (Object.keys(errors).length) return { ok: false, errors };
 
+  // The accounts the settings named a moment ago. A setting repointed at
+  // another account has to release the one it left behind, and once
+  // `writeSystemDefaults` has run there is nothing that remembers it.
+  const before = await systemDefaultAccountIds();
+
   const changed = await writeSystemDefaults(clean, actorId);
 
   // The bridge and FX settings do not prefill a control — they name where a
   // posting lands. An account that decides a posting is written to by the
-  // posting engine alone, so it becomes a control account here and stops being
-  // reachable from a manual journal. The same reasoning as a Cash & Bank
-  // resource's account: what a book or an engine owns, a person does not type
-  // into (CLAUDE.md §12).
-  for (const named of accountsNamed) {
-    if (!changed.includes(named.key)) continue;
-    if (systemDefaultDef(named.key).ref !== "acc_account") continue;
-    await markControlAccount(named.id, actorId);
+  // posting engine alone, so it is a control account for as long as a setting
+  // names it and stops being one when none does. The same reasoning as a Cash
+  // & Bank resource's account: what a book or an engine owns, a person does
+  // not type into (CLAUDE.md §12).
+  if (changed.length) {
+    const after = await systemDefaultAccountIds();
+    const touched = new Set([...before, ...after]);
+    for (const named of accountsNamed) {
+      if (systemDefaultDef(named.key).ref === "acc_account") touched.add(named.id);
+    }
+    await syncControlAccounts(touched, after, actorId);
   }
 
   for (const key of changed) {

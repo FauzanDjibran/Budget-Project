@@ -338,6 +338,18 @@ export const ENTITIES: Entity[] = [
     scope: "company_id",
     statusModel: ACTIVE_STATUS,
     fields: [
+      // Company first, because it is what the record belongs to and cannot be
+      // changed afterwards. A form is read top to bottom, and the field that
+      // fixes a record's context belongs before the fields that describe it.
+      {
+        name: "company_id",
+        label: "Company",
+        type: "ref",
+        ref: "sys_company",
+        required: true,
+        locked: true,
+        help: "terikat pada satu Company, tidak dapat dipindah",
+      },
       {
         name: "partner_label",
         label: "Label",
@@ -355,15 +367,6 @@ export const ENTITIES: Entity[] = [
         required: true,
         placeholder: "Cabang Jakarta",
         help: "nama lengkap",
-      },
-      {
-        name: "company_id",
-        label: "Company",
-        type: "ref",
-        ref: "sys_company",
-        required: true,
-        locked: true,
-        help: "terikat pada satu Company, tidak dapat dipindah",
       },
       {
         name: "category_id",
@@ -399,6 +402,18 @@ export const ENTITIES: Entity[] = [
     scope: "company_id",
     statusModel: ACTIVE_STATUS,
     fields: [
+      // Company first: it is what the resource belongs to, it cannot be
+      // changed afterwards, and the Account picker below is decided by it.
+      {
+        name: "company_id",
+        label: "Company",
+        type: "ref",
+        ref: "sys_company",
+        required: true,
+        locked: true,
+        resets: ["account_id"],
+        help: "pilihan Account mengikuti Company ini",
+      },
       {
         name: "cash_bank_label",
         label: "Label",
@@ -416,16 +431,6 @@ export const ENTITIES: Entity[] = [
         required: true,
         placeholder: "Bank Mandiri Rupiah",
         help: "nama lengkap",
-      },
-      {
-        name: "company_id",
-        label: "Company",
-        type: "ref",
-        ref: "sys_company",
-        required: true,
-        locked: true,
-        resets: ["account_id"],
-        help: "pilihan Account mengikuti Company ini",
       },
       {
         name: "cash_bank_type",
@@ -625,13 +630,6 @@ export const ENTITIES: Entity[] = [
         defaultValue: "Debit",
       },
       {
-        name: "is_postable",
-        label: "Postable",
-        type: "bool",
-        defaultValue: true,
-        caption: "Menerima Journal Line",
-      },
-      {
         name: "require_partner",
         label: "Require Partner",
         type: "bool",
@@ -649,9 +647,19 @@ export const ENTITIES: Entity[] = [
         help: "satu Account menampung satu Partner Category",
       },
       {
+        // Whether a book outside the General Ledger reconciles against this
+        // account: a Cash & Bank resource registered on it, a subject-book
+        // mapping pointing at it, a bridge or FX System Default naming it.
+        // The structure answers that question, so the flag is recomputed from
+        // it on every event that can change the answer and is never typed —
+        // `syncControlAccounts` in `records.ts`. Still shown, because a manual
+        // journal is refused by it and that refusal has to be readable before
+        // somebody starts writing one.
         name: "is_control_account",
         label: "Control Account",
         type: "bool",
+        derived: true,
+        locked: true,
         defaultValue: false,
         caption: "Direkonsiliasi dengan book",
       },
@@ -808,6 +816,49 @@ export function entityByKey(key: string): Entity | undefined {
 /** Label shown on the create button. */
 export function createLabel(entity: Entity): string {
   return `Tambah ${entity.single ?? entity.name}`;
+}
+
+/**
+ * The fields that have to be answered before this one can be, in form order.
+ *
+ * Derived from `resets` rather than declared a second time. A field that
+ * clears another when it changes *is* a field that other one depends on —
+ * Company clears Parent Account because a parent belongs to a Company — so
+ * stating the dependency twice would be a rule with two answers, and the two
+ * would drift the first time one of them was edited alone.
+ *
+ * A `bool` never counts: it is always answered, one way or the other. A field
+ * that does not apply is skipped, so a Partner Category the Budget Category
+ * does not take never blocks the Account behind it.
+ */
+export function prerequisitesOf(
+  entity: Entity,
+  field: Field,
+  values: Record<string, unknown>,
+  applies: (f: Field) => boolean
+): Field[] {
+  return entity.fields.filter(
+    (f) =>
+      f.type !== "bool" &&
+      (f.resets?.includes(field.name) ?? false) &&
+      applies(f) &&
+      (values[f.name] == null || values[f.name] === "")
+  );
+}
+
+/**
+ * What a picker says while it waits — `Pilih Company dan Kelompok Account
+ * dulu…`, in the same `Pilih <what>…` shape every prompt in the application
+ * uses (CLAUDE.md §8).
+ */
+export function waitingClause(missing: Field[]): string | null {
+  if (!missing.length) return null;
+  const names = missing.map((f) => f.label);
+  const list =
+    names.length > 1
+      ? `${names.slice(0, -1).join(", ")} dan ${names[names.length - 1]}`
+      : names[0];
+  return `Pilih ${list} dulu…`;
 }
 
 /** Whether a field applies, given the values currently entered. */

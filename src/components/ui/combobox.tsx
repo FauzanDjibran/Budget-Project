@@ -30,6 +30,7 @@ export function Combobox({
   size = "field",
   invalid,
   disabled,
+  waitingFor,
   onChange,
 }: {
   value: number | null;
@@ -44,6 +45,18 @@ export function Combobox({
   size?: "field" | "sm";
   invalid?: boolean;
   disabled?: boolean;
+  /**
+   * What has to be chosen before this field can be — `Pilih Company dulu…`.
+   *
+   * Not the same as `disabled`, and drawn differently on purpose: disabled
+   * means never, this means not yet. A picker whose prerequisite is unanswered
+   * used to open onto an empty list reading "Tidak ada pilihan yang cocok",
+   * which says the options do not exist when in fact the question that decides
+   * them has not been asked. The field is still there, still in its place and
+   * still explaining itself — it simply will not collect an answer out of
+   * order. The same shape the segment input's "menunggu induk" prefix uses.
+   */
+  waitingFor?: string | null;
   onChange: (value: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -62,9 +75,12 @@ export function Combobox({
     );
   });
 
-  if (disabled) {
+  if (disabled || waitingFor) {
     return (
-      <div className={`cbx${size === "sm" ? " sm" : ""} dis`}>
+      <div
+        className={`cbx${size === "sm" ? " sm" : ""} dis${waitingFor ? " wait" : ""}`}
+        title={waitingFor ?? undefined}
+      >
         <span className="v">
           {selected ? (
             <>
@@ -72,7 +88,7 @@ export function Combobox({
               <span className="nm">{selected.name}</span>
             </>
           ) : (
-            <span className="ph">—</span>
+            <span className="ph">{waitingFor ?? "—"}</span>
           )}
         </span>
       </div>

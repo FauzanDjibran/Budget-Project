@@ -20,7 +20,9 @@ import { generalLedgerReport, trialBalanceReport } from "../src/lib/siba/ledger"
 import {
   CASH_BANK_SUBCATEGORY,
   controlAccountReasons,
+  syncControlAccounts,
 } from "../src/lib/siba/records";
+import { systemDefaultAccountIds } from "../src/lib/siba/system-settings";
 import { knownAuditEvents } from "../src/lib/siba/audit-events";
 import {
   childCompanyId,
@@ -132,6 +134,33 @@ async function draft(lines: ReturnType<typeof line>[]) {
   return result;
 }
 
+/** Whether the account currently carries the flag the manual journal reads. */
+async function isControl(accountId: number): Promise<boolean> {
+  const row = await prisma.accAccount.findUniqueOrThrow({
+    where: { id: accountId },
+    select: { is_control_account: true },
+  });
+  return row.is_control_account;
+}
+
+/** A Cash & Bank resource on an account, which is what claims it for the book. */
+async function makeCashBank(accountId: number, label: string): Promise<number> {
+  const row = await prisma.mCashBank.create({
+    data: {
+      cash_bank_code: `test.${label}`,
+      cash_bank_label: label,
+      cash_bank_name: `Fixture ${label}`,
+      company_id: company,
+      cash_bank_type: "Cash",
+      currency_id: baseCurrency,
+      account_id: accountId,
+      created_by: actor,
+    },
+    select: { id: true },
+  });
+  return row.id;
+}
+
 // ------------------------------------------------------- control accounts
 
 describe("a manual journal may not touch a control account", () => {
@@ -225,6 +254,85 @@ describe("a manual journal may not touch a control account", () => {
     });
 
     assert.deepEqual(await controlAccountReasons(biaya), []);
+  });
+
+  test("the flag follows the structure in both directions", async () => {
+    // The property the recompute exists for, and the one that cannot be seen
+    // by looking at the screen: a Cash & Bank resource repointed at another
+    // account has to release the one it left behind. While claiming was
+    // automatic and releasing was not, the old account stayed closed to manual
+    // entry for good — and the only way back was a checkbox that no longer
+    // exists.
+    const first = await makeAccount({
+      companyId: company,
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+    });
+    const second = await makeAccount({
+      companyId: company,
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+    });
+    const resource = await makeCashBank(first, "ZZMJ2");
+
+    const defaults = await systemDefaultAccountIds();
+    await syncControlAccounts([first, second], defaults, actor);
+    assert.equal(await isControl(first), true, "the Cash Bank Book claims it");
+    assert.equal(await isControl(second), false, "nothing claims this one yet");
+
+    await prisma.mCashBank.update({
+      where: { id: resource },
+      data: { account_id: second },
+    });
+    await syncControlAccounts([first, second], defaults, actor);
+
+    assert.equal(
+      await isControl(first),
+      false,
+      "nothing reconciles against it any more, so it re-opens to manual entry"
+    );
+    assert.equal(await isControl(second), true, "the resource's new account is claimed");
+
+    // And the refusal follows the flag rather than lagging a step behind it.
+    const allowed = await checkManualJournal(headerFor(), [
+      line(first, 40_000, 0),
+      line(expense, 0, 40_000),
+    ]);
+    assert.equal(allowed.ok, true, "a released account is writable by hand again");
+
+    await prisma.mCashBank.delete({ where: { id: resource } });
+  });
+
+  test("a second claim holds an account even when the first lets go", async () => {
+    // Why the release re-asks the structure rather than assuming: two things
+    // can reconcile against one account, and the one that moves away must not
+    // release it for the one that is still there.
+    const shared = await makeAccount({
+      companyId: company,
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+    });
+    const elsewhere = await makeAccount({
+      companyId: company,
+      subcategoryLabel: CASH_BANK_SUBCATEGORY,
+    });
+    const moving = await makeCashBank(shared, "ZZMJ3");
+    const staying = await makeCashBank(shared, "ZZMJ4");
+
+    const defaults = await systemDefaultAccountIds();
+    await syncControlAccounts([shared], defaults, actor);
+    assert.equal(await isControl(shared), true);
+
+    await prisma.mCashBank.update({
+      where: { id: moving },
+      data: { account_id: elsewhere },
+    });
+    await syncControlAccounts([shared, elsewhere], defaults, actor);
+
+    assert.equal(
+      await isControl(shared),
+      true,
+      "the second resource still reconciles against it"
+    );
+
+    await prisma.mCashBank.deleteMany({ where: { id: { in: [moving, staying] } } });
   });
 
   test("the flag alone is enough, with no structure behind it", async () => {

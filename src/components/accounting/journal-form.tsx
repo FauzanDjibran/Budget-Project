@@ -373,7 +373,7 @@ export function JournalForm({
           <button
             className="btn sm primary"
             disabled={!companyId}
-            title={companyId ? undefined : "Pilih Company terlebih dahulu"}
+            title={companyId ? undefined : "Pilih Company dulu…"}
             onClick={addLine}
           >
             <Icon name="plus" size={14} /> Tambah Baris

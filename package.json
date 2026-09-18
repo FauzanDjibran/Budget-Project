@@ -12,7 +12,7 @@
     "db:neon-seed": "node scripts/with-remote.mjs npx tsx prisma/seed.ts",
     "db:sample": "tsx scripts/sample-data.ts",
     "db:backfill-subledger": "node --env-file-if-exists=.env --conditions=react-server --import tsx scripts/backfill-subledger.ts",
-    "db:backfill-control-accounts": "node --env-file-if-exists=.env --conditions=react-server --import tsx scripts/backfill-control-accounts.ts",
+    "db:backfill-account-flags": "node --env-file-if-exists=.env --conditions=react-server --import tsx scripts/backfill-account-flags.ts",
     "db:truncate-transactions": "node --env-file-if-exists=.env --import tsx scripts/truncate-transactions.ts",
     "db:reset": "prisma migrate reset --force",
     "db:neon-reset": "node scripts/with-remote.mjs --destructive npx prisma migrate reset --force",

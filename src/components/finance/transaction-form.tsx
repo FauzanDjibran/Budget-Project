@@ -182,6 +182,29 @@ export function TransactionForm({
       (!needsPartner || values.partner_id)
   );
 
+  /**
+   * The one field still standing between here and choosing a Budget.
+   *
+   * Which Budgets this document may realize is the whole header at once
+   * (concept doc §9), so the picker cannot open before it is complete. It used
+   * to say "Lengkapi header dokumen terlebih dahulu", which names none of the
+   * five fields it could mean — and the header is read left to right, so the
+   * first gap is the one to name.
+   */
+  const budgetWaitingFor = !purpose
+    ? "Pilih Purpose dulu…"
+    : !companyId
+      ? "Pilih Company dulu…"
+      : needsPartner && !values.partner_id
+        ? "Pilih Partner dulu…"
+        : funded
+          ? values.currency_id
+            ? null
+            : "Pilih Currency dulu…"
+          : values.cash_bank_id
+            ? null
+            : "Pilih Cash & Bank dulu…";
+
   const set = (key: keyof TransactionValues, value: string) => {
     setValues((v) => {
       const next = { ...v, [key]: value };
@@ -721,6 +744,12 @@ export function TransactionForm({
                           value={values.partner_id ? Number(values.partner_id) : null}
                           options={partnerOptions}
                           placeholder="Pilih Partner…"
+                          // A Partner belongs to one Company, so until the
+                          // Company is named there is nothing to choose
+                          // between — and an empty list reads as "this Purpose
+                          // has no partners" rather than "say whose document
+                          // this is first".
+                          waitingFor={companyId ? null : "Pilih Company dulu…"}
                           invalid={Boolean(errors.partner_id)}
                           onChange={(v) => set("partner_id", v ? String(v) : "")}
                         />
@@ -773,6 +802,11 @@ export function TransactionForm({
                         value={values.cash_bank_id ? Number(values.cash_bank_id) : null}
                         options={cashBankOptions}
                         placeholder="Pilih Cash & Bank…"
+                        // Every resource belongs to a Company, and which
+                        // Company this document is for also decides whether it
+                        // names a resource at all (the anak names a Currency
+                        // and goes through Funding Request instead).
+                        waitingFor={companyId ? null : "Pilih Company dulu…"}
                         invalid={Boolean(errors.cash_bank_id)}
                         onChange={(v) => set("cash_bank_id", v ? String(v) : "")}
                       />
@@ -970,9 +1004,7 @@ export function TransactionForm({
                 <button
                   className="btn sm primary"
                   disabled={!headerReady}
-                  title={
-                    headerReady ? undefined : "Lengkapi header dokumen terlebih dahulu"
-                  }
+                  title={budgetWaitingFor ?? undefined}
                   onClick={() => setPicking(true)}
                 >
                   <Icon name="plus" size={14} /> Tambah Budget

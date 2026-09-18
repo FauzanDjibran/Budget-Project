@@ -309,10 +309,12 @@ prisma/
   migrations/            Applied migrations
   seed.ts                System data only — idempotent, never touches business data
 scripts/
-  backfill-control-accounts.ts  One-off: marks the accounts a book already
-                         reconciles against, so `is_control_account` is true
-                         wherever the structure implies it. Idempotent, sets
-                         only, never clears. Run by hand, never by install or CI
+  backfill-account-flags.ts  One-off: brings `is_postable` and
+                         `is_control_account` back into agreement with the
+                         structure that decides them — leaf for the first,
+                         what reconciles against the account for the second.
+                         Idempotent, sets and clears. Run by hand, never by
+                         install or CI
   backfill-subledger.ts  One-off: replays already-posted Cash Bank Transactions
                          into the subject books, in document order and
                          idempotently. Run by hand, never by install or CI
@@ -453,7 +455,7 @@ npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
 npm run db:sample            # dev only: sample Partners + Chart of Accounts (NOT the seeder)
 npm run db:backfill-subledger  # one-off: subject books for already-posted documents
-npm run db:backfill-control-accounts  # one-off: flag the accounts a book reconciles against
+npm run db:backfill-account-flags  # one-off: resync Postable + Control Account to the structure
 npm run db:truncate-transactions          # reports what it would delete, deletes nothing
 npm run db:truncate-transactions -- --confirm  # DESTRUCTIVE: empties the documents and
                                                # the books, keeps master + system data
@@ -549,8 +551,14 @@ dialog icon each have exactly one implementation, and that nothing formats a dat
 number outside `lib/format.ts`. It also holds the form layout: every labelled field
 goes through `components/ui/form.tsx`, no help is rendered beside a control, no form
 keeps a summary side card or a page subtitle, and each document form titles itself with
-its own number. It reads source text, so it needs no database and costs
-nothing. A schema suite closes the loop underneath all of
+its own number. It also holds the order a form is filled in: a prerequisite is
+declared once as `resets`, it is listed **before** the field it gates in every
+registry entity, and a waiting clause reads `Pilih <what> dulu…` rather than
+naming none of the fields it could mean. And it holds that neither of an
+account's two structural flags is offered on a form — Postable not at all,
+Control Account read-only — and that nothing sets one without also being able
+to clear it. It reads source text and the registry, so it needs no database and
+costs nothing. A schema suite closes the loop underneath all of
 it: every model in `prisma/schema.prisma` must have a delegate on the generated client
 and a table in the database, so a checkout where `prisma generate` or `prisma migrate`
 has not been run fails here rather than at the first page that reads the missing model.
@@ -643,6 +651,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Rate layers | `KursSelect` — a layer is *chosen*, never a rate typed, and it is chosen in a `Dialog` where date, kurs, sisa and sumber are four columns. The field afterwards carries **only the kurs** |
 | Search | `SearchField` in the `.toolbar` — icon, `Cari <what>…`, clear button. `grow` when it is the only control |
 | Picker prompts | Always `Pilih <what>…` — for a `Combobox`, a `Select`, and anything that stands in for one |
+| Prerequisites | A picker whose options another field decides takes `waitingFor` — **shown, in its place, not collecting an answer**, reading `Pilih <what> dulu…`. Never hidden, and never an open list saying "Tidak ada pilihan yang cocok" |
 | Validation | Inline `.err` under the field + `.bad` on the control + error toast |
 | Unsaved changes | `.ph-dirty` chip with pulse indicator, in `.ph-act` beside Simpan |
 | Confirmations | `ConfirmDialog` — small, centred, one question: tinted icon, subject chip, **consequence copy** |
@@ -902,18 +911,27 @@ Implemented and enforced:
    which ties it to the Cash Bank Book and its rate layers, and a mapping from a
    Budget Category that keeps a subject book, which ties it to that book. The
    bridge and FX System Defaults make a third, because those accounts are
-   written by the posting engine alone. Each of them **sets
-   `is_control_account`** when it claims the account — `markControlAccount`,
-   called from the write paths — and `controlAccountReasons` in `records.ts` is
-   what can say which book, for the refusal to name. A Biaya or Asset mapping
-   target is **not** one: those categories keep no subject book, so the account
-   reconciles against the General Ledger and nothing else.
+   written by the posting engine alone. `is_control_account` is **recomputed
+   from those three, in both directions**, by `syncControlAccounts` in
+   `records.ts` — called from every write path that can change the answer, so
+   repointing a Cash & Bank, a mapping or a System Default claims the new
+   account and releases the old one where nothing else still claims it.
+   `controlAccountReasons` is what can say which book, for the refusal to name.
+   A Biaya or Asset mapping target is **not** one: those categories keep no
+   subject book, so the account reconciles against the General Ledger and
+   nothing else.
 80. **Whether an account may be written to is `is_postable` and
-   `is_control_account`.** The user's own rule, and every place an account is
-   chosen asks it. `checkAccountIsLeaf` sits under the first, because the tree
-   is what makes the flag true (rule 77). Nothing clears either flag
-   automatically: re-opening an account to manual entry is a decision somebody
-   takes on the form.
+   `is_control_account`, and neither is an isian.** The user's own rule, and
+   every place an account is chosen asks it. Both are decided by the backend:
+   `is_postable` is whether the account is a leaf, with `checkAccountIsLeaf`
+   under it because the tree is what makes the flag true (rule 77), and
+   `is_control_account` is whether anything reconciles against it (rule 79).
+   **Neither appears on a form.** Postable is not shown at all — it is a
+   consequence of the chart's shape, and a reader who needs to know why an
+   account no longer receives postings is told in the note at the foot of its
+   card. Control Account is shown read-only, because a manual journal is
+   refused by it and that refusal has to be readable before somebody starts
+   writing one.
 81. **A manual journal is drafted before it is posted, and only it is ever a
    Draft.** A journal a document produced is `Posted` the moment it exists,
    because it records something that has already happened. A manual journal is
@@ -1420,6 +1438,51 @@ Specified in the concept doc, **not yet implemented** (see §13):
   works differently from the rest.
 - **Status:** Frozen, current.
 
+### A field waits for its prerequisite, and says which one (FROZEN)
+- **Decision:** A picker whose options are decided by another field is
+  **shown, in its own place, and does not collect an answer** until that field
+  is filled in. `waitingFor` on `Combobox` and on `Select` is the one
+  implementation: the control renders inert with `.wait` and carries the clause
+  `Pilih <what> dulu…` where its prompt would be. It is never hidden, and it is
+  never `disabled` — `.dis` means *never*, `.wait` means *not yet*, and the two
+  read differently on purpose. In the registry the dependency is derived from
+  `resets` by `prerequisitesOf` in `entities.ts`; a bespoke form states its own
+  clause, and states the **first** missing field rather than listing them all.
+- **Reason:** Chart of Accounts is where it showed. Parent Account sat beside
+  Company and Kelompok Account and could be opened before either was chosen,
+  whereupon it reported "Tidak ada pilihan yang cocok" — which says the options
+  do not exist, when what has actually happened is that the question deciding
+  them has not been asked. The same hole was open on Cash & Bank's Account, the
+  mapping's Account, Cash Bank Transaction's Partner and Cash & Bank, and the
+  transfer's source, where picking the resource before the Purpose meant
+  choosing from a list the Purpose would then contradict and having the
+  selection silently cleared out from under the field.
+- **Shown rather than hidden, on the user's instruction.** A form whose shape
+  changes as it is filled in is worse than one that waits: the reader loses the
+  map of what the document needs, and a field that appears late reads as one
+  they missed. The field stays where it is and explains itself, which is the
+  shape the segment input's `menunggu induk` prefix already had.
+- **A prerequisite is declared once.** `resets` already says "changing me
+  clears you", which is the same fact as "you cannot be answered before me".
+  Two declarations of one dependency drift the first time either is edited
+  alone. A `bool` never counts — it is always answered — and a field that does
+  not apply is skipped, so a Partner Category the Budget Category does not take
+  never blocks the Account behind it.
+- **Impact:** None of this is enforcement. The Server Action re-checks every
+  rule exactly as before (§12, "a picker's filter is never the enforcement") —
+  this only stops the form offering a control whose every use would be refused,
+  or worse, silently discarded. `tests/design-system.test.ts` holds three
+  things: that `prerequisitesOf` reads `resets`, that a prerequisite is listed
+  **before** the field it gates in every registry entity, and that every
+  waiting clause reads `Pilih <what> dulu…` rather than something like
+  "Lengkapi header dokumen terlebih dahulu", which names none of the five
+  fields it could mean.
+- **Do not change unless:** explicitly instructed. **Never hide a field until
+  its prerequisite is answered**, never let a picker open onto an empty list
+  that a missing prerequisite caused, never use `disabled` where the field is
+  merely waiting, and do not write a waiting clause that fails to name a field.
+- **Status:** Frozen, current.
+
 ### A list of combinations is grouped, and searched by its facets (FROZEN)
 - **Decision:** A `Select` whose options are combinations rather than names
   takes `group` on each option and `listWidth="wide"`. The list emits a heading
@@ -1470,18 +1533,23 @@ Specified in the concept doc, **not yet implemented** (see §13):
   posting privilege that a Cash & Bank resource, a mapping or a System Default
   was already relying on — and §10 rule 4 says exactly that may not happen.
 - **Impact:** `checkAccountIsLeaf` asks the **tree**, not the flag, so an
-  account that somehow still carried `is_postable` is refused anyway; the flag
-  is what the form shows, the tree is what enforces. The `parentAccount` picker
-  narrows by `journal_lines`/`cash_banks`/`mappings` being empty, and the
-  Server Action adds the System Default case, which is not expressible as a
-  `where`. The form locks the toggle **per row** — `lockedFields` and
-  `lockNote` on `EntityForm`, computed by the page, because the registry
-  describes what an Account *is* and this depends on what was created under
-  this one. Revocation is one-way: nothing makes a parent postable again,
-  because nothing removes the sub-account either.
+  account that somehow still carried `is_postable` is refused anyway. The
+  `parentAccount` picker narrows by `journal_lines`/`cash_banks`/`mappings`
+  being empty, and the Server Action adds the System Default case, which is not
+  expressible as a `where`. Revocation is one-way: nothing makes a parent
+  postable again, because nothing removes the sub-account either.
+- **There is no Postable toggle, and there never was a reason for one.** The
+  form used to carry a checkbox that was locked off per row once an account
+  had children — `lockedFields` on `EntityForm` — which was a control that
+  could only ever agree with the structure or be refused. It is gone entirely
+  (§10 rule 80): whether an account receives postings is the shape of the
+  chart, restated to nobody. `lockNote` survives without it, because an
+  account that has quietly dropped out of every destination picker still owes
+  its reader an explanation.
 - **Do not change unless:** explicitly instructed. **Never let a parent account
-  be posted to, never add a path that makes one postable again, and never
-  loosen the mirror rule** — the two only work as a pair.
+  be posted to, never add a path that makes one postable again, never put
+  `is_postable` back on a form, and never loosen the mirror rule** — the two
+  only work as a pair.
 - **Status:** Frozen, current.
 
 ### A popup is placed in viewport coordinates, never inside its control (FROZEN)
@@ -1709,14 +1777,25 @@ Specified in the concept doc, **not yet implemented** (see §13):
   account that somehow still carried the flag is refused anyway). The refusal
   **names the book**, because "tidak dapat dipilih" tells nobody which document
   they should have raised instead.
-- **The structure sets the flag, so nobody has to remember to.**
-  `is_control_account` existed since the schema was written and nothing read it
-  or set it — it was a checkbox. It is now claimed by whatever makes an account
-  a book's counterpart: a Cash & Bank resource registered on it, a mapping from
-  a Budget Category that keeps a subject book, a bridge or FX System Default
-  naming it. The same shape as a parent account giving up `is_postable`. It
-  stays editable where nothing structural implies it, so an account can still be
-  declared one by hand, and nothing ever clears it automatically.
+- **The structure decides the flag, in both directions, so nobody has to
+  remember to.** `is_control_account` existed since the schema was written and
+  nothing read it or set it — it was a checkbox. It is now the recomputed
+  answer to "does anything outside the General Ledger reconcile against this
+  account?": a Cash & Bank resource registered on it, a mapping from a Budget
+  Category that keeps a subject book, a bridge or FX System Default naming it.
+  `syncControlAccounts` in `records.ts` re-asks that question on every write
+  that can change it, and writes only when the answer has moved.
+- **Claiming used to be automatic and releasing was not**, which is the defect
+  this closed. A mapping repointed at another account left the old one flagged
+  for good — closed to manual entry, reconciling against nothing, with a
+  checkbox as the only way back. That checkbox is now gone too (§10 rule 80),
+  so a one-way claim would have been worse than what it replaced. What is lost
+  is declaring a control account **by hand** where nothing structurally claims
+  it. That is deliberate: rule 79 defines a control account as one a book
+  reconciles against, and ticking the box on an account nothing reconciles
+  against was using the flag to mean a different thing ("don't hand-write
+  here"). If that policy lever is ever wanted it is a separate flag with a
+  separate name, not this one.
 - **Reason for the shape.** A separate document table was the alternative and
   the user chose this one: the draft lives in `acc_journal`, and automatic
   journals are categorised as instantly Posted. The cost is real and is paid in
@@ -1742,8 +1821,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   a book that imported those could not be lifted out. No new boundary crossing.
 - **Do not change unless:** explicitly instructed. **Never let a manual journal
   reach a control account**, never let a draft be read by a ledger report, never
-  clear `is_control_account` automatically, never add a date field to the form,
-  and never add a reversal — a posted manual journal is as final as any other.
+  put either account flag back on a form, never reduce `syncControlAccounts` to
+  a one-way claim, never add a date field to the form, and never add a reversal
+  — a posted manual journal is as final as any other.
 - **Status:** Frozen, current.
 
 ### The subject books are one mechanism with six books (FROZEN)
@@ -3085,6 +3165,10 @@ process allowed to restate positions, and it is not built.
 - Do **not** hand-write a control that already exists in `components/ui/` —
   a search box, a dialog, an amount field, a picker. One repeated control is one
   component, and `tests/design-system.test.ts` fails on a copy (§12).
+- Do **not** hide a field until its prerequisite is answered, and do **not**
+  let a picker open onto a list that is empty only because another field is
+  unfilled. It waits in place with `waitingFor`, saying `Pilih <what> dulu…`
+  (§8, §12).
 - Do **not** build a form out of `.fld` / `.frow` / `.fsec` markup. Use
   `FormBody` / `FormSection` / `FormRow` / `Field` from `components/ui/form.tsx`
   — a label-less `.fld` holding a button or a banner is the only exception (§12).
@@ -3216,9 +3300,13 @@ process allowed to restate positions, and it is not built.
 - Do **not** let a Draft journal be read by the General Ledger, the Trial
   Balance or `unbalancedJournals`, and do **not** enforce the balance when a
   draft is saved — a journal being typed does not balance yet (§10 rule 82).
-- Do **not** clear `is_control_account` automatically, and do **not** add a date
-  field to the manual journal form. The structure sets the flag; the engine
-  writes the date (§10 rules 79, 81).
+- Do **not** put `is_postable` or `is_control_account` on a form, and do **not**
+  reduce `syncControlAccounts` to a one-way claim. Both flags are the
+  structure's answer, recomputed rather than typed — and with no checkbox left,
+  a claim that never releases would close an account for good (§10 rules 79–80,
+  §12).
+- Do **not** add a date field to the manual journal form. The engine writes the
+  date when it writes the books (§10 rule 81).
 - Do **not** derive an operational book from journal lines. Only the General
   Ledger derives from the journal (§10, §12).
 - Do **not** sum across accounts in the General Ledger, and do **not** convert
@@ -3338,7 +3426,6 @@ process allowed to restate positions, and it is not built.
 | A standing foreign position is never retranslated | A Hutang in USD keeps the base value it was carried at until something settles it. Without period-end revaluation (§13) there is no unrealised gain or loss anywhere in the system, so the base measure of an open position drifts from what it would be worth today — by design for now, and the one thing revaluation exists to fix. |
 | A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
 | Nothing refuses a posting on a period's status | Neither `applyPosting` nor `postDraftJournal` consults the fiscal calendar, so a document or a manual journal can post into a period that is not Open — or into no period at all. Consistent with Fiscal Year closing not being built (§13); the lock belongs with that work, and it belongs on both paths. |
-| A control account is never un-flagged | `is_control_account` is set by the structure and cleared only by hand. A mapping repointed to another account leaves the old one flagged, so it stays closed to manual entry until somebody unticks it on the form. Deliberate: the conservative direction is the safe one, and re-opening an account that has a book's history behind it is a decision, not a cleanup. |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |

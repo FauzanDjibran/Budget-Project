@@ -315,23 +315,26 @@ export async function EntityEditPage({
 }
 
 /**
- * Postable, for an account that has gained a sub-account, is no longer a
- * decision — so the toggle is shown off and locked, and the form says why.
+ * Why an account that has gained a sub-account no longer receives postings.
+ *
+ * There is no control to lock any more — whether an account may be posted to
+ * is decided by the shape of the chart and by what reconciles against it, and
+ * the form offers neither flag. What is left is the explanation, which still
+ * has to be on the screen: the account simply stops appearing in every picker
+ * that names somewhere money goes, and a reader who is not told why will go
+ * looking for the setting that did it.
  *
  * Per-row rather than per-entity, which is why it cannot live in the registry:
  * `entities.ts` describes what an Account *is*, and this depends on what has
- * been created underneath this one. `validateAccount` refuses the same change
- * on the server, which is what actually enforces it — this only stops the form
- * offering a control whose every use would be refused.
+ * been created underneath this one.
  */
 async function accountParentLock(
   entity: Entity,
   row: { id: number }
-): Promise<{ lockedFields?: string[]; lockNote?: string }> {
+): Promise<{ lockNote?: string }> {
   if (entity.key !== "acc_account") return {};
   if (!(await checkAccountIsLeaf(row.id))) return {};
   return {
-    lockedFields: ["is_postable"],
     lockNote:
       "Account ini memiliki sub-account, sehingga tidak lagi menerima posting: " +
       "saldonya adalah jumlah dari account di bawahnya. Hak posting tidak dapat " +

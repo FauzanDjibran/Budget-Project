@@ -447,28 +447,41 @@ export async function structuralControlAccountIds(): Promise<Set<number>> {
 }
 
 /**
- * Declares an account a control account, if it is not already one.
+ * Re-decides whether each of these accounts is a control account.
  *
- * Called when something claims the account as a book's counterpart: a Cash &
- * Bank resource being registered on it, a subledger-bearing mapping pointing at
- * it, a bridge or FX System Default naming it. This mirrors how creating a
- * sub-account revokes the parent's posting privilege — the structure sets the
- * flag, so nobody has to remember to.
+ * Being one is not a property somebody sets: it is the answer to "does
+ * anything outside the General Ledger reconcile against this account?" — a
+ * Cash & Bank resource registered on it, a subledger-bearing mapping pointing
+ * at it, a bridge or FX System Default naming it. So the flag is *recomputed*
+ * from the structure on every event that can change that answer, in both
+ * directions, the same way a parent account's posting privilege follows the
+ * shape of the tree rather than a checkbox.
  *
- * The flag is what the manual journal checks, and it stays editable where
- * nothing structural implies it, so an account can still be declared one by
- * hand. Nothing here ever clears it: an account that was a book's counterpart
- * has history behind it, and re-opening it to manual entry is a decision
- * somebody takes deliberately on the form.
+ * Claiming used to be automatic and releasing was not, which left an account
+ * flagged by a mapping that had since been repointed elsewhere — closed to
+ * manual entry for good, with a checkbox as the only way back. Recomputing is
+ * what removes both the stale flag and the checkbox.
+ *
+ * The System Default half arrives as an argument. `sys_setting` belongs to a
+ * layer above this one, and the caller is the only place allowed to read both
+ * — the same split `accountUsage` and `controlAccountReasons` already use.
+ *
+ * `where` carries the opposite flag, so a row is written only when the answer
+ * has actually changed and an unrelated save leaves `updated_by` alone.
  */
-export async function markControlAccount(
-  accountId: number,
+export async function syncControlAccounts(
+  accountIds: Iterable<number>,
+  namedByDefaults: ReadonlySet<number>,
   actorId: number
 ): Promise<void> {
-  await prisma.accAccount.updateMany({
-    where: { id: accountId, is_control_account: false },
-    data: { is_control_account: true, updated_by: actorId },
-  });
+  for (const id of new Set(accountIds)) {
+    const claimed =
+      namedByDefaults.has(id) || (await controlAccountReasons(id)).length > 0;
+    await prisma.accAccount.updateMany({
+      where: { id, is_control_account: !claimed },
+      data: { is_control_account: claimed, updated_by: actorId },
+    });
+  }
 }
 
 /**

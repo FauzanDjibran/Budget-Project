@@ -101,6 +101,7 @@ export function Select({
   set,
   invalid,
   disabled,
+  waitingFor,
   searchable,
   listWidth = "default",
   title,
@@ -116,6 +117,13 @@ export function Select({
   set?: boolean;
   invalid?: boolean;
   disabled?: boolean;
+  /**
+   * What has to be answered before this field can be — `Pilih Budget Category
+   * dulu…`. The `Combobox`'s prop of the same name, for the same reason:
+   * disabled means never, this means not yet, and a control that simply
+   * greyed out left the reader to work out which other field had done it.
+   */
+  waitingFor?: string | null;
   /** Turns the trigger into a filter box. Defaults on once the list is long. */
   searchable?: boolean;
   listWidth?: keyof typeof LIST_MAX_WIDTH;
@@ -127,9 +135,15 @@ export function Select({
   const wrapRef = useRef<HTMLDivElement>(null);
   const listId = useId();
 
+  const waiting = Boolean(waitingFor);
+  // Waiting is a kind of disabled, so everything that asks "is this control
+  // live?" reads one flag rather than two that could disagree.
+  const inert = Boolean(disabled) || waiting;
+  const prompt = waitingFor ?? placeholder;
+
   const selected = options.find((o) => o.value === value) ?? null;
   const withSearch = searchable ?? options.length > 8;
-  const searching = open && withSearch && !disabled;
+  const searching = open && withSearch && !inert;
 
   const visible = filterOptions(options, query);
 
@@ -142,7 +156,8 @@ export function Select({
     set ? "set" : "",
     invalid ? "bad" : "",
     open ? "open" : "",
-    disabled ? "dis" : "",
+    inert ? "dis" : "",
+    waiting ? "wait" : "",
     !selected && variant === "field" ? "ph" : "",
   ]
     .filter(Boolean)
@@ -155,7 +170,7 @@ export function Select({
   };
 
   const toggle = (e: React.MouseEvent) => {
-    if (disabled) return;
+    if (inert) return;
     // The popup ignores clicks on its own anchor, so closing again happens
     // here — but a click into the search input is a click in the field.
     if (open && (e.target as HTMLElement).tagName === "INPUT") return;
@@ -170,7 +185,7 @@ export function Select({
       autoFocus
       value={query}
       onChange={(e) => setQuery(e.target.value)}
-      placeholder={selected?.label ?? placeholder}
+      placeholder={selected?.label ?? prompt}
       onKeyDown={(e) => {
         if (e.key !== "Enter") return;
         e.preventDefault();
@@ -183,11 +198,11 @@ export function Select({
       {selected ? (
         <span className="nm">{selected.label}</span>
       ) : (
-        <span className="ph">{placeholder}</span>
+        <span className="ph">{prompt}</span>
       )}
     </span>
   ) : (
-    <span className="tv">{selected?.label ?? placeholder}</span>
+    <span className="tv">{selected?.label ?? prompt}</span>
   );
 
   return (
@@ -203,11 +218,11 @@ export function Select({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
-        aria-disabled={disabled || undefined}
-        tabIndex={disabled || searching ? -1 : 0}
+        aria-disabled={inert || undefined}
+        tabIndex={inert || searching ? -1 : 0}
         onMouseDown={toggle}
         onKeyDown={(e) => {
-          if (open || disabled) return;
+          if (open || inert) return;
           if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
             e.preventDefault();
             setOpen(true);
@@ -225,7 +240,7 @@ export function Select({
 
       <AnchoredPopup
         anchorRef={wrapRef}
-        open={open && !disabled}
+        open={open && !inert}
         onDismiss={() => {
           setOpen(false);
           setQuery("");

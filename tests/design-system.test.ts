@@ -15,6 +15,7 @@ import {
   TRANSACTION_TRANSITIONS,
   availableTransactionActions,
 } from "../src/lib/siba/transaction-workflow";
+import { ENTITIES } from "../src/lib/siba/entities";
 
 /**
  * The design system holds together, checked mechanically.
@@ -688,5 +689,147 @@ describe("a form is laid out by one component", () => {
         `${rel} should title itself with its document number.`
       );
     }
+  });
+});
+
+// -------------------------------------------- a form is filled in in order
+
+/**
+ * A field that depends on another cannot be answered before it.
+ *
+ * The Chart of Accounts create form is what this came from: Parent Account sat
+ * beside Company and Kelompok Account and could be opened before either was
+ * chosen, whereupon it reported "Tidak ada pilihan yang cocok" — which says the
+ * options do not exist, when what has actually happened is that the question
+ * deciding them has not been asked. Nothing is hidden, because a form whose
+ * shape changes under the reader is worse than one that waits; the field stays
+ * where it is and says what to fill in first.
+ */
+describe("a form is filled in in the order its rules require", () => {
+  test("a prerequisite is declared once, as `resets`", () => {
+    // `prerequisitesOf` reads `resets` rather than a second list of its own.
+    // Two declarations of one dependency are a dependency with two answers,
+    // and they drift the first time either is edited alone.
+    const f = files.find((x) => x.rel === "src/lib/siba/entities.ts");
+    assert.ok(f);
+    assert.match(
+      code(f!.text),
+      /export function prerequisitesOf[\s\S]{0,600}resets\?\.includes\(field\.name\)/,
+      "prerequisitesOf must derive the dependency from `resets`."
+    );
+  });
+
+  test("a prerequisite always sits before the field it gates", () => {
+    // Otherwise the form would tell a reader to go back up the page, or — on a
+    // create form read top to bottom — to answer a question it has not asked
+    // yet. The registry order is the reading order.
+    for (const entity of ENTITIES) {
+      const position = new Map(entity.fields.map((f, i) => [f.name, i]));
+      for (const [i, field] of entity.fields.entries()) {
+        for (const dependent of field.resets ?? []) {
+          const at = position.get(dependent);
+          if (at === undefined) continue;
+          assert.ok(
+            at > i,
+            `${entity.slug}: ${field.label} decides ${dependent}, so it must be listed before it.`
+          );
+        }
+      }
+    }
+  });
+
+  test("a waiting clause names the field to fill in first", () => {
+    // `Pilih <what> dulu…`, the same `Pilih <what>…` shape every prompt in the
+    // application uses (CLAUDE.md §8). A clause reading "lengkapi header" tells
+    // nobody which of six fields it means.
+    // Every literal saying "dulu" is one of these, wherever it is written —
+    // inline on the control or hoisted into a const the control reads.
+    const clauses = files.flatMap((f) =>
+      [...code(f.text).matchAll(/"(Pilih [^"\n]*\bdulu\b[^"\n]*)"/g)].map((m) => ({
+        rel: f.rel,
+        clause: m[1],
+      }))
+    );
+    assert.ok(clauses.length > 0, "nothing declares a waiting clause any more");
+    for (const { rel, clause } of clauses) {
+      assert.match(
+        clause,
+        /^Pilih .+ dulu…$/,
+        `${rel}: a waiting clause reads "Pilih <what> dulu…", not ${JSON.stringify(clause)}.`
+      );
+    }
+
+    assert.ok(
+      files.some((f) => /waitingFor=/.test(code(f.text))),
+      "nothing passes a waiting clause to a picker any more"
+    );
+  });
+
+  test("a picker waits rather than opening onto an empty list", () => {
+    // The two controls that can be waited on are the two that carry a list.
+    // Anything else offering a `waitingFor` would be a third idiom.
+    for (const rel of [
+      "src/components/ui/combobox.tsx",
+      "src/components/ui/select.tsx",
+    ]) {
+      const f = files.find((x) => x.rel === rel);
+      assert.ok(f, `${rel} is missing`);
+      assert.match(code(f!.text), /waitingFor/, `${rel} should accept a waiting clause.`);
+    }
+    assert.match(
+      css,
+      /\.cbx\.wait/,
+      "`.wait` distinguishes a picker waiting for its prerequisite from one locked for good."
+    );
+  });
+});
+
+// ------------------------------------- an account's flags are not isian
+
+/**
+ * Whether an account may receive a posting is decided by the backend.
+ *
+ * Both flags used to be checkboxes, and both are structural: `is_postable` is
+ * whether the account is a leaf (§10 rule 77), and `is_control_account` is
+ * whether anything outside the General Ledger reconciles against it (rule 79).
+ * A checkbox over either of those is an invitation to contradict the structure
+ * — and the application would not error, it would simply stop being able to
+ * prove its own figures.
+ */
+describe("an account's postability is not something a user types", () => {
+  const account = ENTITIES.find((e) => e.key === "acc_account")!;
+
+  test("the form offers no Postable field at all", () => {
+    assert.equal(
+      account.fields.find((f) => f.name === "is_postable"),
+      undefined,
+      "Postable follows the shape of the chart; it is not an isian."
+    );
+  });
+
+  test("Control Account is shown, and never written by a form", () => {
+    const field = account.fields.find((f) => f.name === "is_control_account");
+    assert.ok(field, "the flag is still shown — a manual journal is refused by it");
+    assert.equal(field!.derived, true, "it is recomputed from the structure");
+    assert.equal(field!.locked, true, "so an update must drop whatever was submitted");
+  });
+
+  test("the flag is recomputed in both directions", () => {
+    // Claiming used to be automatic and releasing was not, which left an
+    // account flagged by a mapping since repointed elsewhere closed to manual
+    // entry for good. With the checkbox gone there would be no way back.
+    const f = files.find((x) => x.rel === "src/lib/siba/records.ts");
+    assert.ok(f);
+    assert.match(
+      code(f!.text),
+      /export async function syncControlAccounts/,
+      "records.ts owns the recompute."
+    );
+    const bad = files.filter((x) => /markControlAccount/.test(code(x.text)));
+    assert.deepEqual(
+      bad.map((x) => x.rel),
+      [],
+      "`markControlAccount` only ever set the flag — use `syncControlAccounts`."
+    );
   });
 });

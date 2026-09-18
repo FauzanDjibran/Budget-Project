@@ -176,6 +176,25 @@ export function TransferForm({
       (!drawsLayer || values.cash_bank_layer_id)
   );
 
+  /**
+   * What a destination is still waiting on, named rather than merely greyed.
+   *
+   * A destination is decided by the whole header — the Purpose says which
+   * currency it must be in, the source says which Company and which account it
+   * may not be. Offering the picker before those are answered would open it
+   * onto an empty list, which reads as "there are no accounts" rather than
+   * "the question that picks them has not been asked".
+   */
+  const destinationWaitingFor = !purpose
+    ? "Pilih Purpose dulu…"
+    : !source
+      ? "Pilih Cash & Bank sumber dulu…"
+      : currencyLabel === "—"
+        ? "Pilih valuta dulu…"
+        : drawsLayer && !values.cash_bank_layer_id
+          ? "Pilih Kurs Sumber dulu…"
+          : null;
+
   const set = (key: keyof TransferValues, value: string) => {
     setValues((v) => {
       const next = { ...v, [key]: value };
@@ -566,6 +585,13 @@ export function TransferForm({
                         }
                         options={sourceOptions}
                         placeholder="Pilih Cash & Bank…"
+                        // The Purpose states which side of the exchange the
+                        // source is on — rupiah for a purchase, foreign for a
+                        // Pencairan — so choosing the resource first meant
+                        // picking from a list the Purpose would then
+                        // contradict, and having the selection silently
+                        // cleared out from under the field.
+                        waitingFor={purpose ? null : "Pilih Purpose dulu…"}
                         invalid={Boolean(errors.from_cash_bank_id)}
                         onChange={(v) =>
                           set("from_cash_bank_id", v ? String(v) : "")
@@ -714,7 +740,7 @@ export function TransferForm({
                 <button
                   className="btn sm primary"
                   disabled={!headerReady}
-                  title={headerReady ? undefined : "Lengkapi sumber dana terlebih dahulu"}
+                  title={destinationWaitingFor ?? undefined}
                   onClick={() => {
                     setDraftLines((rows) => [
                       ...rows,
@@ -781,7 +807,7 @@ export function TransferForm({
                                   value={l.to_cash_bank_id}
                                   options={destinationOptions(l.to_cash_bank_id)}
                                   placeholder="Pilih Cash & Bank…"
-                                  disabled={!headerReady}
+                                  waitingFor={destinationWaitingFor}
                                   onChange={(v) => {
                                     setDraftLines((rows) =>
                                       rows.map((r) =>

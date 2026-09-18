@@ -32,6 +32,8 @@ import {
   allowedPartnerCategories,
   fieldApplies,
   isActiveStatus,
+  prerequisitesOf,
+  waitingClause,
   type Entity,
   type Field,
 } from "@/lib/siba/entities";
@@ -171,6 +173,21 @@ export function EntityForm({
     if (!id) return undefined;
     return refs[field.currencyFrom]?.find((o) => o.id === id)?.label;
   };
+
+  /**
+   * What this field is still waiting on, if anything.
+   *
+   * A ref whose options are decided by another field used to render as an open
+   * picker over an empty list: clicking it said "Tidak ada pilihan yang cocok",
+   * which reads as *there are none* rather than *the question that decides them
+   * has not been asked yet*. It now says which field to fill in first, and does
+   * not collect an answer out of order. Nothing is hidden — the field stays in
+   * its place, so the shape of the form never changes under the reader.
+   */
+  const waitingFor = (field: Field): string | null =>
+    field.type === "ref"
+      ? waitingClause(prerequisitesOf(entity, field, values, applies))
+      : null;
 
   const optionsFor = (field: Field): RefOption[] => {
     const all = refs[field.name] ?? [];
@@ -373,6 +390,7 @@ export function EntityForm({
                     error={errors[f.name]}
                     options={optionsFor(f)}
                     prefix={f.type === "segment" ? inheritedCode(f) : null}
+                    waitingFor={waitingFor(f)}
                     currencyLabel={currencyLabelOf(f)}
                     forceLocked={lockedFields?.includes(f.name)}
                     onChange={(v) => setField(f, v)}
@@ -502,6 +520,7 @@ function FieldControl({
   currencyLabel,
   statusLike,
   forceLocked,
+  waitingFor,
   onChange,
 }: {
   field: Field;
@@ -511,6 +530,8 @@ function FieldControl({
   exists: boolean;
   /** Locked for this row rather than for the entity — see `lockedFields`. */
   forceLocked?: boolean;
+  /** What must be answered before this field can be — see `Combobox`. */
+  waitingFor?: string | null;
   error?: string;
   options: RefOption[];
   /** `segment` only: the code this field's number continues. */
@@ -530,7 +551,17 @@ function FieldControl({
     field.span ?? (field.full || field.type === "textarea" ? 12 : 4);
 
   const node = editing
-    ? editableControl({ field, value, locked, error, options, prefix, currencyLabel, onChange })
+    ? editableControl({
+        field,
+        value,
+        locked,
+        error,
+        options,
+        prefix,
+        currencyLabel,
+        waitingFor: locked ? null : waitingFor,
+        onChange,
+      })
     : readOnlyBody({ field, row, options, currencyLabel, statusLike });
 
   return (
@@ -649,6 +680,7 @@ function editableControl({
   options,
   prefix,
   currencyLabel,
+  waitingFor,
   onChange,
 }: {
   field: Field;
@@ -658,6 +690,7 @@ function editableControl({
   options: RefOption[];
   prefix?: string | null;
   currencyLabel?: string;
+  waitingFor?: string | null;
   onChange: (value: string | boolean | null) => void;
 }): React.ReactNode {
   if (field.type === "bool") {
@@ -714,6 +747,7 @@ function editableControl({
         placeholder={`Pilih ${field.label}…`}
         invalid={Boolean(error)}
         disabled={locked}
+        waitingFor={waitingFor}
         onChange={(v) => onChange(v == null ? null : String(v))}
       />
     );

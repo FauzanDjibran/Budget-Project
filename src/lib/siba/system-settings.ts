@@ -82,6 +82,26 @@ export async function systemDefaultsUsingAccount(
 }
 
 /**
+ * Every account a System Default currently names.
+ *
+ * The third structural source of a control account: the bridge and FX
+ * settings decide where a posting lands, and what a posting engine owns a
+ * person does not hand-write into. `syncControlAccounts` cannot ask this for
+ * itself — `records.ts` may not read `sys_setting` — so the caller resolves it
+ * and passes it down.
+ */
+export async function systemDefaultAccountIds(): Promise<Set<number>> {
+  const current = await systemDefaults();
+  const ids = new Set<number>();
+  for (const def of SYSTEM_DEFAULTS) {
+    if (def.ref !== "acc_account") continue;
+    const id = refValueOf(current, def.key);
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+/**
  * The Currency a new record's Currency picker starts on.
  *
  * Resolved against the master rather than trusted as stored: a currency that
