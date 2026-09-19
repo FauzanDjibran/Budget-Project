@@ -435,7 +435,10 @@ export async function confirmFundingRequest(
       docTypeId: await fundingRequestDocTypeId(),
       docId: request.id,
     },
-    note: `${request.funding_request_no} — ${request.note ?? ""}`.trim(),
+    // The number alone. Finance composes what the books and the journals are
+    // named, because it is the module that knows which of them is about the
+    // funding and which is about the realization.
+    requestNo: request.funding_request_no,
   });
   if (!prepared.ok) return { ok: false, errors: prepared.errors };
 

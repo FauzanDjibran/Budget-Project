@@ -701,6 +701,78 @@ describe("confirmation posts both Companies, at once", () => {
     assert.ok(request.confirmed_at);
   });
 
+  test("each journal names its own cause, and names each part once", async () => {
+    const supplier = await makePartner({
+      companyId: anak,
+      categoryLabel: "Stakeholder",
+    });
+    const budget = await makeBudget({
+      categoryLabel: "Hutang",
+      partnerId: supplier,
+      amount: 120_000,
+    });
+    const doc = await makeAnakDraft({
+      purpose: "HTG_SH_OUT",
+      partnerId: supplier,
+      lines: [{ budgetId: budget, amount: 120_000 }],
+    });
+    const raised = await raise(doc);
+    assert.ok(raised.ok);
+    const requestNo = raised.ok ? raised.funding_request_no : "";
+
+    const cashBank = await makeCashBank({ opening: 500_000 });
+    const result = await confirmFundingRequest(
+      raised.ok ? raised.id : 0,
+      cashBank,
+      actor
+    );
+    assert.equal(result.ok, true, JSON.stringify(result));
+
+    const { transaction_no } = await prisma.finCashBankTransaction.findUniqueOrThrow({
+      where: { id: doc },
+      select: { transaction_no: true },
+    });
+    const label = (await purposeByKey("HTG_SH_OUT"))!.label;
+
+    // The anak performed an ordinary realization that happened to be funded,
+    // so its journal names its own document and nothing else.
+    const [anakJournal] = await journalsFor(await transactionDocType(), doc);
+    assert.equal(anakJournal.description, `${transaction_no} — ${label}`);
+
+    // The induk acted on a Funding Request, so its journal names the request,
+    // the realization it funded, and what that was for — §10 rule 60.
+    const [indukJournal] = await journalsFor(
+      await fundingRequestDocTypeId(),
+      raised.ok ? raised.id : 0
+    );
+    assert.equal(
+      indukJournal.description,
+      `${requestNo} — ${transaction_no} — ${label}`
+    );
+
+    // The property that actually broke, stated on its own: the description was
+    // accreted across two modules — Funding composed a phrase ending in the
+    // label, Finance appended the label again — so it read the purpose twice on
+    // the Journal register and in both ledger reports. Nothing errored, and the
+    // suite passed. Counting is what catches it.
+    assert.equal(
+      indukJournal.description!.split(label).length - 1,
+      1,
+      "the purpose is named once, not once per module that composed the string"
+    );
+
+    // And every line of both, for the same reason.
+    for (const journal of [anakJournal, indukJournal]) {
+      for (const line of journal.lines) {
+        assert.equal(
+          (line.description ?? "").split(label).length - 1 <= 1,
+          true,
+          `${journal.journal_no}: a line names the purpose at most once`
+        );
+      }
+    }
+  });
+
   test("an anak receipt mirrors it: induk cash in, induk Hutang, anak Piutang", async () => {
     const debtor = await makePartner({
       companyId: anak,

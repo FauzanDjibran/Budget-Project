@@ -1790,8 +1790,16 @@ export type FundedPostingInput = {
    * module that owns it, and Finance must not name its table.
    */
   providerSource: { docTypeId: number; docId: number };
-  /** Carried onto every book entry, so a row reads back to the request. */
-  note: string;
+  /**
+   * The request's own number, as a **fact rather than a phrase**.
+   *
+   * It used to arrive as a note the caller had already composed — document
+   * number, purpose label and all — which left this module unable to tell what
+   * was inside it, and appending the label again produced a description that
+   * said it twice. Descriptions are composed here now, in one place, from parts
+   * that each mean one thing.
+   */
+  requestNo: string;
 };
 
 export type FundedPostingPlan = {
@@ -1818,7 +1826,7 @@ export type FundedPostingPlan = {
   rate: number;
   transactionNo: string;
   purposeLabel: string;
-  note: string;
+  requestNo: string;
   providerSource: { docTypeId: number; docId: number };
   requesterSource: { docTypeId: number; docId: number };
   lines: { budgetId: number; amount: number }[];
@@ -2022,7 +2030,7 @@ export async function prepareFundedPosting(
       rate: valuation.rate,
       transactionNo: doc.transaction_no,
       purposeLabel: purpose.label,
-      note: input.note,
+      requestNo: input.requestNo,
       providerSource: input.providerSource,
       requesterSource: {
         docTypeId: await transactionDocTypeId(),
@@ -2060,6 +2068,18 @@ export async function writeFundedPosting(
   const today = new Date().toISOString().slice(0, 10);
   const { induk, anak } = plan;
 
+  // The two things this posting can be named after, composed once.
+  //
+  // Which one a row carries follows §10 rule 60: each journal points at its own
+  // Company's document. The induk acted on a Funding Request, so its rows name
+  // the request, the realization it funded and what that was for; the anak
+  // performed an ordinary realization that happened to be funded, so its rows
+  // name only its own document. Neither is assembled anywhere else — the
+  // duplicated label this replaced came from one module composing a phrase and
+  // another appending to it without being able to see what was already there.
+  const funding = `${plan.requestNo} — ${plan.transactionNo} — ${plan.purposeLabel}`;
+  const realization = `${plan.transactionNo} — ${plan.purposeLabel}`;
+
   await recordCashBankEntry(tx, {
     cashBankId: induk.cashBankId,
     date: today,
@@ -2071,7 +2091,7 @@ export async function writeFundedPosting(
     // names — the same weak pair the direct route writes.
     sourceDocTypeId: plan.requesterSource.docTypeId,
     sourceDocId: plan.requesterSource.docId,
-    note: plan.note,
+    note: funding,
     actorId,
   });
 
@@ -2090,7 +2110,7 @@ export async function writeFundedPosting(
       rate: plan.rate,
       sourceDocTypeId: plan.requesterSource.docTypeId,
       sourceDocId: plan.requesterSource.docId,
-      note: `${plan.transactionNo} — ${plan.purposeLabel}`,
+      note: realization,
       actorId,
     });
   }
@@ -2102,7 +2122,7 @@ export async function writeFundedPosting(
   // Journal A — the induk's. Its cause is the Funding Request it confirmed.
   await postJournal(tx, {
     companyId: induk.companyId,
-    description: `${plan.note} — ${plan.purposeLabel}`,
+    description: funding,
     sourceDocTypeId: plan.providerSource.docTypeId,
     sourceDocId: plan.providerSource.docId,
     lines: [
@@ -2112,7 +2132,7 @@ export async function writeFundedPosting(
         rate: plan.rate,
         debit: outgoing ? plan.amount : 0,
         credit: outgoing ? 0 : plan.amount,
-        description: plan.note,
+        description: funding,
       },
       {
         accountId: induk.cashAccountId,
@@ -2120,7 +2140,7 @@ export async function writeFundedPosting(
         rate: plan.rate,
         debit: outgoing ? 0 : plan.amount,
         credit: outgoing ? plan.amount : 0,
-        description: plan.note,
+        description: funding,
       },
     ],
     actorId,
@@ -2145,12 +2165,12 @@ export async function writeFundedPosting(
     rate: plan.rate,
     debit: outgoing ? 0 : plan.amount,
     credit: outgoing ? plan.amount : 0,
-    description: plan.note,
+    description: funding,
   };
 
   await postJournal(tx, {
     companyId: anak.companyId,
-    description: `${plan.transactionNo} — ${plan.purposeLabel}`,
+    description: realization,
     sourceDocTypeId: plan.requesterSource.docTypeId,
     sourceDocId: plan.requesterSource.docId,
     lines: outgoing
