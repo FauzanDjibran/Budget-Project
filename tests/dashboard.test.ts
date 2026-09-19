@@ -157,6 +157,7 @@ let submittedId = 0;
 let draftId = 0;
 let rejectedId = 0;
 let requestId = 0;
+let pendingDocumentId = 0;
 
 before(async () => {
   induk = await parentCompanyId();
@@ -200,7 +201,10 @@ before(async () => {
     status: "Open",
     amount: AMOUNT.openClaimed,
   });
-  ({ requestId } = await makePendingDocument(openClaimedId, AMOUNT.claim));
+  ({ requestId, documentId: pendingDocumentId } = await makePendingDocument(
+    openClaimedId,
+    AMOUNT.claim
+  ));
 });
 
 after(async () => {
@@ -321,8 +325,12 @@ describe("the queue names records, and names them once", () => {
 
   test("a funding task opens the request, which is what the induk answers", async () => {
     const data = await dashboardData([induk, anak]);
-    const task = data.funnel.tasks.find((t) => t.stage === "funding");
+    // By this fixture’s own document, never "the first funding task": a
+    // database that already holds a pending document — the showcase seed
+    // leaves one — would otherwise hand back somebody else’s.
+    const task = data.funnel.tasks.find((t) => t.key === `funding-${pendingDocumentId}`);
     assert.ok(task, "the pending document must be in the queue");
+    assert.equal(task.stage, "funding");
     assert.equal(task.href, `/finance/funding-request/${requestId}`);
   });
 });

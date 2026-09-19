@@ -30,6 +30,7 @@ import {
   disconnect,
   makeAccount,
   makeMapping,
+  mappingAccountId,
   makePartner,
   parentCompanyId,
   prisma,
@@ -222,14 +223,18 @@ describe("a manual journal may not touch a control account", () => {
       subcategoryLabel: "2.1.1",
       normalBalance: "Kredit",
     });
-    await makeMapping({
+    const mapping = await makeMapping({
       companyId: company,
       budgetCategoryLabel: "Hutang",
       partnerCategoryLabel: "Cabang",
       accountId: hutang,
     });
 
-    const reasons = await controlAccountReasons(hutang);
+    // The account the mapping actually points at, which is not necessarily
+    // the one just made: a Company may already hold a mapping for this
+    // combination, and makeMapping reuses it rather than repointing it.
+    const target = await mappingAccountId(mapping);
+    const reasons = await controlAccountReasons(target);
     assert.deepEqual(
       reasons,
       ["Buku Hutang"],

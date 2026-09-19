@@ -296,6 +296,9 @@ export async function makeMapping(options: {
     },
     select: { id: true },
   });
+  // Reused, never repointed: the row may be one the showcase seed or a user
+  // created, and cleanup deletes only rows carrying the fixture prefix. A
+  // caller that needs the account asks `mappingAccountId`.
   if (existing) return existing.id;
 
   const row = await prisma.accBudgetCategoryAccount.create({
@@ -310,6 +313,22 @@ export async function makeMapping(options: {
     select: { id: true },
   });
   return row.id;
+}
+
+/**
+ * The account a mapping points at.
+ *
+ * `makeMapping` reuses an existing mapping for the combination rather than
+ * repointing it — repointing would mutate a row cleanup cannot restore. A test
+ * that cares which account the mapping resolves to therefore asks, instead of
+ * assuming it is the one it just passed in.
+ */
+export async function mappingAccountId(mappingId: number): Promise<number> {
+  const row = await prisma.accBudgetCategoryAccount.findUniqueOrThrow({
+    where: { id: mappingId },
+    select: { account_id: true },
+  });
+  return row.account_id;
 }
 
 export async function makePartner(options: {
