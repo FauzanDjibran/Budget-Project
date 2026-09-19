@@ -9,6 +9,7 @@ import { journalLineCountForAccount } from "./journal";
 import { subledgerForCategory } from "./subledger-catalogue";
 import { loadSubledgers } from "./subledger-data";
 import { loadClassification } from "./classification-data";
+import { purposeCountByCategory, purposeLabel } from "./purposes";
 import { budgetCountByCategory } from "./budget";
 import { type Entity, type Field, entityBySlug } from "./entities";
 import {
@@ -108,7 +109,79 @@ export async function listRows(
 
 export async function getRow(entity: Entity, id: number): Promise<Row | null> {
   const row = await delegate(entity.key).findUnique({ where: { id } });
-  return row ? serialize(row) : null;
+  if (!row) return null;
+  return {
+    ...serialize(row),
+    ...virtualValues(entity, row as Record<string, unknown>),
+    ...(await multirefValues(entity, id)),
+  };
+}
+
+/**
+ * Values for fields the form offers but no column holds.
+ *
+ * A Budget Category's `Arah` is one answer stored as two booleans, so opening
+ * an existing category has to read them back into the single field the form
+ * asks with. The write side is `derivedColumns` in `app/actions/master.ts`;
+ * this is its mirror, and the pair has to stay in step.
+ */
+function virtualValues(
+  entity: Entity,
+  row: Record<string, unknown>
+): Record<string, unknown> {
+  if (entity.key !== "sys_budget_category") return {};
+  const inbound = row.allows_in === true;
+  const outbound = row.allows_out === true;
+  return {
+    direction_mode:
+      inbound && outbound ? "Both" : inbound ? "In" : outbound ? "Out" : "",
+  };
+}
+
+/**
+ * The ids a `multiref` field currently holds, read from its join table.
+ *
+ * Only the **active** rows: a deactivated pairing is one somebody retired, and
+ * the form shows it unticked. Re-ticking reopens that same row rather than
+ * creating a second — see `reconcileMultiref` in `app/actions/master.ts` — so
+ * nothing is lost by presenting it as simply unchecked.
+ */
+async function multirefValues(
+  entity: Entity,
+  id: number
+): Promise<Record<string, number[]>> {
+  const out: Record<string, number[]> = {};
+  for (const field of entity.fields) {
+    if (field.type !== "multiref" || !field.joinTable) continue;
+    const rows = await delegate(field.joinTable).findMany({
+      where: { [ownerColumn(entity)]: id, status: "Active" },
+      select: { [targetColumn(field)]: true },
+      orderBy: { [targetColumn(field)]: "asc" },
+    });
+    out[field.name] = rows.map(
+      (r: Record<string, unknown>) => r[targetColumn(field)] as number
+    );
+  }
+  return out;
+}
+
+/**
+ * Which column of the join table points back at the record being edited, and
+ * which points at what it admits.
+ *
+ * Derived from the entity keys rather than configured: `sys_budget_category`
+ * is `budget_category_id` and `sys_partner_category` is
+ * `partner_category_id`, which is the convention every join table in this
+ * schema already follows (§7). A second `multiref` that broke it would need a
+ * config key; none does, so inventing one now would be configuration nothing
+ * reads.
+ */
+export function ownerColumn(entity: Entity): string {
+  return `${entity.key.replace(/^sys_|^m_|^acc_|^ref_|^fin_|^bud_/, "")}_id`;
+}
+
+export function targetColumn(field: Field): string {
+  return `${(field.ref ?? "").replace(/^sys_|^m_|^acc_|^ref_|^fin_|^bud_/, "")}_id`;
 }
 
 /**
@@ -147,7 +220,7 @@ export async function refOptions(
 ): Promise<Record<string, RefOption[]>> {
   const result: Record<string, RefOption[]> = {};
   for (const field of entity.fields) {
-    if (field.type !== "ref" || !field.ref) continue;
+    if ((field.type !== "ref" && field.type !== "multiref") || !field.ref) continue;
     result[field.name] = await optionsFor(field.ref, field.refFilter);
   }
   return result;
@@ -657,6 +730,113 @@ export async function strandedCategories(
 }
 
 /**
+ * Brings a `multiref` field's join rows in line with the ids submitted.
+ *
+ * Runs **inside the caller's transaction**, so a record and the set it admits
+ * are written together or not at all. That is the whole reason the pairing
+ * stopped being a menu of its own: a Budget Category saved without its Partner
+ * Categories is inert — no Purpose names it and its subject book can receive
+ * nothing — and two saves means that state is reachable whenever the second one
+ * fails. One transaction makes it unreachable.
+ *
+ * **Nothing is deleted.** An id that was there and is not now has its row set
+ * Inactive; an id that comes back reopens the row that was already there rather
+ * than creating a second. So a pairing keeps its code, its authorship and its
+ * history across being retired and restored, and the unique index on the
+ * combination is never contended.
+ */
+export async function reconcileMultiref(
+  tx: Prisma.TransactionClient,
+  entity: Entity,
+  rowId: number,
+  wanted: Record<string, number[]>,
+  actorId: number
+): Promise<void> {
+  for (const field of entity.fields) {
+    if (field.type !== "multiref" || !field.joinTable) continue;
+
+    const owner = ownerColumn(entity);
+    const target = targetColumn(field);
+    const admitted = new Set(wanted[field.name] ?? []);
+
+    const existing: { id: number; status: string }[] = await delegate(
+      field.joinTable,
+      tx
+    ).findMany({
+      where: { [owner]: rowId },
+      select: { id: true, status: true, [target]: true },
+    });
+    const byTarget = new Map(
+      existing.map((r) => [(r as Record<string, unknown>)[target] as number, r])
+    );
+
+    for (const targetId of admitted) {
+      const row = byTarget.get(targetId);
+      if (!row) {
+        await delegate(field.joinTable, tx).create({
+          data: {
+            [codeFieldOf(field.joinTable)]: await nextJoinCode(tx, field.joinTable),
+            [owner]: rowId,
+            [target]: targetId,
+            created_by: actorId,
+          },
+        });
+      } else if (row.status !== "Active") {
+        await delegate(field.joinTable, tx).update({
+          where: { id: row.id },
+          data: { status: "Active", updated_by: actorId },
+        });
+      }
+    }
+
+    for (const [targetId, row] of byTarget) {
+      if (admitted.has(targetId) || row.status !== "Active") continue;
+      await delegate(field.joinTable, tx).update({
+        where: { id: row.id },
+        data: { status: "Inactive", updated_by: actorId },
+      });
+    }
+  }
+}
+
+const JOIN_CODE_FIELD: Record<string, string> = {
+  sys_budget_partner_category_mapping: "mapping_code",
+};
+const JOIN_CODE_PREFIX: Record<string, string> = {
+  sys_budget_partner_category_mapping: "bpcm",
+};
+
+function codeFieldOf(entityKey: string): string {
+  const field = JOIN_CODE_FIELD[entityKey];
+  if (!field) throw new Error(`No code field declared for join table ${entityKey}.`);
+  return field;
+}
+
+/**
+ * The next `<prefix>.<4 digits>` for a join table (§9).
+ *
+ * Counted rather than read off the highest code because these rows are never
+ * deleted, so the count only ever grows — and the loop below covers the one
+ * case it would not, a database seeded in a different order.
+ */
+async function nextJoinCode(
+  tx: Prisma.TransactionClient,
+  entityKey: string
+): Promise<string> {
+  const prefix = JOIN_CODE_PREFIX[entityKey];
+  let n = await delegate(entityKey, tx).count();
+  for (;;) {
+    n += 1;
+    const code = `${prefix}.${String(n).padStart(4, "0")}`;
+    const clash = await delegate(entityKey, tx).findFirst({
+      where: { [codeFieldOf(entityKey)]: code },
+      select: { id: true },
+    });
+    if (!clash) return code;
+  }
+}
+
+/**
  * Values for columns marked `computed` — counts and derived text that are not
  * columns on the row itself.
  */
@@ -756,10 +936,37 @@ export async function computedValues(
     }
   }
 
-  // Direction is stored as In/Out and never shown that way (§8).
+  // A Purpose's label is composed from the three fields it names — never
+  // stored, so it cannot drift from them — and its direction is shown as
+  // Penerimaan / Pengeluaran rather than as the stored enum (§8).
   if (entity.key === "sys_purpose") {
+    const [categories, partnerCategories] = await Promise.all([
+      prisma.sysBudgetCategory.findMany({ select: { id: true, category_label: true } }),
+      prisma.sysPartnerCategory.findMany({ select: { id: true, category_label: true } }),
+    ]);
+    const categoryLabel = new Map(categories.map((c) => [c.id, c.category_label]));
+    const partnerLabel = new Map(partnerCategories.map((c) => [c.id, c.category_label]));
     for (const r of rows) {
-      out[r.id] = { direction: directionText(String(r.direction)) };
+      const direction = String(r.direction) as "In" | "Out";
+      out[r.id] = {
+        direction: directionText(direction),
+        label: purposeLabel(
+          direction,
+          categoryLabel.get(r.budget_category_id as number) ?? "?",
+          partnerLabel.get(r.partner_category_id as number) ?? null
+        ),
+      };
+    }
+  }
+
+  // How many Purposes a Budget Category holds. Nothing creates one, so a
+  // category showing none is a maintenance gap somebody has to close before it
+  // can be transacted — stated here rather than left to be discovered on a
+  // document that cannot be raised.
+  if (entity.key === "sys_budget_category") {
+    const counts = await purposeCountByCategory();
+    for (const r of rows) {
+      out[r.id] = { ...out[r.id], purpose_count: counts.get(r.id) ?? 0 };
     }
   }
 

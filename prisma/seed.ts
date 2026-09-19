@@ -32,7 +32,6 @@ import { SEEDED_ROLES, ADMIN_ROLE, adminPermissionCodes } from "../src/lib/siba/
 import { parentCode } from "../src/lib/siba/account-code";
 import { BASE_CURRENCY_LABEL } from "../src/lib/siba/currency";
 import { SEED_PURPOSES } from "../src/lib/siba/rules";
-import { syncPurposes } from "../src/lib/siba/purposes";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -754,15 +753,13 @@ async function ensureBudgetCategoryRules(audit: {
  * Plants the 22 historical Purposes, then lets the generator fill in anything
  * else the classification implies.
  *
- * Two steps rather than one, because the two halves have different sources of
- * truth. The original 22 carry keys that posted documents already reference and
- * labels that name business events rather than classifications — neither is
- * regenerable, so they are transcribed from `SEED_PURPOSES`. Everything after
- * them is the cross product of Budget Categories, their admitted Partner
- * Categories and their directions, which `syncPurposes` derives.
+ * Only the original 22, and only because their **keys** are already referenced
+ * by posted documents — a seeded database has to be able to read those back.
+ * Nothing else is planted: a Purpose for a Budget Category somebody adds later
+ * is entered through the GUI, on purpose, because this table is a maintainer's
+ * to own.
  *
- * Both halves are additive and neither overwrites a label. Re-running after
- * somebody has reworded a Purpose leaves their wording alone.
+ * Additive and idempotent: a key that already exists is left alone.
  */
 async function ensurePurposes(system: number): Promise<void> {
   const categoryId = new Map(
@@ -800,7 +797,6 @@ async function ensurePurposes(system: number): Promise<void> {
             budget_category_id: budgetCategoryId,
             partner_category_id: partnerCategoryId,
             direction: purpose.direction,
-            label: purpose.label,
             created_by: system,
             updated_by: null,
           },
@@ -809,10 +805,6 @@ async function ensurePurposes(system: number): Promise<void> {
     tally("purposes", made);
   }
 
-  const { created, retired, restored } = await syncPurposes(prisma, system);
-  tally("purposes generated", created);
-  tally("purposes retired", retired);
-  tally("purposes reopened", restored);
 }
 
 async function create<T>(find: () => Promise<T | null>, make: () => Promise<T>): Promise<number> {

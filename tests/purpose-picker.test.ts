@@ -2,7 +2,7 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { filterOptions, type SelectOption } from "../src/components/ui/select";
 import { SEED_PURPOSES } from "../src/lib/siba/rules";
-import { TRANSACTION_TYPE_TEXT } from "../src/lib/siba/transaction-workflow";
+import { purposeLabel } from "../src/lib/siba/purposes";
 
 /**
  * The Transaction Purpose list — 22 combinations in one dropdown.
@@ -26,9 +26,8 @@ import { TRANSACTION_TYPE_TEXT } from "../src/lib/siba/transaction-workflow";
 /** The options exactly as `transaction-form.tsx` builds them. */
 const options: SelectOption[] = SEED_PURPOSES.map((p) => ({
   value: p.key,
-  label: p.label,
+  label: purposeLabel(p.direction, p.budgetCategory, p.partnerCategory),
   group: p.budgetCategory,
-  hint: TRANSACTION_TYPE_TEXT[p.direction],
 }));
 
 const keysFor = (query: string) => filterOptions(options, query).map((o) => o.value).sort();
@@ -38,19 +37,22 @@ describe("a Purpose is findable by any facet a reader can see", () => {
     assert.equal(options.length, 22);
     for (const o of options) {
       assert.ok(o.group, `${o.value} must sit under its Budget Category.`);
-      assert.ok(
-        o.hint === "Penerimaan" || o.hint === "Pengeluaran",
-        `${o.value} must state its direction, which its label does not always spell.`
-      );
+      // Direction and Partner Category are both in the label now, in one fixed
+      // order, so there is nothing left for a chip to add — and a chip that
+      // repeated either would be the thing §12 forbids.
+      assert.equal(o.hint, undefined, `${o.value} must not restate its label in a chip.`);
+      assert.match(o.label, /^(Penerimaan|Pengeluaran) /);
     }
   });
 
-  test("the direction is searchable even where the label never says it", () => {
-    // "Pembayaran", "Pemberian", "Pembelian" and "Pengembalian" are all Out and
-    // none of them contains the word Pengeluaran. Before the chip carried the
-    // direction alone this was the one facet a reader could not type.
+  test("the direction is searchable, and the label is where it is said", () => {
+    // It used to be the one facet a reader could not type: "Pembayaran",
+    // "Pemberian", "Pembelian" and "Pengembalian" are all Out and none of them
+    // contains the word Pengeluaran, so a chip had to carry it. Every label
+    // opens with its direction now, which is why that chip is gone — a chip
+    // repeating a word the label already says is what §12 forbids.
     const payment = options.find((o) => o.value === "HTG_CAB_OUT")!;
-    assert.doesNotMatch(payment.label.toLowerCase(), /pengeluaran/);
+    assert.match(payment.label, /^Pengeluaran /);
     assert.ok(keysFor("pengeluaran").includes("HTG_CAB_OUT"));
 
     const out = new Set(keysFor("pengeluaran"));
@@ -75,7 +77,7 @@ describe("a Purpose is findable by any facet a reader can see", () => {
     for (const p of SEED_PURPOSES) {
       if (!p.partnerCategory) continue;
       assert.match(
-        p.label,
+        purposeLabel(p.direction, p.budgetCategory, p.partnerCategory),
         new RegExp(`${p.partnerCategory}$`),
         `${p.key} should still name its Partner Category last.`
       );

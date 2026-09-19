@@ -11,8 +11,8 @@ import {
   ruleFor,
 } from "../src/lib/siba/classification";
 import { availablePurposeOptions, purposeOptions } from "../src/lib/siba/finance";
-import { allPurposes, syncPurposes } from "../src/lib/siba/purposes";
-import { disconnect, prisma, systemUserId } from "./helpers";
+import { allPurposes } from "../src/lib/siba/purposes";
+import { disconnect, prisma } from "./helpers";
 
 /**
  * The Budget Category rules used to be a constant compiled into the build. They
@@ -109,16 +109,15 @@ describe("direction is written for the user, never shown raw", () => {
  * Retiring "Prive x Stakeholder" has to withdraw both Prive Purposes — the form
  * must not offer a classification the approval chain would then refuse.
  *
- * The helper deactivates the pairing **and re-syncs**, because that is exactly
- * what the Server Action does: `syncPurposesFor` runs on every write that can
- * move the matrix. Flipping the row alone would test a state the application
- * cannot actually be in.
+ * Nothing re-derives the Purposes when a pairing is retired — they are rows a
+ * maintainer owns. What changes is what the **picker offers**:
+ * `availablePurposes` drops a Purpose whose pairing is no longer admitted,
+ * because the approval chain would refuse that classification anyway.
  *
  * Prive admits exactly one Partner Category, so retiring one row empties it.
  */
 async function withPriveStakeholderRetired<T>(run: () => Promise<T>): Promise<T> {
-  const actor = await systemUserId();
-  const row = await prisma.sysBudgetPartnerCategoryMapping.findFirst({
+    const row = await prisma.sysBudgetPartnerCategoryMapping.findFirst({
     where: {
       budget_category: { category_label: "Prive" },
       partner_category: { category_label: "Stakeholder" },
@@ -130,7 +129,6 @@ async function withPriveStakeholderRetired<T>(run: () => Promise<T>): Promise<T>
     where: { id: row.id },
     data: { status: "Inactive" },
   });
-  await syncPurposes(prisma, actor);
   try {
     return await run();
   } finally {
@@ -138,7 +136,6 @@ async function withPriveStakeholderRetired<T>(run: () => Promise<T>): Promise<T>
       where: { id: row.id },
       data: { status: row.status },
     });
-    await syncPurposes(prisma, actor);
   }
 }
 

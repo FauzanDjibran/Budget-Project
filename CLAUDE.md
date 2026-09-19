@@ -77,10 +77,10 @@ or invariants that assume a particular row exists.
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done — the commitment funnel (submitted → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
-| Klasifikasi (Budget Category, Partner Category, their pairing) | Done — the Budget Category rules are rows now, not a constant: which directions a category allows, whether it names a Partner, and which Partner Categories it admits. Three registry entities under Master › Klasifikasi, each deactivable. Retiring a pair withdraws the Purposes resting on it from the picker while leaving every record already classified by it readable |
+| Klasifikasi (Budget Category, Partner Category, Purpose) | Done — the Budget Category rules are rows now, not a constant: which directions a category allows, whether it names a Partner, and which Partner Categories it admits — **the last chosen on the category's own form and written in the same transaction**, so a new category is usable in one save. Under Pengaturan › Klasifikasi, each deactivable. Retiring a pair withdraws the Purposes resting on it from the picker while leaving every record already classified by it readable |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
-| Transaction Purpose | Done — generated from the classification into `sys_purpose`, so a new Budget Category is transactable with no code change. GUI under Master › Klasifikasi; only the label is editable |
+| Transaction Purpose | Done — rows in `sys_purpose` a maintainer **enters** under Pengaturan › Klasifikasi. Nothing generates them, so a Budget Category with none cannot be transacted; the Budget Category list states the count. The label is composed from direction × Category × Partner Category and never stored |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
@@ -328,10 +328,15 @@ scripts/
                          and their audit rows, in one transaction. Reports and
                          refuses without `--confirm`. Run by hand, never by
                          install or CI
-  sample-data.ts         Dev convenience: plausible Partners, a Chart of Accounts
-                         and the account mappings to test against. **Not** the
-                         seeder — ordinary inserts, run by hand, never by
-                         install/migrate/reset/CI
+  seed-showcase.ts       Dev convenience: a believable year of business data, so
+                         every menu has something in it — Partners for both
+                         Companies, a Chart of Accounts, the mappings, the cash
+                         resources with their opening balances and layers, a
+                         fiscal year, Budgets across the lifecycle, and the
+                         documents that realize them. **Not** the seeder —
+                         ordinary inserts, run by hand, never by
+                         install/migrate/reset/CI. Anything posted goes through
+                         the real engine, never a direct book insert
 src/
   proxy.ts               Optimistic redirect to /login (NOT a security boundary);
                          lets /login and /api/health through without a cookie
@@ -364,6 +369,8 @@ src/
       finance/cash-bank-transfer/  Bespoke: list, /new, /[id], /[id]/edit
       finance/funding-request/  The induk's queue: list and /[id] (confirm)
       finance/report/[report]/  Every Report View, driven by `reports.ts`
+      settings/[entity]/ The registry pages again — the classification chain:
+                         Budget Category, Partner Category, Transaction Purpose
       settings/user/     Admin-only user management (bespoke, not registry)
       settings/role/     Admin-only roles + permission matrix
       settings/system-default/  Values the application prefills with
@@ -461,7 +468,7 @@ npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
                              # (runs under --conditions=react-server: it imports
                              #  `purposes.ts`, which is server-only)
-npm run db:sample            # dev only: sample Partners + Chart of Accounts (NOT the seeder)
+npm run db:seed-showcase     # dev only: a believable year of business data (NOT the seeder)
 npm run db:backfill-subledger  # one-off: subject books for already-posted documents
 npm run db:backfill-account-flags  # one-off: resync Postable + Control Account to the structure
 npm run db:truncate-transactions          # reports what it would delete, deletes nothing
@@ -475,6 +482,7 @@ npx prisma studio            # browse the database
 # Against the DEPLOYED database rather than the local one. Both read the
 # connection from `.env.neon` through `scripts/with-remote.js`.
 npm run db:neon-seed         # sync system data on Neon; idempotent, destroys nothing
+npm run db:neon-seed-showcase  # dev/demo only: the same believable year, on Neon
 npm run db:neon-reset        # reports what it would destroy, destroys nothing
 npm run db:neon-reset -- --confirm  # DESTRUCTIVE: drops and re-migrates the deployed
                                     # database. Run db:neon-seed afterwards — reset
@@ -648,6 +656,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Summary cards | **None.** Each fact sits where it is read; a closing note about the record's state is a `.fnote` at the foot of its card |
 | Read-only fields | `.ro` — presented as text, **never disabled inputs** |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options. **The control itself is the search box**: opening turns it into a text input in place, and the popup carries no filter bar of its own |
+| Sets | `MultiSelect` — a searchable picker that adds, chips that remove. **Never a checkbox per option**: a grid grows with the catalogue rather than with the answer |
 | Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`). Searchable once the list is long, and searched the same way — in the trigger. A long list of combinations takes `group` on its options and `listWidth="wide"` |
 | Dropdown search | Every word must match, across label + hint + group. A list of facets is searched by naming facets — `pengeluaran cabang` — and one substring against the whole row finds nothing |
 | Popups | `AnchoredPopup` draws every list and calendar — portalled to `document.body`, placed from the trigger's rect, flipping and clamping to the room it has. **Never positioned inside its control** |
@@ -1208,10 +1217,11 @@ Implemented and enforced:
     one direction**, which is what lets it resolve to a single account. It is
     the field a Cash Bank Transaction's header starts from, and it decides the
     document's direction, its Budget Category, and whether a Partner is
-    required. Purposes are **rows in `sys_purpose`, generated from the
-    classification and never authored** — so a Budget Category created through
-    the GUI can be transacted immediately, which is the whole reason they
-    stopped being constants. The label is the only editable field. §12.
+    required. Purposes are **rows in `sys_purpose` that a maintainer enters** —
+    nothing generates them, so a Budget Category with none cannot be
+    transacted, which is a maintenance gap rather than a fault. The label is
+    **composed** from the three fields and never stored, so every Purpose reads
+    the same way. §12.
 
 22. **Operational books are independent append-only stores** — never views over
     journal lines. Only the General Ledger derives from journals.
@@ -1365,13 +1375,35 @@ Specified in the concept doc, **not yet implemented** (see §13):
   fiscal calendar, the mappings and the missing cash resources in dependency order.
   Tests build their own business fixtures (`tests/helpers.ts`) and clean them up.
 - **Sample business data has its own script, outside the seed.**
-  `scripts/sample-data.ts` (`npm run db:sample`) inserts six generic Partners, a
-  full Chart of Accounts for both Companies, and the Budget Category × Partner
-  Category → account mappings every Purpose in `rules.ts` needs, so a developer
-  has something to post against. It is deliberately *not* part of the seed, is never run by
-  install, migrate, reset or CI, and writes ordinary records — composed account
-  numbers, audit entries, editable through the GUI. It reuses anything already
-  present rather than overwriting it, and deletes nothing.
+  `scripts/seed-showcase.ts` (`npm run db:seed-showcase`) fills a development
+  database with a believable year of it: Partners for both Companies, a full
+  Chart of Accounts each, every Budget Category × Partner Category → account
+  mapping, the cash and bank resources with their opening balances and the
+  foreign one's first rate layer, an open fiscal year, Budgets across the
+  lifecycle, and the documents that realize them — Cash Bank Transactions, all
+  three kinds of Transfer, a confirmed and an open Funding Request, and a posted
+  and a draft manual journal. The goal is that **no menu is empty**, so a screen
+  can be judged on what it shows rather than on an empty state.
+  It replaced `scripts/sample-data.ts` (`npm run db:sample`), which stopped at
+  the setup tables and left every document screen blank.
+  It is deliberately *not* part of the seed, is never run by install, migrate,
+  reset or CI, and writes ordinary records — composed account numbers, audit
+  entries, editable through the GUI. It reuses anything already present rather
+  than overwriting it, and deletes nothing.
+- **Everything it posts goes through the real engine.** `applyPosting`,
+  `applyTransfer`, `confirmFundingRequest` and `postManualJournal`, never a
+  direct insert into a book. Inserting those rows would be faster and would
+  produce reports whose figures do not reconcile — which is worse than an empty
+  screen, because it looks like the application is wrong. It is also what makes
+  the script a standing check on the posting paths: a rule one of them breaks
+  refuses here, loudly, rather than being discovered on a report.
+- **The names are the point.** "Cabang Medan", "Budi Santoso", "Termin II
+  kontraktor gudang Cikarang" — on the user's instruction, because a showcase
+  populated with "Partner A" and "Category C" demonstrates the layout and
+  nothing else. The two Companies are renamed from the seeded "Perusahaan
+  Induk" / "Perusahaan Anak" to **ABHC** and **SBTC** for the same reason; that
+  is the one `sys_*` row it touches, and a reseed of a fresh database restores
+  the defaults.
 - **The seed is also idempotent and non-destructive.** It creates what is missing and
   leaves everything else alone, so it is safe to run against a live database and is
   how a newly added permission reaches it. The one exception is the permission
@@ -2121,6 +2153,17 @@ Specified in the concept doc, **not yet implemented** (see §13):
 ### A menu destination always renders (FROZEN)
 - **Decision:** Every entry `nav.ts` can show has a route that answers inside the shell.
   Where a destination is not built yet, the route exists anyway and explains itself.
+- **`tests/design-system.test.ts` holds it, one test per entry.** An entry
+  resolves either as a **registry entity whose slug *and module* both match**,
+  or as a route directory of its own — and the first segment of that route must
+  be a real directory, never the registry's `[entity]`. That last clause is the
+  whole point: every module holding registry entities also has a dynamic segment
+  matching any slug, so a weaker check calls a broken entry healthy.
+- **It has failed once.** Removing the Budget Category × Partner Category
+  pairing from the registry took `sys_purpose` out with it, and the Purpose menu
+  linked to a 404 for two rounds of work — nothing built, type-checked or tested
+  differently, because a menu entry is a string and a missing route is a runtime
+  `notFound()`.
 - **Reason:** The icon rail linked to `/finance/cash-bank-transaction`, which had no
   route: clicking it produced the framework's bare English 404, outside the design
   system, in an Indonesian application. `EntityLocked` already settled the principle for
@@ -2232,7 +2275,7 @@ they relate. Keep the table; keep it out of the UI's write path.
   `sys_budget_partner_category_mapping` holds one row per admitted pair. Both
   category tables gain `status`. `BUDGET_CATEGORY_RULES` in `rules.ts` is
   **gone**; `classification.ts` holds the same rules as pure functions over a
-  catalogue, and `classification-data.ts` loads it. Master > Klasifikasi is the
+  catalogue, and `classification-data.ts` loads it. Pengaturan > Klasifikasi is the
   GUI: three registry entities, no bespoke page.
 - **Reason:** The user is still discovering the model and needs to reshape it
   and see what pops up downstream, which a constant compiled into the build
@@ -2268,59 +2311,118 @@ they relate. Keep the table; keep it out of the UI's write path.
   pair.
 - **Status:** Frozen, current.
 
-### A Transaction Purpose is generated from the classification (FROZEN)
-- **Decision:** The Purposes live in `sys_purpose`, one row per combination of
-  Budget Category x Partner Category x direction, **generated** by
-  `syncPurposes` in `lib/siba/purposes.ts` and never authored. The GUI is a
-  registry entity under Master › Klasifikasi where the only editable field is
-  the **label**. There is no PURPOSE_CREATE.
-- **This supersedes "Transaction purposes stay application logic"**, which
-  froze the opposite and forbade exactly this table. **Confirmed with the user
-  before implementation.** The reason it no longer holds: the Budget Categories
-  became rows, and a category created through the GUI could be planned against,
-  mapped to an account and given a subject book — and still never reach a Cash
-  Bank Transaction, because no Purpose named it. That was the last link needing
-  a developer, which is the thing the whole sequence of changes was removing.
-  The old decision's stated reason — that a Purpose carries behaviour a generic
-  table cannot express — had already stopped being true: `purposeNeedsPartner`
-  was `partnerCategory != null` and everything else was plain data.
-- **Generated, because the set was always the cross product.** The original 22
-  were *exactly* category x admitted Partner Category x allowed direction — no
-  more and no fewer, verified entry by entry. So the set is derived and a new
-  category's Purposes appear the moment it is saved. Authoring them would mean
-  the Purpose list and the classification could disagree, with nothing to catch
-  it.
-- **The label is the one thing a person edits, and the generator never touches
-  it.** "Penerimaan Pinjaman dari Cabang" is a Hutang receipt and "Pemberian
-  Advance kepada Karyawan" is a Piutang payment: the sentence names the business
-  event, not the classification. 21 of the 22 fit a template; that one does not,
-  which is the proof that generated labels must be overridable. `syncPurposes`
-  writes a serviceable default (`Pengeluaran Produksi ke Cabang`) and leaves it
-  alone for ever after.
-- **The key is opaque and permanent.** `fin_cash_bank_transaction.purpose` holds
-  it, and a posted document is permanent — so the original 22 keep their
-  historical mnemonics (`TTP_CAB_IN`), transcribed verbatim from
-  `SEED_PURPOSES` in `rules.ts`, and generated ones carry `purp.NNNN`. Nothing
-  parses either.
-- **Additive, and nothing is deleted.** A combination the matrix no longer
-  implies is **deactivated**, so documents posted against it still resolve; a
-  combination that comes back reopens the same row rather than creating a
-  second. `purposeOptions` is unfiltered and is what a list reads a posted
-  document back through; `availablePurposeOptions` is what a picker reads.
-- **Kept in step by the write path.** `syncPurposesFor` in
-  `app/actions/master.ts` runs after every create, edit and status toggle on a
-  Budget Category, a Partner Category or a pairing — the three things that can
-  move the matrix.
-- **`rules.ts` is seed data now, not a runtime source.** It holds
-  `SEED_PURPOSES` and the `Purpose` type and nothing else. **Do not add an entry
-  to it** — a new Purpose comes from a new Budget Category or a new pairing.
-- **Do not change unless:** explicitly instructed. **Never author a Purpose by
-  hand**, never let the generator overwrite a label, never delete one, never
-  change a Purpose's category, Partner Category or direction (that would make it
-  a different Purpose against which documents are already posted), and do not
-  filter `purposeOptions`.
-- **Status:** Frozen, current. Supersedes "Transaction purposes stay application
-  logic".
+### A Budget Category is saved with what it admits, in one transaction (FROZEN)
+- **Decision:** Which Partner Categories a Budget Category admits is chosen on
+  the **Budget Category's own form**, as a `multiref` field, and written to
+  `sys_budget_partner_category_mapping` **inside the same transaction** that
+  writes the category. The pairing has no menu, no routes and no permissions of
+  its own; `BUDGET_PARTNER_CATEGORY_*` is gone from the catalogue.
+- **Reason:** it was two menus, so creating a category and saying what it admits
+  were two records, two forms and two saves — and a category saved between them
+  is **inert**: no Purpose names it and its subject book can receive nothing.
+  Making that state merely *refused* (the earlier "simpan dulu dengan status Non
+  Aktif…" message) left the user walking the detour every time. One transaction
+  makes it unreachable instead, which is the rule in §10 rule 93 applied to its
+  own cause rather than its symptom.
+- **One transaction, not one screen.** Role is the near precedent and does
+  **not** manage this: a new role is created, then its permission matrix is a
+  second Server Action call from the same click, with "Role dibuat tanpa
+  permission" written into the code as the failure path. That half-done state is
+  exactly the one this rule exists to prevent, so the reconcile runs inside
+  `createRecord`'s existing `prisma.$transaction` — the same place a Cash & Bank
+  resource's book and first rate layer are written — and `updateRecord` gained a
+  transaction for it.
+- **A set is picked, not ticked.** `multiref` renders `MultiSelect` — a
+  searchable `Combobox` that adds and chips that remove — never a checkbox per
+  option. A grid costs vertical space in proportion to the **catalogue** rather
+  than to the answer, and stops being scannable the moment the catalogue grows.
+  The same component draws the report filter's several-Partners picker, which
+  is where the pattern already existed; `tests/design-system.test.ts` fails on a
+  second implementation of the chip row.
+- **Arah is one field over two columns.** `allows_in` and `allows_out` are not
+  offered as two checkboxes, because two checkboxes can both be off — a
+  category moving in no direction classifies nothing, which the Server Action
+  and a CHECK constraint both refuse *after* the user has built it. The form
+  asks once, `Pengeluaran saja` / `Penerimaan saja` / `Keduanya`, and a required
+  select has no fourth state to reach. The columns are unchanged, because every
+  reader still wants the booleans. `derivedColumns` in `app/actions/master.ts`
+  writes them and `virtualValues` in `records.ts` reads them back — mirrors that
+  have to stay in step, which is what the round-trip test pins.
+- **`raises` is asked only where it is a choice.** A single-direction category's
+  book can only run that way, so the form stops asking and `derivedColumns`
+  answers; `categoryChoosesRaises` is the predicate. Only `Keduanya` is asked.
+- **`multiref` is a registry field type**, so this is config: `ref` names what
+  may be chosen and `joinTable` names where the set is stored. (`writesTo` was
+  taken — it is how a `segment` names the column its composed code goes into.)
+  `required` beside `visibleWhen` reads as "mandatory exactly when the category
+  names a Partner", because `validate` skips a field that does not apply.
+- **Nothing is deleted.** Unticking sets the pairing Inactive; re-ticking reopens
+  **the same row**, keeping its code, its authorship and its history, and never
+  contending the unique index. Clearing "Memakai Partner" retires every pairing,
+  because the field stops applying.
+- **Hidden, not waiting.** The grid and the two book fields disappear when
+  "Memakai Partner" is off. That is the user's own distinction: a field waiting
+  on a **prerequisite** stays visible and inert (`waitingFor`), while a field
+  that **does not apply to this record** is hidden. Filling in more of this form
+  cannot make it answerable, so it goes.
+- **Impact:** `reconcileMultiref` lives in `records.ts` rather than in the
+  Server Action, so `tests/purposes.test.ts` drives the real rule — an action
+  resolves its caller from a session cookie a test process does not have. The
+  join table's code series is declared in `master.ts` (`bpcm.`), because a
+  registry entity would otherwise have supplied it.
+- **Do not change unless:** explicitly instructed. **Never give the pairing its
+  own menu again**, never write the set outside the record's transaction, never
+  delete a pairing row, and do not let a `multiref` reach the entity's own table
+  — it is `virtual`.
+- **Status:** Frozen, current.
+
+### A Transaction Purpose is entered, and its label is composed (FROZEN)
+- **Decision:** Purposes are rows in `sys_purpose` that a maintainer **enters**
+  through Pengaturan › Klasifikasi › Transaction Purpose. Nothing generates one.
+  Each names a direction, a Budget Category and a Partner Category, all three
+  locked once saved, and its **label is composed** —
+  `<Penerimaan|Pengeluaran> <Budget Category> <dari|ke> <Partner Category>` —
+  never stored and never typed.
+- **This supersedes "A Transaction Purpose is generated from the
+  classification"**, which had `syncPurposes` derive the whole set so a new
+  Budget Category was transactable the moment it was saved. **Reversed on the
+  user's explicit instruction**, with the cost named by them: *"i understand it
+  will lead to blockage in transaction when not set but this is not a failure
+  but that mean the developer / maintenance at the time forget to add purpose in
+  db after adding new budget category."*
+- **Reason:** the table stands in for what somebody would otherwise type
+  straight into the database, and the screen exists to exercise that. A Budget
+  Category with no Purpose therefore cannot be transacted, and **that is the
+  correct outcome** — it means whoever added the category has not finished. The
+  gap is made *visible* (the Budget Category list carries a `Purpose` count) and
+  is never closed automatically.
+- **The label is computed, so it cannot drift.** Storing it would let a renamed
+  Budget Category leave its Purposes reading the old name. It also makes the
+  format uniform by construction: there is no field to type a one-off into, and
+  no Sebutan on the form. What that discarded is the hand-written wording the
+  original 22 carried — "Pemberian Advance kepada Karyawan" is now "Pengeluaran
+  Piutang ke Karyawan". **Uniformity was chosen over naming the business
+  event**, deliberately.
+- **A consequence in the picker.** Every label now opens with its direction, so
+  the chip that used to carry it was repeating a word the label already says —
+  which is what the grouped-list decision forbids. The chip is gone; the group
+  still states the Budget Category once.
+- **The keys are unchanged and permanent.** `fin_cash_bank_transaction.purpose`
+  holds them, and a posted document is permanent, so the original 22 keep their
+  mnemonics (`TTP_CAB_IN`) — which is the only reason `SEED_PURPOSES` in
+  `rules.ts` still exists. Entered ones carry `purp.NNNN`.
+- **What is refused, and what is only hidden.** A Purpose naming a combination
+  the classification does not admit is **refused at creation** — it could never
+  be used, and an inert row is the thing §10 rule 93 forbids. But a pairing
+  retired *afterwards* writes nothing: `availablePurposes` simply stops offering
+  the Purpose, because Budget approval would refuse that classification anyway.
+  A read-side filter where a write-side generator is not wanted.
+- **Do not change unless:** explicitly instructed. **Never generate a Purpose**,
+  never store its label, never add a "generate missing" action, never change a
+  saved Purpose's direction, category or Partner Category, and do not filter
+  `purposeOptions` — that is what a posted document is read back through.
+- **Status:** Frozen, current. Supersedes "A Transaction Purpose is generated
+  from the classification".
 
 ### The Cash Bank Book is the only source of a balance (FROZEN)
 - **Decision:** `m_cash_bank` has **no** balance column. Every movement is an entry in
@@ -3287,7 +3389,14 @@ process allowed to restate positions, and it is not built.
   architecture, or build a configurable funding-provider mechanism.
 - Do **not** delete a Budget Category x Partner Category pair, let a category allow
   neither direction, or let a `require_partner = false` category hold a pair. A pair
-  is deactivated, and the mirror rule is refused by name (§12).
+  is deactivated, and unticking one on the form retires it (§12).
+- Do **not** give the Budget Category x Partner Category pairing its own menu again,
+  or write the set outside the transaction that writes the category. Two saves is how
+  an inert category becomes reachable (§12).
+- Do **not** render a set as a checkbox grid, or rebuild the add-and-remove chip row.
+  `MultiSelect` in `components/ui` is the one implementation (§8, §12).
+- Do **not** offer `allows_in` and `allows_out` as two checkboxes again. Both can be
+  off, which is a category that classifies nothing — Arah asks once (§12).
 - Do **not** put the Budget Category rules back in code, or read them anywhere but
   `loadClassification`. `BUDGET_CATEGORY_RULES` is gone (§12).
 - Do **not** show a direction as `In` or `Out`, or invent a second Indonesian pair
@@ -3296,9 +3405,12 @@ process allowed to restate positions, and it is not built.
   through. A picker uses `availablePurposeOptions` (§12).
 - Do **not** resolve a Budget Category from a Purpose's label. A Purpose row carries
   `budgetCategoryId`; the category owns the book and the mapping (§12).
-- Do **not** author a Transaction Purpose by hand, delete one, change its category,
-  Partner Category or direction, or let the generator overwrite a label. Purposes are
-  generated from the classification and retired by deactivation (§12).
+- Do **not** generate a Transaction Purpose, store its label, or add a "generate
+  missing" action. They are entered; a Budget Category with none is a maintenance
+  gap, not a fault to design away (§12).
+- Do **not** change a saved Purpose's direction, Budget Category or Partner Category.
+  That would not edit it — it would make it a different Purpose, against which
+  documents are already posted (§12).
 - Do **not** add an entry to `SEED_PURPOSES` in `rules.ts`. It is the historical 22,
   planted once; a new Purpose comes from a new Budget Category or pairing (§12).
 - Do **not** create an exchange-rate master table, a rate-fetching service, or a

@@ -445,10 +445,6 @@ model SysPurpose {
   partner_category_id Int?
   direction           FlowDirection
 
-  /// The Indonesian sentence naming the business event, not the classification.
-  /// Editable, and the only field that is.
-  label String
-
   note   String?
   status ActiveStatus @default(Active)
 

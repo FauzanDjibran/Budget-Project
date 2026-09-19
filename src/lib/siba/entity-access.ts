@@ -58,19 +58,12 @@ const ENTITY_PERMISSIONS: Record<string, EntityPermissions> = {
     activate: "PARTNER_CATEGORY_ACTIVATE",
     deactivate: "PARTNER_CATEGORY_DEACTIVATE",
   },
-  // No create: generated, not authored.
   sys_purpose: {
     view: "PURPOSE_VIEW",
+    create: "PURPOSE_CREATE",
     edit: "PURPOSE_EDIT",
     activate: "PURPOSE_ACTIVATE",
     deactivate: "PURPOSE_DEACTIVATE",
-  },
-  sys_budget_partner_category_mapping: {
-    view: "BUDGET_PARTNER_CATEGORY_VIEW",
-    create: "BUDGET_PARTNER_CATEGORY_CREATE",
-    edit: "BUDGET_PARTNER_CATEGORY_EDIT",
-    activate: "BUDGET_PARTNER_CATEGORY_ACTIVATE",
-    deactivate: "BUDGET_PARTNER_CATEGORY_DEACTIVATE",
   },
   acc_account: {
     view: "ACCOUNT_VIEW",

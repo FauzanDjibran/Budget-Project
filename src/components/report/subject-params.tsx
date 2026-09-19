@@ -3,10 +3,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
-import { Combobox } from "@/components/ui/combobox";
 import { DateInput } from "@/components/ui/date-input";
 import type { RefOption } from "@/lib/siba/records";
 import { reportHref } from "@/lib/siba/reports";
+import { MultiSelect } from "@/components/ui/multi-select";
 
 /**
  * The filter for every report whose subject is a **set**: several accounts for
@@ -78,15 +78,6 @@ export function SubjectParams({
   const invalidRange = Boolean(start && end && start > end);
   const missingSubject = subjectRequired && selected.length === 0;
 
-  const byId = new Map(subjects.map((s) => [s.id, s]));
-  const remaining = subjects.filter((s) => !selected.includes(s.id));
-
-  const add = (id: number | null) => {
-    if (id == null || selected.includes(id)) return;
-    setSelected((s) => [...s, id]);
-  };
-  const remove = (id: number) => setSelected((s) => s.filter((x) => x !== id));
-
   const run = () => {
     if (invalidRange || missingSubject) return;
     startTransition(() => {
@@ -106,11 +97,13 @@ export function SubjectParams({
     <>
       <span className="rl">{label}</span>
       <div className="rf wide">
-        <Combobox
-          value={null}
-          options={remaining}
-          placeholder={subjectRequired ? addPlaceholder : allPlaceholder}
-          onChange={add}
+        <MultiSelect
+          value={selected}
+          options={subjects}
+          placeholder={addPlaceholder}
+          emptyPlaceholder={subjectRequired ? addPlaceholder : allPlaceholder}
+          removeTitle="Keluarkan dari laporan"
+          onChange={setSelected}
         />
       </div>
 
@@ -147,26 +140,6 @@ export function SubjectParams({
         </span>
       )}
 
-      {selected.length > 0 && (
-        <div className="rchips">
-          {selected.map((id) => (
-            <button
-              key={id}
-              className="rchip"
-              title="Keluarkan dari laporan"
-              onClick={() => remove(id)}
-            >
-              {byId.get(id)?.label ?? id}
-              <Icon name="block" size={10} />
-            </button>
-          ))}
-          {selected.length > 1 && (
-            <button className="lnk" onClick={() => setSelected([])}>
-              Bersihkan
-            </button>
-          )}
-        </div>
-      )}
     </>
   );
 }

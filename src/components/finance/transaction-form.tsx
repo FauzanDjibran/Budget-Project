@@ -665,19 +665,21 @@ export function TransactionForm({
                         invalid={Boolean(errors.purpose)}
                         placeholder="Pilih Purpose…"
                         // A Purpose *is* direction x Category x Partner
-                        // Category, and its label is that triple written as a
-                        // sentence — so the Category chip repeated a word the
-                        // label already said while starving it of the width it
-                        // needed to reach its last one, which is where every
-                        // label names the Partner Category. The group states
-                        // the Category once, the chip states the direction
-                        // (which "Pembayaran", "Pemberian" and "Pembelian" all
-                        // imply without spelling), and the label gets the rest.
+                        // Category, and its label is now that triple written
+                        // out in one fixed order — so the group states the
+                        // Category once instead of 22 times, and there is no
+                        // chip at all.
+                        //
+                        // There used to be one carrying the direction, because
+                        // "Pembayaran", "Pemberian" and "Pembelian" all implied
+                        // it without spelling it. Every label opens with
+                        // Penerimaan or Pengeluaran now, so that chip would
+                        // repeat a word the label already says — which is the
+                        // thing the rule forbids (§12).
                         options={purposes.map((p) => ({
                           value: p.key,
                           label: p.label,
                           group: p.budgetCategory,
-                          hint: TRANSACTION_TYPE_TEXT[p.direction],
                         }))}
                         onChange={(v) => set("purpose", v)}
                       />

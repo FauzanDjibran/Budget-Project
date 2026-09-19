@@ -46,7 +46,23 @@ export type FieldType =
    * Server Action writes `1.1.1.5` into the field named by `writesTo`. See
    * `lib/siba/account-code.ts` — Chart of Accounts is the entity that needs it.
    */
-  | "segment";
+  | "segment"
+  /**
+   * A **set** of references, written to a join table rather than to a column on
+   * this row — which Partner Categories a Budget Category admits.
+   *
+   * The registry could already write a child row (a Cash & Bank resource opens
+   * its book in the same transaction it is registered in); this is the same
+   * mechanism for a set of them. It exists because the alternative was a second
+   * menu: the pairing used to be its own entity, so creating a category and
+   * saying what it admits were two records, two forms and two saves — and a
+   * category saved between them is inert, which is a state the application now
+   * refuses outright.
+   *
+   * Never deletes. Unticking a reference **deactivates** its row and re-ticking
+   * reopens the same one, so a pairing keeps its history and its code.
+   */
+  | "multiref";
 
 export type Field = {
   name: string;
@@ -95,6 +111,11 @@ export type Field = {
   /** `ref` target entity key. */
   ref?: string;
   /**
+   * For a `multiref`: the join entity whose rows carry the set. The Server
+   * Action reconciles it inside the same transaction that writes this record.
+   */
+  joinTable?: string;
+  /**
    * Named narrowing for a ref field. The server applies the structural half
    * (postable, subcategory, active) when it builds the options; the form
    * applies the half that depends on values the user is still choosing, such
@@ -104,7 +125,8 @@ export type Field = {
     | "cashBankAccount"
     | "postableAccount"
     | "parentAccount"
-    | "mappingPartnerCategory";
+    /** Only the Partner Categories the chosen Budget Category admits. */
+    | "admittedPartnerCategory";
   /**
    * Named predicate deciding whether the field applies at all. A field that
    * does not apply is hidden and stored as null — the Server Action evaluates
@@ -113,6 +135,13 @@ export type Field = {
   visibleWhen?:
     | "accountRequiresPartner"
     | "budgetCategoryRequiresPartner"
+    /**
+     * A Budget Category that keeps a book **and** moves both ways, so which
+     * direction raises its subject is a real choice. A single-direction
+     * category's book can only run that way — the CHECK constraint says as
+     * much — so asking would be offering one answer.
+     */
+    | "categoryChoosesRaises"
     /**
      * The chosen `currency_id` is not the base currency. A base-currency
      * resource needs no kurs — asking for one and answering "1" would be a
@@ -547,17 +576,22 @@ export const ENTITIES: Entity[] = [
     ],
   },
 
-  // ---------------------------------------------------- master · klasifikasi
+  // ------------------------------------------------ pengaturan · klasifikasi
   //
   // The classification chain, as three editable entities. These are `sys_`
   // tables the seeder still plants, but the model they describe is the part of
   // the business still being discovered — so they are read from the database
   // rather than compiled in, and reshaped here. See `classification.ts`.
+  //
+  // Under Pengaturan rather than Master because they configure how the
+  // application classifies, which is a different job from maintaining the
+  // records it classifies — a Partner or a Cash & Bank resource is data
+  // somebody enters daily, while these are set up once and revisited rarely.
 
   {
     key: "sys_budget_category",
     slug: "budget-category",
-    module: "master",
+    module: "settings",
     name: "Budget Category",
     icon: "tags",
     desc: "Klasifikasi yang diberikan saat Budget disetujui. Menentukan arah yang berlaku, apakah memakai Partner, dan Partner Category mana yang boleh dipilih.",
@@ -587,27 +621,55 @@ export const ENTITIES: Entity[] = [
         placeholder: "Hutang kepada pihak lain",
         help: "nama lengkap",
       },
+      // One field rather than two checkboxes, because two checkboxes can both
+      // be off — a category that moves in no direction could classify no
+      // Budget at all, and the Server Action and a CHECK constraint both refuse
+      // it. A required select has no such state to reach: the bad combination
+      // stops being something a user can build and then be told about.
+      //
+      // Virtual: it is written as `allows_in` / `allows_out`, which is what
+      // every reader still asks for. See `derivedColumns` in
+      // `app/actions/master.ts`.
       {
-        name: "allows_out",
-        label: "Berlaku untuk Pengeluaran",
-        type: "bool",
+        name: "direction_mode",
+        label: "Arah",
+        type: "select",
+        options: ["Out", "In", "Both"],
+        optionLabels: {
+          Out: "Pengeluaran saja",
+          In: "Penerimaan saja",
+          Both: "Keduanya",
+        },
+        required: true,
+        virtual: true,
         span: 4,
-        help: "arah mengikuti logika neraca, bukan arah kas",
-      },
-      {
-        name: "allows_in",
-        label: "Berlaku untuk Penerimaan",
-        type: "bool",
-        span: 4,
-        help: "boleh keduanya",
+        help: "mengikuti logika neraca, bukan arah kas",
       },
       {
         name: "require_partner",
         label: "Memakai Partner",
         type: "bool",
         span: 4,
-        resets: ["raises", "book_closing_label"],
+        resets: ["raises", "book_closing_label", "partner_category_ids"],
         help: "matikan bila kategori ini tidak punya subjek",
+      },
+      // Chosen here rather than on a menu of its own. A category that names a
+      // Partner is only usable once it admits at least one Partner Category —
+      // no Purpose is generated for it otherwise, and its subject book can
+      // never receive an entry — so the two belong in one save. `required`
+      // together with `visibleWhen` reads as "mandatory exactly when the
+      // category names a Partner".
+      {
+        name: "partner_category_ids",
+        label: "Partner Category",
+        type: "multiref",
+        ref: "sys_partner_category",
+        joinTable: "sys_budget_partner_category_mapping",
+        virtual: true,
+        required: true,
+        visibleWhen: "accountRequiresPartner",
+        span: 12,
+        help: "boleh dipilih saat Budget kategori ini disetujui",
       },
       // A category that names a Partner keeps a subject book, and these two are
       // what that book needs. `raises` is the only fact nothing else predicts:
@@ -627,7 +689,7 @@ export const ENTITIES: Entity[] = [
         // optional produced a category that could be transacted while its
         // subject book silently recorded nothing.
         required: true,
-        visibleWhen: "accountRequiresPartner",
+        visibleWhen: "categoryChoosesRaises",
         span: 4,
         help: "arah yang menambah posisi subjek",
       },
@@ -649,6 +711,7 @@ export const ENTITIES: Entity[] = [
       { field: "directions", label: "Arah", computed: true, width: "170px" },
       { field: "partner_categories", label: "Partner Category", computed: true, width: "210px" },
       { field: "book", label: "Buku Subjek", computed: true, width: "150px" },
+      { field: "purpose_count", label: "Purpose", computed: true, numeric: true, width: "92px" },
       { field: "budget_count", label: "Budget", computed: true, numeric: true, width: "86px" },
       { field: "status", label: "Status", isStatus: true, width: "104px", filter: "enum" },
     ],
@@ -657,7 +720,7 @@ export const ENTITIES: Entity[] = [
   {
     key: "sys_partner_category",
     slug: "partner-category",
-    module: "master",
+    module: "settings",
     name: "Partner Category",
     icon: "users",
     desc: "Jenis Partner — Cabang, Karyawan, Stakeholder. Menentukan Partner mana yang boleh dipilih untuk sebuah Budget Category.",
@@ -700,84 +763,25 @@ export const ENTITIES: Entity[] = [
   },
 
   {
-    key: "sys_budget_partner_category_mapping",
-    slug: "budget-partner-category",
-    module: "master",
-    name: "Partner Category per Budget Category",
-    single: "Klasifikasi",
-    icon: "link",
-    desc: "Partner Category mana yang boleh dipilih untuk setiap Budget Category — rantai Budget Category ke Partner Category ke Partner.",
-    codeField: "mapping_code",
-    codePrefix: "bpcm",
-    titleRefs: ["budget_category_id", "partner_category_id"],
-    statusModel: ACTIVE_STATUS,
-    fields: [
-      {
-        name: "budget_category_id",
-        label: "Budget Category",
-        type: "ref",
-        ref: "sys_budget_category",
-        required: true,
-        locked: true,
-        resets: ["partner_category_id"],
-        help: "hanya kategori yang memakai Partner",
-      },
-      {
-        name: "partner_category_id",
-        label: "Partner Category",
-        type: "ref",
-        ref: "sys_partner_category",
-        required: true,
-        locked: true,
-        help: "boleh dipilih saat Budget kategori ini disetujui",
-      },
-      STATUS_FIELD,
-      NOTE_FIELD,
-    ],
-    columns: [
-      { field: "budget_category_id", label: "Budget Category", isRef: true, refLabelOnly: true, width: "190px", filter: "ref" },
-      { field: "partner_category_id", label: "Partner Category", isRef: true, primary: true, filter: "ref" },
-      { field: "status", label: "Status", isStatus: true, width: "110px", filter: "enum" },
-      { field: "note", label: "Catatan", muted: true, truncate: true },
-    ],
-  },
-
-  {
     key: "sys_purpose",
     slug: "purpose",
-    module: "master",
+    module: "settings",
     name: "Transaction Purpose",
     single: "Purpose",
     icon: "tags",
-    desc: "Arah × Budget Category × Partner Category, sebagaimana dipilih pada Cash Bank Transaction. Dibuat otomatis dari Klasifikasi; yang dapat diubah hanya sebutannya.",
+    desc: "Arah × Budget Category × Partner Category, sebagaimana dipilih pada Cash Bank Transaction. Ditambahkan sendiri — Budget Category tanpa Purpose belum dapat ditransaksikan.",
     codeField: "purpose_key",
     codePrefix: "purp",
-    nameField: "label",
     statusModel: ACTIVE_STATUS,
     fields: [
-      // Everything but the label is locked. A Purpose *is* the triple
-      // direction × Budget Category × Partner Category, so editing one of them
-      // would not change this Purpose — it would silently make it a different
-      // one, against which documents have already been posted.
-      {
-        name: "budget_category_id",
-        label: "Budget Category",
-        type: "ref",
-        ref: "sys_budget_category",
-        required: true,
-        locked: true,
-        span: 4,
-        help: "menentukan Budget yang dapat direalisasikan",
-      },
-      {
-        name: "partner_category_id",
-        label: "Partner Category",
-        type: "ref",
-        ref: "sys_partner_category",
-        locked: true,
-        span: 4,
-        help: "kosong bila Purpose ini tanpa Partner",
-      },
+      // A Purpose *is* the triple direction × Budget Category × Partner
+      // Category, so all three are chosen once and locked. Editing one would
+      // not change this Purpose — it would silently make it a different one,
+      // against which documents have already been posted.
+      //
+      // There is no Sebutan: the label is composed from these three
+      // (`purposeLabel` in `purposes.ts`), so every Purpose reads the same way
+      // and none can drift from what it describes.
       {
         name: "direction",
         label: "Arah",
@@ -790,19 +794,37 @@ export const ENTITIES: Entity[] = [
         help: "arah kas dokumen",
       },
       {
-        name: "label",
-        label: "Sebutan",
-        type: "text",
+        name: "budget_category_id",
+        label: "Budget Category",
+        type: "ref",
+        ref: "sys_budget_category",
         required: true,
-        full: true,
-        placeholder: "Pembayaran Hutang ke Cabang",
-        help: "menamai peristiwa bisnis, bukan klasifikasinya",
+        locked: true,
+        resets: ["partner_category_id"],
+        span: 4,
+        help: "menentukan Budget yang dapat direalisasikan",
+      },
+      {
+        name: "partner_category_id",
+        label: "Partner Category",
+        type: "ref",
+        ref: "sys_partner_category",
+        required: true,
+        locked: true,
+        // Shown only where the Budget Category names a subject, and offering
+        // only the Partner Categories that category admits — so the reader
+        // never has to guess which ones a Budget Category takes, and cannot
+        // pick one `validatePurpose` would then refuse.
+        visibleWhen: "budgetCategoryRequiresPartner",
+        refFilter: "admittedPartnerCategory",
+        span: 4,
+        help: "hanya yang diakui Budget Category itu",
       },
       STATUS_FIELD,
       NOTE_FIELD,
     ],
     columns: [
-      { field: "label", label: "Sebutan", primary: true, filter: "text" },
+      { field: "label", label: "Sebutan", computed: true, primary: true },
       { field: "direction", label: "Arah", computed: true, width: "128px" },
       { field: "budget_category_id", label: "Budget Category", isRef: true, refLabelOnly: true, width: "160px", filter: "ref" },
       { field: "partner_category_id", label: "Partner Category", isRef: true, refLabelOnly: true, width: "150px", filter: "ref" },
@@ -990,7 +1012,7 @@ export const ENTITIES: Entity[] = [
         type: "ref",
         ref: "sys_partner_category",
         required: true,
-        refFilter: "mappingPartnerCategory",
+        refFilter: "admittedPartnerCategory",
         visibleWhen: "budgetCategoryRequiresPartner",
         resets: ["account_id"],
         help: "satu kombinasi menuju tepat satu Account",
@@ -1147,6 +1169,10 @@ export function fieldApplies(
   if (field.visibleWhen === "accountRequiresPartner") {
     const v = values.require_partner;
     return v === true || v === "true";
+  }
+  if (field.visibleWhen === "categoryChoosesRaises") {
+    const v = values.require_partner;
+    return (v === true || v === "true") && values.direction_mode === "Both";
   }
   if (field.visibleWhen === "currencyIsForeign") {
     const label = currencyLabelOf?.(values.currency_id);

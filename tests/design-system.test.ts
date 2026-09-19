@@ -1,6 +1,8 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { MODULES } from "../src/lib/siba/nav";
+import { entityBySlug } from "../src/lib/siba/entities";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   orderForHeader,
@@ -877,6 +879,128 @@ describe("a select displays the label it offered", () => {
       assert.ok(
         after.includes("Pengeluaran") && after.includes("Penerimaan"),
         "a direction select must carry optionLabels for Penerimaan and Pengeluaran"
+      );
+    }
+  });
+});
+
+// ------------------------------------------- one control for "several of X"
+
+/**
+ * A set is chosen through one component, not markup copied between screens.
+ *
+ * The add-and-remove-chips pattern existed once, in the report filter bar. When
+ * a Budget Category needed the same thing for its Partner Categories, the
+ * cheaper move was to copy it — which is exactly the drift this suite exists to
+ * catch, and how the search box ended up with seven implementations.
+ */
+describe("several of something is one component", () => {
+  const files = sourceFiles(join(process.cwd(), "src"));
+
+  test("only MultiSelect renders a removable chip", () => {
+    const offenders = files.filter(
+      (f) =>
+        !f.endsWith("multi-select.tsx") &&
+        /className="rchip"/.test(readFileSync(f, "utf8"))
+    );
+    assert.deepEqual(
+      offenders.map((f) => f.replace(process.cwd(), "")),
+      [],
+      "use MultiSelect from components/ui rather than rebuilding the chip row"
+    );
+  });
+
+  test("a multiref field is rendered by it", () => {
+    const form = readFileSync(
+      join(process.cwd(), "src/components/master/entity-form.tsx"),
+      "utf8"
+    );
+    // The editable branch, not the read-only one above it: a saved record
+    // shows its set as badges, which is correct and is not a control.
+    const editable = form.slice(form.indexOf("function editableControl("));
+    const branch = editable.slice(editable.indexOf(`if (field.type === "multiref")`));
+    const body = branch.slice(0, branch.indexOf(`if (field.type === "bool")`));
+    assert.ok(
+      body.includes("<MultiSelect"),
+      "a growing list wants a searchable picker, not a checkbox per option"
+    );
+  });
+});
+
+// ------------------------------------------- every menu entry has a destination
+
+/**
+ * A menu entry whose route does not answer is the failure this suite exists for:
+ * it breaks nothing at build time, nothing at type-check time, and nothing until
+ * somebody clicks it.
+ *
+ * It has happened once. Removing an entity from the registry took a second one
+ * with it, and `/settings/purpose` 404'd for two rounds of work while the menu
+ * went on linking to it — caught by a test that happened to call
+ * `requireEntity`, not by anything watching the menu.
+ *
+ * An entry resolves one of two ways: a registry entity whose slug **and module**
+ * both match, or a route directory of its own. Nothing else counts.
+ */
+describe("a menu destination always renders", () => {
+  const appDir = join(process.cwd(), "src/app/(app)");
+
+  /**
+   * A route of the entry's own — not the registry's `[entity]`.
+   *
+   * The **first** segment has to be a real directory, which is what makes this
+   * test able to fail. Every module holding registry entities also has a
+   * dynamic `[entity]` segment that matches any slug at all, so accepting a
+   * dynamic match here would have declared the missing-entity bug healthy:
+   * `/settings/purpose` resolved to `[entity]`, which then called
+   * `notFound()`. Deeper segments may be dynamic — `report/cash-bank-ledger`
+   * is served by `report/[report]`, and `report` is a directory.
+   */
+  const ownRouteExists = (moduleKey: string, slug: string): boolean => {
+    const segments = slug.split("/");
+    let dir = join(appDir, moduleKey, segments[0]);
+    if (!existsSync(dir)) return false;
+    for (const segment of segments.slice(1)) {
+      const entries = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory());
+      const next =
+        entries.find((e) => e.name === segment) ?? entries.find((e) => e.name.startsWith("["));
+      if (!next) return false;
+      dir = join(dir, next.name);
+    }
+    return existsSync(join(dir, "page.tsx"));
+  };
+
+  for (const mod of MODULES) {
+    for (const group of mod.groups ?? []) {
+      for (const entry of group.entities) {
+        test(`/${mod.key}/${entry.slug} answers`, () => {
+          const entity = entityBySlug(entry.slug);
+          if (entity) {
+            // Served by the registry. Its module has to agree, or `resolve`
+            // in entity-pages.tsx calls notFound().
+            assert.equal(
+              entity.module,
+              mod.key,
+              `${entry.slug} is a ${entity.module} entity but the menu lists it under ${mod.key}, ` +
+                "so its route resolves it to a 404"
+            );
+            return;
+          }
+          assert.ok(
+            ownRouteExists(mod.key, entry.slug),
+            `${entry.slug} is in no registry and has no route of its own under ` +
+              `src/app/(app)/${mod.key} — the menu links to a 404`
+          );
+        });
+      }
+    }
+  }
+
+  test("a module with no groups is a page of its own", () => {
+    for (const mod of MODULES.filter((m) => !m.groups)) {
+      assert.ok(
+        existsSync(join(appDir, mod.key, "page.tsx")),
+        `${mod.key} is a single page and needs one`
       );
     }
   });

@@ -93,32 +93,26 @@ export const PERMISSIONS = [
   // reshaping which Partner Categories a Budget Category admits changes what
   // every future approval may classify, which is a different decision from
   // maintaining the records classified by it.
-  { code: "BUDGET_CATEGORY_VIEW", name: "Lihat Budget Category", module: "master" },
-  { code: "BUDGET_CATEGORY_CREATE", name: "Tambah Budget Category", module: "master" },
-  { code: "BUDGET_CATEGORY_EDIT", name: "Ubah Budget Category", module: "master" },
-  { code: "BUDGET_CATEGORY_ACTIVATE", name: "Aktifkan Budget Category", module: "master" },
-  { code: "BUDGET_CATEGORY_DEACTIVATE", name: "Nonaktifkan Budget Category", module: "master" },
+  { code: "BUDGET_CATEGORY_VIEW", name: "Lihat Budget Category", module: "settings" },
+  { code: "BUDGET_CATEGORY_CREATE", name: "Tambah Budget Category", module: "settings" },
+  { code: "BUDGET_CATEGORY_EDIT", name: "Ubah Budget Category", module: "settings" },
+  { code: "BUDGET_CATEGORY_ACTIVATE", name: "Aktifkan Budget Category", module: "settings" },
+  { code: "BUDGET_CATEGORY_DEACTIVATE", name: "Nonaktifkan Budget Category", module: "settings" },
 
-  { code: "PARTNER_CATEGORY_VIEW", name: "Lihat Partner Category", module: "master" },
-  { code: "PARTNER_CATEGORY_CREATE", name: "Tambah Partner Category", module: "master" },
-  { code: "PARTNER_CATEGORY_EDIT", name: "Ubah Partner Category", module: "master" },
-  { code: "PARTNER_CATEGORY_ACTIVATE", name: "Aktifkan Partner Category", module: "master" },
-  { code: "PARTNER_CATEGORY_DEACTIVATE", name: "Nonaktifkan Partner Category", module: "master" },
+  { code: "PARTNER_CATEGORY_VIEW", name: "Lihat Partner Category", module: "settings" },
+  { code: "PARTNER_CATEGORY_CREATE", name: "Tambah Partner Category", module: "settings" },
+  { code: "PARTNER_CATEGORY_EDIT", name: "Ubah Partner Category", module: "settings" },
+  { code: "PARTNER_CATEGORY_ACTIVATE", name: "Aktifkan Partner Category", module: "settings" },
+  { code: "PARTNER_CATEGORY_DEACTIVATE", name: "Nonaktifkan Partner Category", module: "settings" },
 
-  // No PURPOSE_CREATE: a Purpose is generated from the classification, never
-  // authored. Creating one by hand could only duplicate a combination the
-  // matrix already implies or invent one it does not — both of which are how
-  // the Purpose list and the classification start disagreeing.
-  { code: "PURPOSE_VIEW", name: "Lihat Transaction Purpose", module: "master" },
-  { code: "PURPOSE_EDIT", name: "Ubah sebutan Transaction Purpose", module: "master" },
-  { code: "PURPOSE_ACTIVATE", name: "Aktifkan Transaction Purpose", module: "master" },
-  { code: "PURPOSE_DEACTIVATE", name: "Nonaktifkan Transaction Purpose", module: "master" },
-
-  { code: "BUDGET_PARTNER_CATEGORY_VIEW", name: "Lihat Klasifikasi Budget-Partner", module: "master" },
-  { code: "BUDGET_PARTNER_CATEGORY_CREATE", name: "Tambah Klasifikasi Budget-Partner", module: "master" },
-  { code: "BUDGET_PARTNER_CATEGORY_EDIT", name: "Ubah Klasifikasi Budget-Partner", module: "master" },
-  { code: "BUDGET_PARTNER_CATEGORY_ACTIVATE", name: "Aktifkan Klasifikasi Budget-Partner", module: "master" },
-  { code: "BUDGET_PARTNER_CATEGORY_DEACTIVATE", name: "Nonaktifkan Klasifikasi Budget-Partner", module: "master" },
+  // A Purpose is entered, not generated: `sys_purpose` stands in for what a
+  // maintainer would type into the database, so adding one is an ordinary
+  // capability like any other master record's.
+  { code: "PURPOSE_VIEW", name: "Lihat Transaction Purpose", module: "settings" },
+  { code: "PURPOSE_CREATE", name: "Tambah Transaction Purpose", module: "settings" },
+  { code: "PURPOSE_EDIT", name: "Ubah sebutan Transaction Purpose", module: "settings" },
+  { code: "PURPOSE_ACTIVATE", name: "Aktifkan Transaction Purpose", module: "settings" },
+  { code: "PURPOSE_DEACTIVATE", name: "Nonaktifkan Transaction Purpose", module: "settings" },
 
   // ---------------------------------------------------------------- accounting
   { code: "MENU_ACCOUNTING_ACCESS", name: "Akses menu Accounting", module: "accounting" },

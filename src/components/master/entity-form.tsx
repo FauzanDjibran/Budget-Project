@@ -46,6 +46,7 @@ import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
 import { recordTitle } from "@/lib/siba/record-title";
+import { MultiSelect } from "@/components/ui/multi-select";
 
 export type FormMode = "new" | "view" | "edit";
 
@@ -220,7 +221,7 @@ export function EntityForm({
             o.id !== row?.id
         );
       }
-      case "mappingPartnerCategory": {
+      case "admittedPartnerCategory": {
         const label = budgetCategoryLabel(values.budget_category_id);
         if (!label) return [];
         const allowed = allowedPartnerCategories(classification, label);
@@ -616,6 +617,20 @@ function readOnlyBody({
       <div className="ro nil">tidak diisi</div>
     );
   }
+  if (field.type === "multiref") {
+    const selected = new Set(idsOf(raw as string | null | undefined));
+    const chosen = options.filter((o) => selected.has(o.id));
+    if (!chosen.length) return <div className="ro nil">tidak diisi</div>;
+    return (
+      <div className="ro">
+        {chosen.map((o) => (
+          <span className="bdg t-slate" key={o.id}>
+            {o.label}
+          </span>
+        ))}
+      </div>
+    );
+  }
   if (field.type === "bool") {
     return (
       <div className="ro">
@@ -690,6 +705,19 @@ function readOnlyBody({
   );
 }
 
+/**
+ * A multiref's value, however it arrived — an array from the loader, a
+ * comma-separated string from the form's own state.
+ */
+function idsOf(value: unknown): number[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value !== ""
+      ? value.split(",")
+      : [];
+  return raw.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0);
+}
+
 function editableControl({
   field,
   value,
@@ -711,6 +739,23 @@ function editableControl({
   waitingFor?: string | null;
   onChange: (value: string | boolean | null) => void;
 }): React.ReactNode {
+  if (field.type === "multiref") {
+    // A set, not a value: the ids travel as a comma-separated string so the
+    // rest of the form keeps handling one scalar per field, and the Server
+    // Action parses it back with the same tolerance it gives an array.
+    return (
+      <MultiSelect
+        value={idsOf(value)}
+        options={options}
+        placeholder={`Tambah ${field.label}…`}
+        emptyPlaceholder={`Pilih ${field.label}…`}
+        removeTitle={`Keluarkan dari ${field.label}`}
+        invalid={Boolean(error)}
+        disabled={locked}
+        onChange={(ids) => onChange(ids.join(","))}
+      />
+    );
+  }
   if (field.type === "bool") {
     // A caption that stands on its own gets the one-line control, so a form
     // full of toggles does not read as a wall of explanation.
