@@ -169,15 +169,32 @@ const BUDGET_CATEGORIES: [
   note: string,
   directions: ("In" | "Out")[],
   partnerCategories: string[],
+  /**
+   * Which cash direction **raises** the subject's position, and so whether the
+   * category keeps a subject book at all.
+   *
+   * Balance-sheet logic, never cash direction: money leaving raises a Piutang,
+   * a Prive and an Investasi, and *lowers* a Hutang or a Titipan. A book that
+   * mirrored the cash flow would print every position backwards.
+   *
+   * Null exactly where the category names no Partner, because a book with no
+   * subject is not a book. The pairing is mandatory in both directions:
+   * `sys_budget_category_partner_implies_book` refuses a row that names a
+   * Partner without saying which way its book runs, so a fresh database cannot
+   * be seeded at all without this column. It was missing until a reset proved
+   * it — the categories already in a database had been repaired by migration,
+   * so only a database with none showed the gap.
+   */
+  raises: "In" | "Out" | null,
 ][] = [
-  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder.", ["In", "Out"], ["Cabang", "Stakeholder"]],
-  ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"]],
-  ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"]],
-  ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder.", ["In", "Out"], ["Stakeholder"]],
-  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], []],
-  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], []],
-  ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran.", ["Out"], ["Cabang"]],
-  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan.", ["In"], ["Cabang"]],
+  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder.", ["In", "Out"], ["Cabang", "Stakeholder"], "In"],
+  ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "In"],
+  ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "Out"],
+  ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder.", ["In", "Out"], ["Stakeholder"], "Out"],
+  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null],
+  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null],
+  ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran.", ["Out"], ["Cabang"], "Out"],
+  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan.", ["In"], ["Cabang"], "In"],
 ];
 
 const PARTNER_CATEGORIES: [label: string, name: string, note: string][] = [
@@ -557,7 +574,7 @@ async function ensureReferenceData(
     tally("document types", made);
   }
 
-  for (const [i, [label, note, directions, _partners]] of BUDGET_CATEGORIES.entries()) {
+  for (const [i, [label, note, directions, _partners, raises]] of BUDGET_CATEGORIES.entries()) {
     const made = await create(
       () => prisma.sysBudgetCategory.findFirst({ where: { category_label: label } }),
       () =>
@@ -569,6 +586,7 @@ async function ensureReferenceData(
             allows_in: directions.includes("In"),
             allows_out: directions.includes("Out"),
             require_partner: _partners.length > 0,
+            raises,
             note,
             ...audit,
           },
@@ -703,10 +721,10 @@ async function ensureBudgetCategoryRules(audit: {
     ).map((c) => [c.category_label, c.id])
   );
 
-  for (const [label, , directions, partners] of BUDGET_CATEGORIES) {
+  for (const [label, , directions, partners, raises] of BUDGET_CATEGORIES) {
     const category = await prisma.sysBudgetCategory.findFirst({
       where: { category_label: label },
-      select: { id: true, allows_in: true, allows_out: true },
+      select: { id: true, allows_in: true, allows_out: true, raises: true },
     });
     // A category the declaration names but the database does not is not this
     // function's to create — the loop above owns that, and reaching here means
@@ -720,9 +738,22 @@ async function ensureBudgetCategoryRules(audit: {
           allows_in: directions.includes("In"),
           allows_out: directions.includes("Out"),
           require_partner: partners.length > 0,
+          raises,
         },
       });
       tally("budget category rules backfilled");
+    }
+
+    // A category that predates the column and was repaired by the migration's
+    // rule rather than by name. Filled in only where it is still missing: a
+    // direction somebody has since chosen through the GUI is theirs, and the
+    // seed does not overwrite it.
+    if (partners.length && !category.raises && raises) {
+      await prisma.sysBudgetCategory.update({
+        where: { id: category.id },
+        data: { raises },
+      });
+      tally("budget category book directions backfilled");
     }
 
     if (!partners.length) continue;
