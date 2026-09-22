@@ -28,7 +28,10 @@ import {
   bookKey,
   budgetCategoryId,
   childCompanyId,
+  cleanupFiscalYear,
   cleanupFixtures,
+  closeYearFor,
+  openFiscalYear,
   disconnect,
   makeAccount,
   makeMapping,
@@ -64,6 +67,7 @@ const today = new Date().toISOString().slice(0, 10);
 let induk = 0;
 let anak = 0;
 let actor = 0;
+let fiscalYear = 0;
 let currency = 0;
 let otherCurrency = 0;
 
@@ -236,6 +240,10 @@ const journalsFor = async (docTypeId: number, docId: number) =>
   });
 
 before(async () => {
+  // Posting is refused outside an Open fiscal year (`checkPostingPeriod`),
+  // and the seed opens none — a calendar is business data. Reused when the
+  // database already has one; removed again only if this run made it.
+  fiscalYear = await openFiscalYear();
   induk = await parentCompanyId();
   anak = await childCompanyId();
   actor = await systemUserId();
@@ -343,6 +351,7 @@ after(async () => {
     await prisma.mCashBank.deleteMany({ where: { id: { in: cashBanks } } });
   }
 
+  await cleanupFiscalYear();
   await cleanupFixtures();
   await prisma.refCurrency.deleteMany({
     where: { currency_label: { startsWith: FIXTURE_PREFIX } },
@@ -1021,3 +1030,52 @@ async function transactionDocType(): Promise<number> {
   });
   return row.id;
 }
+
+// ------------------------------------------------------------- the period lock
+
+describe("a confirmation is refused outside an open period", () => {
+  test("either Company having closed the year refuses it, and the refusal says which", async () => {
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 50_000 });
+    const doc = await makeAnakDraft({
+      purpose: "BYA_OUT",
+      lines: [{ budgetId: budget, amount: 50_000 }],
+    });
+    const raised = await raise(doc);
+    assert.ok(raised.ok);
+    const requestId = raised.ok ? raised.id : 0;
+    const cashBank = await makeCashBank({ opening: 400_000 });
+
+    // One confirmation writes both Companies' books, so both are asked. The
+    // anak is the interesting half: its year is closed, the induk's is not,
+    // and the induk is the one holding the cash.
+    for (const companyId of [anak, induk]) {
+      const reopen = await closeYearFor(fiscalYear, companyId);
+      try {
+        const refused = await confirmFundingRequest(requestId, cashBank, actor);
+        assert.equal(refused.ok, false, "a closed year on either side refuses");
+        assert.match(
+          refused.ok === false ? refused.errors._form ?? "" : "",
+          /menutup/
+        );
+
+        assert.equal(await bookBalance(cashBank), 400_000, "no cash moved");
+        assert.equal(await subledgerEntries(doc), 0);
+        assert.equal(
+          (
+            await prisma.finFundingRequest.findUniqueOrThrow({
+              where: { id: requestId },
+              select: { status: true },
+            })
+          ).status,
+          "Open",
+          "and the request is still waiting to be answered"
+        );
+      } finally {
+        await reopen();
+      }
+    }
+
+    const confirmed = await confirmFundingRequest(requestId, cashBank, actor);
+    assert.equal(confirmed.ok, true, JSON.stringify(confirmed));
+  });
+});

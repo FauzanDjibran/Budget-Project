@@ -80,6 +80,15 @@ enum FiscalStatus {
   Closed
 }
 
+/// Whether one Company has closed one fiscal year.
+///
+/// Deliberately not `FiscalStatus`: a closing has no Draft. A year is either
+/// still receiving this Company's postings or it never will again.
+enum FiscalClosingStatus {
+  Open
+  Closed
+}
+
 enum FlowDirection {
   In
   Out
@@ -305,6 +314,8 @@ model SysCompany {
   transfers    FinCashBankTransfer[]
 
   journals AccJournal[]
+
+  fiscal_closings AccFiscalClosing[]
 
   @@map("sys_company")
 }
@@ -1036,6 +1047,7 @@ model AccFiscalYear {
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   periods AccFiscalPeriod[]
+  closings AccFiscalClosing[]
 
   @@map("acc_fiscal_year")
 }
@@ -1061,6 +1073,52 @@ model AccFiscalPeriod {
 
   @@index([fiscal_year_id])
   @@map("acc_fiscal_period")
+}
+
+/// One Company's closing state for one fiscal year.
+///
+/// The fiscal calendar is global — one set of years and periods, shared by both
+/// Companies (see `AccFiscalYear`) — but closing is not: the induk can shut
+/// 2026 while the anak is still finishing it. That state needs somewhere to
+/// live, and this is it.
+///
+/// An explicit record rather than a status inferred from the existence of an
+/// Opening Balance document. Inferring a fact from a row in another table is
+/// the same habit `AccountSection` exists to stop: it works until somebody
+/// writes that row for a second reason, and then nothing fails.
+///
+/// `AccFiscalYear.status` is a **rollup** over these: the year reads Closed once
+/// every Company has closed it.
+model AccFiscalClosing {
+  id             Int                 @id @default(autoincrement())
+  fiscal_year_id Int
+  company_id     Int
+  status         FiscalClosingStatus @default(Open)
+
+  closed_at DateTime? @db.Timestamptz(6)
+  /// Plain Int with no FK, exactly like `created_by` elsewhere — the DBML
+  /// declares authorship that way throughout.
+  closed_by Int?
+
+  /// The `CLS-` journal this close produced, and the `OPB-` snapshot it wrote
+  /// for the following year. Both are other modules' documents, so they are
+  /// held as ids rather than as relations (CLAUDE.md §3): a relation would put
+  /// a back-reference on `acc_journal`, which is a book and is meant to be
+  /// liftable. Null until a close actually happens — nothing writes either yet.
+  closing_journal_id Int?
+  opening_balance_id Int?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  fiscal_year AccFiscalYear @relation(fields: [fiscal_year_id], references: [id])
+  company     SysCompany    @relation(fields: [company_id], references: [id])
+
+  @@unique([fiscal_year_id, company_id])
+  @@index([company_id])
+  @@map("acc_fiscal_closing")
 }
 
 // ---------------------------------------------------------------- budget

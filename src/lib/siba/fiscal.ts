@@ -2,7 +2,11 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { MONTHS_LONG } from "@/lib/format";
+import { MONTHS_LONG, formatDate } from "@/lib/format";
+import {
+  openLimitRefusal,
+  type OpenYearSummary,
+} from "./fiscal-workflow";
 
 /**
  * The fiscal calendar.
@@ -16,6 +20,10 @@ import { MONTHS_LONG } from "@/lib/format";
  * Budget Month reads these periods (CLAUDE.md §10, rule 20), so a period whose
  * range did not line up with a real month would silently strand budgets between
  * two months or in none.
+ *
+ * The calendar is also what says whether a book may be written into at all.
+ * `checkPostingPeriod` at the foot of this file is that question, and every
+ * posting path in the application asks it before it writes anything.
  */
 
 type Db = Prisma.TransactionClient | typeof prisma;
@@ -145,4 +153,134 @@ export async function fiscalYearPeriods(fiscalYearId: number): Promise<FiscalPer
       }).length,
     };
   });
+}
+
+// ------------------------------------------------------------------- the lock
+
+/**
+ * The years standing Open right now, oldest first.
+ *
+ * The calendar is global — one set of years shared by both Companies — so this
+ * is not scoped to one. Which Company has finished with a year is a separate
+ * record (`acc_fiscal_closing`), because "the anak has closed 2026 and the
+ * induk has not" is a fact about a Company and not about the calendar.
+ */
+export async function openFiscalYears(db: Db = prisma): Promise<OpenYearSummary[]> {
+  const rows = await db.accFiscalYear.findMany({
+    where: { status: "Open" },
+    orderBy: { start_date: "asc" },
+    select: { id: true, year_label: true, year_name: true },
+  });
+  return rows.map((r) => ({ id: r.id, label: r.year_label, name: r.year_name }));
+}
+
+/**
+ * Whether one more year may be activated — the max-two-Open rule.
+ *
+ * Asked by the Server Action before it moves a year to Open, and testable on
+ * its own because the counting rule it delegates to is pure
+ * (`openLimitRefusal`). The year being activated is excluded from the count:
+ * re-activating a year that is somehow already Open is the transition table's
+ * refusal to make, not this one's.
+ */
+export async function checkYearOpenable(
+  id: number,
+  db: Db = prisma
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const open = (await openFiscalYears(db)).filter((y) => y.id !== id);
+  const refusal = openLimitRefusal(open);
+  return refusal ? { ok: false, message: refusal } : { ok: true };
+}
+
+export type PostingPeriodCheck =
+  | { ok: true; fiscalYearId: number }
+  | { ok: false; message: string };
+
+/** A `Date`, or a `YYYY-MM-DD` day, as the UTC midnight the calendar stores. */
+function asDay(value: Date | string): Date {
+  if (value instanceof Date) {
+    return new Date(`${value.toISOString().slice(0, 10)}T00:00:00Z`);
+  }
+  return new Date(`${value.slice(0, 10)}T00:00:00Z`);
+}
+
+/**
+ * May this Company write into the books on this date?
+ *
+ * Two questions, in order: the **year** containing the date must be Open, and
+ * this Company must not already have closed it. The year carries the date
+ * range, so it is the year that is queried and not the period — a period's own
+ * status says nothing the year's does not, and a date outside every year
+ * belongs to no period either.
+ *
+ * `Draft` means *not yet*: a year whose twelve periods have not been generated
+ * cannot group what is posted into it. `Closed` means *never again*, and it is
+ * per Company (`acc_fiscal_closing`), because the induk can finish 2026 while
+ * the anak is still working in it.
+ *
+ * A date inside **no** year is refused as well. That is the same rule read
+ * plainly rather than a separate one — a posting that belongs to no fiscal year
+ * cannot be closed out, carried forward, or found again by anyone reconciling a
+ * year end. It also means a fresh installation must open its calendar before it
+ * can post, which is what the dashboard's setup card has always said to do.
+ *
+ * Every posting path asks this before it writes anything, and the refusal is
+ * returned rather than thrown: it is a refusal the user can act on, not a fault.
+ */
+export async function checkPostingPeriod(
+  companyId: number,
+  date: Date | string,
+  db: Db = prisma
+): Promise<PostingPeriodCheck> {
+  const day = asDay(date);
+
+  const year = await db.accFiscalYear.findFirst({
+    where: { start_date: { lte: day }, end_date: { gte: day } },
+    select: { id: true, year_name: true, status: true },
+  });
+  if (!year) {
+    return {
+      ok: false,
+      message:
+        `Tanggal ${formatDate(day)} tidak berada dalam tahun buku manapun. ` +
+        "Buat dan aktifkan tahun buku yang memuatnya sebelum memposting.",
+    };
+  }
+  if (year.status === "Draft") {
+    return {
+      ok: false,
+      message:
+        `${year.year_name} masih berstatus Draft. Aktifkan tahun buku ` +
+        "tersebut sebelum memposting ke dalamnya.",
+    };
+  }
+  if (year.status === "Closed") {
+    return {
+      ok: false,
+      message:
+        `${year.year_name} sudah ditutup. Tidak ada transaksi baru yang ` +
+        "dapat dibuat di dalamnya.",
+    };
+  }
+
+  const closing = await db.accFiscalClosing.findUnique({
+    where: {
+      fiscal_year_id_company_id: { fiscal_year_id: year.id, company_id: companyId },
+    },
+    select: { status: true },
+  });
+  if (closing?.status === "Closed") {
+    const company = await db.sysCompany.findUnique({
+      where: { id: companyId },
+      select: { company_label: true },
+    });
+    return {
+      ok: false,
+      message:
+        `Company ${company?.company_label ?? companyId} sudah menutup ` +
+        `${year.year_name}. Tidak ada transaksi baru yang dapat dibuat di dalamnya.`,
+    };
+  }
+
+  return { ok: true, fiscalYearId: year.id };
 }

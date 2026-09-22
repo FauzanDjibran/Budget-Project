@@ -13,13 +13,14 @@
  * grouped by them, so returning a year to Draft would strand data inside a year
  * that claims never to have started.
  *
- * Closing is declared here but not yet executable. Closing a book means more
- * than writing a word into a column — it locks its periods against posting,
- * and nothing anywhere yet refuses a posting on the strength of a period's
- * status. The Journal and the General Ledger it has to lock against now exist;
- * the lock itself is the piece still outstanding (CLAUDE.md §13). The step is
- * described so the screen can say so plainly rather than offering a status
- * change that would only pretend to close.
+ * Closing is declared here but not yet executable. The lock it needs now
+ * exists: `checkPostingPeriod` in `fiscal.ts` refuses a posting into a year
+ * that is not Open, or into one the posting's Company has already closed, on
+ * every path that writes a book. What is still outstanding is the closing
+ * process itself — the entry that moves a year's result into equity and the
+ * snapshot the next year opens from (CLAUDE.md §13). The step is described
+ * here so the screen can say so plainly rather than offering a status change
+ * that would only pretend to close.
  *
  * Client-safe on purpose — no `server-only`, no database import.
  */
@@ -74,6 +75,44 @@ export const FISCAL_YEAR_CLOSING_NOTE =
   "Penutupan tahun buku dilakukan melalui proses closing tersendiri, bukan " +
   "dengan mengubah status. Prosesnya mengunci periode terhadap posting dan " +
   "akan tersedia bersama modul Accounting.";
+
+/**
+ * How many fiscal years may stand Open at once.
+ *
+ * Two, and the reason is the overlap at a year-end: January's work belongs to
+ * the new year while December's invoices are still arriving against the old
+ * one, so a book that had to be shut before the next one opened would refuse
+ * one of them. Three is not that case — it is a year nobody has got round to
+ * closing, and every month it stays open is a month of figures that cannot be
+ * carried forward.
+ */
+export const MAX_OPEN_FISCAL_YEARS = 2;
+
+/** Just enough of a Fiscal Year to say which one is being talked about. */
+export type OpenYearSummary = { id: number; label: string; name: string };
+
+/**
+ * Why one more year may not be opened, or null when it may.
+ *
+ * Pure, and takes the years already Open rather than reading them, so the rule
+ * can be exercised directly at every count instead of only at whatever the
+ * database happens to hold. Ordered here rather than by the caller: the refusal
+ * has to name the **oldest** open year — the only one that can be closed next,
+ * since closing a newer one would leave an Open year with no successor to
+ * inherit into — and "oldest" is a property of the list, not of the query.
+ */
+export function openLimitRefusal(open: OpenYearSummary[]): string | null {
+  if (open.length < MAX_OPEN_FISCAL_YEARS) return null;
+
+  const ordered = [...open].sort((a, b) => a.label.localeCompare(b.label));
+  const oldest = ordered[0];
+  return (
+    `Sudah ada ${ordered.length} tahun buku aktif (${ordered
+      .map((y) => y.label)
+      .join(", ")}). Tutup ${oldest.name} lebih dahulu sebelum mengaktifkan ` +
+    "tahun buku berikutnya."
+  );
+}
 
 export function transitionAllowed(
   action: FiscalYearAction,

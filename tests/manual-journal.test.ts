@@ -30,7 +30,10 @@ import {
 import { knownAuditEvents } from "../src/lib/siba/audit-events";
 import {
   childCompanyId,
+  cleanupFiscalYear,
   cleanupFixtures,
+  closeYearFor,
+  openFiscalYear,
   disconnect,
   makeAccount,
   makeMapping,
@@ -60,6 +63,7 @@ import {
 let company = 0;
 let otherCompany = 0;
 let actor = 0;
+let fiscalYear = 0;
 let scope: number[] = [];
 
 /** Freely writable: an expense account reconciles against nothing but the GL. */
@@ -71,6 +75,10 @@ let foreignCurrency = 0;
 const made: number[] = [];
 
 before(async () => {
+  // Posting is refused outside an Open fiscal year (`checkPostingPeriod`),
+  // and the seed opens none — a calendar is business data. Reused when the
+  // database already has one; removed again only if this run made it.
+  fiscalYear = await openFiscalYear();
   company = await parentCompanyId();
   otherCompany = await childCompanyId();
   actor = await systemUserId();
@@ -105,6 +113,7 @@ after(async () => {
     });
     await prisma.accJournal.deleteMany({ where: { id } });
   }
+  await cleanupFiscalYear();
   await cleanupFixtures();
   await disconnect();
 });
@@ -858,5 +867,45 @@ describe("the lifecycle is one table, read by both sides", () => {
         `${key} would read as a bare "Diubah" in the history panel`
       );
     }
+  });
+});
+
+// ------------------------------------------------------------- the period lock
+
+describe("a manual journal is refused outside an open period", () => {
+  test("a closed year takes no hand-written entry either", async () => {
+    const created = await draft([
+      line(expense, 120_000, 0),
+      line(expenseB, 0, 120_000),
+    ]);
+
+    // Asked in `postManualJournal` rather than in `postDraftJournal`: the
+    // Journal is an independent book that imports only the shared kernel, so
+    // the rule about *when* it may be written lives in the layer above it —
+    // beside the control-account rule, which is there for the same reason.
+    const reopen = await closeYearFor(fiscalYear, company);
+    try {
+      const refused = await postManualJournal(created.id, actor, scope);
+      assert.equal(refused.ok, false);
+      assert.match(refused.ok ? "" : refused.errors._form, /menutup/);
+
+      assert.equal(
+        (
+          await prisma.accJournal.findUniqueOrThrow({
+            where: { id: created.id },
+            select: { status: true, posting_date: true },
+          })
+        ).status,
+        "Draft",
+        "the draft is untouched — a refusal at Post is not a cancellation"
+      );
+    } finally {
+      await reopen();
+    }
+
+    assert.ok(
+      (await postManualJournal(created.id, actor, scope)).ok,
+      "the same draft posts once the year is open again"
+    );
   });
 });

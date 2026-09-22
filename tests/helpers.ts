@@ -1,5 +1,6 @@
 import { prisma } from "../src/lib/prisma";
 import { actorFor, type Actor } from "../src/lib/siba/access";
+import { ensureFiscalPeriods } from "../src/lib/siba/fiscal";
 import { hashPassword } from "../src/lib/siba/login";
 import { ADMIN_ROLE, STAFF_ROLE } from "../src/lib/siba/roles";
 
@@ -445,4 +446,100 @@ export async function cleanupFixtures(): Promise<void> {
   await prisma.mPartner.deleteMany({
     where: { partner_label: { startsWith: FIXTURE_PREFIX } },
   });
+}
+
+// ------------------------------------------------------------ fiscal calendar
+//
+// Posting is only allowed inside an Open fiscal year the Company has not closed
+// (`checkPostingPeriod`), so every suite that posts needs one covering today.
+// The seed creates no fiscal year — a calendar is business data a user opens
+// through the GUI — so CI has none at all, and a developer's database has
+// whatever they opened.
+
+let madeFiscalYear: number | null = null;
+
+/**
+ * An Open fiscal year covering `date`, created only if there is not one.
+ *
+ * A year that already exists is reused and never touched: it belongs to
+ * whoever uses the database, and a fixture that flipped its status would be
+ * rewriting their calendar. One that exists but is not Open is reported rather
+ * than activated, for the same reason — the run cannot proceed, and silently
+ * opening somebody's Draft year is worse than saying so.
+ */
+export async function openFiscalYear(date: Date = new Date()): Promise<number> {
+  const day = new Date(`${date.toISOString().slice(0, 10)}T00:00:00Z`);
+  const existing = await prisma.accFiscalYear.findFirst({
+    where: { start_date: { lte: day }, end_date: { gte: day } },
+    select: { id: true, year_name: true, status: true },
+  });
+  if (existing) {
+    if (existing.status !== "Open") {
+      throw new Error(
+        `${existing.year_name} is ${existing.status}. Posting tests need it Open — ` +
+          "activate it from Accounting > Fiscal Year, or drop it and let the fixture " +
+          "make its own."
+      );
+    }
+    return existing.id;
+  }
+
+  const year = day.getUTCFullYear();
+  const actor = await systemUserId();
+  const created = await prisma.accFiscalYear.create({
+    data: {
+      year_code: `fyr.${FIXTURE_PREFIX}${year}`,
+      year_label: String(year),
+      year_name: `Tahun Buku ${year}`,
+      start_date: new Date(Date.UTC(year, 0, 1)),
+      end_date: new Date(Date.UTC(year, 11, 31)),
+      status: "Open",
+      created_by: actor,
+    },
+    select: { id: true },
+  });
+  madeFiscalYear = created.id;
+  await ensureFiscalPeriods(prisma, {
+    fiscalYearId: created.id,
+    year,
+    actorId: actor,
+  });
+  return created.id;
+}
+
+/**
+ * Closes one Company's year, and hands back the undo.
+ *
+ * The closing process itself does not exist yet — that is Phase 4 — so a test
+ * that needs to prove the lock writes the row the lock reads. Which is also
+ * what the lock is for: the state is a record, not an inference.
+ */
+export async function closeYearFor(
+  fiscalYearId: number,
+  companyId: number
+): Promise<() => Promise<void>> {
+  const row = await prisma.accFiscalClosing.create({
+    data: {
+      fiscal_year_id: fiscalYearId,
+      company_id: companyId,
+      status: "Closed",
+      closed_at: new Date(),
+      closed_by: await systemUserId(),
+      created_by: await systemUserId(),
+    },
+    select: { id: true },
+  });
+  return async () => {
+    await prisma.accFiscalClosing.deleteMany({ where: { id: row.id } });
+  };
+}
+
+/** Removes a fiscal year this run created, leaving one it merely found alone. */
+export async function cleanupFiscalYear(): Promise<void> {
+  if (madeFiscalYear === null) return;
+  const id = madeFiscalYear;
+  madeFiscalYear = null;
+  await prisma.accFiscalClosing.deleteMany({ where: { fiscal_year_id: id } });
+  await prisma.accFiscalPeriod.deleteMany({ where: { fiscal_year_id: id } });
+  await prisma.accFiscalYear.deleteMany({ where: { id } });
 }

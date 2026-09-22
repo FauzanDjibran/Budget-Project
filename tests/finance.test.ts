@@ -34,7 +34,10 @@ import {
   bookKey,
   budgetCategoryId,
   childCompanyId,
+  cleanupFiscalYear,
   cleanupFixtures,
+  closeYearFor,
+  openFiscalYear,
   disconnect,
   makeAccount,
   makeMapping,
@@ -63,6 +66,7 @@ const today = new Date().toISOString().slice(0, 10);
 let induk = 0;
 let anak = 0;
 let actor = 0;
+let fiscalYear = 0;
 let currency = 0;
 let otherCurrency = 0;
 let fxAccount = 0;
@@ -204,6 +208,10 @@ async function makeDraft(options: {
 }
 
 before(async () => {
+  // Posting is refused outside an Open fiscal year (`checkPostingPeriod`),
+  // and the seed opens none — a calendar is business data. Reused when the
+  // database already has one; removed again only if this run made it.
+  fiscalYear = await openFiscalYear();
   induk = await parentCompanyId();
   anak = await childCompanyId();
   actor = await systemUserId();
@@ -302,6 +310,7 @@ after(async () => {
   }
   // Fixtures first: a subledger entry points at both a Partner and a
   // currency, so the books have to be cleared before either can go.
+  await cleanupFiscalYear();
   await cleanupFixtures();
   await prisma.refCurrency.deleteMany({
     where: { currency_label: { startsWith: FIXTURE_PREFIX } },
@@ -1833,5 +1842,45 @@ describe("a foreign document is valued rather than refused", () => {
       entry.balance_after.toNumber(),
       "both measures move together while everything is rupiah"
     );
+  });
+});
+
+// ------------------------------------------------------------- the period lock
+
+describe("posting is refused outside an open period", () => {
+  test("a Company that has closed the year cannot post into it", async () => {
+    const cashBank = await makeCashBank({ opening: 5_000_000 });
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 400_000, outstanding: 1_000_000 }],
+    });
+
+    const reopen = await closeYearFor(fiscalYear, induk);
+    try {
+      const refused = await applyPosting(doc, actor);
+      assert.equal(refused.ok, false, "a closed year takes no new transactions");
+      assert.match(refused.ok === false ? refused.errors._form ?? "" : "", /menutup/);
+
+      // And nothing was written on the way to refusing.
+      const balance = await prisma.cashBankBalance.findUniqueOrThrow({
+        where: { cash_bank_id: cashBank },
+      });
+      assert.equal(balance.balance.toNumber(), 5_000_000);
+      const plan = await prisma.budBudget.findUniqueOrThrow({ where: { id: budget } });
+      assert.equal(plan.realized_amount.toNumber(), 0);
+      assert.equal(
+        (await prisma.finCashBankTransaction.findUniqueOrThrow({ where: { id: doc } }))
+          .status,
+        "Draft"
+      );
+    } finally {
+      await reopen();
+    }
+
+    // The same document posts once the year is open again, which is what makes
+    // the refusal the lock rather than something else about the document.
+    await post(doc);
   });
 });

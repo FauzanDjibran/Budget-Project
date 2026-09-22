@@ -691,6 +691,17 @@ table acc_budget_category_account {
   }
 }
 
+// The fiscal calendar, shared by both Companies — there is no company_id here
+// and there is not meant to be. Everything that genuinely differs per Company —
+// the chart, the journal, the equity accounts, the closing state, the posting
+// lock — already lives somewhere that is per Company, and a Budget transcends
+// Company, so a cross-Company Budget grouped by a cross-Company calendar is the
+// coherent shape.
+//
+// At most two years stand Open at once: the overlap at a year-end is real, a
+// third open year is just one nobody has closed. status is a rollup over
+// acc_fiscal_closing — Closed once every Company has closed the year.
+
 table acc_fiscal_year {
   id                          int [pk, increment, not null]
 
@@ -739,6 +750,55 @@ table acc_fiscal_period {
 
   indexes {
     fiscal_year_id
+  }
+}
+
+// One Company's closing state for one fiscal year.
+//
+// The calendar itself is global — one set of years and periods shared by both
+// Companies — but closing is not: the induk can shut 2026 while the anak is
+// still finishing it. That is why this is a table and not a column on
+// acc_fiscal_year, and it is also why acc_fiscal_year.status is a *rollup*: the
+// year reads Closed once every Company has closed it.
+//
+// An explicit record rather than a status inferred from the existence of an
+// Opening Balance document. Inferring a fact from a row in another table works
+// until somebody writes that row for a second reason, and then nothing fails.
+//
+// The lock reads this table: a posting is allowed only when the year containing
+// its date is Open and the posting's Company has no Closed row against it.
+// Closing is irreversible — Closed means never again, not "not yet".
+
+table acc_fiscal_closing {
+  id                          int [pk, increment, not null]
+
+  fiscal_year_id              int [not null, ref : > acc_fiscal_year.id]
+  company_id                  int [not null, ref : > sys_company.id]
+
+  // No Draft: a year is either still receiving this Company's postings or it
+  // never will again.
+  status                      enum('Open', 'Closed') [not null, default: 'Open']
+
+  closed_at                   timestamptz
+  closed_by                   int
+
+  // The CLS- journal this close produced and the OPB- snapshot it wrote for the
+  // following year. Held as ids rather than as declared references: both are
+  // other modules' documents, and a reference would put a back-relation on
+  // acc_journal, which is an independent book meant to stay liftable. Null
+  // until a close actually happens — nothing writes either one yet.
+  closing_journal_id          int
+  opening_balance_id          int
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (fiscal_year_id, company_id) [unique]
+    company_id
   }
 }
 

@@ -12,6 +12,7 @@ import {
   type DraftJournalLine,
   type JournalLineInput,
 } from "./journal";
+import { checkPostingPeriod } from "./fiscal";
 import { controlAccountReasons } from "./records";
 import { systemDefaultsUsingAccount } from "./system-settings";
 
@@ -493,6 +494,18 @@ export async function postManualJournal(
       errors: { _form: Object.values(recheck.errors).join(" ") },
     };
   }
+
+  // The fiscal lock, asked here rather than inside `postDraftJournal`: the
+  // Journal is an independent book and imports only the shared kernel, so the
+  // rule about *when* a book may be written belongs in the layer above it —
+  // the same place the control-account rule already lives. A manual journal
+  // posts at today's date like every other posting, so that is the day asked
+  // about.
+  const period = await checkPostingPeriod(
+    existing.companyId,
+    new Date().toISOString().slice(0, 10)
+  );
+  if (!period.ok) return { ok: false, errors: { _form: period.message } };
 
   const posted = await postDraftJournal(id, actorId);
   if (!posted.ok) return { ok: false, errors: { _form: posted.error } };

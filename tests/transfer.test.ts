@@ -20,7 +20,10 @@ import {
 import {
   FIXTURE_PREFIX,
   childCompanyId,
+  cleanupFiscalYear,
   cleanupFixtures,
+  closeYearFor,
+  openFiscalYear,
   disconnect,
   makeAccount,
   parentCompanyId,
@@ -54,6 +57,7 @@ const today = new Date().toISOString().slice(0, 10);
 let induk = 0;
 let anak = 0;
 let actor = 0;
+let fiscalYear = 0;
 let baseCurrency = 0;
 let foreignCurrency = 0;
 let foreignLabel = "";
@@ -187,6 +191,10 @@ const layersOf = (cashBankId: number) =>
   });
 
 before(async () => {
+  // Posting is refused outside an Open fiscal year (`checkPostingPeriod`),
+  // and the seed opens none — a calendar is business data. Reused when the
+  // database already has one; removed again only if this run made it.
+  fiscalYear = await openFiscalYear();
   induk = await parentCompanyId();
   anak = await childCompanyId();
   actor = await systemUserId();
@@ -244,6 +252,7 @@ after(async () => {
     });
     await prisma.mCashBank.deleteMany({ where: { id: { in: resources } } });
   }
+  await cleanupFiscalYear();
   await cleanupFixtures();
   await disconnect();
 });
@@ -936,4 +945,36 @@ describe("a posting that refuses leaves nothing behind", () => {
 test("the fixture currencies are distinct and neither is the base", () => {
   assert.notEqual(foreignLabel, thirdLabel);
   assert.notEqual(foreignLabel, BASE_CURRENCY_LABEL);
+});
+
+// ------------------------------------------------------------- the period lock
+
+describe("a transfer is refused outside an open period", () => {
+  test("a Company that has closed the year cannot move its own money either", async () => {
+    const from = await makeResource({ currencyId: baseCurrency, opening: 50_000_000 });
+    const to = await makeResource({ currencyId: baseCurrency });
+    const id = await makeTransfer({
+      purpose: "Transfer",
+      from,
+      currencyId: baseCurrency,
+      lines: [{ to, amount: 30_000_000 }],
+    });
+
+    const reopen = await closeYearFor(fiscalYear, induk);
+    try {
+      const refused = await applyTransfer(id, actor);
+      assert.equal(refused.ok, false);
+      assert.match(refused.ok === false ? refused.errors._form ?? "" : "", /menutup/);
+
+      assert.equal((await balanceOf(from)).balance.toNumber(), 50_000_000);
+      assert.equal((await balanceOf(to)).balance.toNumber(), 0);
+    } finally {
+      await reopen();
+    }
+
+    assert.ok(
+      (await applyTransfer(id, actor)).ok,
+      "the same document posts once the year is open again"
+    );
+  });
 });

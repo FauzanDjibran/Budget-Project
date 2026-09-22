@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
-import { ensureFiscalPeriods, parseYear } from "@/lib/siba/fiscal";
+import { checkYearOpenable, ensureFiscalPeriods, parseYear } from "@/lib/siba/fiscal";
 import {
   FISCAL_YEAR_TRANSITIONS,
   transitionAllowed,
@@ -58,6 +58,14 @@ export async function transitionFiscalYear(
       message: `Tahun buku berstatus ${year.status} tidak dapat ${transition.label.toLowerCase()}.`,
     };
   }
+
+  // At most two years stand Open at once (`MAX_OPEN_FISCAL_YEARS`). The
+  // overlap at a year-end is real — December's invoices arrive while January
+  // is already being worked in — but a third open year is not that case, and
+  // every month it stays open is a month that cannot be carried forward. The
+  // refusal names the year to close, because "too many" is not actionable.
+  const openable = await checkYearOpenable(id);
+  if (!openable.ok) return { ok: false, message: openable.message };
 
   const parsed = parseYear(year.year_label);
   if (!parsed) {

@@ -7,6 +7,7 @@ import { recordCashBankEntry } from "./cash-bank";
 import { drawFromLayer, openLayer, openLayersFor, type LayerOption } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL, consumesLayer, isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
+import { checkPostingPeriod } from "./fiscal";
 import { roundBase } from "./fx";
 import { valueTransferLine } from "./transfer-valuation";
 import { postJournal, type JournalLineInput } from "./journal";
@@ -1001,6 +1002,13 @@ export async function applyTransfer(
   }
 
   const today = new Date().toISOString().slice(0, 10);
+
+  // Both legs belong to one Company (§10 rule 84), so one period check answers
+  // for the whole document — asked before the transaction opens, because a
+  // refusal in there would have to be raised as a throw and rolled back.
+  const period = await checkPostingPeriod(doc.company_id, today);
+  if (!period.ok) return { ok: false, errors: { _form: period.message } };
+
   const docTypeId = await transferDocTypeId();
   const label = transferPurposeOf(doc.purpose)?.label ?? doc.purpose;
   let fxDifference = 0;

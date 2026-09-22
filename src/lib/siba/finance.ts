@@ -25,6 +25,7 @@ import {
 } from "./currency";
 import { drawLayer, fxDifference, roundBase, settle } from "./fx";
 import { nextDocumentNumber } from "./document-number";
+import { checkPostingPeriod } from "./fiscal";
 import { postJournal, type JournalLineInput } from "./journal";
 import type { Purpose } from "./rules";
 import {
@@ -1602,6 +1603,13 @@ export async function applyPosting(
   }
 
   const today = new Date().toISOString().slice(0, 10);
+
+  // The books are only writable inside an Open fiscal year this Company has
+  // not closed. Asked before anything is resolved, so a refusal costs nothing
+  // and reads as what it is: not a fault, but a period that is shut.
+  const period = await checkPostingPeriod(doc.company_id, today);
+  if (!period.ok) return { ok: false, errors: { _form: period.message } };
+
   const docTypeId = await transactionDocTypeId();
   let closed = 0;
 
@@ -1903,6 +1911,16 @@ export async function prepareFundedPosting(
       ok: false,
       errors: { _form: "Dokumen Company induk tidak melalui Funding Request." },
     };
+  }
+
+  // One business event, two Companies' books — so the period is checked for
+  // both. The induk moves cash and journals the claim; the anak journals its
+  // own realization on its own chart. Either Company having closed the year is
+  // enough to refuse, and the refusal names which one.
+  const confirmationDay = new Date().toISOString().slice(0, 10);
+  for (const companyId of [induk.id, doc.company_id]) {
+    const period = await checkPostingPeriod(companyId, confirmationDay);
+    if (!period.ok) return { ok: false, errors: { _form: period.message } };
   }
 
   const cashBank = await prisma.mCashBank.findUnique({
