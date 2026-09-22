@@ -1,5 +1,11 @@
 # SIBA 3.0 — Database DBML
 
+> **The current schema, always.** This file is the one authoritative DBML for
+> SIBA and is updated in the same change as any migration that alters the
+> database — a new table, a new column, a new enum, a changed constraint.
+> If `prisma/schema.prisma` and this file disagree, this file is out of date
+> and is the thing to fix.
+
 ```dbml
 //----------------------------------
 // Sys Table

@@ -309,6 +309,11 @@ Path alias: `@/*` → `./src/*`.
 ```
 Initialization/          Read-only source material (concept, DBML, mockup, UI study,
                          the two multi-currency concept documents, COA template)
+SIBA DBML/
+  SIBA DBML.md           The current schema as DBML — one file, updated in the
+                         same change as any migration (§9). Not to be confused
+                         with `Initialization/SIBA 3.0 DBML.txt`, which is the
+                         frozen source material the project was converted from
 prisma/
   schema.prisma          Data model; deviations from the DBML commented inline
   migrations/            Applied migrations
@@ -751,6 +756,16 @@ movements themselves.
 
 **Migrations:** always `npx prisma migrate dev`. Never hand-edit an applied migration.
 Never use `prisma db push` on this project.
+
+**Every migration updates `SIBA DBML/SIBA DBML.md` in the same change.** That
+file is the one authoritative DBML for the current schema — a new table, a new
+column, a new enum, a dropped column or a changed constraint all land in it
+before the work is reported done, so it can be read at any moment as the
+up-to-date picture without reconstructing one from `schema.prisma` or the
+migration history. It is documentation rather than a generated artifact, so it
+carries the same explanatory comments the Prisma schema does. If the two
+disagree, the DBML is what is stale. `Initialization/SIBA 3.0 DBML.txt` is a
+different file entirely: frozen source material, never updated to match.
 
 **Seed:** `prisma/seed.ts` syncs **system data only** and nothing else — see §12.
 It is idempotent, creates what is missing, deletes no business data, and is safe to
@@ -3653,6 +3668,9 @@ process allowed to restate positions, and it is not built.
   Request flow without explicit instruction (§13).
 - Do **not** add an API route layer for internal CRUD.
 - Do **not** hand-edit applied migrations or use `prisma db push`.
+- Do **not** land a migration without updating `SIBA DBML/SIBA DBML.md` in the same
+  change, and do **not** edit `Initialization/SIBA 3.0 DBML.txt` to match the current
+  schema — it is frozen source material (§9).
 - Do **not** run `npm run db:reset` against data the user cares about — it drops the
   database. `npm run db:seed` is the safe one and destroys nothing.
 - Do **not** run `npm run db:truncate-transactions -- --confirm` without being asked to.
