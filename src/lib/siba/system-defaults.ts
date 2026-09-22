@@ -32,7 +32,11 @@ export type SystemDefaultKey =
   | "anak_bridge_ar_account"
   | "anak_bridge_ap_account"
   | "induk_fx_account"
-  | "anak_fx_account";
+  | "anak_fx_account"
+  | "induk_accumulated_pl_account"
+  | "anak_accumulated_pl_account"
+  | "induk_current_pl_account"
+  | "anak_current_pl_account";
 
 /** Which master a `ref` setting points at — a registry entity key. */
 export type SystemDefaultRef = "ref_currency" | "acc_account";
@@ -41,7 +45,8 @@ export type SystemDefaultGroupKey =
   | "application"
   | "bridge_induk"
   | "bridge_anak"
-  | "fx";
+  | "fx"
+  | "equity_pl";
 
 export type SystemDefaultGroup = {
   key: SystemDefaultGroupKey;
@@ -89,6 +94,15 @@ export const SYSTEM_DEFAULT_GROUPS = [
       "diakui dan harga currency yang dipakai melunasinya. Hanya terpakai " +
       "ketika dokumen mata uang asing diposting.",
     icon: "coin",
+  },
+  {
+    key: "equity_pl",
+    name: "Laba/Rugi pada Ekuitas",
+    desc:
+      "Dua account ekuitas milik tiap Company. Tahun Sebelumnya adalah tujuan " +
+      "posting saat Fiscal Year ditutup; Tahun Berjalan adalah baris penyajian " +
+      "Neraca selama tahun berjalan dan tidak pernah diposting.",
+    icon: "calc",
   },
 ] as const satisfies readonly SystemDefaultGroup[];
 
@@ -193,6 +207,62 @@ export const SYSTEM_DEFAULTS = [
     company: "anak",
     help: "hanya terpakai saat dokumen mata uang asing diposting",
   },
+
+  // ---------------------------------------------------------- equity / P&L
+  //
+  // Two accounts per Company, and they are opposites in the one way that
+  // matters. The **accumulated** account is a posting target: it is where a
+  // Fiscal Year's result lands when the year is closed. The **current-year**
+  // account is never posted to at all — Laba/Rugi Tahun Berjalan is a
+  // presentation line, computed as Pendapatan minus Biaya for the year still
+  // open, and a posted balance on it would leave the line named "tahun
+  // berjalan" carrying the previous year's result for twelve months.
+  //
+  // Both are still declared here, and both become control accounts through the
+  // ordinary mechanism every account-valued setting uses, so neither can be
+  // written into by hand. The current-year one is read by nothing until a
+  // Neraca report exists; it is named now because the account is real in the
+  // chart and its job is already decided.
+  {
+    key: "induk_accumulated_pl_account",
+    name: "Account Laba/Rugi Tahun Sebelumnya — Induk",
+    icon: "hist",
+    type: "ref",
+    ref: "acc_account",
+    group: "equity_pl",
+    company: "induk",
+    help: "tujuan posting saat Fiscal Year ditutup",
+  },
+  {
+    key: "anak_accumulated_pl_account",
+    name: "Account Laba/Rugi Tahun Sebelumnya — Anak",
+    icon: "hist",
+    type: "ref",
+    ref: "acc_account",
+    group: "equity_pl",
+    company: "anak",
+    help: "tujuan posting saat Fiscal Year ditutup",
+  },
+  {
+    key: "induk_current_pl_account",
+    name: "Account Laba/Rugi Tahun Berjalan — Induk",
+    icon: "calc",
+    type: "ref",
+    ref: "acc_account",
+    group: "equity_pl",
+    company: "induk",
+    help: "baris penyajian Neraca, tidak pernah diposting",
+  },
+  {
+    key: "anak_current_pl_account",
+    name: "Account Laba/Rugi Tahun Berjalan — Anak",
+    icon: "calc",
+    type: "ref",
+    ref: "acc_account",
+    group: "equity_pl",
+    company: "anak",
+    help: "baris penyajian Neraca, tidak pernah diposting",
+  },
 ] as const satisfies readonly SystemDefaultDef[];
 
 /** What each key is set to; a key that has never been set reads as null. */
@@ -206,6 +276,10 @@ export const EMPTY_SYSTEM_DEFAULTS: SystemDefaultValues = {
   anak_bridge_ap_account: null,
   induk_fx_account: null,
   anak_fx_account: null,
+  induk_accumulated_pl_account: null,
+  anak_accumulated_pl_account: null,
+  induk_current_pl_account: null,
+  anak_current_pl_account: null,
 };
 
 export function isSystemDefaultKey(key: string): key is SystemDefaultKey {

@@ -22,7 +22,11 @@ import {
   controlAccountReasons,
   syncControlAccounts,
 } from "../src/lib/siba/records";
-import { systemDefaultAccountIds } from "../src/lib/siba/system-settings";
+import {
+  systemDefaultAccountIds,
+  systemDefaults,
+  writeSystemDefaults,
+} from "../src/lib/siba/system-settings";
 import { knownAuditEvents } from "../src/lib/siba/audit-events";
 import {
   childCompanyId,
@@ -354,6 +358,73 @@ describe("a manual journal may not touch a control account", () => {
     assert.match(
       refused.ok ? "" : refused.errors["lines.0.account_id"],
       /control account/i
+    );
+  });
+
+  test("an equity account closing posts into is refused, by its setting's name", async () => {
+    // The third structural source of a control account, and the one with no
+    // table behind it: a System Default names where a posting engine writes,
+    // and what an engine owns a person does not hand-write into. Laba/Rugi
+    // Tahun Sebelumnya is where a Fiscal Year's result lands at closing;
+    // Laba/Rugi Tahun Berjalan is a computed presentation line that nothing
+    // posts to at all, which is a stronger reason still.
+    const accumulated = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.3.1",
+      normalBalance: "Kredit",
+    });
+    const current = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.4.1",
+      normalBalance: "Kredit",
+    });
+
+    const before = await systemDefaults();
+    await writeSystemDefaults(
+      {
+        induk_accumulated_pl_account: String(accumulated),
+        induk_current_pl_account: String(current),
+      },
+      actor
+    );
+    await syncControlAccounts(
+      [accumulated, current],
+      await systemDefaultAccountIds(),
+      actor
+    );
+
+    assert.equal(await isControl(accumulated), true);
+    assert.equal(await isControl(current), true);
+
+    for (const [account, name] of [
+      [accumulated, "Tahun Sebelumnya"],
+      [current, "Tahun Berjalan"],
+    ] as const) {
+      const refused = await checkManualJournal(headerFor(), [
+        line(account, 0, 75_000),
+        line(expense, 75_000, 0),
+      ]);
+      assert.equal(refused.ok, false);
+      const message = refused.ok ? "" : refused.errors["lines.0.account_id"];
+      assert.match(message, /control account/i);
+      // Naming the setting rather than the flag is the whole point: a user
+      // told "tidak dapat dipilih" learns nothing they can act on.
+      assert.match(message, new RegExp(name));
+    }
+
+    // Put the settings back, and release the accounts before they are torn
+    // down — an account left flagged would outlive the row explaining it.
+    await writeSystemDefaults(
+      {
+        induk_accumulated_pl_account: before.induk_accumulated_pl_account,
+        induk_current_pl_account: before.induk_current_pl_account,
+      },
+      actor
+    );
+    await syncControlAccounts(
+      [accumulated, current],
+      await systemDefaultAccountIds(),
+      actor
     );
   });
 

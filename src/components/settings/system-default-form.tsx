@@ -177,10 +177,10 @@ export function SystemDefaultForm({
 
       <p className="foot-note">
         Mengubah default tidak mengubah data yang sudah tersimpan — hanya isian
-        awal pada form berikutnya. Pengaturan bridge intercompany adalah
-        pengecualian: ia menentukan account dan Partner yang dipakai saat Funding
-        Request dikonfirmasi, dan konfirmasi ditolak selama salah satunya belum
-        diisi.
+        awal pada form berikutnya. Kartu yang menyebut Account adalah
+        pengecualian: ia tidak mengisi form, melainkan menentukan ke mana
+        posting ditulis, dan proses yang membutuhkannya ditolak dengan menyebut
+        nama selama account-nya belum diisi.
       </p>
     </>
   );

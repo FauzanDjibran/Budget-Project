@@ -159,6 +159,12 @@ table sys_account_type {
   type_label                  varchar(255) [not null, unique]
   type_name                   varchar(255) [not null]
 
+  // Neraca or Laba Rugi. Seeded, never edited and never offered on a form:
+  // which statement a type belongs to is not a judgement call. Stored rather
+  // than read off the first segment of the lineage code, so a type that does
+  // not follow the convention cannot break a derivation silently.
+  section                     enum('BalanceSheet', 'ProfitLoss') [not null]
+
   note                        text
 
   created_by                  int [not null]

@@ -394,6 +394,71 @@ describe("an account code states its own lineage", () => {
     }
   });
 
+  test("every Account Type says which statement it belongs to", async () => {
+    const types = await prisma.sysAccountType.findMany({
+      select: { type_label: true, type_name: true, section: true },
+    });
+    assert.ok(types.length, "the skeleton seeds five Account Types");
+
+    // The column exists so that nothing has to read the section off the first
+    // segment of a lineage code. That convention holds today and is exactly
+    // what a stored fact protects against: a type added later that does not
+    // follow it would break a derivation silently, and fails here instead.
+    const bySection = (section: string) =>
+      types
+        .filter((t) => t.section === section)
+        .map((t) => t.type_label)
+        .sort();
+
+    assert.deepEqual(bySection("ProfitLoss"), ["4", "5"], "PENDAPATAN and BIAYA");
+    assert.deepEqual(bySection("BalanceSheet"), ["1", "2", "3"], "AKTIVA, PASIVA, EKUITAS");
+    assert.equal(
+      bySection("ProfitLoss").length + bySection("BalanceSheet").length,
+      types.length,
+      "the two sets partition the Account Types — every type is one or the other"
+    );
+  });
+
+  test("every account resolves to exactly one section through its own lineage", async () => {
+    const company = await parentCompanyId();
+    // One account either side of the boundary, so the assertion is never
+    // vacuous on a database that carries no chart of its own yet.
+    await makeAccount({ companyId: company, subcategoryLabel: CASH_BANK_SUBCATEGORY });
+    await makeAccount({ companyId: company, subcategoryLabel: "5.3.1" });
+
+    const accounts = await prisma.accAccount.findMany({
+      select: {
+        account_label: true,
+        account_subcategory: {
+          select: {
+            account_category: {
+              select: { account_type: { select: { type_label: true, section: true } } },
+            },
+          },
+        },
+      },
+    });
+    assert.ok(accounts.length >= 2);
+
+    const seen = new Set<string>();
+    for (const a of accounts) {
+      const type = a.account_subcategory.account_category.account_type;
+      assert.ok(
+        type.section === "BalanceSheet" || type.section === "ProfitLoss",
+        `${a.account_label} reaches no section`
+      );
+      seen.add(type.section);
+      // The lineage and the stored section must agree, which is the whole
+      // point of storing it: the chart can be asked, and the answer can be
+      // checked against the convention rather than resting on it.
+      const expected = ["4", "5"].includes(type.type_label.split(".")[0])
+        ? "ProfitLoss"
+        : "BalanceSheet";
+      assert.equal(type.section, expected, a.account_label);
+    }
+    assert.equal(seen.size, 2, "both sections are reachable from real accounts");
+  });
+
   test("the kelompok Cash & Bank posts into is one that exists", async () => {
     const row = await prisma.accAccountSubcategory.findUnique({
       where: { subcategory_label: CASH_BANK_SUBCATEGORY },

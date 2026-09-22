@@ -167,6 +167,43 @@ export async function checkSystemDefaultValue(
   return null;
 }
 
+const ACCUMULATED_PL_KEYS = [
+  "induk_accumulated_pl_account",
+  "anak_accumulated_pl_account",
+] as const satisfies readonly SystemDefaultKey[];
+
+/**
+ * The accumulated-P&L settings that are not usable, by name.
+ *
+ * Closing a Fiscal Year moves that year's result into each Company's
+ * Laba/Rugi Tahun Sebelumnya, so without that account there is nowhere for the
+ * closing journal to post and the whole process is refused — the same shape the
+ * intercompany bridge takes, and for the same reason: a posting target is never
+ * guessed and never falls back.
+ *
+ * Resolved against the master rather than trusted as stored, exactly as
+ * `intercompanyBridge` resolves its four, so a setting pointing at an account
+ * that has since been deactivated, made non-postable or given a sub-account
+ * reads as unset rather than as ready.
+ *
+ * The current-year accounts are deliberately **not** checked here. Nothing
+ * posts to one, so an unset one blocks nothing — it is a report that is
+ * missing a line, not a process that cannot run.
+ */
+export async function missingClosingAccounts(): Promise<string[]> {
+  const values = await systemDefaults();
+  const missing: string[] = [];
+
+  for (const key of ACCUMULATED_PL_KEYS) {
+    const id = refValueOf(values, key);
+    if (!id || (await checkSystemDefaultValue(key, id))) {
+      missing.push(systemDefaultDef(key).name);
+    }
+  }
+
+  return missing;
+}
+
 export type IntercompanyBridge = {
   /** Where each Company keeps its claim on the other. */
   arAccountId: number;

@@ -288,6 +288,28 @@ const COA_SKELETON: [code: string, name: string][] = [
   ["5.9.1", "BIAYA DILUAR USAHA"],
 ];
 
+/**
+ * Which statement each Account Type belongs to.
+ *
+ * Keyed on the type's code, which is also its label, because that is what the
+ * migration backfills on and what a reader of the chart already knows. Neraca
+ * is carried forward from one fiscal year into the next; Laba Rugi is closed
+ * out into Laba/Rugi Tahun Sebelumnya and starts the new year at nil.
+ *
+ * Declared here rather than derived from the code's first segment on purpose:
+ * the derivation would work today and would break silently the first time
+ * somebody added a type. Re-synced on every run, because nothing in the
+ * application can change it — the section of a type is not a judgement call,
+ * so code is its source of truth in the same sense the permission catalogue is.
+ */
+const ACCOUNT_TYPE_SECTIONS: Record<string, "BalanceSheet" | "ProfitLoss"> = {
+  "1": "BalanceSheet", // AKTIVA
+  "2": "BalanceSheet", // PASIVA
+  "3": "BalanceSheet", // EKUITAS
+  "4": "ProfitLoss", //  PENDAPATAN
+  "5": "ProfitLoss", //  BIAYA
+};
+
 /** The skeleton rows at one depth, in the order the sheet lists them. */
 const skeletonLevel = (depth: number) =>
   COA_SKELETON.filter(([c]) => c.split(".").length === depth);
@@ -547,14 +569,32 @@ async function ensureReferenceData(
   audit: { created_by: number; updated_by: null }
 ): Promise<void> {
   for (const [i, [label, name]] of skeletonLevel(1).entries()) {
+    const section = ACCOUNT_TYPE_SECTIONS[label] ?? "BalanceSheet";
     const made = await create(
       () => prisma.sysAccountType.findUnique({ where: { type_label: label } }),
       () =>
         prisma.sysAccountType.create({
-          data: { type_code: code("atyp", i + 1), type_label: label, type_name: name, ...audit },
+          data: {
+            type_code: code("atyp", i + 1),
+            type_label: label,
+            type_name: name,
+            section,
+            ...audit,
+          },
         })
     );
     tally("account types", made);
+
+    // Nothing in the application writes this column, so a row disagreeing with
+    // the declaration above was changed outside it. Corrected rather than left,
+    // because closing reads it to decide which accounts are zeroed.
+    if (!made) {
+      const fixed = await prisma.sysAccountType.updateMany({
+        where: { type_label: label, section: { not: section } },
+        data: { section },
+      });
+      if (fixed.count) tally("account type sections corrected", fixed.count);
+    }
   }
 
   for (const [i, [label, table]] of DOC_TYPES.entries()) {

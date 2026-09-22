@@ -62,6 +62,18 @@ enum NormalBalance {
   Kredit
 }
 
+/// Which statement an account type belongs to, and therefore whether the
+/// accounts beneath it are closed out at the end of a fiscal year.
+///
+/// Stored rather than read off the first segment of a lineage code. The
+/// convention — `4` and `5` are Laba Rugi — happens to hold, and a
+/// convention that merely happens to hold is one a future maintainer can break
+/// with nothing failing. A column is a fact the database can be asked for.
+enum AccountSection {
+  BalanceSheet
+  ProfitLoss
+}
+
 enum FiscalStatus {
   Draft
   Open
@@ -302,6 +314,9 @@ model SysAccountType {
   type_code  String  @unique
   type_label String  @unique
   type_name  String
+  /// Neraca or Laba Rugi. Seeded, never edited, never offered on a form: which
+  /// statement a type belongs to is not a judgement call.
+  section    AccountSection
   note       String?
 
   created_by Int

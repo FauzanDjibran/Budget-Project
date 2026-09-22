@@ -9,12 +9,26 @@ import {
   isSystemDefaultKey,
   refValueOf,
 } from "../src/lib/siba/system-defaults";
+import { syncControlAccounts } from "../src/lib/siba/records";
 import {
+  checkSystemDefaultValue,
   defaultCurrencyId,
+  missingClosingAccounts,
+  systemDefaultAccountIds,
   systemDefaults,
+  systemDefaultsUsingAccount,
   writeSystemDefaults,
 } from "../src/lib/siba/system-settings";
-import { FIXTURE_PREFIX, disconnect, prisma, systemUserId } from "./helpers";
+import {
+  FIXTURE_PREFIX,
+  childCompanyId,
+  cleanupFixtures,
+  disconnect,
+  makeAccount,
+  parentCompanyId,
+  prisma,
+  systemUserId,
+} from "./helpers";
 
 /**
  * System Default.
@@ -33,9 +47,20 @@ let activeCurrency = 0;
 let inactiveCurrency = 0;
 let previous: string | null = null;
 
+/** The equity settings this suite writes over, so they can be put back. */
+const EQUITY_KEYS = [
+  "induk_accumulated_pl_account",
+  "anak_accumulated_pl_account",
+  "induk_current_pl_account",
+  "anak_current_pl_account",
+] as const;
+const previousEquity: Record<string, string | null> = {};
+
 before(async () => {
   actor = await systemUserId();
-  previous = (await systemDefaults()).default_currency;
+  const stored = await systemDefaults();
+  previous = stored.default_currency;
+  for (const key of EQUITY_KEYS) previousEquity[key] = stored[key];
 
   const base = await prisma.refCurrency.findFirstOrThrow({
     where: { status: "Active" },
@@ -58,7 +83,15 @@ before(async () => {
 });
 
 after(async () => {
-  await writeSystemDefaults({ default_currency: previous }, actor);
+  await writeSystemDefaults({ default_currency: previous, ...previousEquity }, actor);
+  // Release every fixture account these settings claimed, before the accounts
+  // themselves go: an account left flagged would outlive the row explaining it.
+  await syncControlAccounts(
+    claimed,
+    await systemDefaultAccountIds(),
+    actor
+  );
+  await cleanupFixtures();
   await prisma.refCurrency.deleteMany({
     where: { currency_label: { startsWith: FIXTURE_PREFIX } },
   });
@@ -67,6 +100,9 @@ after(async () => {
 });
 
 // -------------------------------------------------------------- the catalogue
+
+/** Every account this suite pointed a setting at, for the teardown to release. */
+const claimed = new Set<number>();
 
 describe("the System Default catalogue lives in code", () => {
   test("every declared key has a home in the empty value set", () => {
@@ -171,5 +207,166 @@ describe("a saved default is what the forms read", () => {
       where: { setting_key: "default_company" },
     });
     assert.equal(row, null, "sys_setting holds only keys the catalogue declares");
+  });
+});
+
+// --------------------------------------------------- the equity P&L accounts
+
+/**
+ * The two accounts per Company that closing a Fiscal Year needs.
+ *
+ * They behave like the intercompany bridge rather than like a prefill: the
+ * accumulated one is where a year's result is posted, so it is checked when it
+ * is stored and refused by name when it is missing. Both are closed to hand
+ * entry by the ordinary mechanism — an account a posting engine owns is not one
+ * a person types into — and the property that matters is that the claim is
+ * released again when the setting is repointed.
+ *
+ * The sync is invoked here the way `saveSystemDefaults` invokes it: a test
+ * process has no session, so it calls what the Server Action delegates to.
+ */
+describe("the equity accounts closing posts into", () => {
+  const sync = async (touched: number[]) => {
+    for (const id of touched) claimed.add(id);
+    await syncControlAccounts(touched, await systemDefaultAccountIds(), actor);
+  };
+  const isControl = async (id: number) =>
+    (
+      await prisma.accAccount.findUniqueOrThrow({
+        where: { id },
+        select: { is_control_account: true },
+      })
+    ).is_control_account;
+
+  test("an account of the wrong Company is refused before it is stored", async () => {
+    const anakAccount = await makeAccount({
+      companyId: await childCompanyId(),
+      subcategoryLabel: "3.3.1",
+      normalBalance: "Kredit",
+    });
+    const refused = await checkSystemDefaultValue(
+      "induk_accumulated_pl_account",
+      anakAccount
+    );
+    assert.ok(refused, "the induk's setting may not name the anak's chart");
+    assert.match(refused!, /Company/);
+  });
+
+  test("a header account is refused — a posting target is always a leaf", async () => {
+    const company = await parentCompanyId();
+    const parent = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.3.1",
+      normalBalance: "Kredit",
+    });
+    await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.3.1",
+      normalBalance: "Kredit",
+      parentId: parent,
+    });
+    assert.ok(
+      await checkSystemDefaultValue("induk_accumulated_pl_account", parent),
+      "an account with a sub-account is a heading, not a destination"
+    );
+  });
+
+  test("setting one closes it to manual entry, and repointing re-opens it", async () => {
+    const company = await parentCompanyId();
+    const first = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.3.1",
+      normalBalance: "Kredit",
+    });
+    const current = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.4.1",
+      normalBalance: "Kredit",
+    });
+
+    await writeSystemDefaults(
+      {
+        induk_accumulated_pl_account: String(first),
+        induk_current_pl_account: String(current),
+      },
+      actor
+    );
+    await sync([first, current]);
+
+    assert.equal(await isControl(first), true, "closing posts here");
+    assert.equal(
+      await isControl(current),
+      true,
+      "and nothing posts here at all, which is a stronger reason still"
+    );
+    assert.deepEqual(await systemDefaultsUsingAccount(first), [
+      "Account Laba/Rugi Tahun Sebelumnya — Induk",
+    ]);
+
+    // The half that used to be missing everywhere: a setting moved on has to
+    // let go of what it left behind, or the old account stays shut for good.
+    const second = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.3.1",
+      normalBalance: "Kredit",
+    });
+    await writeSystemDefaults(
+      { induk_accumulated_pl_account: String(second) },
+      actor
+    );
+    await sync([first, second]);
+
+    assert.equal(await isControl(first), false, "nothing names it any more");
+    assert.equal(await isControl(second), true, "the setting's new target is claimed");
+    assert.equal(await isControl(current), true, "the untouched setting still holds its own");
+  });
+
+  test("an unset accumulated account is reported by name, and the current one is not", async () => {
+    await writeSystemDefaults(
+      { induk_accumulated_pl_account: null, anak_accumulated_pl_account: null },
+      actor
+    );
+    const missing = await missingClosingAccounts();
+    assert.deepEqual(missing, [
+      "Account Laba/Rugi Tahun Sebelumnya — Induk",
+      "Account Laba/Rugi Tahun Sebelumnya — Anak",
+    ]);
+
+    // Nothing posts to the current-year account, so an unset one blocks no
+    // process — it is a report missing a line, not a refusal waiting to happen.
+    assert.ok(
+      !missing.some((m) => m.includes("Berjalan")),
+      "the presentation line is not a blocking gap"
+    );
+
+    const company = await parentCompanyId();
+    const account = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.3.1",
+      normalBalance: "Kredit",
+    });
+    await writeSystemDefaults(
+      { induk_accumulated_pl_account: String(account) },
+      actor
+    );
+    await sync([account]);
+    assert.deepEqual(await missingClosingAccounts(), [
+      "Account Laba/Rugi Tahun Sebelumnya — Anak",
+    ]);
+
+    // Resolved against the master, never trusted as stored: an account that has
+    // since been deactivated is somewhere the picker would no longer offer.
+    await prisma.accAccount.update({
+      where: { id: account },
+      data: { is_active: false },
+    });
+    assert.deepEqual(await missingClosingAccounts(), [
+      "Account Laba/Rugi Tahun Sebelumnya — Induk",
+      "Account Laba/Rugi Tahun Sebelumnya — Anak",
+    ]);
+    await prisma.accAccount.update({
+      where: { id: account },
+      data: { is_active: true },
+    });
   });
 });

@@ -15,7 +15,7 @@ import { accountPositions, type AccountPosition } from "./ledger";
 import { companyStructure } from "./records";
 import { subledgerPositions, type SubledgerPosition } from "./subledger";
 import { loadSubledgers } from "./subledger-data";
-import { intercompanyBridge } from "./system-settings";
+import { intercompanyBridge, missingClosingAccounts } from "./system-settings";
 
 /**
  * The dashboard's data, composed from what each module says about its own
@@ -408,6 +408,25 @@ async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[
         bridgeMissing.join(", ") +
         ". Funding Request Company anak tidak dapat dikonfirmasi sebelum ini lengkap.",
     });
+  }
+
+  // Same shape as the bridge above, and for the same reason: an account a
+  // posting engine needs is named, never guessed. Raised only once a chart of
+  // accounts exists, because before that the missing accounts are the thing to
+  // fix and this would only repeat it.
+  if (accounts) {
+    const closingMissing = await missingClosingAccounts();
+    if (closingMissing.length) {
+      items.push({
+        href: "/settings/system-default",
+        title: "Account Laba/Rugi Tahun Sebelumnya belum diatur",
+        detail:
+          "Belum diatur: " +
+          closingMissing.join(", ") +
+          ". Fiscal Year tidak dapat ditutup sebelum tiap Company menunjuk " +
+          "account tempat hasil tahun berjalan dipindahkan.",
+      });
+    }
   }
 
   return items;
