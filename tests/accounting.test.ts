@@ -419,6 +419,20 @@ describe("an account code states its own lineage", () => {
     );
   });
 
+  test("every Account Type says which side its total reads positive on", async () => {
+    const types = await prisma.sysAccountType.findMany({
+      select: { type_label: true, normal_balance: true },
+    });
+    const side = (label: string) => types.find((t) => t.type_label === label)?.normal_balance;
+    // The Neraca signs by this, so a contra account inside a type prints as a
+    // deduction there. A wrong side would print every AKTIVA negative.
+    assert.equal(side("1"), "Debit", "AKTIVA");
+    assert.equal(side("2"), "Kredit", "PASIVA");
+    assert.equal(side("3"), "Kredit", "EKUITAS");
+    assert.equal(side("4"), "Kredit", "PENDAPATAN");
+    assert.equal(side("5"), "Debit", "BIAYA");
+  });
+
   test("every Laba Rugi category names its step, and no Neraca category does", async () => {
     const categories = await prisma.accAccountCategory.findMany({
       select: {

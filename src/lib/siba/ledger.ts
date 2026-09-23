@@ -913,3 +913,115 @@ export async function statementMovements(
     credit: roundBase(r._sum.kredit_amount?.toNumber() ?? 0),
   }));
 }
+
+/**
+ * Where one Company's accounts on one statement stood at the end of a day, at
+ * `(account, partner?)` grain — the Neraca's figures, and the profit it has to
+ * carry that no close has moved yet.
+ *
+ * Cumulative, so it opens from the Opening Balance snapshot dated **on or
+ * before `openingOn`** and adds the posted lines from that snapshot's date to
+ * `to`. The caller passes the reported year's first day as `openingOn`, and
+ * that is load-bearing: the *next* year's snapshot would also cover `to`, but
+ * it already contains this year's closing journal — which the statement
+ * deliberately leaves out, so a Desember Neraca reads the same before and
+ * after the close. Without a snapshot the whole history is scanned, exactly as
+ * the ledger reports do.
+ *
+ * A `to` earlier than the snapshot's own date asks only for what the snapshot
+ * already holds, which is how the profit carried from before the year is read:
+ * `to` is the day before the year begins.
+ */
+export async function statementBalances(
+  companyId: number,
+  options: {
+    section: AccountSection;
+    /** `YYYY-MM-DD` — the latest snapshot on or before this day is stood on. */
+    openingOn: string;
+    /** `YYYY-MM-DD`, inclusive. */
+    to: string;
+    excludeClosingOf?: number | null;
+  }
+): Promise<{ pairs: StatementMovement[]; openingFrom: OpeningProvenance | null }> {
+  const snapshot = await openingBasisFor(
+    companyId,
+    new Date(`${options.openingOn}T00:00:00Z`)
+  );
+  const sectionFilter = {
+    account_subcategory: {
+      account_category: { account_type: { section: options.section } },
+    },
+  };
+
+  const [rows, inSection] = await Promise.all([
+    prisma.accJournalLine.groupBy({
+      by: ["account_id", "partner_id"],
+      where: {
+        account: sectionFilter,
+        journal: {
+          ...POSTED,
+          company_id: companyId,
+          posting_date: {
+            ...(snapshot ? { gte: snapshot.postingDate } : {}),
+            lte: new Date(`${options.to}T00:00:00Z`),
+          },
+          ...(options.excludeClosingOf
+            ? {
+                NOT: {
+                  source_doc_id: options.excludeClosingOf,
+                  source_doc_type: { is: { doc_table: CLOSING_SOURCE_TABLE } },
+                },
+              }
+            : {}),
+        },
+      },
+      _sum: { debit_amount: true, kredit_amount: true },
+    }),
+    snapshot
+      ? prisma.accAccount.findMany({
+          where: { company_id: companyId, ...sectionFilter },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const pairs = new Map<string, StatementMovement>();
+  const at = (accountId: number, partnerId: number | null) => {
+    const key = `${accountId}:${partnerId ?? "-"}`;
+    let pair = pairs.get(key);
+    if (!pair) {
+      pair = { accountId, partnerId, debit: 0, credit: 0 };
+      pairs.set(key, pair);
+    }
+    return pair;
+  };
+
+  if (snapshot) {
+    const ids = new Set(inSection.map((a) => a.id));
+    for (const l of snapshot.byPair) {
+      if (!ids.has(l.accountId)) continue;
+      const pair = at(l.accountId, l.partnerId);
+      if (l.net >= 0) pair.debit += l.net;
+      else pair.credit -= l.net;
+    }
+  }
+  for (const r of rows) {
+    const pair = at(r.account_id, r.partner_id);
+    pair.debit += r._sum.debit_amount?.toNumber() ?? 0;
+    pair.credit += r._sum.kredit_amount?.toNumber() ?? 0;
+  }
+
+  return {
+    pairs: [...pairs.values()].map((p) => ({
+      ...p,
+      debit: roundBase(p.debit),
+      credit: roundBase(p.credit),
+    })),
+    openingFrom: snapshot
+      ? {
+          openingNo: snapshot.openingNo,
+          date: snapshot.postingDate.toISOString().slice(0, 10),
+        }
+      : null,
+  };
+}

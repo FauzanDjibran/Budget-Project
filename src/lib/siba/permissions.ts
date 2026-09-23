@@ -175,6 +175,7 @@ export const PERMISSIONS = [
   { code: "REPORT_GENERAL_LEDGER_VIEW", name: "Lihat General Ledger", module: "accounting" },
   { code: "REPORT_TRIAL_BALANCE_VIEW", name: "Lihat Trial Balance", module: "accounting" },
   { code: "REPORT_PROFIT_LOSS_VIEW", name: "Lihat Laba Rugi", module: "accounting" },
+  { code: "REPORT_BALANCE_SHEET_VIEW", name: "Lihat Neraca", module: "accounting" },
 
   // ---------------------------------------------------------------- budget
   { code: "MENU_BUDGET_ACCESS", name: "Akses menu Budget", module: "budget" },

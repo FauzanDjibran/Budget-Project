@@ -238,6 +238,44 @@ export async function missingNeracaAccounts(
   return missing;
 }
 
+export type NeracaAccounts =
+  | { ok: true; currentId: number; unclosedId: number | null }
+  | { ok: false; missing: string[] };
+
+/**
+ * Where one Company's Neraca places its computed equity figures, or what is
+ * missing, by name.
+ *
+ * The Neraca is **not produced** without them — the user's rule — so this is
+ * the refusal's source as well as the placement's. Belum Ditutup is resolved
+ * only when the caller has a figure for it to hold, the same reasoning
+ * `missingNeracaAccounts` applies for the dashboard.
+ */
+export async function neracaAccountsFor(
+  isParent: boolean,
+  needsUnclosed: boolean
+): Promise<NeracaAccounts> {
+  const values = await systemDefaults();
+  const prefix = isParent ? "induk" : "anak";
+  const resolve = async (key: SystemDefaultKey) => {
+    const id = refValueOf(values, key);
+    if (!id || (await checkSystemDefaultValue(key, id))) return null;
+    return id;
+  };
+
+  const currentKey: SystemDefaultKey = `${prefix}_current_pl_account`;
+  const unclosedKey: SystemDefaultKey = `${prefix}_unclosed_pl_account`;
+  const currentId = await resolve(currentKey);
+  const unclosedId = needsUnclosed ? await resolve(unclosedKey) : null;
+
+  const missing: string[] = [];
+  if (!currentId) missing.push(systemDefaultDef(currentKey).name);
+  if (needsUnclosed && !unclosedId) missing.push(systemDefaultDef(unclosedKey).name);
+  if (missing.length) return { ok: false, missing };
+
+  return { ok: true, currentId: currentId!, unclosedId };
+}
+
 export type IntercompanyBridge = {
   /** Where each Company keeps its claim on the other. */
   arAccountId: number;

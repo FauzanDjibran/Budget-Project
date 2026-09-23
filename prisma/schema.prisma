@@ -345,6 +345,13 @@ model SysAccountType {
   /// Neraca or Laba Rugi. Seeded, never edited, never offered on a form: which
   /// statement a type belongs to is not a judgement call.
   section    AccountSection
+  /// Which side the type's own total reads positive on — AKTIVA and BIAYA
+  /// debit, PASIVA, EKUITAS and PENDAPATAN credit. The Neraca signs every row
+  /// under a type by it, which is what prints Akumulasi Penyusutan (a Kredit
+  /// account inside AKTIVA) as the deduction it is. Seeded, never edited, on no
+  /// form; stored rather than read off the type's number for the reason
+  /// `section` is.
+  normal_balance NormalBalance
   note       String?
 
   created_by Int

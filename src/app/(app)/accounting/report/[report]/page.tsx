@@ -17,14 +17,21 @@ import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { formatDate } from "@/lib/format";
 import type { OpeningProvenance } from "@/lib/siba/ledger";
 import { FiscalPeriodParams } from "@/components/report/fiscal-period-params";
-import { ProfitLossReport } from "@/components/report/profit-loss-report";
+import { StatementReport } from "@/components/report/statement-report";
+import Link from "next/link";
 import { Icon } from "@/components/icon";
 import {
   reportableFiscalYears,
   unclosedPriorYear,
   type ReportableFiscalYear,
 } from "@/lib/siba/fiscal";
-import { profitLossReport, resolveColumn } from "@/lib/siba/statements";
+import {
+  balanceSheetReport,
+  profitLossReport,
+  resolveColumn,
+  type StatementColumn,
+} from "@/lib/siba/statements";
+import { formatMoney } from "@/lib/format";
 import type { StatementMode } from "@/lib/siba/statement-layout";
 import type { ReportDef } from "@/lib/siba/reports";
 
@@ -84,7 +91,7 @@ export default async function Page({
   }
 
   if (report.params === "fiscal-period") {
-    return statementPage(report, slug, company.id, scope.options, query);
+    return statementPage(report, slug, company, scope.options, query);
   }
 
   const companyIds = [company.id];
@@ -239,7 +246,7 @@ function parseIds(raw?: string): number[] {
 async function statementPage(
   report: ReportDef,
   slug: string,
-  companyId: number,
+  company: { id: number; isParent: boolean },
   companyOptions: Parameters<typeof CompanyFilter>[0]["options"],
   query: {
     year?: string;
@@ -249,12 +256,14 @@ async function statementPage(
     cmpPeriod?: string;
   }
 ) {
+  const companyId = company.id;
   const runAt = new Date().toISOString();
   const years = await reportableFiscalYears();
+  const companyFilter = <CompanyFilter options={companyOptions} selectedId={companyId} />;
 
   if (!years.length) {
     return (
-      <ReportView report={report} filter={<CompanyFilter options={companyOptions} selectedId={companyId} />} runAt={runAt}>
+      <ReportView report={report} filter={companyFilter} runAt={runAt}>
         <ReportNeedsSubject
           icon="cal"
           title="Belum ada tahun buku aktif"
@@ -264,7 +273,11 @@ async function statementPage(
     );
   }
 
-  const mode: StatementMode = query.mode === "mtd" ? "mtd" : "ytd";
+  // The Neraca is a position at the end of the period, so it has no mode: its
+  // column runs from the year's first day, which is where the profit it carries
+  // in equity is split.
+  const neraca = report.key === "balance_sheet";
+  const mode: StatementMode = !neraca && query.mode === "mtd" ? "mtd" : "ytd";
   const fallback = defaultPeriod(years);
   const main =
     resolveColumn(years, toId(query.year), toId(query.period), mode) ??
@@ -272,21 +285,20 @@ async function statementPage(
   const compare = resolveColumn(years, toId(query.cmpYear), toId(query.cmpPeriod), mode);
   const columns = compare ? [main, compare] : [main];
 
-  const data = await profitLossReport(companyId, columns);
-
-  // A previous year this Company has not closed yet. The figures are right
-  // either way — a Laba Rugi is a range sum — but the books are still running
-  // as an extension of that year, and the report says so rather than leaving
-  // a reader to find out on the Neraca.
+  // A previous year this Company has not closed yet. The books are running as
+  // an extension of that year, and the report says so rather than leaving a
+  // reader to find out from a figure.
   const carried = await unclosedPriorYear(companyId);
-  const mainYear = years.find((y) => y.id === main.yearId)!;
-  const carriedYear = carried ? years.find((y) => y.id === carried.id) : null;
+  const carriedYear = carried ? (years.find((y) => y.id === carried.id) ?? null) : null;
+  const yearOf = (c: StatementColumn) => years.find((y) => y.id === c.yearId)!;
   const carrying =
-    carriedYear && carriedYear.startDate < mainYear.startDate ? carriedYear : null;
+    carriedYear && columns.some((c) => carriedYear.startDate < yearOf(c).startDate)
+      ? carriedYear
+      : null;
 
   const filter = (
     <>
-      <CompanyFilter options={companyOptions} selectedId={companyId} />
+      {companyFilter}
       <FiscalPeriodParams
         slug={slug}
         companyId={companyId}
@@ -299,10 +311,91 @@ async function statementPage(
         main={{ yearId: main.yearId, periodId: main.periodId }}
         compare={compare ? { yearId: compare.yearId, periodId: compare.periodId } : null}
         mode={mode}
-        showMode
+        showMode={!neraca}
       />
     </>
   );
+
+  // ----------------------------------------------------------------- neraca
+
+  if (neraca) {
+    const data = await balanceSheetReport(company, columns, carriedYear?.startDate ?? null);
+
+    if (!data.ok) {
+      return (
+        <ReportView report={report} filter={filter} runAt={runAt}>
+          <div className="empty sm">
+            <div className="ic">
+              <Icon name="warn" size={20} />
+            </div>
+            <h4>Neraca tidak dapat ditampilkan</h4>
+            <p>
+              Laba rugi yang belum dipindahkan ke ekuitas dihitung, lalu diletakkan pada
+              account yang ditunjuk System Default. Belum diatur: {data.missing.join(", ")}.
+            </p>
+            <Link className="btn primary sm" href="/settings/system-default">
+              <Icon name="gear" size={13} /> Buka System Default
+            </Link>
+          </div>
+        </ReportView>
+      );
+    }
+
+    const off = data.columns.flatMap((c, i) =>
+      Math.round((data.debitTotal[i] - data.creditTotal[i]) * 100) !== 0
+        ? [`${c.periodName}: selisih ${formatMoney(Math.abs(data.debitTotal[i] - data.creditTotal[i]))}`]
+        : []
+    );
+    const opening = data.openingFrom.find(Boolean);
+
+    return (
+      <ReportView
+        report={report}
+        filter={filter}
+        runAt={runAt}
+        footnote={
+          <>
+            Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}), saldo kumulatif
+            per akhir periode tiap kolom — laba rugi yang belum dipindahkan ke ekuitas
+            dihitung dari journal dan diletakkan pada account System Default
+            {openingSource(opening)}.
+          </>
+        }
+      >
+        {carrying && (
+          <Notice tone="warn" title={`${carrying.name} belum ditutup untuk Company ini.`}>
+            Ekuitas memuat laba rugi {carrying.name} yang belum dipindahkan ke Laba/Rugi
+            Tahun Sebelumnya — angkanya berpindah ke sana saat {carrying.name} ditutup.
+          </Notice>
+        )}
+        {off.length > 0 && (
+          <Notice tone="bad" title="Aktiva tidak sama dengan Pasiva dan Ekuitas.">
+            {off.join("; ")}. Setiap journal wajib seimbang, jadi selisih ini menandakan
+            masalah sistem, bukan kesalahan input.
+          </Notice>
+        )}
+        {data.postedOnComputed.length > 0 && (
+          <Notice tone="bad" title="Account laba rugi yang dihitung memiliki posting.">
+            Account ini tidak pernah diposting, tetapi memiliki saldo — saldonya
+            dijumlahkan dengan angka yang dihitung: {data.postedOnComputed.join(", ")}.
+          </Notice>
+        )}
+        {data.unclosedWithoutYear.length > 0 && (
+          <Notice tone="bad" title="Laba rugi tahun lalu tidak nol padahal tahunnya sudah ditutup.">
+            Account Laba Rugi sebelum awal tahun masih bersaldo walau tahun buku
+            sebelumnya sudah ditutup. Angkanya tetap ditampilkan pada account Tahun Lalu
+            Belum Ditutup agar Neraca seimbang.
+          </Notice>
+        )}
+        {data.unplaced.length > 0 && <UnplacedNotice names={data.unplaced} />}
+        <StatementReport columns={data.columns} rows={data.rows} companyId={companyId} position />
+      </ReportView>
+    );
+  }
+
+  // -------------------------------------------------------------- laba rugi
+
+  const data = await profitLossReport(companyId, columns);
 
   return (
     <ReportView
@@ -318,32 +411,45 @@ async function statementPage(
       }
     >
       {carrying && (
-        <div className="nbox warn slim" style={{ margin: "0 0 12px" }}>
-          <Icon name="warn" size={14} />
-          <div>
-            <b>{carrying.name} belum ditutup untuk Company ini.</b>
-            <p>
-              Angka Laba Rugi tetap benar karena setiap kolom hanya menjumlah
-              periodenya sendiri, tetapi hasil {carrying.name} belum dipindahkan ke
-              Laba/Rugi Tahun Sebelumnya.
-            </p>
-          </div>
-        </div>
+        <Notice tone="warn" title={`${carrying.name} belum ditutup untuk Company ini.`}>
+          Angka Laba Rugi tetap benar karena setiap kolom hanya menjumlah periodenya
+          sendiri, tetapi hasil {carrying.name} belum dipindahkan ke Laba/Rugi Tahun
+          Sebelumnya.
+        </Notice>
       )}
-      {data.unplaced.length > 0 && (
-        <div className="nbox bad slim" style={{ margin: "0 0 12px" }}>
-          <Icon name="warn" size={14} />
-          <div>
-            <b>Ada account yang bergerak tanpa tingkat Laba Rugi.</b>
-            <p>
-              Kategori account berikut tidak menyebut tingkat Laba Rugi, sehingga
-              nilainya tidak masuk ke subtotal manapun: {data.unplaced.join(", ")}.
-            </p>
-          </div>
-        </div>
-      )}
-      <ProfitLossReport columns={data.columns} rows={data.rows} companyId={companyId} />
+      {data.unplaced.length > 0 && <UnplacedNotice names={data.unplaced} />}
+      <StatementReport columns={data.columns} rows={data.rows} companyId={companyId} />
     </ReportView>
+  );
+}
+
+/** A statement's notice: a warning the reader acts on, or a fault. */
+function Notice({
+  tone,
+  title,
+  children,
+}: {
+  tone: "warn" | "bad";
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`nbox ${tone} slim`} style={{ margin: "0 0 12px" }}>
+      <Icon name="warn" size={14} />
+      <div>
+        <b>{title}</b>
+        <p>{children}</p>
+      </div>
+    </div>
+  );
+}
+
+function UnplacedNotice({ names }: { names: string[] }) {
+  return (
+    <Notice tone="bad" title="Ada account yang bergerak tanpa tempat pada laporan ini.">
+      Kategori account berikut tidak menyebut tempatnya pada laporan, sehingga nilainya
+      tidak masuk ke subtotal manapun: {names.join(", ")}.
+    </Notice>
   );
 }
 

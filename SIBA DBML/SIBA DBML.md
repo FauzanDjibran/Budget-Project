@@ -165,6 +165,14 @@ table sys_account_type {
   // not follow the convention cannot break a derivation silently.
   section                     enum('BalanceSheet', 'ProfitLoss') [not null]
 
+  // Which side the type's own total reads positive on — AKTIVA and BIAYA
+  // Debit, PASIVA, EKUITAS and PENDAPATAN Kredit. The Neraca signs every row
+  // beneath a type by it rather than by the account's own normal balance,
+  // which is what prints Akumulasi Penyusutan (a Kredit account inside
+  // AKTIVA) as the deduction it is. Seeded, never edited, on no form; stored
+  // rather than read off the type's number for the reason `section` is.
+  normal_balance              enum('Debit', 'Kredit') [not null]
+
   note                        text
 
   created_by                  int [not null]

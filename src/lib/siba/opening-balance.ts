@@ -413,6 +413,12 @@ export type OpeningBasis = {
   postingDate: Date;
   /** `debit − credit` per account, rolled up from the snapshot's own lines. */
   byAccount: Map<number, number>;
+  /**
+   * The same figures at the grain they are stored at, `(account, partner?)`.
+   * A financial statement's Partner breakdown opens from these; the ledger
+   * reports, which are about accounts, read `byAccount`.
+   */
+  byPair: { accountId: number; partnerId: number | null; net: number }[];
 };
 
 /**
@@ -447,7 +453,12 @@ export async function openingBasisFor(
       opening_no: true,
       posting_date: true,
       lines: {
-        select: { account_id: true, debit_amount: true, kredit_amount: true },
+        select: {
+          account_id: true,
+          partner_id: true,
+          debit_amount: true,
+          kredit_amount: true,
+        },
       },
     },
   });
@@ -468,5 +479,10 @@ export async function openingBasisFor(
     openingNo: snapshot.opening_no,
     postingDate: snapshot.posting_date,
     byAccount,
+    byPair: snapshot.lines.map((l) => ({
+      accountId: l.account_id,
+      partnerId: l.partner_id,
+      net: l.debit_amount.toNumber() - l.kredit_amount.toNumber(),
+    })),
   };
 }

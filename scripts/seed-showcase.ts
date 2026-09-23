@@ -26,7 +26,8 @@
 import "dotenv/config";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
 import { ensureFiscalPeriods, fiscalYearShape } from "@/lib/siba/fiscal";
-import { writeSystemDefaults } from "@/lib/siba/system-settings";
+import { syncControlAccounts } from "@/lib/siba/records";
+import { systemDefaultAccountIds, writeSystemDefaults } from "@/lib/siba/system-settings";
 import { nextBudgetNo } from "@/lib/siba/budget";
 import { applyPosting } from "@/lib/siba/finance";
 import { purposeByKey } from "@/lib/siba/purposes";
@@ -216,7 +217,12 @@ const CHART: Group[] = [
   {
     kelompok: "3.4.1",
     balance: "Kredit",
-    accounts: [{ name: "Laba Rugi Tahun Berjalan" }],
+    // Neither is ever posted to: the Neraca computes both figures and places
+    // them here, through the System Defaults below.
+    accounts: [
+      { name: "Laba Rugi Tahun Berjalan" },
+      { name: "Laba Rugi Tahun Lalu Belum Ditutup" },
+    ],
   },
   {
     kelompok: "4.1.1",
@@ -493,10 +499,21 @@ async function setDefaults(actor: number) {
       anak_bridge_ap_account: String(await accountId(anak.id, "Hutang kepada Perusahaan Afiliasi")),
       induk_fx_account: String(await accountId(induk.id, "Selisih Kurs")),
       anak_fx_account: String(await accountId(anak.id, "Selisih Kurs")),
+      induk_accumulated_pl_account: String(await accountId(induk.id, "Laba Ditahan")),
+      anak_accumulated_pl_account: String(await accountId(anak.id, "Laba Ditahan")),
+      induk_unclosed_pl_account: String(await accountId(induk.id, "Laba Rugi Tahun Lalu Belum Ditutup")),
+      anak_unclosed_pl_account: String(await accountId(anak.id, "Laba Rugi Tahun Lalu Belum Ditutup")),
+      induk_current_pl_account: String(await accountId(induk.id, "Laba Rugi Tahun Berjalan")),
+      anak_current_pl_account: String(await accountId(anak.id, "Laba Rugi Tahun Berjalan")),
     },
     actor
   );
   tally("system defaults", changed.length);
+
+  // What the Server Action does after every settings write: an account a
+  // posting engine or a statement owns is closed to hand entry.
+  const named = await systemDefaultAccountIds();
+  await syncControlAccounts([...named], named, actor);
 }
 
 /**

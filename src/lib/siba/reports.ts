@@ -156,6 +156,19 @@ const FIXED_REPORTS = [
     // the route defaults it to the latest one.
     subjectRequired: false,
   },
+  {
+    key: "balance_sheet",
+    slug: "balance-sheet",
+    module: "accounting",
+    name: "Neraca",
+    desc:
+      "Aktiva, pasiva dan ekuitas satu Company pada akhir periode tahun buku, " +
+      "dengan laba rugi yang belum ditutup di ekuitas dan pembanding opsional.",
+    icon: "scale",
+    permission: "REPORT_BALANCE_SHEET_VIEW",
+    params: "fiscal-period",
+    subjectRequired: false,
+  },
 ] as const satisfies readonly ReportDef[];
 
 /**

@@ -28,11 +28,11 @@ const HIDDEN_AT: Record<Detail, StatementRow["kind"][]> = {
 };
 
 /**
- * The multi-step Laba Rugi.
+ * A financial statement — the multi-step Laba Rugi or the Neraca.
  *
- * One table: a step heads its categories, a result line (Laba Kotor, Laba
- * Usaha, Laba Bersih) closes the steps above it, and each heading carries the
- * total of what sits beneath it. With a comparison, three columns join the
+ * One table: a step or an Account Type heads its categories, a result or total
+ * line closes it, and each heading carries the total of what sits beneath it
+ * (a Neraca section's heading carries none, because its total line follows). With a comparison, three columns join the
  * first — Pembanding, Selisih and Selisih % — and each column header states its
  * own date range, so a screenshot says which figures it is.
  *
@@ -40,14 +40,17 @@ const HIDDEN_AT: Record<Detail, StatementRow["kind"][]> = {
  * Partners in place; an account number links to its General Ledger for the
  * first column's range. Read-only, like every Report View.
  */
-export function ProfitLossReport({
+export function StatementReport({
   columns,
   rows,
   companyId,
+  position = false,
 }: {
   columns: StatementColumn[];
   rows: StatementRow[];
   companyId: number;
+  /** A Neraca: each column is a position per its last day, not a range. */
+  position?: boolean;
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<Detail>("account");
@@ -103,7 +106,9 @@ export function ProfitLossReport({
                 <th key={i} className="num" style={{ width: 150 }}>
                   {i === 0 ? c.periodName : `Pembanding · ${c.periodName}`}
                   <span className="rsub">
-                    {formatDate(c.range.from)} – {formatDate(c.range.to)}
+                    {position
+                      ? `per ${formatDate(c.range.to)}`
+                      : `${formatDate(c.range.from)} – ${formatDate(c.range.to)}`}
                   </span>
                 </th>
               ))}
@@ -139,7 +144,9 @@ export function ProfitLossReport({
                       ) : (
                         <span className="tgl" />
                       )}
-                      {r.kind === "account" && r.accountId ? (
+                      {/* A computed line's account is never posted to, so its
+                          General Ledger is empty — a link there would mislead. */}
+                      {r.kind === "account" && r.accountId && !r.computed ? (
                         <Link
                           className="lab"
                           href={reportHref("general-ledger", {
@@ -156,14 +163,30 @@ export function ProfitLossReport({
                         r.code && <span className="cd">{r.code}</span>
                       )}
                       <span className="nm">{r.name}</span>
+                      {r.computed && (
+                        <span
+                          className="bdg t-slate"
+                          title="Dihitung dari journal Laba Rugi, tidak pernah diposting ke account ini"
+                        >
+                          dihitung
+                        </span>
+                      )}
                     </div>
                   </td>
-                  {r.values.map((v, i) => (
-                    <td key={i} className="num">
-                      <Figure value={v} strong={r.kind === "subtotal"} />
-                    </td>
-                  ))}
-                  {comparing && <Difference current={r.values[0]} base={r.values[1]} />}
+                  {r.values.length === 0 ? (
+                    // A heading whose total is its own closing line: nothing to
+                    // state here, and a dash would read as "nil".
+                    <td colSpan={columns.length + (comparing ? 2 : 0)} />
+                  ) : (
+                    <>
+                      {r.values.map((v, i) => (
+                        <td key={i} className="num">
+                          <Figure value={v} strong={r.kind === "subtotal"} />
+                        </td>
+                      ))}
+                      {comparing && <Difference current={r.values[0]} base={r.values[1]} />}
+                    </>
+                  )}
                 </tr>
               );
             })}

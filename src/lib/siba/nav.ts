@@ -281,6 +281,14 @@ export const MODULES: NavModule[] = [
             desc: "Laba rugi bertingkat satu Company per periode tahun buku, dengan pembanding opsional.",
             permission: "REPORT_PROFIT_LOSS_VIEW",
           },
+          {
+            key: "report_balance_sheet",
+            slug: "report/balance-sheet",
+            name: "Neraca",
+            icon: "scale",
+            desc: "Aktiva, pasiva dan ekuitas satu Company pada akhir periode tahun buku, dengan pembanding opsional.",
+            permission: "REPORT_BALANCE_SHEET_VIEW",
+          },
         ],
       },
       {

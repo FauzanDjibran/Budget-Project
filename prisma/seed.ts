@@ -341,6 +341,23 @@ const ACCOUNT_CATEGORY_PL_GROUPS: Record<
   "5.9": "OtherExpense", //     BIAYA DILUAR USAHA
 };
 
+/**
+ * Which side each Account Type's own total reads positive on.
+ *
+ * The Neraca signs every row beneath a type by this rather than by the
+ * account's own normal balance, which is what prints Akumulasi Penyusutan — a
+ * Kredit account inside AKTIVA — as the deduction it is. Declared rather than
+ * inferred from the code for the reason `ACCOUNT_TYPE_SECTIONS` is, and
+ * re-synced on every run for the same reason.
+ */
+const ACCOUNT_TYPE_NORMAL_BALANCE: Record<string, "Debit" | "Kredit"> = {
+  "1": "Debit", //  AKTIVA
+  "2": "Kredit", // PASIVA
+  "3": "Kredit", // EKUITAS
+  "4": "Kredit", // PENDAPATAN
+  "5": "Debit", //  BIAYA
+};
+
 /** The skeleton rows at one depth, in the order the sheet lists them. */
 const skeletonLevel = (depth: number) =>
   COA_SKELETON.filter(([c]) => c.split(".").length === depth);
@@ -601,6 +618,7 @@ async function ensureReferenceData(
 ): Promise<void> {
   for (const [i, [label, name]] of skeletonLevel(1).entries()) {
     const section = ACCOUNT_TYPE_SECTIONS[label] ?? "BalanceSheet";
+    const normalBalance = ACCOUNT_TYPE_NORMAL_BALANCE[label] ?? "Debit";
     const made = await create(
       () => prisma.sysAccountType.findUnique({ where: { type_label: label } }),
       () =>
@@ -610,6 +628,7 @@ async function ensureReferenceData(
             type_label: label,
             type_name: name,
             section,
+            normal_balance: normalBalance,
             ...audit,
           },
         })
@@ -625,6 +644,11 @@ async function ensureReferenceData(
         data: { section },
       });
       if (fixed.count) tally("account type sections corrected", fixed.count);
+      const sided = await prisma.sysAccountType.updateMany({
+        where: { type_label: label, normal_balance: { not: normalBalance } },
+        data: { normal_balance: normalBalance },
+      });
+      if (sided.count) tally("account type sides corrected", sided.count);
     }
   }
 

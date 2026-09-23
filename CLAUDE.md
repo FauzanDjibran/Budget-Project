@@ -88,7 +88,7 @@ or invariants that assume a particular row exists.
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
-| Report Views | Done — the screen type plus ten reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs` and the six subject books under Finance › Laporan, and General Ledger, Trial Balance and the multi-step **Laba Rugi** under Accounting. The Neraca is next. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
+| Report Views | Done — the screen type plus eleven reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs` and the six subject books under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
@@ -202,8 +202,8 @@ of its own.
 | Transfer lifecycle | `src/lib/siba/transfer-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Transfer data | `src/lib/siba/transfer.ts` | Header and destination enforcement, `applyTransfer`, `TRF-` numbering; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
-| Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and `buildProfitLoss` — chart + movements to rows, pure; client-safe |
-| Financial statements | `src/lib/siba/statements.ts` | Resolves a year and period to a column, reads the chart and the Partners, asks `ledger.ts` for the figures; `server-only` |
+| Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and the two builders — `buildProfitLoss` and `buildBalanceSheet` over one shared tree — chart + figures to rows, pure; client-safe |
+| Financial statements | `src/lib/siba/statements.ts` | Resolves a year and period to a column, reads the chart and the Partners, asks `ledger.ts` for the figures, computes the Neraca's two equity lines and places them; `server-only` |
 | Dashboard composition | `src/lib/siba/dashboard.ts` | The commitment funnel, the cash position and the setup gaps, asked of each owning module; names no table itself; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Budget writes | `src/app/actions/budget.ts` | Create, edit, and the lifecycle transitions |
@@ -422,7 +422,8 @@ src/
                          several, FiscalPeriodParams for a statement), and the
                          report bodies: Cash Bank Ledger, Cash Bank Balance,
                          Cash Bank Layer, General Ledger, Trial Balance,
-                         Subledger, Laba Rugi
+                         Subledger, and the one statement body the Laba
+                         Rugi and the Neraca share
     dashboard/           Dashboard — the funnel, the cash table, the positions
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
@@ -1030,6 +1031,27 @@ Implemented and enforced:
    year's id), never by the `CLS-` prefix — so a Desember or full-year run
    shows the result rather than the nil a close leaves, and reads the same
    before and after the close. One Company per run, no joint report.
+96. **The Neraca is cumulative, and carries unclosed profit on two computed
+   lines.** Every balance-sheet account stands at its balance at the end of
+   the chosen period, opened from the Opening Balance snapshot dated **on or
+   before the reported year's first day** — never the next year's, which
+   already holds this year's closing journal — and with that closing journal
+   left out, so a Desember Neraca reads the same before and after the close.
+   Equity then needs the profit nothing has posted into it, split at the
+   year's first day: **Laba/Rugi Tahun Berjalan** is the Laba Rugi lines
+   from that day to the period's end (exactly the Laba Rugi's s.d. Periode
+   ini), and **Laba/Rugi Tahun Lalu Belum Ditutup** is every Laba Rugi line
+   before it that no close has emptied — the previous year's result while
+   that year is unclosed, nil after. While a previous year is open the newer
+   one runs as its extension, and the report says so. Each figure is placed
+   on the account its System Default names, marked *dihitung*; the Neraca is
+   **not produced** without Tahun Berjalan, nor without Belum Ditutup where
+   there is a figure for it, and the refusal names the setting. A type's
+   rows are signed by `sys_account_type.normal_balance`, never the
+   account's, so Akumulasi Penyusutan prints as a deduction inside AKTIVA.
+   Balance is stated only when it breaks. A computed account that somehow
+   carries postings, and a pre-year Laba Rugi residue with no year left
+   unclosed, are each added in rather than dropped, and named.
 94. **A Laba Rugi step is stored on the Account Category, never inferred.**
    `acc_account_category.pl_group` places each Laba Rugi category in one step
    of the multi-step statement — Pendapatan Usaha, Harga Pokok Penjualan, Beban
@@ -2053,6 +2075,39 @@ Specified in the concept doc, **not yet implemented** (see §13):
   category label.
 - **Status:** Frozen, current. Supersedes "The subject books are one mechanism
   with six books".
+
+### The Neraca is cumulative, per fiscal period, with unclosed profit on computed lines (FROZEN)
+- **Decision:** A Report View under Accounting (`accounting/report/balance-sheet`,
+  `REPORT_BALANCE_SHEET_VIEW`) on the `fiscal-period` parameter set, without the
+  Laba Rugi's mode — a Neraca is a position at the period's end. One section per
+  Account Type in code order, each closed by its total, and one further line
+  totalling every credit-side type (PASIVA dan EKUITAS), the names read from the
+  types. The same tree, Partner arrows, Rincian control, comparison columns and
+  drill-through as the Laba Rugi — one component, `StatementReport`. The two
+  equity figures and the rules around them are §10 rule 96.
+- **Reason:** The user's specification, settled across a design discussion:
+  a statement never doctors a number — an unclosed previous year is shown as
+  what it is, the newer year running as its extension until the close — and
+  the computed lines sit on **real accounts named by System Default** so the
+  user controls their name and position, the shape Xero and Odoo take, rather
+  than the report hardcoding a line. Refusing to run without them is the
+  user's rule, over a warning.
+- **Impact:** `sys_account_type.normal_balance` was added for the signing —
+  an additive migration, seeded like `section`, because neither account-level
+  normal balance nor the type's number can say it. `statementBalances` in
+  `ledger.ts` is the cumulative reader, and the snapshot reader now also
+  returns its lines at pair grain for the Partner breakdown.
+  `tests/balance-sheet.test.ts` runs a whole year-end on 1980/1981 fixtures
+  with a real `executeClosing` in the middle: the unclosed line holds 1980's
+  result until the close moves it into Tahun Sebelumnya, total equity does not
+  move, Tahun Berjalan equals the Laba Rugi to the cent, and Desember 1980 is
+  identical before and after.
+- **Do not change unless:** explicitly instructed. **Never open a Neraca from
+  the next year's snapshot, never post to either computed account, never
+  hardcode a computed line's position, never sign a row by its own account's
+  normal balance, and never produce the Neraca without the accounts it places
+  its figures on.**
+- **Status:** Frozen, current.
 
 ### The Laba Rugi is multi-step, per fiscal period, with an optional comparison (FROZEN)
 - **Decision:** A Report View under Accounting (`accounting/report/profit-loss`,
@@ -3685,6 +3740,10 @@ process allowed to restate positions, and it is not built.
   Ditutup. The Neraca computes both and places them on the accounts System
   Default names; the closing journal moves a year's result straight into
   Laba/Rugi Tahun Sebelumnya (§10 rule 79, §12).
+- Do **not** open a Neraca from a snapshot dated after the reported year's first
+  day, or let it read that year's own closing journal (§10 rule 96).
+- Do **not** sign a statement row by its own account's normal balance. The
+  type's `normal_balance` decides, or a contra account prints wrongly (§12).
 - Do **not** read a Laba Rugi step off an account category's number. It is
   `acc_account_category.pl_group`, seeded and never edited (§10 rule 94).
 - Do **not** add an edit, delete or reversal path to `acc_opening_balance`, or a
