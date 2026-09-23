@@ -17,12 +17,14 @@ import { nextDocumentNumber } from "./document-number";
  *  - a closed year has to hand the next one its position in a form somebody
  *    can read, rather than as an instruction to re-add every journal line ever
  *    posted;
- *  - and the General Ledger and the Trial Balance can then compute an opening
- *    from the snapshot instead of scanning from the first historical
- *    transaction. That second payoff is deliberately **not** taken here — the
- *    reports are unchanged — because changing how an existing report computes
- *    a figure it already produces is a separate piece of work with its own
- *    equivalence test.
+ *  - and the General Ledger and the Trial Balance compute their openings from
+ *    it instead of scanning from the first historical transaction.
+ *    `openingBasisFor` at the foot of this file is that second job, and the
+ *    property it lives or dies by is **equivalence**: for the same account and
+ *    the same date, the snapshot-based opening equals the full-scan opening to
+ *    the cent. A database that has never closed a year has no snapshot to
+ *    stand on and produces exactly the figures it produced before any of this
+ *    existed.
  *
  * ## Immutable, and read-only in the UI
  *
@@ -393,4 +395,78 @@ export async function openingBalanceNumbersByIds(
     select: { id: true, opening_no: true },
   });
   return new Map(rows.map((r) => [r.id, r.opening_no]));
+}
+
+// ------------------------------------------------- the reporting shortcut
+
+export type OpeningBasis = {
+  id: number;
+  openingNo: string;
+  /**
+   * The day the figures speak for.
+   *
+   * A line dated **on or after** this day is *not* in the snapshot — the
+   * snapshot was taken as at the end of the day before. That is what makes it
+   * a starting point a report can add to rather than a figure it has to
+   * reconcile against.
+   */
+  postingDate: Date;
+  /** `debit − credit` per account, rolled up from the snapshot's own lines. */
+  byAccount: Map<number, number>;
+};
+
+/**
+ * The latest snapshot a Company holds on or before a date, if any.
+ *
+ * This is what a report stands on instead of summing every journal line ever
+ * posted. A General Ledger for March 2028 does not need 2026 and 2027 line by
+ * line; it needs where the accounts stood on 1 January 2028 — which is exactly
+ * what the close of 2027 wrote down — plus the two months since.
+ *
+ * Reported at **account** grain rather than the pair grain it is stored at,
+ * because both ledger reports are about accounts. A pair that nets to nothing
+ * is not in the snapshot at all, and dropping it changes no account's total.
+ *
+ * Returns null where there is no snapshot to stand on, and the caller then
+ * scans as it always did. That is the honest fallback: a database that has
+ * never closed a year has nothing to shortcut through, and must produce the
+ * same figures it produced before this existed.
+ */
+export async function openingBasisFor(
+  companyId: number,
+  on: Date,
+  db: Client = prisma
+): Promise<OpeningBasis | null> {
+  const snapshot = await db.accOpeningBalance.findFirst({
+    where: { company_id: companyId, posting_date: { lte: on } },
+    // The *latest* one that is still not after the date asked about. An older
+    // snapshot would be correct too — it just leaves more to scan.
+    orderBy: [{ posting_date: "desc" }, { id: "desc" }],
+    select: {
+      id: true,
+      opening_no: true,
+      posting_date: true,
+      lines: {
+        select: { account_id: true, debit_amount: true, kredit_amount: true },
+      },
+    },
+  });
+  if (!snapshot) return null;
+
+  const byAccount = new Map<number, number>();
+  for (const l of snapshot.lines) {
+    byAccount.set(
+      l.account_id,
+      (byAccount.get(l.account_id) ?? 0) +
+        l.debit_amount.toNumber() -
+        l.kredit_amount.toNumber()
+    );
+  }
+
+  return {
+    id: snapshot.id,
+    openingNo: snapshot.opening_no,
+    postingDate: snapshot.posting_date,
+    byAccount,
+  };
 }

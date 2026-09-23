@@ -58,10 +58,12 @@ or invariants that assume a particular row exists.
   its own, foreign resources hold rate layers, and a settlement recognises its FX
   difference), the **Cash Bank Transfer** — moving the Company's own money between
   its own resources, including selling and buying foreign currency — and the
-  **Report Views** over all of it.
-- **Not yet built** — Opening Balance, Fiscal Year closing, report output (print and
-  export), intercompany settlement (the anak paying the induk back), and revaluation
-  of standing foreign positions at a period end. Full list in §13.
+  **Report Views** over all of it, and **period control** — the fiscal calendar as a
+  posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
+  snapshot a close writes and the ledger reports then read their openings from.
+- **Not yet built** — report output (print and export), intercompany settlement (the
+  anak paying the induk back), subledger opening balances, and revaluation of standing
+  foreign positions at a period end. Full list in §13.
 
 ### Current status
 
@@ -79,7 +81,8 @@ or invariants that assume a particular row exists.
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Klasifikasi (Budget Category, Partner Category, Purpose) | Done — the Budget Category rules are rows now, not a constant: which directions a category allows, whether it names a Partner, and which Partner Categories it admits — **the last chosen on the category's own form and written in the same transaction**, so a new category is usable in one save. Under Pengaturan › Klasifikasi, each deactivable. Retiring a pair withdraws the Purposes resting on it from the picker while leaving every record already classified by it readable |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
-| Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is the only fiscal menu entry; it is created Draft, activated into Open, and its twelve periods are generated at that moment. Closing is not built. |
+| Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is created Draft, activated into Open, and its twelve periods are generated at that moment. |
+| Period control (lock, closing, Opening Balance) | Done — a posting is allowed only inside an Open year its Company has not closed, enforced on all four posting paths. **Fiscal Year Closing** moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day — the one back-dated journal), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, and stamps `acc_fiscal_closing`; the year itself reads Closed only once every Company has closed it. At most two years stand Open and only the oldest is closable. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
 | Transaction Purpose | Done — rows in `sys_purpose` a maintainer **enters** under Pengaturan › Klasifikasi. Nothing generates them, so a Budget Category with none cannot be transacted; the Budget Category list states the count. The label is composed from direction × Category × Partner Category and never stored |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
@@ -90,7 +93,7 @@ or invariants that assume a particular row exists.
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Default Currency, the four intercompany bridge accounts, and each Company's FX difference account |
-| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar and System Default enforcement points, via `node:test` (`npm test`). Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
+| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
 
@@ -161,7 +164,9 @@ of its own.
 | Account numbering | `src/lib/siba/account-code.ts` | The dotted lineage code — parsing, segments, ordering; client-safe |
 | Company access | `src/lib/siba/company-access.ts` | Permissions -> the Companies a user may read; `server-only` |
 | Journal | `src/lib/siba/journal.ts` | The posting engine and the shared balance rule — writes the journal a posting produces, and the draft CRUD a manual journal is edited through. `JRN-` / `JUR-` numbering; `server-only` |
-| General Ledger | `src/lib/siba/ledger.ts` | General Ledger and Trial Balance over journal lines; `server-only` |
+| General Ledger | `src/lib/siba/ledger.ts` | General Ledger and Trial Balance over journal lines, `closingBalances` at `(account, partner?)` grain, and the shared `openingBasis` that stands on an Opening Balance snapshot rather than scanning a Company's whole history; `server-only` |
+| Opening Balance | `src/lib/siba/opening-balance.ts` | The immutable per-Company, per-year snapshot: writing one, reading one back, and `openingBasisFor`, which is what the two ledger reports open from. `OPB-` numbering; `server-only` |
+| Fiscal Year closing | `src/lib/siba/closing.ts` | The seven blocking checks, the closing journal preview, and the one transaction that writes the `CLS-` journal, the `OPB-` snapshot and the closing record. Names no other module's table; `server-only` |
 | Permission catalogue | `src/lib/siba/permissions.ts` | Every capability in the system; client-safe |
 | Seeded roles | `src/lib/siba/roles.ts` | ADMIN / STAFF and their grants |
 | Authorization gate | `src/lib/siba/auth.ts` | `requireAuth`, `requirePermission`, `authorizeAction` |
@@ -175,8 +180,8 @@ of its own.
 | Record naming | `src/lib/siba/record-title.ts` | How a record names itself, for forms, lists and the audit log; client-safe |
 | Audit vocabulary | `src/lib/siba/audit-events.ts` | An `event` key -> its past-tense label, icon and tone, read from the owning workflow table; client-safe |
 | Audit reading | `src/lib/siba/audit.ts` | `entity_key` -> subject, `row_id` -> title, each resolved by the owning module; `server-only` |
-| Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, and reading them back; `server-only` |
-| Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open, its permission, and why Closed is not reachable; client-safe |
+| Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, reading them back, the posting lock (`checkPostingPeriod`), and the per-Company closing record with the year's `Closed` rollup over it; `server-only` |
+| Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open → Closed, each transition's permission, the max-two-Open rule, and the `runAt` that sends closing to its own screen; client-safe |
 | Startup check | `src/lib/siba/startup-check.ts` | Is the database the one this build expects; read at boot by `instrumentation-node.ts`; `server-only` |
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
 | System Default store | `src/lib/siba/system-settings.ts` | Reads and writes `sys_setting`, resolves a default against its master; `server-only` |
@@ -224,7 +229,8 @@ source scan and needs no database.
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` (+ `subledger-data.ts`, which reads the Budget Categories the books are) |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22); the manual journal's rules sit above it in `lib/siba/manual-journal.ts` + `app/actions/journal.ts` |
-| Fiscal | `acc_fiscal_year`, `acc_fiscal_period` | `lib/siba/fiscal.ts` |
+| Fiscal | `acc_fiscal_year`, `acc_fiscal_period`, `acc_fiscal_closing` | `lib/siba/fiscal.ts` |
+| Opening Balance | `acc_opening_balance(_line)` | `lib/siba/opening-balance.ts` |
 
 Three rules, in force:
 
@@ -368,6 +374,9 @@ src/
       accounting/[entity]/ The same four registry pages — COA, mapping, Fiscal Year
       accounting/journal/  The register, plus the manual journal: /new,
                          /[id], /[id]/edit
+      accounting/closing/  Bespoke: the closing workspace — checklist,
+                         journal preview, one confirm
+      accounting/opening-balance/  Read-only: the register and /[id]
       budget/budget/     Bespoke, not registry: month list, /month/[period],
                          /new, /[id], /[id]/edit
       finance/cash-bank-transaction/  Bespoke: list, /new, /[id], /[id]/edit
@@ -860,9 +869,15 @@ Implemented and enforced:
    correction is a new business transaction, which produces its own journal.
    There is no JOURNAL_CREATE, JOURNAL_EDIT or JOURNAL_DELETE — viewing is the
    whole capability.
-49. **A journal's posting date is the day it was posted.** Never back-dated: it
-   records when the books were written, not when somebody decided they should
-   have been.
+49. **A journal's posting date is the day it was posted — with one exception.**
+   Never back-dated: it records when the books were written, not when somebody
+   decided they should have been. The single exception is a **closing entry**,
+   which is dated the last day of the fiscal year it closes: a `CLS-` journal
+   belongs to the year it shuts, and one dated afterwards would fall inside the
+   year it opens and be the first thing that year inherited.
+   `JournalInput.postingDate` is tied to `series: "CLS"` in `journal.ts`, so
+   back-dating anything else is unrepresentable rather than merely forbidden.
+   Everything else about a posted journal is unchanged, immutability included.
 50. **Posting needs a mapping; approval does not.** A Cash Bank Transaction
    journals against the account its Purpose resolves to through Company ×
    Budget Category × Partner Category. Without that mapping there is no account
@@ -962,6 +977,14 @@ Implemented and enforced:
    A Biaya or Asset mapping target is **not** one: those categories keep no
    subject book, so the account reconciles against the General Ledger and
    nothing else.
+   The **equity/P&L System Defaults** are claimed by that same third source,
+   and one of them for a different reason worth stating: Laba/Rugi Tahun
+   Sebelumnya is a posting engine's target, like the bridge accounts, but
+   **Laba/Rugi Tahun Berjalan is closed to hand entry because nothing posts to
+   it at all** — it is a Balance Sheet presentation line, computed as
+   Σ Pendapatan − Σ Biaya for the year still open. The mechanism needed no
+   change to cover them: both are account-valued System Defaults, and
+   `systemDefaultAccountIds` is generic over every one of those.
 80. **Whether an account may be written to is `is_postable` and
    `is_control_account`, and neither is an isian.** The user's own rule, and
    every place an account is chosen asks it. Both are decided by the backend:
@@ -2026,6 +2049,50 @@ Specified in the concept doc, **not yet implemented** (see §13):
   either report by transaction currency again.
 - **Status:** Frozen, current.
 
+### An Opening Balance is a snapshot, and a report's opening stands on it (FROZEN)
+- **Decision:** `acc_opening_balance(_line)` records where one Company's accounts
+  stood at the start of one fiscal year, at the journal line's own
+  `(account, partner?)` grain, in base currency, **written once and never touched**.
+  A close writes one; a developer injects the go-live figures with
+  `source_fiscal_year_id = null`. There is no create form, no edit path and no
+  delete. The General Ledger and the Trial Balance then compute their openings from
+  the latest snapshot on or before the range's start, plus the lines since —
+  `openingBasis` in `ledger.ts` — instead of summing every journal line the Company
+  has ever posted.
+- **Reason:** two different ones, and both matter. A closed year has to hand the next
+  one its position in a form somebody can read, rather than as an instruction to
+  re-add all of history. And the opening scan grows without bound: a report for March
+  2030 should need where the accounts stood on 1 January 2030 plus two months, not
+  four years line by line.
+- **Equivalence is the whole guarantee.** For the same account and the same date, the
+  snapshot-based opening equals the full-scan opening **to the cent**. Where no
+  snapshot covers the date the scan runs exactly as it always did, so a database that
+  has never closed a year produces the figures it produced before any of this
+  existed. `tests/ledger-opening.test.ts` restates the pre-change algorithm as a
+  reference — deliberately *not* imported, so the two cannot drift into agreement by
+  sharing code — and pushes at three boundaries: before any snapshot, exactly on one,
+  and a year past one.
+- **The grain is what was posted, never what a flag says.** Pairs come from the
+  journal lines as they actually are; reading `acc_account.require_partner` would drop
+  a partner-bearing balance on an unflagged account and invent a null-partner line for
+  an account that has none. There is no parent row holding an account's total: that
+  figure is the sum of its children, and an immutable snapshot has no rebuild function
+  to prove a stored duplicate still agrees with what it duplicates.
+- **Impact:** uniqueness on `(opening_id, account_id, partner_id)` is created
+  **`NULLS NOT DISTINCT`** in the migration's own SQL, because Postgres otherwise
+  treats two null-partner rows for one account as distinct — which is the common case
+  and precisely the duplicate that matters. The Trial Balance now seeds its rows from
+  the snapshot as well as from the period's lines, or an account carrying an opening
+  and no movement would vanish from it. Both reports say which document their opening
+  came from, as one clause on the footnote they already carry. What is genuinely lost
+  is recorded in §17: a snapshot is base currency, so it cannot say which currencies
+  fed an opening.
+- **Do not change unless:** explicitly instructed. **Never add an update, delete or
+  reversal path to a snapshot, never give it a create form, never derive its grain
+  from `require_partner`, and never let a snapshot-based opening disagree with the
+  full scan** — if they ever differ, the report is wrong.
+- **Status:** Frozen, current.
+
 ### Company access is a permission, and the picker lives on the page (FROZEN)
 - **Decision:** Which Company's records a user may see is governed by two
   ordinary catalogue permissions, `COMPANY_INDUK_ACCESS` and
@@ -2499,20 +2566,44 @@ they relate. Keep the table; keep it out of the UI's write path.
   letting a year be switched back to Draft from a dropdown would strand budgets inside
   a year claiming never to have begun — and letting an edit write `Closed` would
   "close" a book without locking anything.
-- **Impact:** `Open` is a one-way door: no transition produces `Draft` or `Closed`.
-  The detail header carries the lifecycle buttons through `EntityForm`'s
-  `headerActions` slot — the registry describes fields, not lifecycles, so the escape
-  hatch is a slot rather than a config key nothing else would use.
-- **Closing is deliberately not built.** The header shows a disabled *Tutup Tahun
-  Buku* explaining that closing is a process of its own, and the catalogue carries
-  **no** `FISCAL_YEAR_CLOSE`: a capability is a catalogue entry first (§12, "The
-  permission catalogue lives in code"). Real closing locks periods against posting and
-  belongs with the journal and the general ledger (§13).
+- **Impact:** `Open` is a one-way door: no transition produces `Draft`. The detail
+  header carries the lifecycle buttons through `EntityForm`'s `headerActions` slot —
+  the registry describes fields, not lifecycles, so the escape hatch is a slot rather
+  than a config key nothing else would use.
+- **At most two years stand Open at once**, and only the **oldest** is closable. The
+  overlap at a year-end is real — December's invoices arrive while January is already
+  being worked in — but a third open year is not that case, and every month it stays
+  open is a month that cannot be carried forward. Closing the newer of two would leave
+  an Open year with no successor to inherit into, since the snapshot a close writes is
+  what the next year opens from. `MAX_OPEN_FISCAL_YEARS` and `openLimitRefusal` in
+  `fiscal-workflow.ts` are the rule; the refusal **names the year to close**, because
+  "too many" is not actionable.
+- **`Closed` is reachable now, and it is a rollup rather than a status anybody sets.**
+  Closing happens **per Company** — the induk can shut 2026 while the anak is still
+  finishing it — and that state lives in `acc_fiscal_closing`, one row per
+  `(fiscal_year, company)`. `AccFiscalYear.status` reads `Closed` only once **every**
+  Company has closed it, written in the same transaction as the last Company's close
+  (`recordFiscalClosing` in `fiscal.ts`). An explicit record rather than a status
+  inferred from the existence of an Opening Balance document: inferring a fact from a
+  row in another table works until somebody writes that row for a second reason, and
+  then nothing fails.
+- **The closing step leaves this screen.** `FISCAL_YEAR_CLOSE` is in the catalogue and
+  the `close` transition is in the table, but it carries a **`runAt`** —
+  `/accounting/closing` — so the Fiscal Year header offers a *link* rather than a
+  confirm button, and `availableActions` deliberately excludes it. Closing needs a
+  Company, a seven-point validation checklist and a preview of the journal it is about
+  to post; none of that fits behind a yes/no on a record belonging to neither Company.
+  The permission landed **in the change that built the process**, never before, exactly
+  as §13 required.
+- **Irreversible.** Nothing reopens a closed year: the close posts a journal, a posted
+  journal is never reversed (§12), and `checkPostingPeriod` refuses every later posting
+  into it by that Company on all four posting paths.
 - **Do not change unless:** explicitly instructed. **Never make `status` an editable
-  field again, never add a transition back to Draft, and do not add a
-  `FISCAL_YEAR_CLOSE` permission without building the closing process in the same
-  change.**
-- **Status:** Frozen, current.
+  field again, never add a transition back to Draft, never add a path that reopens a
+  closed year, do not let a third year stand Open, and do not offer `close` as a header
+  confirm button** — it is run where its checklist and its preview are.
+- **Status:** Frozen, current. Supersedes the earlier statement that closing was not
+  built and that no transition might produce `Closed`.
 
 ### System Default is a catalogue in code, and a default decides nothing (FROZEN)
 - **Decision:** `/settings/system-default` holds every value the application prefills
@@ -3369,15 +3460,12 @@ decisions now that foreclose them.
 
 | Item | Planned behaviour |
 | --- | --- |
-| Subledger opening balances | A subject's position before the application started keeping its book. `SubLedgerEntryType.Opening` exists and nothing writes it; it belongs with Opening Balance below, not with a manual entry form |
+| Subledger opening balances | A subject's position before the application started keeping its book. `SubLedgerEntryType.Opening` exists and nothing writes it. **Deliberately outside the Opening Balance work**, on the user's decision: the subject books are continuous stores, so a year-end does not interrupt one, and a close writes no subledger entry |
 | Period-end revaluation | SIBA multi-currency §7: retranslate open positions at the closing rate and collapse a foreign account's layers into one. `CashBankLayerStatus.ClosedByRevaluation` exists and nothing writes it. **The only sanctioned consolidation of layers** — do not add a second one, and do not merge layers for any other reason (§10 rule 71) |
 | Multi-layer settlement | The source specification lets one payment draw on several layers (`Σ selected = account_amount`). SIBA takes one per document, refused at draft time with a message that says to split it. Widening this means a selection UI with a running total and per-layer relief, not a loosened check (§12) |
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
-
-| Fiscal Year closing | The closing process that moves a year Open → Closed, locking its periods against posting. Belongs with the journal and the general ledger. **Add `FISCAL_YEAR_CLOSE` to the catalogue in the same change that builds it, never before** — §12 |
-| Opening Balance | `acc_opening_balance(_line)` tables and UI — the accounting opening balance per account, distinct from a cash resource's opening entry, which already exists |
 | Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
 
 **Exchange rate — current state.** Built, and it is not a rate *source*. The system
@@ -3512,9 +3600,29 @@ process allowed to restate positions, and it is not built.
 - Do **not** give Fiscal Period a menu entry, a route, a registry config, or
   permissions, and do **not** let a period's dates be edited by hand. Periods are
   generated when a Fiscal Year is activated (§12).
-- Do **not** make a Fiscal Year's `status` an editable field, add a transition back to
-  Draft, or add a `FISCAL_YEAR_CLOSE` permission without building the closing process
-  in the same change (§12).
+- Do **not** make a Fiscal Year's `status` an editable field, add a transition back
+  to Draft, or add a path that reopens a closed year. `Closed` is a rollup over
+  `acc_fiscal_closing`, never a value anybody sets (§12).
+- Do **not** let a third Fiscal Year stand Open, and do **not** close any but the
+  oldest Open one — the newer would have no successor to inherit its snapshot
+  (§12).
+- Do **not** offer `close` as a header confirm button. It carries a `runAt` because
+  it needs a Company, a checklist and a preview of the journal it is about to post
+  (§12).
+- Do **not** back-date a journal. A `CLS-` closing entry is the single exception,
+  and `postJournal` refuses a `postingDate` outside that series (§10 rule 49).
+- Do **not** post to Laba/Rugi Tahun Berjalan. It is a Balance Sheet presentation
+  line, computed as Σ Pendapatan − Σ Biaya; the closing journal moves the result
+  straight into Laba/Rugi Tahun Sebelumnya (§12).
+- Do **not** add an edit, delete or reversal path to `acc_opening_balance`, or a
+  create form for it. A snapshot is written by a close or injected at go-live with a
+  null source, and is immutable (§12).
+- Do **not** write a snapshot line for an account whose Partner split you read off
+  `require_partner`. The grain comes from the posted journal lines as they actually
+  are (§12).
+- Do **not** let a report's opening disagree with the full scan. Equivalence is the
+  property the snapshot-based opening rests on, and `tests/ledger-opening.test.ts`
+  holds it at three boundaries (§12).
 - Do **not** let a System Default decide what is valid, apply one to an existing
   record, or add a UI for creating setting keys. The catalogue is code and a default
   only prefills (§12).
@@ -3664,8 +3772,7 @@ process allowed to restate positions, and it is not built.
 - Do **not** edit `src/generated/prisma/` — regenerate it.
 - Do **not** rewrite `globals.css` or introduce a utility CSS framework.
 - Do **not** rename Prisma fields to camelCase.
-- Do **not** build the Journal, the General Ledger, the subject ledgers or the Funding
-  Request flow without explicit instruction (§13).
+- Do **not** build anything still listed in §13 without explicit instruction.
 - Do **not** add an API route layer for internal CRUD.
 - Do **not** hand-edit applied migrations or use `prisma db push`.
 - Do **not** land a migration without updating `SIBA DBML/SIBA DBML.md` in the same
@@ -3744,7 +3851,8 @@ process allowed to restate positions, and it is not built.
 | The FX difference on a payment is a user decision | Which layer the user picks sets the gain or loss recognised. Under averaging it would be deterministic. This is the feature working as intended — the source document calls layer selection an auditable control point — but it does mean two clerks can post the same payment to different results, and nothing flags that. |
 | A standing foreign position is never retranslated | A Hutang in USD keeps the base value it was carried at until something settles it. Without period-end revaluation (§13) there is no unrealised gain or loss anywhere in the system, so the base measure of an open position drifts from what it would be worth today — by design for now, and the one thing revaluation exists to fix. |
 | A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
-| Nothing refuses a posting on a period's status | Neither `applyPosting` nor `postDraftJournal` consults the fiscal calendar, so a document or a manual journal can post into a period that is not Open — or into no period at all. Consistent with Fiscal Year closing not being built (§13); the lock belongs with that work, and it belongs on both paths. |
+| A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |
+| A closing entry is the one back-dated journal | A `CLS-` journal is dated the last day of the year it closes (§10 rule 49). Nothing else may be, and `postJournal` refuses a `postingDate` outside the `CLS` series — but it does mean the General Ledger holds one entry whose date is not the day it was written, and a reader comparing a journal's date to its audit row will find them different for exactly those. |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
@@ -3756,7 +3864,7 @@ process allowed to restate positions, and it is not built.
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |
 | The intercompany position has no subject-book view | It is carried by the two bridge accounts and read through the General Ledger, which is a deliberate deviation from concept doc §34/§37/§38 (§12). The consequence is that the subject books answer "which Partner moved?" and not "what does the anak owe the induk?" — that question is an account balance, and the dashboard now states it from those two accounts so it is no longer reachable only by running the General Ledger for exactly the right one. If a book of it is ever wanted, it needs a subject that is a Company, which is a change to an append-only table. |
-| Tests cover security, Accounting, Budget, Finance, Funding, the books, the layers, the FX kernel, the reports and the fiscal calendar | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
+| Tests cover security, Accounting, Budget, Finance, Funding, the books, the layers, the FX kernel, the reports, the fiscal calendar, closing and the snapshot-based opening | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | Two module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a third fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |

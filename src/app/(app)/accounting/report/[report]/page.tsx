@@ -14,6 +14,8 @@ import {
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
+import { formatDate } from "@/lib/format";
+import type { OpeningProvenance } from "@/lib/siba/ledger";
 
 export const dynamic = "force-dynamic";
 
@@ -108,7 +110,7 @@ export default async function Page({
           <>
             Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}), dan saldo
             bergerak mengikuti normal balance account — account Debit naik di sisi
-            debit, account Kredit di sisi kredit.
+            debit, account Kredit di sisi kredit{openingSource(data?.openingFrom)}.
           </>
         }
       >
@@ -138,13 +140,31 @@ export default async function Page({
         <>
           Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}), dan total
           mutasi debit wajib sama dengan total kredit — selisih di sini berarti
-          ada masalah sistem, bukan kesalahan input.
+          ada masalah sistem, bukan kesalahan input
+          {openingSource(data.openingFrom)}.
         </>
       }
     >
       <TrialBalanceReport report={data} companyId={company.id} />
     </ReportView>
   );
+}
+
+/**
+ * Where the saldo awal came from, as one clause on the report's own footnote.
+ *
+ * The figure is identical whether it was summed from the whole history or read
+ * off a snapshot — that equivalence is the property the change rests on — so
+ * this is provenance rather than a caveat. It earns its place because a reader
+ * checking an opening balance can now open the document it came from, instead
+ * of re-adding years of entries the page does not show.
+ *
+ * A clause rather than a second sentence: a report footnote is one sentence
+ * (CLAUDE.md §12), and this does not change what the sentence is about.
+ */
+function openingSource(from: OpeningProvenance | null | undefined) {
+  if (!from) return null;
+  return `; saldo awal diambil dari Opening Balance ${from.openingNo} per ${formatDate(from.date)}`;
 }
 
 /** Defaults to the current month to date, like every other Report View. */
