@@ -110,16 +110,27 @@ database, reapplies every migration and reseeds — it destroys all data.
 ### 6. Run
 
 ```bash
-npm run dev
+npm run dev:local
 ```
 
-http://localhost:3000
+http://localhost:3010
+
+Each way of running SIBA has its own fixed port, so two can run side by side:
+
+| Run | Command | Port |
+| --- | --- | --- |
+| Development server | `npm run dev` | 3000 |
+| Local run | `npm run dev:local` | 3010 |
+| Local run of a temporary branch worktree | `npm run dev:branch` | 3020 |
+| Vercel-style local run | — | 3030 |
 
 ## Useful commands
 
 | Command | Does |
 | --- | --- |
-| `npm run dev` | Dev server |
+| `npm run dev` | Dev server, port 3000 |
+| `npm run dev:local` | Local run, port 3010 |
+| `npm run dev:branch` | Local run of a branch worktree, port 3020 |
 | `npm run build` | Production build |
 | `npm run lint` | ESLint |
 | `npm test` | Test suite (needs a migrated, seeded database) |
