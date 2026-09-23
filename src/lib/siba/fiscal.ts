@@ -285,6 +285,119 @@ export async function checkPostingPeriod(
   return { ok: true, fiscalYearId: year.id };
 }
 
+/**
+ * A posting refused, from inside its transaction, because the period it is
+ * dated in has shut since it was checked. Thrown rather than returned so it
+ * rolls back whatever the transaction already wrote; every posting path
+ * catches it and reports `message` like any other refusal.
+ */
+export class PeriodShut extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PeriodShut";
+  }
+}
+
+/**
+ * Holds one Company's fiscal year for the rest of the caller's transaction.
+ *
+ * A close and a posting into the year it closes must not interleave. With
+ * backdating allowed, a posting can land in a year at any moment up to its
+ * close, and both sides decide something from what they read: the close
+ * computes the journal that empties profit and loss, a posting checks the
+ * year is still open. Without a lock, a posting that checked before the close
+ * committed could write into the closed year afterwards, and a posting landing
+ * between the close's preview and its write would leave profit and loss in the
+ * snapshot. Every posting path and the close take this first, so whichever
+ * comes second waits and then reads what the first committed.
+ *
+ * An advisory lock, keyed on the pair and released when the transaction ends —
+ * the same shape as `lockSubledgerPosition`. Parameterised; nothing is
+ * interpolated into the SQL text.
+ */
+export async function lockFiscalPeriod(
+  tx: Prisma.TransactionClient,
+  fiscalYearId: number,
+  companyId: number
+): Promise<void> {
+  const key = `acc_fiscal_closing:${fiscalYearId}:${companyId}`;
+  await tx.$queryRaw`SELECT 1 AS held FROM (SELECT pg_advisory_xact_lock(hashtext(${key}))) AS lock`;
+}
+
+/**
+ * Locks the year `date` falls in for each Company, then asks the period
+ * question again under the lock — inside the posting's own transaction.
+ *
+ * `checkTransactionDate` before the transaction gives the refusal early and
+ * cheaply; this is what makes it true at the moment of writing. Companies are
+ * locked in id order, so a funded posting (two Companies) and a close (one)
+ * can never wait on each other in a circle.
+ */
+export async function holdPostingPeriod(
+  tx: Prisma.TransactionClient,
+  companyIds: number[],
+  date: string
+): Promise<void> {
+  const day = asDay(date);
+  const year = await tx.accFiscalYear.findFirst({
+    where: { start_date: { lte: day }, end_date: { gte: day } },
+    select: { id: true },
+  });
+  for (const companyId of [...new Set(companyIds)].sort((a, b) => a - b)) {
+    if (year) await lockFiscalPeriod(tx, year.id, companyId);
+    const period = await checkPostingPeriod(companyId, date, tx);
+    if (!period.ok) throw new PeriodShut(period.message);
+  }
+}
+
+/** Today, as the `YYYY-MM-DD` UTC day every stored date is. */
+export function todayDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export type TransactionDateCheck =
+  | { ok: true; date: string }
+  | { ok: false; message: string };
+
+/**
+ * May a document be dated this day?
+ *
+ * A document's date is the day it belongs to in the books, and it may be any
+ * day **up to today** — backdating is allowed, dating ahead is not: a posting
+ * dated tomorrow would claim something happened that has not yet. The rest is
+ * the period lock, asked of **every** Company the posting writes into, which is
+ * one for an ordinary document and both for a funded one: a date inside a year
+ * one of them has closed cannot be written, whichever it is.
+ *
+ * Asked when a draft is saved, so the refusal arrives while the date can still
+ * be changed, and again at Post, because a year can close in between. The
+ * date is returned in its canonical `YYYY-MM-DD` form.
+ */
+export async function checkTransactionDate(
+  raw: string | Date | null | undefined,
+  companyIds: number[],
+  db: Db = prisma
+): Promise<TransactionDateCheck> {
+  const text =
+    raw instanceof Date ? raw.toISOString().slice(0, 10) : String(raw ?? "").trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  const parsed = m ? new Date(`${text}T00:00:00Z`) : null;
+  if (!m || !parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+    return { ok: false, message: "Tanggal transaksi wajib diisi dengan tanggal yang valid." };
+  }
+  if (text > todayDay()) {
+    return {
+      ok: false,
+      message: `Tanggal ${formatDate(text)} belum terjadi. Transaksi tidak boleh bertanggal di masa depan.`,
+    };
+  }
+  for (const companyId of [...new Set(companyIds)]) {
+    const period = await checkPostingPeriod(companyId, text, db);
+    if (!period.ok) return { ok: false, message: period.message };
+  }
+  return { ok: true, date: text };
+}
+
 // ---------------------------------------------------------------- closing
 
 /** A fiscal year as the closing workspace needs to name and bound it. */

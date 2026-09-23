@@ -330,10 +330,11 @@ describe("the ledger report reconciles", () => {
     assert.ok(report.reconciles);
   });
 
-  test("entries read oldest first, and their stored balance is what is shown", async () => {
+  test("entries read by date, not by the order they were written", async () => {
     const cb = await makeCashBank({ opening: 100_000, openingDate: "2026-01-01" });
-    await move(cb, "2026-07-02", "In", 50_000);
     await move(cb, "2026-07-03", "Out", 30_000);
+    // Written second, dated first — a backdated posting.
+    await move(cb, "2026-07-02", "In", 50_000);
 
     const report = await cashBankLedgerReport(
       cb,
@@ -345,11 +346,25 @@ describe("the ledger report reconciles", () => {
       report.entries.map((e) => e.date),
       ["2026-07-02", "2026-07-03"]
     );
-    assert.deepEqual(
-      report.entries.map((e) => e.balanceAfter),
-      [150_000, 120_000]
+    assert.equal(report.closing, 120_000);
+    assert.ok(report.reconciles, "the book still agrees with its stored balance");
+  });
+
+  test("a backdated entry moves the opening of every later period", async () => {
+    const cb = await makeCashBank({ opening: 100_000, openingDate: "2026-01-01" });
+    await move(cb, "2026-08-10", "In", 10_000);
+    // Written after August's entry, dated in July.
+    await move(cb, "2026-07-20", "In", 5_000);
+
+    const august = await cashBankLedgerReport(
+      cb,
+      { from: "2026-08-01", to: "2026-08-31" },
+      scope
     );
-    assert.equal(report.entries.at(-1)!.balanceAfter, report.closing);
+    assert.ok(august);
+    assert.equal(august.opening, 105_000, "July's backdated entry is carried in");
+    assert.equal(august.closing, 115_000);
+    assert.ok(august.reconciles);
   });
 
   test("an entry names the document that caused it", async () => {

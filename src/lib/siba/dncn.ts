@@ -5,7 +5,12 @@ import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney, sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
-import { checkPostingPeriod } from "./fiscal";
+import {
+  PeriodShut,
+  checkTransactionDate,
+  holdPostingPeriod,
+  todayDay,
+} from "./fiscal";
 import { originate, relieve, roundBase } from "./fx";
 import { postJournal, type JournalLineInput } from "./journal";
 import {
@@ -646,10 +651,15 @@ export async function applyDncn(noteId: number, actorId: number): Promise<DncnPo
   }
 
   const type = doc.note_type as DncnType;
-  const today = new Date().toISOString().slice(0, 10);
-
-  const period = await checkPostingPeriod(doc.company_id, today);
-  if (!period.ok) return { ok: false, errors: { _form: period.message } };
+  // The day this note belongs to in the books — chosen on the draft, possibly
+  // earlier than today, and re-checked here because a year can close in
+  // between. A draft saved before drafts carried a date posts as today.
+  const dated = await checkTransactionDate(
+    doc.document_date ?? todayDay(),
+    [doc.company_id]
+  );
+  if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
+  const date = dated.date;
 
   // Re-checked rather than trusted from when the draft was saved: the book may
   // have lost its flag, the Partner may have been deactivated or moved out of
@@ -735,6 +745,10 @@ export async function applyDncn(noteId: number, actorId: number): Promise<DncnPo
 
   try {
     await prisma.$transaction(async (tx) => {
+      // The year this is dated in, held against a close and re-asked under
+      // the hold — taken before the position, the order every writer uses.
+      await holdPostingPeriod(tx, [doc.company_id], date);
+
       // Held until the transaction ends. A second note on the same position
       // waits here, and its read below sees what this one left.
       await lockSubledgerPosition(tx, header.book.key, doc.partner_id, doc.currency_id);
@@ -763,7 +777,7 @@ export async function applyDncn(noteId: number, actorId: number): Promise<DncnPo
         book: header.book,
         partnerId: doc.partner_id,
         currencyId: doc.currency_id,
-        date: today,
+        date,
         type: "Adjustment",
         direction,
         amount,
@@ -805,6 +819,7 @@ export async function applyDncn(noteId: number, actorId: number): Promise<DncnPo
 
       await postJournal(tx, {
         companyId: doc.company_id,
+        postingDate: new Date(`${date}T00:00:00Z`),
         description: label,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
@@ -823,7 +838,7 @@ export async function applyDncn(noteId: number, actorId: number): Promise<DncnPo
         where: { id: doc.id },
         data: {
           status: "Posted",
-          document_date: new Date(`${today}T00:00:00Z`),
+          document_date: new Date(`${date}T00:00:00Z`),
           posting_date: new Date(),
           note_base_amount: base,
           updated_by: actorId,
@@ -832,6 +847,7 @@ export async function applyDncn(noteId: number, actorId: number): Promise<DncnPo
     });
   } catch (error) {
     if (error instanceof DncnRefused) return { ok: false, errors: error.errors };
+    if (error instanceof PeriodShut) return { ok: false, errors: { _form: error.message } };
     throw error;
   }
 

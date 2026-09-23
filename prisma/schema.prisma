@@ -1305,8 +1305,10 @@ model BudBudget {
 model FinCashBankTransaction {
   id                 Int           @id @default(autoincrement())
   transaction_no     String        @unique
-  /// Null until the document is posted. The DBML declared this NOT NULL, but a
-  /// document only acquires a date when the money actually moves.
+  /// The day the document belongs to in the books, chosen on the draft — any
+  /// day up to today. Every book entry and the journal Post writes are dated
+  /// by it; `posting_date` is when Post actually ran. Nullable only for drafts
+  /// saved before drafts carried a date, which post as today.
   document_date      DateTime?     @db.Date
   posting_date       DateTime?     @db.Timestamptz(6)
   transaction_type   FlowDirection
@@ -1744,9 +1746,12 @@ enum JournalStatus {
 model AccJournal {
   id                 Int           @id @default(autoincrement())
   journal_no         String        @unique
-  /// The day the journal was posted. Never back-dated: a journal records when
-  /// the books were written, which is the moment the posting happened. Null
-  /// while a manual journal is still a draft — it has not been written yet.
+  /// The day the journal belongs to in the books — its document's date, which
+  /// may be earlier than today (a backdated document) and never later. A
+  /// manual draft carries the date it is meant for; every reader filters
+  /// `status: "Posted"`, so a draft's date reaches no report. When the journal
+  /// was actually written is `created_at`. Null only on a draft saved before
+  /// drafts carried a date.
   posting_date       DateTime?     @db.Date
   /// What produced this journal, for traceability back to the document.
   source_doc_type_id Int?

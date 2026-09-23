@@ -519,19 +519,20 @@ describe("a closing journal names its own date and series", () => {
     );
   });
 
-  test("nothing but a closing journal may name its own date", async () => {
-    // The single exception to the no-back-dating rule is the closing entry.
-    // Tying the date to the series is what makes every other back-dated
-    // journal unrepresentable rather than merely discouraged.
+  test("an ordinary journal may be backdated, but never dated ahead", async () => {
+    // Backdating is allowed; whether the day is inside an open period is the
+    // caller's question (`checkTransactionDate`). What the engine itself
+    // refuses is a day that has not happened yet.
+    const tomorrow = new Date(Date.now() + 86_400_000);
     await assert.rejects(
       postJournal(prisma, {
         companyId: induk,
-        description: "Fixture back-dated journal",
-        postingDate: new Date(Date.UTC(FIXTURE_YEAR, 5, 1)),
+        description: "Fixture future journal",
+        postingDate: new Date(`${tomorrow.toISOString().slice(0, 10)}T00:00:00Z`),
         lines: [line(indukCash, 1_000, 0), line(indukReceivable, 0, 1_000)],
         actorId: actor,
       }),
-      /journal penutup tahun buku/
+      /masa depan/
     );
   });
 

@@ -12,7 +12,12 @@ import {
   type DraftJournalLine,
   type JournalLineInput,
 } from "./journal";
-import { checkPostingPeriod } from "./fiscal";
+import {
+  PeriodShut,
+  checkTransactionDate,
+  holdPostingPeriod,
+  todayDay,
+} from "./fiscal";
 import { controlAccountReasons } from "./records";
 import { systemDefaultsUsingAccount } from "./system-settings";
 
@@ -62,6 +67,12 @@ import { systemDefaultsUsingAccount } from "./system-settings";
 
 export type ManualJournalHeader = {
   company_id: number | null;
+  /**
+   * `YYYY-MM-DD` — the day the journal belongs to in the books. The form
+   * always sends one (an empty one is refused); a caller in code that leaves
+   * it out — a script, a test — means today.
+   */
+  journal_date?: string | null;
   description: string;
 };
 
@@ -82,6 +93,8 @@ export type ManualJournalCheck =
   | {
       ok: true;
       companyId: number;
+      /** The checked date, canonical `YYYY-MM-DD`. */
+      date: string;
       description: string;
       lines: JournalLineInput[];
       /** Base-currency totals, so the caller can report an imbalance. */
@@ -280,6 +293,15 @@ export async function checkManualJournal(
     return { ok: false, errors };
   }
 
+  // The day it belongs to: any day up to today, inside a year this Company may
+  // still write into. Asked at save so the refusal arrives while the date can
+  // still be changed, and again at Post, because a year can close in between.
+  const dated = await checkTransactionDate(
+    header.journal_date === undefined ? todayDay() : header.journal_date,
+    [companyId]
+  );
+  if (!dated.ok) return { ok: false, errors: { journal_date: dated.message } };
+
   const accountIds = [...new Set(lines.map((l) => l.account_id).filter(Boolean))] as number[];
   const partnerIds = [...new Set(lines.map((l) => l.partner_id).filter(Boolean))] as number[];
   const currencyIds = [...new Set(lines.map((l) => l.currency_id).filter(Boolean))] as number[];
@@ -416,7 +438,15 @@ export async function checkManualJournal(
 
   if (Object.keys(errors).length) return { ok: false, errors };
 
-  return { ok: true, companyId, description, lines: resolved, debit, credit };
+  return {
+    ok: true,
+    companyId,
+    date: dated.date,
+    description,
+    lines: resolved,
+    debit,
+    credit,
+  };
 }
 
 // ----------------------------------------------------------- the lifecycle
@@ -435,6 +465,7 @@ export async function createManualJournal(
 
   const created = await createDraftJournal({
     companyId: checked.companyId,
+    date: checked.date,
     description: checked.description,
     lines: checked.lines,
     actorId,
@@ -457,6 +488,7 @@ export async function updateManualJournal(
 
   await updateDraftJournal(id, {
     companyId: checked.companyId,
+    date: checked.date,
     description: checked.description,
     lines: checked.lines,
     actorId,
@@ -481,8 +513,16 @@ export async function postManualJournal(
   const existing = await draftOrRefusal(id, companyIds);
   if ("errors" in existing) return { ok: false, errors: existing.errors };
 
+  // The accounts and the date are both re-asked. The date carries the fiscal
+  // lock, and it is asked here rather than inside `postDraftJournal` because
+  // the Journal is an independent book importing only the shared kernel. A
+  // draft saved before drafts carried a date posts as today, as it would have.
   const recheck = await checkManualJournal(
-    { company_id: existing.companyId, description: existing.description },
+    {
+      company_id: existing.companyId,
+      journal_date: existing.date ?? new Date().toISOString().slice(0, 10),
+      description: existing.description,
+    },
     existing.lines
   );
   // Post is reached from a detail page rather than from the line editor, so a
@@ -495,19 +535,17 @@ export async function postManualJournal(
     };
   }
 
-  // The fiscal lock, asked here rather than inside `postDraftJournal`: the
-  // Journal is an independent book and imports only the shared kernel, so the
-  // rule about *when* a book may be written belongs in the layer above it —
-  // the same place the control-account rule already lives. A manual journal
-  // posts at today's date like every other posting, so that is the day asked
-  // about.
-  const period = await checkPostingPeriod(
-    existing.companyId,
-    new Date().toISOString().slice(0, 10)
-  );
-  if (!period.ok) return { ok: false, errors: { _form: period.message } };
-
-  const posted = await postDraftJournal(id, actorId);
+  let posted: Awaited<ReturnType<typeof postDraftJournal>>;
+  try {
+    posted = await postDraftJournal(id, actorId, (tx, date) =>
+      holdPostingPeriod(tx, [existing.companyId], date)
+    );
+  } catch (error) {
+    if (error instanceof PeriodShut) {
+      return { ok: false, errors: { _form: error.message } };
+    }
+    throw error;
+  }
   if (!posted.ok) return { ok: false, errors: { _form: posted.error } };
 
   return { ok: true, id, journalNo: posted.journalNo };
@@ -545,6 +583,7 @@ async function draftOrRefusal(
   | {
       journalNo: string;
       companyId: number;
+      date: string | null;
       description: string;
       lines: ManualJournalLineValues[];
     }
@@ -574,6 +613,7 @@ async function draftOrRefusal(
   return {
     journalNo: journal.journalNo,
     companyId: journal.companyId,
+    date: journal.date,
     description: journal.description,
     lines: journal.lines.map(toLineValues),
   };

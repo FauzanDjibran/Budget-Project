@@ -121,10 +121,9 @@ export function SubledgerReport({ report }: { report: Report }) {
             {!s.reconciles && (
               <p className="rwarn">
                 <Icon name="warn" size={12} />
-                Saldo tercatat pada entri terakhir tidak sama dengan hasil
-                perhitungan periode ini. Buku ini bersifat append-only, jadi
-                selisih menandakan gangguan sistem — laporkan sebelum angka ini
-                dipakai.
+                Posisi tersimpan tidak sama dengan jumlah seluruh entri buku
+                ini. Buku ini bersifat append-only, jadi selisih menandakan
+                gangguan sistem — laporkan sebelum angka ini dipakai.
               </p>
             )}
 
@@ -185,7 +184,8 @@ export function SubledgerReport({ report }: { report: Report }) {
                             <span className="dash">–</span>
                           )}
                         </td>
-                        <td className="num">{money(e.balanceAfter)}</td>
+                        {/* No running balance — an entry may be backdated. */}
+                        <td className="num" />
                       </tr>
                     ))}
 

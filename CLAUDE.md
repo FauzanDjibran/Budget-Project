@@ -83,7 +83,8 @@ or invariants that assume a particular row exists.
 | Klasifikasi (Budget Category, Partner Category, Purpose) | Done — the Budget Category rules are rows now, not a constant: which directions a category allows, whether it names a Partner, and which Partner Categories it admits — **the last chosen on the category's own form and written in the same transaction**, so a new category is usable in one save. Under Pengaturan › Klasifikasi, each deactivable. Retiring a pair withdraws the Purposes resting on it from the picker while leaving every record already classified by it readable |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is created Draft, activated into Open, and its twelve periods are generated at that moment. |
-| Period control (lock, closing, Opening Balance) | Done — a posting is allowed only inside an Open year its Company has not closed, enforced on all four posting paths. **Fiscal Year Closing** moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day — the one back-dated journal), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, and stamps `acc_fiscal_closing`; the year itself reads Closed only once every Company has closed it. At most two years stand Open and only the oldest is closable. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
+| Backdating | Done — every posting document carries a Tanggal Dokumen chosen on the draft, any day up to today inside a year every Company it writes into still has open. All its book entries and its journal are dated by it; the moment of posting is kept beside it. A posting and a close hold one lock per year and Company, so neither can land inside the other. The book reports read by date and carry no running balance (§12) |
+| Period control (lock, closing, Opening Balance) | Done — a posting is allowed only inside an Open year its Company has not closed, enforced on all four posting paths. **Fiscal Year Closing** moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, and stamps `acc_fiscal_closing`; the year itself reads Closed only once every Company has closed it. At most two years stand Open and only the oldest is closable. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
 | Transaction Purpose | Done — rows in `sys_purpose` a maintainer **enters** under Pengaturan › Klasifikasi. Nothing generates them, so a Budget Category with none cannot be transacted; the Budget Category list states the count. The label is composed from direction × Category × Partner Category and never stored |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
@@ -883,15 +884,15 @@ Implemented and enforced:
    correction is a new business transaction, which produces its own journal.
    There is no JOURNAL_CREATE, JOURNAL_EDIT or JOURNAL_DELETE — viewing is the
    whole capability.
-49. **A journal's posting date is the day it was posted — with one exception.**
-   Never back-dated: it records when the books were written, not when somebody
-   decided they should have been. The single exception is a **closing entry**,
-   which is dated the last day of the fiscal year it closes: a `CLS-` journal
-   belongs to the year it shuts, and one dated afterwards would fall inside the
-   year it opens and be the first thing that year inherited.
-   `JournalInput.postingDate` is tied to `series: "CLS"` in `journal.ts`, so
-   back-dating anything else is unrepresentable rather than merely forbidden.
-   Everything else about a posted journal is unchanged, immutability included.
+49. **A journal is dated by the document that produced it, never ahead.**
+   Its `posting_date` is the day the document belongs to in the books — which
+   may be earlier than today (a backdated document) and is never later; when it
+   was written is `created_at`. A **closing entry** is dated the last day of
+   the fiscal year it closes: a `CLS-` journal belongs to the year it shuts.
+   `postJournal` refuses a future date for everything but `CLS`; whether the
+   day is inside an open period is `checkTransactionDate`'s question, asked by
+   the caller. Everything else about a posted journal is unchanged,
+   immutability included. Supersedes "never back-dated" (§12).
 50. **Posting needs a mapping; approval does not.** A Cash Bank Transaction
    journals against the account its Purpose resolves to through Company ×
    Budget Category × Partner Category. Without that mapping there is no account
@@ -1022,9 +1023,9 @@ Implemented and enforced:
    Draft.** A journal a document produced is `Posted` the moment it exists,
    because it records something that has already happened. A manual journal is
    saved `Draft`, may be edited and cancelled while it is one, and reaches
-   `Posted` through the same engine — which is also when it acquires its posting
-   date. Nothing reverses a posted journal, manual or not.
-82. **A draft is not accounting.** It has no posting date, the General Ledger
+   `Posted` through the same engine. It carries the date it was written for
+   from the moment it is saved. Nothing reverses a posted journal, manual or not.
+82. **A draft is not accounting.** Its date is only an intention, the General Ledger
    and the Trial Balance filter it out, `unbalancedJournals` ignores it, and it
    is allowed **not to balance** — a journal halfway through being typed does
    not, and the balance is a rule about posting rather than about saving.
@@ -1175,9 +1176,10 @@ Implemented and enforced:
     is being settled rather than on what it cost. `eligibleBudgets` and `checkLines` in
     `finance.ts` are the enforcement; the picker only narrows.
 35. **Post is the actual boundary, and it is atomic.** A Draft touches nothing: no
-    ledger entry, no balance, no `realized_amount`, no document date. Post writes the
+    ledger entry, no balance, no `realized_amount`. It carries the date it is for,
+    which writes nothing until Post. Post writes the
     Cash Bank Book entry and its balance, every Budget's realization, and the
-    document's own dates inside one database transaction — `applyPosting` in
+    document's status and posting time inside one database transaction — `applyPosting` in
     `finance.ts`. Budgets are re-read at Post, so one another document has since
     closed refuses the post rather than being realized twice.
 36. **Realization closes a Budget; nobody closes one by hand.** A Budget whose
@@ -1202,7 +1204,7 @@ Implemented and enforced:
     refusals are mechanical. The requester may withdraw while the request is still
     open, which cancels document and request together.
 58. **Pending is exactly as inert as Draft.** No cash entry, no subject book, no
-    journal, no `realized_amount`, no document date. Confirmation is the actual
+    journal, no `realized_amount`. Confirmation is the actual
     boundary, for **both** Companies at once (§30).
 59. **One confirmation, one transaction, two Companies.** `writeFundedPosting` writes
     the induk's cash entry and balance, the anak's own subject book where its Purpose
@@ -1496,7 +1498,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - The seed's development password is intentionally weak and must not survive into any
   deployed environment. `SIBA_ADMIN_PASSWORD` is required when `NODE_ENV=production`.
 - Prisma parameterises every query. The only raw SQL is the two `$queryRaw` schema
-  assertions in the test suite and `lockSubledgerPosition` in `subledger.ts`,
+  assertions in the test suite, `lockSubledgerPosition` in `subledger.ts` and
+  `lockFiscalPeriod` in `fiscal.ts`,
   which takes a transaction-scoped advisory lock through a parameterised tagged
   template. None interpolates user input into SQL text. Do not introduce raw SQL
   with interpolated user input.
@@ -1947,7 +1950,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
   `lib/siba/journal.ts`, which **refuses** any journal whose two sides do not
   sum equal **in base currency**. A posted journal is immutable: nothing
   updates, deletes or reverses one, and a correction is a new journal. The
-  posting date is the day of posting, never back-dated. An automatic journal —
+  posting date is the document's date, never later than today (see "A
+  document may be backdated, never dated ahead"). An automatic journal —
   one a business document produced — is written by `postJournal` inside that
   document's posting transaction and is `Posted` the moment it exists;
   `applyPosting` calls it **alongside** `recordCashBankEntry`, in the same
@@ -1984,7 +1988,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Do not change unless:** explicitly instructed. **Never add an edit, delete
   or reversal path for a *posted* journal**, never derive an operational book
   from journal lines, never write a journal outside the posting engine, and
-  never back-date one.
+  never date one ahead of today.
 - **Status:** Frozen, current.
 
 ### A manual journal is drafted, posted, and may not touch a book (FROZEN)
@@ -2057,7 +2061,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Do not change unless:** explicitly instructed. **Never let a manual journal
   reach a control account**, never let a draft be read by a ledger report, never
   put either account flag back on a form, never reduce `syncControlAccounts` to
-  a one-way claim, never add a date field to the form, and never add a reversal
+  a one-way claim, never let the date field reach past today, and never add a reversal
   — a posted manual journal is as final as any other.
 - **Status:** Frozen, current.
 
@@ -3312,10 +3316,70 @@ below in outline because the half of it that still holds is easy to lose.**
 - **Do not change unless:** explicitly instructed. **Do not re-embed a second copy of
   the book under the master record.**
 - **Status:** Frozen, current.
+### A document may be backdated, never dated ahead (FROZEN)
+- **Decision:** Every posting document — Cash Bank Transaction, Cash Bank
+  Transfer, Debit / Credit Note and the manual journal — carries a **Tanggal
+  Dokumen** the user chooses while it is a Draft: any day up to today, starting
+  on today (§10 rule 33). Post dates **everything it writes by that day**: the
+  Cash Bank Book and subject-book entries, the rate layer it opens, and the
+  journal's `posting_date`. When the posting actually happened is kept
+  separately — the document's `posting_date` timestamp and the journal's
+  `created_at`. A funded document is posted on the anak's document date, for
+  both Companies. `checkTransactionDate` in `fiscal.ts` is the one rule: a
+  real date, not after today, inside an Open year **every Company the posting
+  writes into** has not closed (`checkDocumentDate` in `finance.ts` adds the
+  induk on the funded route). It is asked when the draft is saved, again before
+  the posting transaction opens, and a third time **inside** it.
+- **Reason:** the user's decision, taken after an analysis of the posting
+  architecture. The real case is the year-end overlap — December documents
+  arriving while January is already being worked — which the two-open-years
+  rule already anticipated and which a posting dated "today" could not serve.
+- **A posting and a close cannot interleave.** `holdPostingPeriod` takes a
+  transaction-scoped advisory lock per `(fiscal year, Company)` —
+  `lockFiscalPeriod` — and re-asks the period question under it; every
+  posting path takes it first thing in its transaction, and
+  `executeClosing` takes the same lock and then **rebuilds the closing journal
+  from the books and refuses if it differs from the preview**. Without it, a
+  posting that passed its check before a close committed could write into the
+  closed year afterwards, and one landing between the preview and the close
+  would leave profit and loss in the snapshot. Companies are locked in id order
+  and the period lock is taken before `lockSubledgerPosition`, so nothing waits
+  in a circle. `tests/finance.test.ts` holds the race deterministically.
+- **The FX difference is valued when posted, dated when chosen.** A backdated
+  settlement relieves a subject-book position at the carrying rate it holds
+  **at the moment of posting**, which may include movements dated after the
+  backdated day. Re-valuing as of the date would mean restating base figures
+  already written by later entries, which "base is history" forbids. The
+  lifetime gain or loss is identical either way; only which period carries it
+  can differ. The user's choice (option B) over as-of-date valuation.
+- **The books lost their running balance.** `balance_after` on
+  `cash_bank_ledger` and `sub_ledger` is still written and still true — it is
+  the balance **at the moment of writing** — but once an entry can be dated in
+  among entries written before it, printing it beside date-ordered rows would
+  show figures no row above produced. Both reports now order by
+  `(entry_date, id)`, state only the period's opening and closing, and
+  `reconciles` compares the whole book, summed, with its `_balance` row. The
+  user's choice: the materialised `_balance` tables are what is read.
+- **What does not change.** The zero rules are asked of the balance **as it
+  stands when the posting is written**, not as of the backdated day — accepted
+  by the user for base currency; a foreign resource is still protected by its
+  layer, which cannot go below zero. A payment may draw on a layer acquired
+  after its own date (the user's decision). Journal numbers run in the order
+  journals were written, so `JRN-0102` may be dated before `JRN-0101` —
+  accepted. A closed year is sealed exactly as before, so an Opening Balance
+  snapshot can never go stale.
+- **Do not change unless:** explicitly instructed. **Never let a document be
+  dated after today, never date a book entry or a journal by anything but the
+  document's own date, never post without `holdPostingPeriod` inside the
+  transaction, never let a close write without the lock and the re-check, and
+  never restate a base figure to value a backdated settlement as of its date.**
+- **Status:** Frozen, current. Supersedes rule 49's "never back-dated" and the
+  statements that a Draft has no document date.
+
 ### Post is the actual boundary, and it is one transaction (FROZEN)
 - **Decision:** A Cash Bank Transaction in Draft moves **nothing** — no ledger entry,
   no balance, no subject-book entry, no journal, no layer movement, no
-  `realized_amount`, not even a document date. `applyPosting` in
+  `realized_amount` — only the date it is for. `applyPosting` in
   `src/lib/siba/finance.ts` is the single place money moves, and inside **one**
   `prisma.$transaction` it writes the Cash Bank Book entry and its materialised
   balance (`recordCashBankEntry`), the subject book where the Purpose keeps one
@@ -3848,8 +3912,13 @@ process allowed to restate positions, and it is not built.
 - Do **not** offer `close` as a header confirm button. It carries a `runAt` because
   it needs a Company, a checklist and a preview of the journal it is about to post
   (§12).
-- Do **not** back-date a journal. A `CLS-` closing entry is the single exception,
-  and `postJournal` refuses a `postingDate` outside that series (§10 rule 49).
+- Do **not** date a document or a journal after today, and do **not** date a
+  book entry or a journal by anything but its document's date (§10 rule 49, §12).
+- Do **not** write a posting without `holdPostingPeriod` inside its transaction,
+  and do **not** let a close write without `lockFiscalPeriod` and its re-check.
+  A backdated posting and a close must never interleave (§12).
+- Do **not** print a running balance on a book report again, or order one by id.
+  An entry may be backdated in among entries written before it (§12).
 - Do **not** post to Laba/Rugi Tahun Berjalan or Laba/Rugi Tahun Lalu Belum
   Ditutup. The Neraca computes both and places them on the accounts System
   Default names; the closing journal moves a year's result straight into
@@ -3968,8 +4037,8 @@ process allowed to restate positions, and it is not built.
 - Do **not** re-embed the Cash Bank Book under the Cash & Bank master record. The
   master links into the report (§12).
 - Do **not** add an edit, delete or reversal path for a **posted** journal, do
-  **not** write one outside the posting engine, and do **not** back-date one
-  (§10, §12).
+  **not** write one outside the posting engine, and do **not** date one ahead
+  of today (§10, §12).
 - Do **not** let a manual journal reach a control account, and do **not** decide
   an account's usability by anything but `is_postable` and `is_control_account`
   (§10 rules 79–80, §12).
@@ -3981,8 +4050,8 @@ process allowed to restate positions, and it is not built.
   structure's answer, recomputed rather than typed — and with no checkbox left,
   a claim that never releases would close an account for good (§10 rules 79–80,
   §12).
-- Do **not** add a date field to the manual journal form. The engine writes the
-  date when it writes the books (§10 rule 81).
+- Do **not** let the manual journal's date reach past today, or skip the
+  period check when it is saved and again when it is posted (§10 rule 81, §12).
 - Do **not** derive an operational book from journal lines. Only the General
   Ledger derives from the journal (§10, §12).
 - Do **not** sum across accounts in the General Ledger, and do **not** convert
@@ -4108,7 +4177,9 @@ process allowed to restate positions, and it is not built.
 | A standing foreign position is never retranslated | A Hutang in USD keeps the base value it was carried at until something settles it. Without period-end revaluation (§13) there is no unrealised gain or loss anywhere in the system, so the base measure of an open position drifts from what it would be worth today — by design for now, and the one thing revaluation exists to fix. |
 | A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
 | A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |
-| A closing entry is the one back-dated journal | A `CLS-` journal is dated the last day of the year it closes (§10 rule 49). Nothing else may be, and `postJournal` refuses a `postingDate` outside the `CLS` series — but it does mean the General Ledger holds one entry whose date is not the day it was written, and a reader comparing a journal's date to its audit row will find them different for exactly those. |
+| A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
+| A backdated settlement is valued at today's carrying rate | A subject-book relief releases base at the carrying rate the position holds when the posting is written, not as of the backdated day, so the FX difference can land in a different period than an on-time posting would have put it. Lifetime totals are identical. Accepted, because the alternative restates stored base figures (§12). |
+| The zero rules ignore the backdated day | A backdated payment is checked against the balance as it stands when posted, so a base-currency book can have been below zero in between. Accepted for base currency; a foreign resource is held by its layers (§12). |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |

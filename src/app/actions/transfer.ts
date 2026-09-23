@@ -6,6 +6,7 @@ import { type Actor } from "@/lib/siba/access";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
+import { checkTransactionDate } from "@/lib/siba/fiscal";
 import { roundBase } from "@/lib/siba/fx";
 import {
   applyTransfer,
@@ -47,6 +48,8 @@ export type TransferValues = {
   /** Only an input for Pembelian Valas; derived from the source otherwise. */
   currency_id: string;
   cash_bank_layer_id: string;
+  /** `YYYY-MM-DD` — the day the transfer belongs to in the books. */
+  document_date: string;
   note: string;
 };
 
@@ -144,6 +147,11 @@ export async function createTransfer(
   const refused = await refuseCompany(g.actor, checked.companyId);
   if (refused) return refused;
 
+  // Any day up to today, inside a year this Company may still write into.
+  // Asked again at Post, since a year can close in between.
+  const dated = await checkTransactionDate(values.document_date, [checked.companyId]);
+  if (!dated.ok) return { ok: false, errors: { document_date: dated.message } };
+
   const settled = await checkTransferLines(checked, asLines(lines));
   if (!settled.ok) return { ok: false, errors: settled.errors };
 
@@ -152,9 +160,9 @@ export async function createTransfer(
   const created = await prisma.finCashBankTransfer.create({
     data: {
       transfer_no,
-      // A document acquires its date when the money moves, not when it is
-      // drafted — concept doc §2.3. Post fills both date columns.
-      document_date: null,
+      // The day it belongs to in the books, chosen on the draft and possibly
+      // earlier than today. `posting_date` waits for Post.
+      document_date: new Date(`${dated.date}T00:00:00Z`),
       posting_date: null,
       company_id: checked.companyId,
       purpose: checked.purpose,
@@ -225,6 +233,11 @@ export async function updateTransfer(
   const refused = await refuseCompany(g.actor, checked.companyId);
   if (refused) return refused;
 
+  // Any day up to today, inside a year this Company may still write into.
+  // Asked again at Post, since a year can close in between.
+  const dated = await checkTransactionDate(values.document_date, [checked.companyId]);
+  if (!dated.ok) return { ok: false, errors: { document_date: dated.message } };
+
   const settled = await checkTransferLines(checked, asLines(lines));
   if (!settled.ok) return { ok: false, errors: settled.errors };
 
@@ -242,6 +255,7 @@ export async function updateTransfer(
         from_cash_bank_id: checked.fromCashBankId,
         currency_id: checked.currencyId,
         cash_bank_layer_id: checked.layerId,
+        document_date: new Date(`${dated.date}T00:00:00Z`),
         transfer_amount: settled.total,
         transfer_base_amount: roundBase(
           settled.total * (checked.layerRate ?? 1)

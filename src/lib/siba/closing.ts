@@ -6,6 +6,7 @@ import { BASE_CURRENCY_LABEL } from "./currency";
 import {
   closedFiscalYearsFor,
   fiscalClosingState,
+  lockFiscalPeriod,
   fiscalYearAfter,
   fiscalYearForClosing,
   openFiscalYears,
@@ -13,7 +14,7 @@ import {
   type FiscalYearForClosing,
 } from "./fiscal";
 import {
-  draftJournalsCreatedBetween,
+  draftJournalsDatedBetween,
   postJournal,
   unbalancedJournals,
   type JournalLineInput,
@@ -242,7 +243,7 @@ async function runChecks(
   // 6. No unfinished journal inside the year. Closing would strand it: the
   //    lock refuses a posting into a closed year, so a draft left here could
   //    afterwards only ever be cancelled.
-  const drafts = await draftJournalsCreatedBetween(
+  const drafts = await draftJournalsDatedBetween(
     subject.companyId,
     year.startDate,
     year.endDate
@@ -506,6 +507,33 @@ export async function executeClosing(
 
   try {
     return await prisma.$transaction(async (tx) => {
+      // Held against every posting into this year by this Company for the
+      // rest of the transaction. A posting already past its own check waits
+      // here and then finds the year closed; one that committed first is in
+      // the books this close is about to read.
+      await lockFiscalPeriod(tx, fiscalYearId, companyId);
+
+      // Under the hold, the journal is rebuilt from the books as they now
+      // stand and compared with the preview the reader approved. A backdated
+      // posting landing between the two would otherwise leave profit and
+      // loss behind in the snapshot. If they differ, nothing is written and
+      // the reader is sent back to look at the new figures.
+      const settled = planJournal(
+        await closingBalances(companyId, year.endDate, tx),
+        account.accountId
+      );
+      const shape = (ls: { accountId: number; partnerId: number | null; debit: number; credit: number }[]) =>
+        ls
+          .map((l) => `${l.accountId}:${l.partnerId ?? "-"}:${cents(l.debit)}:${cents(l.credit)}`)
+          .sort()
+          .join("|");
+      if (shape(settled.lines) !== shape(plan.preview!.lines)) {
+        throw new Error(
+          `Pembukuan ${year.name} berubah sejak pratinjau disusun. ` +
+            "Muat ulang halaman penutupan dan periksa journal penutupnya lagi."
+        );
+      }
+
       let journalNo: string | null = null;
       let journalId: number | null = null;
 

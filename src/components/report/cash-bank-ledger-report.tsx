@@ -148,11 +148,10 @@ export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
                         <span className="dash">–</span>
                       )}
                     </td>
-                    <td className="num">
-                      <span className={`mny${e.balanceAfter ? "" : " z"}`}>
-                        {money(e.balanceAfter)}
-                      </span>
-                    </td>
+                    {/* No running balance: an entry may be backdated in among
+                        entries written before it, so only the period's opening
+                        and closing are balances this report can state. */}
+                    <td className="num" />
                   </tr>
                 );
               })}
@@ -194,11 +193,11 @@ export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
             <Icon name="warn" size={14} />
           </span>
           <div>
-            <b>Saldo berjalan tidak cocok dengan jumlah mutasi.</b>
+            <b>Saldo tersimpan tidak cocok dengan jumlah mutasi.</b>
             <p>
-              Saldo tersimpan pada entri terakhir berbeda dari hasil penjumlahan
-              mutasi. Laporan tetap ditampilkan apa adanya; selisih ini perlu
-              diperiksa sebelum angkanya dipakai.
+              Saldo Cash & Bank yang tersimpan berbeda dari hasil penjumlahan
+              seluruh mutasinya. Laporan tetap ditampilkan apa adanya; selisih
+              ini perlu diperiksa sebelum angkanya dipakai.
             </p>
           </div>
         </div>

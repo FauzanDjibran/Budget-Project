@@ -225,8 +225,15 @@ export async function rebuildSubledgerBalance(
 // One Report View per book, all served by the reader below. The property every
 // one of them holds is `opening + naik - turun = closing`, per subject and per
 // currency — the same arithmetic `rebuildSubledgerBalance` uses, so the report
-// derives its own figures rather than trusting the stored total, and
-// `reconciles` reports whether the two agree.
+// derives its own figures rather than trusting the stored total.
+//
+// **There is no running balance.** An entry may be dated before entries already
+// written (a backdated posting), so the `balance_after` stored on each row is
+// the position at the moment of writing, not at the entry's date, and printing
+// it beside date-ordered rows would show figures no row above produced. The
+// report reads in date order and states opening and closing only; the current
+// position is `sub_ledger_balance`'s, and `reconciles` checks the book against
+// it.
 
 export type SubledgerEntryRow = {
   id: number;
@@ -237,12 +244,10 @@ export type SubledgerEntryRow = {
   amount: number;
   /** Signed in the book's direction: positive raises the position. */
   movement: number;
-  balanceAfter: number;
   /** This book's own settlement rate for the entry. */
   rate: number;
   baseAmount: number;
   baseMovement: number;
-  baseBalanceAfter: number;
   note: string | null;
   sourceDocId: number | null;
 };
@@ -274,9 +279,14 @@ export type SubledgerSubject = {
    * transacted at, so it is shown and never used as an input.
    */
   carryingRate: number | null;
-  /** Oldest first — a book reads forward through the period. */
+  /** By date, oldest first — a book reads forward through the period. */
   entries: SubledgerEntryRow[];
-  /** False when the stored running balance and the summed movements disagree. */
+  /**
+   * False when the subject's whole book, summed, disagrees with its
+   * materialised position in `sub_ledger_balance` — on either measure. A
+   * statement about the book rather than the period: once entries may be
+   * backdated there is no running balance for a period-bound check to lean on.
+   */
   reconciles: boolean;
 };
 
@@ -325,7 +335,9 @@ export async function subledgerReport(
         ...scope,
         entry_date: { gte: startOf(range.from), lte: startOf(range.to) },
       },
-      orderBy: { id: "asc" },
+      // Date first: a backdated entry has a later id than the entries it
+      // precedes, and a book is read in the order things happened.
+      orderBy: [{ entry_date: "asc" }, { id: "asc" }],
     }),
   ]);
 
@@ -385,11 +397,9 @@ export async function subledgerReport(
       direction: e.direction,
       amount: e.amount.toNumber(),
       movement,
-      balanceAfter: e.balance_after.toNumber(),
       rate: e.rate.toNumber(),
       baseAmount: e.base_amount.toNumber(),
       baseMovement,
-      baseBalanceAfter: e.base_balance_after.toNumber(),
       note: e.note,
       sourceDocId: e.source_doc_id,
     });
@@ -397,7 +407,11 @@ export async function subledgerReport(
 
   if (acc.size === 0) return { book, range, subjects: [] };
 
-  const [partners, currencies] = await Promise.all([
+  const keys = [...acc.values()].map((a) => ({
+    partner_id: a.partnerId,
+    currency_id: a.currencyId,
+  }));
+  const [partners, currencies, wholeBook, stored] = await Promise.all([
     prisma.mPartner.findMany({
       where: { id: { in: [...new Set([...acc.values()].map((a) => a.partnerId))] } },
       select: {
@@ -410,7 +424,32 @@ export async function subledgerReport(
       },
     }),
     prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
+    prisma.subLedger.groupBy({
+      by: ["partner_id", "currency_id"],
+      where: { book: book.key, OR: keys },
+      _sum: { movement: true, base_movement: true },
+    }),
+    prisma.subLedgerBalance.findMany({
+      where: { book: book.key, OR: keys },
+      select: { partner_id: true, currency_id: true, balance: true, base_balance: true },
+    }),
   ]);
+  const pair = (p: number, c: number) => `${p}:${c}`;
+  const summedOf = new Map(
+    wholeBook.map((w) => [
+      pair(w.partner_id, w.currency_id),
+      {
+        cents: Math.round((w._sum.movement?.toNumber() ?? 0) * 100),
+        base: roundBase(w._sum.base_movement?.toNumber() ?? 0),
+      },
+    ])
+  );
+  const storedOf = new Map(
+    stored.map((r) => [
+      pair(r.partner_id, r.currency_id),
+      { cents: Math.round(r.balance.toNumber() * 100), base: r.base_balance.toNumber() },
+    ])
+  );
   const partnerOf = new Map(partners.map((p) => [p.id, p]));
   const currencyOf = new Map(currencies.map((c) => [c.id, c.currency_label]));
 
@@ -420,7 +459,8 @@ export async function subledgerReport(
     if (!partner) continue;
     const closing = a.opening + a.raised - a.lowered;
     const baseClosing = roundBase(a.baseOpening + a.baseRaised - a.baseLowered);
-    const last = a.entries.at(-1);
+    const summed = summedOf.get(pair(a.partnerId, a.currencyId));
+    const held = storedOf.get(pair(a.partnerId, a.currencyId));
     subjects.push({
       partnerId: a.partnerId,
       label: partner.partner_label,
@@ -442,9 +482,11 @@ export async function subledgerReport(
       // no rate, and a number here would invite being used as one.
       carryingRate: closing === 0 ? null : baseClosing / closing,
       entries: a.entries,
-      reconciles: last
-        ? last.balanceAfter === closing && last.baseBalanceAfter === baseClosing
-        : true,
+      reconciles:
+        !!summed &&
+        !!held &&
+        summed.cents === held.cents &&
+        summed.base === held.base,
     });
   }
 

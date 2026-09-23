@@ -28,6 +28,7 @@ import {
 } from "../src/lib/siba/cash-bank";
 import { openLayer, openLayersOf } from "../src/lib/siba/cash-bank-layers";
 import { subledgerPosition } from "../src/lib/siba/subledger";
+import { checkTransactionDate, lockFiscalPeriod } from "../src/lib/siba/fiscal";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
   FIXTURE_PREFIX,
@@ -161,6 +162,8 @@ async function makeDraft(options: {
   rate?: number;
   /** The layer a payment out of a foreign resource draws on. */
   layerId?: number;
+  /** `YYYY-MM-DD`; omitted, the draft carries none and posts as today. */
+  documentDate?: string;
   lines: { budgetId: number; amount: number; outstanding: number }[];
 }): Promise<number> {
   const purpose = (await purposeByKey(options.purpose))!;
@@ -183,6 +186,9 @@ async function makeDraft(options: {
       exchange_rate: rate,
       cash_bank_layer_id: options.layerId ?? null,
       partner_id: options.partnerId ?? null,
+      document_date: options.documentDate
+        ? new Date(`${options.documentDate}T00:00:00Z`)
+        : null,
       transaction_amount: total,
       transaction_base_amount: total * rate,
       status: "Draft",
@@ -1882,5 +1888,178 @@ describe("posting is refused outside an open period", () => {
     // The same document posts once the year is open again, which is what makes
     // the refusal the lock rather than something else about the document.
     await post(doc);
+  });
+});
+
+
+/**
+ * A document may be dated back, never forward.
+ *
+ * The date is chosen on the draft and every book the posting writes is dated
+ * by it — the Cash Bank Book, the journal, the document itself — while
+ * `posting_date` keeps the moment the posting actually happened. What decides
+ * whether a day may be written is the fiscal calendar, asked when the draft is
+ * saved, again before the posting transaction opens, and a third time inside
+ * it under a lock a close also takes.
+ */
+describe("a document may be backdated inside an open year", () => {
+  // The first of January of this year is always inside the open fixture year
+  // and earlier than today — except on the first of January itself.
+  const backdate = `${today.slice(0, 4)}-01-01`;
+  const canBackdate = backdate < today;
+
+  test("every book is dated by the document, not by the day it was posted", { skip: !canBackdate }, async () => {
+    const cashBank = await makeCashBank({ opening: 2_000_000 });
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 300_000 });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      documentDate: backdate,
+      lines: [{ budgetId: budget, amount: 300_000, outstanding: 300_000 }],
+    });
+    await post(doc);
+
+    const entry = await prisma.cashBankLedger.findFirstOrThrow({
+      where: { cash_bank_id: cashBank, source_doc_id: doc },
+      select: { entry_date: true },
+    });
+    assert.equal(entry.entry_date.toISOString().slice(0, 10), backdate);
+
+    const journal = await prisma.accJournal.findFirstOrThrow({
+      where: { source_doc_id: doc, journal_no: { startsWith: "JRN-" } },
+      select: { posting_date: true, created_at: true },
+    });
+    assert.equal(journal.posting_date?.toISOString().slice(0, 10), backdate);
+    assert.equal(
+      journal.created_at.toISOString().slice(0, 10),
+      today,
+      "when it was actually written is kept"
+    );
+
+    const row = await prisma.finCashBankTransaction.findUniqueOrThrow({
+      where: { id: doc },
+      select: { document_date: true, posting_date: true },
+    });
+    assert.equal(row.document_date?.toISOString().slice(0, 10), backdate);
+    assert.equal(row.posting_date?.toISOString().slice(0, 10), today);
+  });
+
+  test("a day that has not happened yet is refused, and nothing moves", async () => {
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      documentDate: tomorrow,
+      lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
+    });
+
+    const refused = await applyPosting(doc, actor);
+    assert.equal(refused.ok, false);
+    assert.match(refused.ok ? "" : refused.errors._form ?? "", /masa depan/);
+    const balance = await prisma.cashBankBalance.findUniqueOrThrow({
+      where: { cash_bank_id: cashBank },
+    });
+    assert.equal(balance.balance.toNumber(), 1_000_000);
+  });
+
+  test("a date inside no fiscal year is refused", async () => {
+    const dated = await checkTransactionDate("1901-06-15", [induk]);
+    assert.equal(dated.ok, false);
+    assert.match(dated.ok ? "" : dated.message, /tidak berada dalam tahun buku/);
+  });
+
+  test("a date that is not a date is refused", async () => {
+    for (const raw of ["", "2026-02-30", "23/09/2026", null]) {
+      const dated = await checkTransactionDate(raw, [induk]);
+      assert.equal(dated.ok, false, `${String(raw)} must be refused`);
+    }
+  });
+
+  test("a year the Company has closed takes no backdated posting", { skip: !canBackdate }, async () => {
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      documentDate: backdate,
+      lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
+    });
+
+    const reopen = await closeYearFor(fiscalYear, induk);
+    try {
+      const refused = await applyPosting(doc, actor);
+      assert.equal(refused.ok, false);
+      assert.match(refused.ok ? "" : refused.errors._form ?? "", /menutup/);
+    } finally {
+      await reopen();
+    }
+  });
+
+  test("a close committed while a posting waits on the lock wins, and the posting writes nothing", { skip: !canBackdate }, async () => {
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
+    const doc = await makeDraft({
+      purpose: "BYA_OUT",
+      cashBankId: cashBank,
+      documentDate: backdate,
+      lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
+    });
+
+    // A close in progress: it holds the year and has written its closing row,
+    // but has not committed. The posting passes its early check (the row is
+    // not visible yet), then has to wait for the hold — and once the close
+    // commits, its re-check under the hold must find the year shut.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let held!: () => void;
+    const holding = new Promise<void>((resolve) => (held = resolve));
+    let closingId = 0;
+    const closer = prisma.$transaction(
+      async (tx) => {
+        await lockFiscalPeriod(tx, fiscalYear, induk);
+        const row = await tx.accFiscalClosing.create({
+          data: {
+            fiscal_year_id: fiscalYear,
+            company_id: induk,
+            status: "Closed",
+            closed_at: new Date(),
+            closed_by: actor,
+            created_by: actor,
+          },
+          select: { id: true },
+        });
+        closingId = row.id;
+        held();
+        await gate;
+      },
+      { timeout: 30_000 }
+    );
+
+    try {
+      await holding;
+      const posting = applyPosting(doc, actor);
+      await new Promise((r) => setTimeout(r, 500));
+      release();
+      await closer;
+
+      const result = await posting;
+      assert.equal(result.ok, false, "the close committed first, so the year is shut");
+      assert.match(result.ok ? "" : result.errors._form ?? "", /menutup/);
+
+      const balance = await prisma.cashBankBalance.findUniqueOrThrow({
+        where: { cash_bank_id: cashBank },
+      });
+      assert.equal(balance.balance.toNumber(), 1_000_000, "nothing was written");
+      assert.equal(
+        await prisma.accJournal.count({ where: { source_doc_id: doc, journal_no: { startsWith: "JRN-" } } }),
+        0
+      );
+    } finally {
+      release();
+      await closer.catch(() => {});
+      if (closingId) await prisma.accFiscalClosing.deleteMany({ where: { id: closingId } });
+    }
   });
 });

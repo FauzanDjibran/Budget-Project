@@ -106,18 +106,15 @@ export type JournalInput = {
   /** Defaults to `JRN` — the series of every journal a document produces. */
   series?: JournalSeries;
   /**
-   * The day the journal is dated. Omitted everywhere but a close.
+   * The day the journal belongs to in the books — the date of the document
+   * that produced it, which may be earlier than today (a backdated posting).
+   * A closing entry is dated the last day of the year it closes.
    *
-   * A journal records when the books were written, so it is dated the day it
-   * was posted and never back-dated. The **one** exception is a fiscal year's
-   * closing entry, which belongs to the year it closes and is therefore dated
-   * that year's last day: a closing entry dated after the year it closes would
-   * fall inside the year it opens, and would be the first thing the new year
-   * inherited.
-   *
-   * That exception is why this field is tied to `series: "CLS"` below rather
-   * than simply offered. Nothing else gains a date, and making it
-   * unrepresentable is stronger than writing it down.
+   * Never later than today: a journal dated ahead would claim something
+   * happened that has not yet. Omitted, it is today. Whether the day is inside
+   * a period this Company may still write into is the caller's question
+   * (`checkTransactionDate`), asked before the posting transaction opens.
+   * When the journal was actually *written* is `created_at`, which is kept.
    */
   postingDate?: Date;
 };
@@ -232,19 +229,16 @@ function lineData(line: ResolvedLine, sequence: number, actorId: number) {
   };
 }
 
-/**
- * The day the books were written.
- *
- * A journal is never back-dated: it records when the posting happened, not
- * when somebody decided it should have. That is true of a manual journal too —
- * which is why the date is not a field on its form.
- *
- * The single exception is a fiscal year's closing entry, which belongs to the
- * year it closes and says so through `JournalInput.postingDate`. It is the
- * only journal that may name its own date, and only in the `CLS` series.
- */
+/** Today, at the UTC midnight a journal's date is stored as. */
 function postingDateToday(): Date {
   return new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+}
+
+/** A journal may be dated any day up to today, and never after it. */
+function assertNotAhead(date: Date): void {
+  if (date.getTime() > postingDateToday().getTime()) {
+    throw new Error("Journal tidak boleh bertanggal di masa depan.");
+  }
 }
 
 /**
@@ -266,11 +260,9 @@ export async function postJournal(
   if (cents(debit) !== cents(credit)) throw new JournalImbalance(debit, credit);
 
   const series = input.series ?? "JRN";
-  if (input.postingDate && series !== "CLS") {
-    throw new Error(
-      "Hanya journal penutup tahun buku yang boleh diberi tanggal posting sendiri."
-    );
-  }
+  // A closing entry is dated its year's last day by definition, and whether a
+  // year may be closed early is the closing checklist's question, not this one.
+  if (input.postingDate && series !== "CLS") assertNotAhead(input.postingDate);
 
   const journal = await tx.accJournal.create({
     data: {
@@ -302,14 +294,18 @@ export async function postJournal(
 /**
  * A manual journal while it is still being written.
  *
- * It carries no posting date and no source document: nobody has posted it, and
- * nothing produced it but the person typing. Its lines are validated
+ * It carries the date the person chose for it — stored in `posting_date` while
+ * it is a Draft, which is safe because every reader of journal lines filters
+ * `status: "Posted"` — and no source document: nothing produced it but the
+ * person typing. Its lines are validated
  * individually but are **not** required to balance — a journal halfway through
  * being entered does not, and refusing to save it would mean the balance rule
  * was enforced at the wrong moment.
  */
 export type DraftJournalInput = {
   companyId: number;
+  /** `YYYY-MM-DD`, already checked by the caller (`checkTransactionDate`). */
+  date: string;
   description: string;
   lines: JournalLineInput[];
   actorId: number;
@@ -325,7 +321,7 @@ export async function createDraftJournal(
     const journal = await tx.accJournal.create({
       data: {
         journal_no: await nextJournalNo(tx, "JUR"),
-        posting_date: null,
+        posting_date: new Date(`${input.date}T00:00:00Z`),
         company_id: input.companyId,
         description: input.description,
         status: "Draft",
@@ -367,6 +363,7 @@ export async function updateDraftJournal(
       where: { id },
       data: {
         company_id: input.companyId,
+        posting_date: new Date(`${input.date}T00:00:00Z`),
         description: input.description,
         updated_by: input.actorId,
         lines: {
@@ -396,7 +393,13 @@ export async function updateDraftJournal(
  */
 export async function postDraftJournal(
   id: number,
-  actorId: number
+  actorId: number,
+  /**
+   * Run first inside the posting transaction — the caller's hold on the
+   * period (`holdPostingPeriod`). Passed in rather than imported because this
+   * module is a book and depends on nothing; a throw from it rolls back.
+   */
+  hold?: (tx: Prisma.TransactionClient, date: string) => Promise<void>
 ): Promise<
   { ok: true; journalNo: string } | { ok: false; error: string }
 > {
@@ -434,7 +437,15 @@ export async function postDraftJournal(
     return { ok: false, error: new JournalImbalance(debit, credit).message };
   }
 
+  // The date the draft was written for. A draft saved before drafts carried
+  // one has none, and posts as today — which is what it would have done.
+  const postingDate = journal.posting_date ?? postingDateToday();
+  if (postingDate.getTime() > postingDateToday().getTime()) {
+    return { ok: false, error: "Journal tidak boleh bertanggal di masa depan." };
+  }
+
   await prisma.$transaction(async (tx) => {
+    if (hold) await hold(tx, postingDate.toISOString().slice(0, 10));
     for (const [i, line] of resolved.entries()) {
       await tx.accJournalLine.update({
         where: { id: journal.lines[i].id },
@@ -449,7 +460,7 @@ export async function postDraftJournal(
       where: { id },
       data: {
         status: "Posted",
-        posting_date: postingDateToday(),
+        posting_date: postingDate,
         updated_by: actorId,
       },
     });
@@ -510,6 +521,8 @@ export type DraftJournal = {
   id: number;
   journalNo: string;
   companyId: number;
+  /** `YYYY-MM-DD`, or null for a draft saved before drafts carried a date. */
+  date: string | null;
   description: string;
   status: string;
   isManual: boolean;
@@ -546,6 +559,7 @@ export async function readDraftJournal(
     id: journal.id,
     journalNo: journal.journal_no,
     companyId: journal.company_id,
+    date: journal.posting_date ? journal.posting_date.toISOString().slice(0, 10) : null,
     description: journal.description,
     status: journal.status,
     isManual: journal.is_manual,
@@ -692,10 +706,6 @@ const totalOf = (lines: { debit_amount: { toNumber(): number }; kredit_amount: {
 export async function listJournals(companyIds: number[]): Promise<JournalRow[]> {
   const rows = await prisma.accJournal.findMany({
     where: { company_id: { in: companyIds } },
-    // Drafts have no posting date, so they sort first on `nulls: "first"` —
-    // which is right: an unposted journal is the one somebody still has to act
-    // on, and a register that buried it under a year of posted entries would
-    // hide the only rows that are anybody's to do something about.
     orderBy: [{ posting_date: { sort: "desc", nulls: "first" } }, { id: "desc" }],
     include: {
       company: { select: { company_label: true } },
@@ -704,7 +714,17 @@ export async function listJournals(companyIds: number[]): Promise<JournalRow[]> 
     },
   });
 
-  return rows.map((j) => ({
+  // Drafts first: an unposted journal is the one somebody still has to act on,
+  // and a register that buried it under a year of posted entries would hide the
+  // only rows that are anybody's to do something about. A draft now carries the
+  // date it was written for, so this is decided by status rather than by a
+  // null date. The sort is stable, so each group keeps the query's order.
+  const ordered = [
+    ...rows.filter((j) => j.status === "Draft"),
+    ...rows.filter((j) => j.status !== "Draft"),
+  ];
+
+  return ordered.map((j) => ({
     id: j.id,
     journalNo: j.journal_no,
     postingDate: j.posting_date ? j.posting_date.toISOString() : null,
@@ -808,7 +828,7 @@ export async function unbalancedJournals(
 }
 
 /**
- * Draft journals a Company created inside a date range.
+ * Draft journals a Company dated inside a date range.
  *
  * Asked before a fiscal year is closed: a draft is somebody's unfinished
  * accounting, and closing the year it belongs to would leave it permanently
@@ -816,13 +836,11 @@ export async function unbalancedJournals(
  * could then only ever be cancelled. The refusal names them so whoever is
  * closing can go and finish or cancel each one.
  *
- * **The range is read against `created_at`, not `posting_date`**, and that is a
- * stated assumption rather than a fact the schema supplies: a draft has no
- * posting date at all, because the date is written when the books are. When it
- * was typed is the only thing that says which year it was meant for, and a
- * draft typed inside the year is the one somebody intended to post into it.
+ * A draft carries the date it was written for, so that is what is read. A
+ * draft saved before drafts carried one has none, and falls back to when it
+ * was typed — the only thing that says which year it was meant for.
  */
-export async function draftJournalsCreatedBetween(
+export async function draftJournalsDatedBetween(
   companyId: number,
   from: Date,
   to: Date
@@ -831,9 +849,15 @@ export async function draftJournalsCreatedBetween(
     where: {
       company_id: companyId,
       status: "Draft",
-      // Inclusive of the year's last day: `to` is a date at UTC midnight and
-      // `created_at` is a timestamp, so the whole of that day has to be inside.
-      created_at: { gte: from, lt: new Date(to.getTime() + 86_400_000) },
+      OR: [
+        { posting_date: { gte: from, lte: to } },
+        {
+          posting_date: null,
+          // Inclusive of the year's last day: `to` is a date at UTC midnight
+          // and `created_at` is a timestamp.
+          created_at: { gte: from, lt: new Date(to.getTime() + 86_400_000) },
+        },
+      ],
     },
     orderBy: { id: "asc" },
     select: { id: true, journal_no: true },

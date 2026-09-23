@@ -14,6 +14,7 @@ import {
   writeFundedPosting,
   type TransactionRow,
 } from "./finance";
+import { PeriodShut } from "./fiscal";
 import { purposeByKey } from "./purposes";
 import { intercompanyBridge } from "./system-settings";
 
@@ -442,7 +443,9 @@ export async function confirmFundingRequest(
   });
   if (!prepared.ok) return { ok: false, errors: prepared.errors };
 
-  const { closed } = await prisma.$transaction(async (tx) => {
+  let closed: number;
+  try {
+  ({ closed } = await prisma.$transaction(async (tx) => {
     const result = await writeFundedPosting(tx, prepared.plan, actorId);
 
     await tx.finFundingRequest.update({
@@ -467,7 +470,15 @@ export async function confirmFundingRequest(
     });
 
     return result;
-  });
+  }));
+  } catch (error) {
+    // A year that closed between the check and the write: nothing was
+    // written, and the request is still open to confirm on another date.
+    if (error instanceof PeriodShut) {
+      return { ok: false, errors: { _form: error.message } };
+    }
+    throw error;
+  }
 
   return { ok: true, closed };
 }

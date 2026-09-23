@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { DateInput } from "@/components/ui/date-input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
 import { KursSelect } from "./kurs-select";
@@ -18,7 +19,7 @@ import {
   updateTransfer,
   type TransferValues,
 } from "@/app/actions/transfer";
-import { formatDate, formatMoney, formatRate } from "@/lib/format";
+import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { relieve, type Balance } from "@/lib/siba/fx";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
@@ -106,6 +107,9 @@ export function TransferForm({
     cash_bank_layer_id: transfer?.cash_bank_layer_id
       ? String(transfer.cash_bank_layer_id)
       : "",
+    // Today, as every editable date starts (§10 rule 33); moved back for a
+    // backdated transfer. A draft saved before drafts carried one starts there.
+    document_date: transfer?.document_date ?? todayIso(),
     note: transfer?.note ?? "",
   }));
 
@@ -684,14 +688,28 @@ export function TransferForm({
                     </Field>
                   )}
 
-                  <Field label="Tanggal Dokumen" span={4}>
-                    <div className="ro">
-                      {transfer?.document_date ? (
-                        formatDate(transfer.document_date)
-                      ) : (
-                        <span className="dash">dicatat saat diposting</span>
-                      )}
-                    </div>
+                  <Field
+                    label="Tanggal Dokumen"
+                    span={4}
+                    required={editing}
+                    help={editing ? "boleh mundur, tidak ke depan" : undefined}
+                    error={errors.document_date}
+                  >
+                    {editing ? (
+                      <DateInput
+                        value={values.document_date}
+                        invalid={Boolean(errors.document_date)}
+                        onChange={(v) => set("document_date", v)}
+                      />
+                    ) : (
+                      <div className="ro">
+                        {transfer?.document_date ? (
+                          formatDate(transfer.document_date)
+                        ) : (
+                          <span className="dash">belum ditentukan</span>
+                        )}
+                      </div>
+                    )}
                   </Field>
 
                   <Field label="Catatan" span={drawsLayer ? 4 : 8}>

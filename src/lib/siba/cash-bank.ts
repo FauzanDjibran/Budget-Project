@@ -458,12 +458,10 @@ export type LedgerEntryRow = {
   direction: string;
   amount: number;
   movement: number;
-  balanceAfter: number;
   /** The kurs this entry moved at — this book's own, not another book's. */
   rate: number;
   baseAmount: number;
   baseMovement: number;
-  baseBalanceAfter: number;
   note: string | null;
   /** The document that caused the movement, for drill-through. Null for an opening. */
   sourceDocTable: string | null;
@@ -491,13 +489,16 @@ export type LedgerReport = {
   baseTotalIn: number;
   baseTotalOut: number;
   baseClosing: number;
-  /** Oldest first — a book reads forward through the period. */
+  /** By date, oldest first — a book reads forward through the period. */
   entries: LedgerEntryRow[];
   /**
-   * False when the stored running balance and the summed movements disagree —
-   * **on either measure**. A book that reconciles in its own currency but not
-   * in base has had a rate written that its entries do not support, which is
-   * exactly the failure the second measure exists to catch.
+   * False when the resource's whole book, summed, disagrees with its
+   * materialised balance in `cash_bank_balance` — **on either measure**. A
+   * book that reconciles in its own currency but not in base has had a rate
+   * written that its entries do not support, which is exactly the failure the
+   * second measure exists to catch. It is a statement about the book rather
+   * than the period: once entries may be backdated there is no running
+   * balance for a period-bound check to lean on.
    */
   reconciles: boolean;
 };
@@ -505,12 +506,14 @@ export type LedgerReport = {
 /**
  * One resource's book over a period.
  *
- * Entries are ordered oldest first, which is how a book is read: the running
- * balance in the last column only means something if the rows above it are what
- * produced it. The balance shown per row is the **stored** `balance_after` —
- * the fact recorded when the entry was written — while the report's own opening
- * and closing are derived from movements, and `reconciles` reports whether the
- * two agree.
+ * Entries are ordered by date, oldest first, which is how a book is read.
+ * **There is no running balance.** An entry may be dated before entries
+ * already written — a backdated posting — so the `balance_after` stored on
+ * each row is the balance at the moment of writing, not at the entry's date,
+ * and printing it beside date-ordered rows would show figures no row above
+ * produced. Opening and closing are derived from movements; the current
+ * balance is `cash_bank_balance`'s, and `reconciles` checks the book against
+ * it.
  *
  * Entries dated exactly `from` or exactly `to` are inside the period; anything
  * earlier is folded into the opening balance rather than listed.
@@ -540,7 +543,7 @@ export async function cashBankLedgerReport(
   });
   if (!resource) return null;
 
-  const [before, rows] = await Promise.all([
+  const [before, rows, wholeBook, stored] = await Promise.all([
     prisma.cashBankLedger.aggregate({
       where: { cash_bank_id: cashBankId, entry_date: { lt: startOf(range.from) } },
       _sum: { movement: true, base_movement: true },
@@ -550,8 +553,18 @@ export async function cashBankLedgerReport(
         cash_bank_id: cashBankId,
         entry_date: { gte: startOf(range.from), lte: startOf(range.to) },
       },
-      orderBy: { id: "asc" },
+      // Date first: a backdated entry has a later id than the entries it
+      // precedes, and a book is read in the order things happened.
+      orderBy: [{ entry_date: "asc" }, { id: "asc" }],
       include: { source_doc_type: { select: { doc_table: true } } },
+    }),
+    prisma.cashBankLedger.aggregate({
+      where: { cash_bank_id: cashBankId },
+      _sum: { movement: true, base_movement: true },
+    }),
+    prisma.cashBankBalance.findUnique({
+      where: { cash_bank_id: cashBankId },
+      select: { balance: true, base_balance: true },
     }),
   ]);
 
@@ -583,18 +596,22 @@ export async function cashBankLedgerReport(
     direction: r.direction,
     amount: r.amount.toNumber(),
     movement: r.movement.toNumber(),
-    balanceAfter: r.balance_after.toNumber(),
     rate: r.rate.toNumber(),
     baseAmount: r.base_amount.toNumber(),
     baseMovement: r.base_movement.toNumber(),
-    baseBalanceAfter: r.base_balance_after.toNumber(),
     note: r.note,
     sourceDocTable: r.source_doc_type?.doc_table ?? null,
     sourceDocId: r.source_doc_id,
     sourceDocNo: r.source_doc_id ? docNumbers.get(r.source_doc_id) ?? null : null,
   }));
 
-  const last = entries.at(-1);
+  const cents = (n: number) => Math.round(n * 100);
+  const reconciles =
+    !!stored &&
+    cents(wholeBook._sum.movement?.toNumber() ?? 0) === cents(stored.balance.toNumber()) &&
+    roundBase(wholeBook._sum.base_movement?.toNumber() ?? 0) ===
+      stored.base_balance.toNumber();
+
   return {
     resource: {
       id: resource.id,
@@ -615,9 +632,7 @@ export async function cashBankLedgerReport(
     baseTotalOut,
     baseClosing,
     entries,
-    reconciles: last
-      ? last.balanceAfter === closing && last.baseBalanceAfter === baseClosing
-      : true,
+    reconciles,
   };
 }
 

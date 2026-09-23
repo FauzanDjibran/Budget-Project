@@ -923,6 +923,10 @@ table acc_journal {
   id                          int [pk, increment, not null]
 
   journal_no                  varchar(255) [not null, unique]
+  // The day the journal belongs to in the books — its document's date, which
+  // may be earlier than today (a backdated document) and never later. A manual
+  // draft carries the date it is meant for; every reader filters Posted, so a
+  // draft's date reaches no report. When it was written is created_at.
   posting_date                date
 
   source_doc_type_id          int [ref : >? sys_doc_type.id]
@@ -1026,6 +1030,9 @@ table fin_cash_bank_transaction {
   id                          int [pk, increment, not null]
 
   transaction_no              varchar(255) [not null, unique]
+  // The day the document belongs to in the books, chosen on the draft — any day
+  // up to today. Post dates every book entry and the journal by it;
+  // posting_date is when Post actually ran. Null only on an older draft.
   document_date               date
   posting_date                timestamptz
 
@@ -1099,6 +1106,7 @@ table fin_cash_bank_transfer {
   id                          int [pk, increment, not null]
 
   transfer_no                 varchar(255) [not null, unique]
+  // As on fin_cash_bank_transaction: chosen on the draft, up to today.
   document_date               date
   posting_date                timestamptz
 
@@ -1223,7 +1231,8 @@ table fin_dncn {
 
   note_type                   enum('Debit', 'Credit') [not null]
 
-  // Null until posted — a Draft has adjusted nothing.
+  // document_date is chosen on the draft, up to today, and dates what Post
+  // writes; posting_date stays null until Post runs.
   document_date               date
   posting_date                timestamptz
 

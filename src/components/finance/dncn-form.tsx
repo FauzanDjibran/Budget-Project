@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { DateInput } from "@/components/ui/date-input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -17,7 +18,7 @@ import {
   updateDncn,
   type DncnValues,
 } from "@/app/actions/dncn";
-import { formatDate, formatMoney, formatRate } from "@/lib/format";
+import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { originate, relieve } from "@/lib/siba/fx";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
@@ -79,6 +80,9 @@ export function DncnForm({
     partner_id: note ? String(note.partner_id) : "",
     currency_id: note ? String(note.currency_id) : "",
     exchange_rate: note?.exchange_rate && note.exchange_rate !== 1 ? String(note.exchange_rate) : "",
+    // Today, as every editable date starts (§10 rule 33); moved back for a
+    // backdated note. A draft saved before drafts carried one starts there.
+    document_date: note?.document_date ?? todayIso(),
     reference: note?.reference ?? "",
     note: note?.note ?? "",
   }));
@@ -500,14 +504,28 @@ export function DncnForm({
                     )}
                   </Field>
 
-                  <Field label="Tanggal Dokumen" span={3}>
-                    <div className="ro">
-                      {note?.document_date ? (
-                        formatDate(note.document_date)
-                      ) : (
-                        <span className="dash">dicatat saat diposting</span>
-                      )}
-                    </div>
+                  <Field
+                    label="Tanggal Dokumen"
+                    span={3}
+                    required={editing}
+                    help={editing ? "boleh mundur" : undefined}
+                    error={errors.document_date}
+                  >
+                    {editing ? (
+                      <DateInput
+                        value={values.document_date}
+                        invalid={Boolean(errors.document_date)}
+                        onChange={(v) => set("document_date", v)}
+                      />
+                    ) : (
+                      <div className="ro">
+                        {note?.document_date ? (
+                          formatDate(note.document_date)
+                        ) : (
+                          <span className="dash">belum ditentukan</span>
+                        )}
+                      </div>
+                    )}
                   </Field>
                 </FormRow>
 

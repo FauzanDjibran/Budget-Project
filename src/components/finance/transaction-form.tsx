@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { DateInput } from "@/components/ui/date-input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
 import { KursSelect } from "./kurs-select";
@@ -20,7 +21,13 @@ import {
   type TransactionValues,
 } from "@/app/actions/finance";
 import { requestFunding, withdrawFunding } from "@/app/actions/funding";
-import { formatDate, formatMoney, formatNumber, formatRate } from "@/lib/format";
+import {
+  formatDate,
+  formatMoney,
+  formatNumber,
+  formatRate,
+  todayIso,
+} from "@/lib/format";
 import { BASE_CURRENCY_LABEL, rateSource } from "@/lib/siba/currency";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetMapping } from "@/lib/siba/budget";
@@ -278,9 +285,10 @@ export function TransactionForm({
               partner_id,
               cash_bank_id,
               currency_id,
-              // Eligibility turns on the document's currency, not on the kurs,
-              // so neither of these narrows the pool.
+              // Eligibility turns on the document's currency, not on the kurs
+              // or the date, so none of these narrows the pool.
               exchange_rate: "",
+              document_date: "",
               cash_bank_layer_id: "",
               note: "",
             },
@@ -851,14 +859,28 @@ export function TransactionForm({
                     )}
                   </Field>
 
-                  <Field label="Tanggal Dokumen" span={4}>
-                    <div className="ro">
-                      {transaction?.document_date ? (
-                        formatDate(transaction.document_date)
-                      ) : (
-                        <span className="dash">dicatat saat diposting</span>
-                      )}
-                    </div>
+                  <Field
+                    label="Tanggal Dokumen"
+                    span={4}
+                    required={editing}
+                    help={editing ? "boleh mundur, tidak ke depan" : undefined}
+                    error={errors.document_date}
+                  >
+                    {editing ? (
+                      <DateInput
+                        value={values.document_date}
+                        invalid={Boolean(errors.document_date)}
+                        onChange={(v) => set("document_date", v)}
+                      />
+                    ) : (
+                      <div className="ro">
+                        {transaction?.document_date ? (
+                          formatDate(transaction.document_date)
+                        ) : (
+                          <span className="dash">belum ditentukan</span>
+                        )}
+                      </div>
+                    )}
                   </Field>
                 </FormRow>
 
@@ -1385,6 +1407,9 @@ function initialValues(
       currency_id: defaultCurrencyId ? String(defaultCurrencyId) : "",
       exchange_rate: "",
       cash_bank_layer_id: "",
+      // Today, as every editable date starts (§10 rule 33); moved back for a
+      // backdated document.
+      document_date: todayIso(),
       note: "",
     };
   }
@@ -1400,6 +1425,8 @@ function initialValues(
     cash_bank_layer_id: transaction.cash_bank_layer_id
       ? String(transaction.cash_bank_layer_id)
       : "",
+    // A draft saved before drafts carried a date starts on today.
+    document_date: transaction.document_date ?? todayIso(),
     note: transaction.note ?? "",
   };
 }

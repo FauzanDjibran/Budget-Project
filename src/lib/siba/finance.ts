@@ -25,7 +25,13 @@ import {
 } from "./currency";
 import { drawLayer, fxDifference, roundBase, settle } from "./fx";
 import { nextDocumentNumber } from "./document-number";
-import { checkPostingPeriod } from "./fiscal";
+import {
+  PeriodShut,
+  checkTransactionDate,
+  holdPostingPeriod,
+  todayDay,
+  type TransactionDateCheck,
+} from "./fiscal";
 import { postJournal, type JournalLineInput } from "./journal";
 import type { Purpose } from "./rules";
 import {
@@ -518,6 +524,27 @@ export async function fundingRoute(
   });
   if (!company) return null;
   return company.is_parent ? "self" : "treasury";
+}
+
+/**
+ * May this document be dated this day?
+ *
+ * The date rule is the fiscal calendar's (`checkTransactionDate`); what this
+ * adds is **which Companies** it is asked of. A direct document writes one
+ * Company's books. A funded one writes both — the induk's cash and journal and
+ * the anak's own — so a day either of them has closed cannot be written.
+ */
+export async function checkDocumentDate(
+  raw: string | Date | null | undefined,
+  companyId: number,
+  route: FundingRoute
+): Promise<TransactionDateCheck> {
+  const companies = [companyId];
+  if (route === "treasury") {
+    const induk = await transactingCompany();
+    if (induk) companies.push(induk.id);
+  }
+  return checkTransactionDate(raw, companies);
 }
 
 /**
@@ -1602,13 +1629,20 @@ export async function applyPosting(
     };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-
-  // The books are only writable inside an Open fiscal year this Company has
-  // not closed. Asked before anything is resolved, so a refusal costs nothing
-  // and reads as what it is: not a fault, but a period that is shut.
-  const period = await checkPostingPeriod(doc.company_id, today);
-  if (!period.ok) return { ok: false, errors: { _form: period.message } };
+  // The day this document belongs to in the books — chosen on the draft, and
+  // possibly earlier than today. Every book entry, the layer it opens and the
+  // journal are dated it; `posting_date` keeps the moment it was actually
+  // posted. A draft saved before drafts carried a date posts as today.
+  //
+  // Re-checked here rather than trusted from the save: a year can close in
+  // between. Asked before anything is resolved, so a refusal costs nothing and
+  // reads as what it is — not a fault, but a period that is shut.
+  const dated = await checkTransactionDate(
+    doc.document_date ?? todayDay(),
+    [doc.company_id]
+  );
+  if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
+  const date = dated.date;
 
   const docTypeId = await transactionDocTypeId();
   let closed = 0;
@@ -1625,7 +1659,12 @@ export async function applyPosting(
   const entries = await journalEntries(doc, plan);
   if (!entries.ok) return { ok: false, errors: entries.errors };
 
+  try {
   await prisma.$transaction(async (tx) => {
+    // The year this is dated in, held against a close for the rest of the
+    // transaction and re-asked under the hold: the check above was before it.
+    await holdPostingPeriod(tx, [doc.company_id], date);
+
     // The layer the payment drew on, taken down by exactly what left it. Done
     // first so an exhausted layer refuses before anything else is written —
     // `drawFromLayer` throws, and a throw in here takes the posting down.
@@ -1640,7 +1679,7 @@ export async function applyPosting(
 
     await recordCashBankEntry(tx, {
       cashBankId: doc.cash_bank_id!,
-      date: today,
+      date,
       type: "Transaction",
       direction: doc.transaction_type as "In" | "Out",
       // In the **resource's** own currency, which is the document's amount
@@ -1668,7 +1707,7 @@ export async function applyPosting(
     ) {
       await openLayer(tx, {
         cashBankId: doc.cash_bank_id!,
-        date: today,
+        date,
         rate: plan.valuation.accountRate,
         foreign: plan.valuation.accountAmount,
         sourceDocTypeId: docTypeId,
@@ -1692,7 +1731,7 @@ export async function applyPosting(
         book: plan.book.def,
         partnerId: plan.book.partnerId,
         currencyId: doc.currency_id,
-        date: today,
+        date,
         type: "Transaction",
         direction: doc.transaction_type as "In" | "Out",
         amount: doc.transaction_amount.toNumber(),
@@ -1728,6 +1767,7 @@ export async function applyPosting(
     // takes the whole posting down — which is the guarantee.
     await postJournal(tx, {
       companyId: doc.company_id,
+      postingDate: new Date(`${date}T00:00:00Z`),
       description: `${doc.transaction_no} — ${entries.purposeLabel}`,
       sourceDocTypeId: docTypeId,
       sourceDocId: doc.id,
@@ -1758,7 +1798,7 @@ export async function applyPosting(
       where: { id: transactionId },
       data: {
         status: "Posted",
-        document_date: new Date(`${today}T00:00:00Z`),
+        document_date: new Date(`${date}T00:00:00Z`),
         posting_date: new Date(),
         exchange_rate: plan.valuation.rate,
         transaction_base_amount: plan.valuation.base,
@@ -1766,6 +1806,12 @@ export async function applyPosting(
       },
     });
   });
+  } catch (error) {
+    if (error instanceof PeriodShut) {
+      return { ok: false, errors: { _form: error.message } };
+    }
+    throw error;
+  }
 
   return { ok: true, closed };
 }
@@ -1828,6 +1874,8 @@ export type FundedPostingPlan = {
     bridgeAccountId: number;
   };
   direction: "In" | "Out";
+  /** `YYYY-MM-DD` — the day both Companies' books are written for. */
+  date: string;
   currencyId: number;
   amount: number;
   /** The kurs both Companies' books value this movement at. */
@@ -1913,15 +1961,19 @@ export async function prepareFundedPosting(
     };
   }
 
-  // One business event, two Companies' books — so the period is checked for
+  // One business event, two Companies' books — so the date is checked for
   // both. The induk moves cash and journals the claim; the anak journals its
-  // own realization on its own chart. Either Company having closed the year is
-  // enough to refuse, and the refusal names which one.
-  const confirmationDay = new Date().toISOString().slice(0, 10);
-  for (const companyId of [induk.id, doc.company_id]) {
-    const period = await checkPostingPeriod(companyId, confirmationDay);
-    if (!period.ok) return { ok: false, errors: { _form: period.message } };
-  }
+  // own realization on its own chart. The day is the anak's document date,
+  // chosen when it was drafted and possibly earlier than today: the
+  // realization happened then, whenever the induk gets round to confirming it.
+  // Either Company having closed that year is enough to refuse, and the
+  // refusal names which one. A document raised before drafts carried a date
+  // posts as today.
+  const dated = await checkTransactionDate(doc.document_date ?? todayDay(), [
+    induk.id,
+    doc.company_id,
+  ]);
+  if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
 
   const cashBank = await prisma.mCashBank.findUnique({
     where: { id: input.providerCashBankId },
@@ -2043,6 +2095,7 @@ export async function prepareFundedPosting(
           : input.bridge.anak.arAccountId,
       },
       direction: doc.transaction_type as "In" | "Out",
+      date: dated.date,
       currencyId: doc.currency_id,
       amount: doc.transaction_amount.toNumber(),
       rate: valuation.rate,
@@ -2083,8 +2136,12 @@ export async function writeFundedPosting(
   plan: FundedPostingPlan,
   actorId: number
 ): Promise<{ closed: number }> {
-  const today = new Date().toISOString().slice(0, 10);
-  const { induk, anak } = plan;
+  const { date, induk, anak } = plan;
+  const postingDate = new Date(`${date}T00:00:00Z`);
+
+  // Both Companies' years, held against a close and re-asked under the hold.
+  // Throws `PeriodShut`, which the caller's transaction turns into a refusal.
+  await holdPostingPeriod(tx, [induk.companyId, anak.companyId], date);
 
   // The two things this posting can be named after, composed once.
   //
@@ -2100,7 +2157,7 @@ export async function writeFundedPosting(
 
   await recordCashBankEntry(tx, {
     cashBankId: induk.cashBankId,
-    date: today,
+    date,
     type: "Transaction",
     direction: plan.direction,
     amount: plan.amount,
@@ -2121,7 +2178,7 @@ export async function writeFundedPosting(
       book: anak.purposeBook,
       partnerId: anak.purposePartnerId,
       currencyId: plan.currencyId,
-      date: today,
+      date,
       type: "Transaction",
       direction: plan.direction,
       amount: plan.amount,
@@ -2140,6 +2197,7 @@ export async function writeFundedPosting(
   // Journal A — the induk's. Its cause is the Funding Request it confirmed.
   await postJournal(tx, {
     companyId: induk.companyId,
+    postingDate,
     description: funding,
     sourceDocTypeId: plan.providerSource.docTypeId,
     sourceDocId: plan.providerSource.docId,
@@ -2188,6 +2246,7 @@ export async function writeFundedPosting(
 
   await postJournal(tx, {
     companyId: anak.companyId,
+    postingDate,
     description: realization,
     sourceDocTypeId: plan.requesterSource.docTypeId,
     sourceDocId: plan.requesterSource.docId,
@@ -2201,7 +2260,7 @@ export async function writeFundedPosting(
     where: { id: plan.transactionId },
     data: {
       status: "Posted",
-      document_date: new Date(`${today}T00:00:00Z`),
+      document_date: postingDate,
       posting_date: new Date(),
       updated_by: actorId,
     },

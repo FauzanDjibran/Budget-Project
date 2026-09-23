@@ -22,6 +22,7 @@ import {
   type DncnStatus,
   type DncnType,
 } from "@/lib/siba/dncn-workflow";
+import { checkTransactionDate } from "@/lib/siba/fiscal";
 import { subledgerPosition } from "@/lib/siba/subledger";
 
 /**
@@ -42,6 +43,8 @@ export type DncnValues = {
   partner_id: string;
   currency_id: string;
   exchange_rate: string;
+  /** `YYYY-MM-DD` — the day the note belongs to in the books. */
+  document_date: string;
   reference: string;
   note: string;
 };
@@ -101,11 +104,18 @@ async function validate(actor: Actor, values: DncnValues, lines: DncnLineValues[
   const settled = checkDncnLines(asLines(lines));
   if (!settled.ok) return { ok: false as const, errors: settled.errors };
 
+  // Any day up to today, inside a year this Company may still write into.
+  // Asked again at Post, since a year can close in between.
+  const dated = await checkTransactionDate(values.document_date, [header.companyId]);
+  if (!dated.ok) {
+    return { ok: false as const, errors: { document_date: dated.message } };
+  }
+
   const position = await subledgerPosition(header.book.key, header.partnerId, header.currencyId);
   const refusal = positionRefusal(position, header.raises, settled.total, header.currencyLabel);
   if (refusal) return { ok: false as const, errors: { _lines: refusal } };
 
-  return { ok: true as const, header, settled };
+  return { ok: true as const, header, settled, date: dated.date };
 }
 
 export async function createDncn(
@@ -117,14 +127,16 @@ export async function createDncn(
 
   const checked = await validate(g.actor, values, lines);
   if (!checked.ok) return { ok: false, errors: checked.errors };
-  const { header, settled } = checked;
+  const { header, settled, date } = checked;
 
   const note_no = await nextNoteNo(header.type);
   const created = await prisma.finDncn.create({
     data: {
       note_no,
       note_type: header.type,
-      document_date: null,
+      // The day it belongs to in the books, chosen on the draft and possibly
+      // earlier than today. `posting_date` waits for Post.
+      document_date: new Date(`${date}T00:00:00Z`),
       posting_date: null,
       company_id: header.companyId,
       budget_category_id: header.book.categoryId,
@@ -192,7 +204,7 @@ export async function updateDncn(
     lines
   );
   if (!checked.ok) return { ok: false, errors: checked.errors };
-  const { header, settled } = checked;
+  const { header, settled, date } = checked;
 
   // A Draft's lines are its own content, not history: no book refers to them.
   await prisma.$transaction(async (tx) => {
@@ -201,6 +213,7 @@ export async function updateDncn(
       where: { id },
       data: {
         company_id: header.companyId,
+        document_date: new Date(`${date}T00:00:00Z`),
         budget_category_id: header.book.categoryId,
         partner_id: header.partnerId,
         currency_id: header.currencyId,

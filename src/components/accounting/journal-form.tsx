@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Combobox } from "@/components/ui/combobox";
+import { DateInput } from "@/components/ui/date-input";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
@@ -16,7 +17,7 @@ import {
   updateJournal,
   type JournalLineValues,
 } from "@/app/actions/journal";
-import { formatMoney } from "@/lib/format";
+import { formatMoney, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { Company } from "@/lib/siba/company-access";
 import type { JournalDetail } from "@/lib/siba/journal";
@@ -100,6 +101,11 @@ export function JournalForm({
     journal?.companyId ?? companies[0]?.id ?? null
   );
   const [description, setDescription] = useState(journal?.description ?? "");
+  // The day it belongs to in the books, starting on today (§10 rule 33). A
+  // draft saved before drafts carried a date starts on today too.
+  const [journalDate, setJournalDate] = useState(
+    journal?.postingDate ? journal.postingDate.slice(0, 10) : todayIso()
+  );
   const [options, setOptions] = useState(initialOptions);
   const [lines, setLines] = useState<DraftLine[]>(() =>
     journal
@@ -200,6 +206,7 @@ export function JournalForm({
     setErrors({});
     const header = {
       company_id: companyId ? String(companyId) : "",
+      journal_date: journalDate,
       description,
     };
     const result =
@@ -293,7 +300,7 @@ export function JournalForm({
             <h3>Journal Manual</h3>
             <p>
               Entri yang tidak berasal dari dokumen — penyusutan, akrual,
-              reklasifikasi. Tanggal terisi saat diposting.
+              reklasifikasi.
             </p>
           </div>
         </div>
@@ -335,8 +342,25 @@ export function JournalForm({
               </Field>
 
               <Field
+                label="Tanggal"
+                span={3}
+                required
+                help="boleh mundur, tidak ke depan"
+                error={errors.journal_date}
+              >
+                <DateInput
+                  value={journalDate}
+                  invalid={Boolean(errors.journal_date)}
+                  onChange={(v) => {
+                    setJournalDate(v);
+                    setDirty(true);
+                  }}
+                />
+              </Field>
+
+              <Field
                 label="Keterangan"
-                span={8}
+                span={5}
                 required
                 help="alasan journal ini dibuat"
                 error={errors.description}

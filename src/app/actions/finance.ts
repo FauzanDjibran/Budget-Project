@@ -10,6 +10,7 @@ import { roundBase } from "@/lib/siba/fx";
 import {
   applyPosting,
   budgetDocTypeId,
+  checkDocumentDate,
   checkHeader,
   checkLines,
   eligibleBudgets,
@@ -61,6 +62,8 @@ export type TransactionValues = {
   exchange_rate: string;
   /** The rate layer a payment out of a foreign resource draws on. */
   cash_bank_layer_id: string;
+  /** `YYYY-MM-DD` — the day the document belongs to in the books. */
+  document_date: string;
   note: string;
 };
 
@@ -184,6 +187,16 @@ export async function createTransaction(
   const checked = await checkHeader(header);
   if (!checked.ok) return { ok: false, errors: checked.errors };
 
+  // Any day up to today, inside a year every Company this document will write
+  // into may still be written. Asked again at Post, since a year can close in
+  // between.
+  const dated = await checkDocumentDate(
+    values.document_date,
+    checked.companyId,
+    checked.route
+  );
+  if (!dated.ok) return { ok: false, errors: { document_date: dated.message } };
+
   const settled = await checkLines(header, asLines(lines));
   if (!settled.ok) return { ok: false, errors: settled.errors };
 
@@ -193,9 +206,10 @@ export async function createTransaction(
   const created = await prisma.finCashBankTransaction.create({
     data: {
       transaction_no,
-      // A document acquires its date when the money moves, not when it is
-      // drafted — concept doc §2.3. Post fills both date columns.
-      document_date: null,
+      // The day it belongs to in the books, chosen on the draft and possibly
+      // earlier than today. `posting_date` stays empty until Post writes the
+      // moment it actually happened.
+      document_date: new Date(`${dated.date}T00:00:00Z`),
       posting_date: null,
       transaction_type: checked.purpose.direction,
       company_id: checked.companyId,
@@ -268,6 +282,16 @@ export async function updateTransaction(
   const checked = await checkHeader(header);
   if (!checked.ok) return { ok: false, errors: checked.errors };
 
+  // Any day up to today, inside a year every Company this document will write
+  // into may still be written. Asked again at Post, since a year can close in
+  // between.
+  const dated = await checkDocumentDate(
+    values.document_date,
+    checked.companyId,
+    checked.route
+  );
+  if (!dated.ok) return { ok: false, errors: { document_date: dated.message } };
+
   const settled = await checkLines(header, asLines(lines), {
     excludeTransactionId: id,
   });
@@ -294,6 +318,7 @@ export async function updateTransaction(
         exchange_rate: checked.rate,
         cash_bank_layer_id: checked.layerId,
         partner_id: checked.partnerId,
+        document_date: new Date(`${dated.date}T00:00:00Z`),
         transaction_amount: settled.total,
         transaction_base_amount: roundBase(settled.total * checked.rate),
         note: values.note?.trim() || null,

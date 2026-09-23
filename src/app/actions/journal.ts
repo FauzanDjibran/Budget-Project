@@ -41,6 +41,8 @@ import {
 
 export type JournalHeaderValues = {
   company_id: string;
+  /** `YYYY-MM-DD` — the day the journal belongs to in the books. */
+  journal_date: string;
   description: string;
 };
 
@@ -165,7 +167,11 @@ export async function createJournal(
   if (refused) return refused;
 
   const result = await createManualJournal(
-    { company_id: companyId, description: header.description },
+    {
+      company_id: companyId,
+      journal_date: header.journal_date,
+      description: header.description,
+    },
     asLines(lines),
     g.actor.user.id
   );
@@ -187,7 +193,11 @@ export async function updateJournal(
 
   const result = await updateManualJournal(
     id,
-    { company_id: companyId, description: header.description },
+    {
+      company_id: companyId,
+      journal_date: header.journal_date,
+      description: header.description,
+    },
     asLines(lines),
     g.actor.user.id,
     await accessibleCompanyIds(g.actor.permissions)

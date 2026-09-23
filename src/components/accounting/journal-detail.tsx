@@ -77,14 +77,13 @@ export function JournalDetail({
         <FormBody>
           <FormSection>
             <FormRow>
-              <Field label="Tanggal Posting" span={3}>
+              <Field label="Tanggal" span={3}>
                 <div className="ro">
                   {journal.postingDate ? (
                     formatDate(journal.postingDate)
                   ) : (
-                    // A draft has none: the date is written when the books are,
-                    // and a journal is never back-dated.
-                    <span className="dash">belum diposting</span>
+                    // Only a draft saved before drafts carried a date has none.
+                    <span className="dash">belum ditentukan</span>
                   )}
                 </div>
               </Field>

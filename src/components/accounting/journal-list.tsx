@@ -122,7 +122,7 @@ export function JournalList({
                 <tr>
                   <th style={{ width: 118 }}>Nomor</th>
                   <th style={{ width: 96 }}>Status</th>
-                  <th style={{ width: 106 }}>Tanggal Posting</th>
+                  <th style={{ width: 106 }}>Tanggal</th>
                   <th>Keterangan</th>
                   <th style={{ width: 150 }}>Sumber</th>
                   <th className="num" style={{ width: 64 }}>

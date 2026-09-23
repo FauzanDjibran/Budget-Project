@@ -7,7 +7,12 @@ import { recordCashBankEntry } from "./cash-bank";
 import { drawFromLayer, openLayer, openLayersFor, type LayerOption } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL, consumesLayer, isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
-import { checkPostingPeriod } from "./fiscal";
+import {
+  PeriodShut,
+  checkTransactionDate,
+  holdPostingPeriod,
+  todayDay,
+} from "./fiscal";
 import { roundBase } from "./fx";
 import { valueTransferLine } from "./transfer-valuation";
 import { postJournal, type JournalLineInput } from "./journal";
@@ -1001,13 +1006,18 @@ export async function applyTransfer(
     };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-
-  // Both legs belong to one Company (§10 rule 84), so one period check answers
-  // for the whole document — asked before the transaction opens, because a
-  // refusal in there would have to be raised as a throw and rolled back.
-  const period = await checkPostingPeriod(doc.company_id, today);
-  if (!period.ok) return { ok: false, errors: { _form: period.message } };
+  // The day this transfer belongs to in the books — chosen on the draft, and
+  // possibly earlier than today. Both legs belong to one Company (§10 rule 84),
+  // so one check answers for the whole document — asked before the transaction
+  // opens, because a refusal in there would have to be raised as a throw and
+  // rolled back. Re-checked here rather than trusted from the save: a year can
+  // close in between. A draft saved before drafts carried a date posts as today.
+  const dated = await checkTransactionDate(
+    doc.document_date ?? todayDay(),
+    [doc.company_id]
+  );
+  if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
+  const date = dated.date;
 
   const docTypeId = await transferDocTypeId();
   const label = transferPurposeOf(doc.purpose)?.label ?? doc.purpose;
@@ -1015,6 +1025,10 @@ export async function applyTransfer(
 
   try {
     await prisma.$transaction(async (tx) => {
+      // The year this is dated in, held against a close and re-asked under
+      // the hold: the check above was before the transaction opened.
+      await holdPostingPeriod(tx, [doc.company_id], date);
+
       // The layers are drawn inside the transaction, which is why the plan is
       // built in here rather than before it opens: a plan that spent a layer
       // and then failed would leave the source short.
@@ -1029,7 +1043,7 @@ export async function applyTransfer(
       // The source gives up once, however many destinations there are.
       await recordCashBankEntry(tx, {
         cashBankId: doc.from_cash_bank_id,
-        date: today,
+        date,
         type: "Transaction",
         direction: "Out",
         amount: plan.sourceAmount,
@@ -1044,7 +1058,7 @@ export async function applyTransfer(
       for (const [i, line] of plan.lines.entries()) {
         await recordCashBankEntry(tx, {
           cashBankId: line.toCashBankId,
-          date: today,
+          date,
           type: "Transaction",
           direction: "In",
           amount: line.inAmount,
@@ -1064,7 +1078,7 @@ export async function applyTransfer(
         if (line.opensLayer) {
           await openLayer(tx, {
             cashBankId: line.toCashBankId,
-            date: today,
+            date,
             rate: line.inRate,
             foreign: line.inAmount,
             baseAmount: line.inBase,
@@ -1093,6 +1107,7 @@ export async function applyTransfer(
       // here takes the whole posting down — which is the guarantee.
       await postJournal(tx, {
         companyId: doc.company_id,
+        postingDate: new Date(`${date}T00:00:00Z`),
         description: `${doc.transfer_no} — ${label}`,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
@@ -1104,7 +1119,7 @@ export async function applyTransfer(
         where: { id: transferId },
         data: {
           status: "Posted",
-          document_date: new Date(`${today}T00:00:00Z`),
+          document_date: new Date(`${date}T00:00:00Z`),
           posting_date: new Date(),
           transfer_base_amount: plan.sourceBase,
           updated_by: actorId,
@@ -1115,6 +1130,9 @@ export async function applyTransfer(
     // A refusal is a decision, not a failure: it is raised as a throw only
     // because it has to roll back the layers already drawn inside the
     // transaction, and it comes back out as the ordinary error shape.
+    if (error instanceof PeriodShut) {
+      return { ok: false, errors: { _form: error.message } };
+    }
     if (error instanceof TransferRefused) {
       return { ok: false, errors: error.errors };
     }

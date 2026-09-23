@@ -638,10 +638,15 @@ describe("a draft is not accounting", () => {
       select: { status: true, posting_date: true },
     });
     assert.equal(row.status, "Draft", "a refused post leaves the draft alone");
-    assert.equal(row.posting_date, null);
+    // A draft carries the date it was written for (today, when a caller in
+    // code names none) — a refused post neither clears nor moves it.
+    assert.equal(
+      row.posting_date?.toISOString().slice(0, 10),
+      new Date().toISOString().slice(0, 10)
+    );
   });
 
-  test("a draft has no posting date and is invisible to both ledger reports", async () => {
+  test("a draft carries its date and is still invisible to both ledger reports", async () => {
     const created = await draft([
       line(expense, 250_000, 0),
       line(expenseB, 0, 250_000),
