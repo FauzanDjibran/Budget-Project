@@ -96,6 +96,12 @@ const TABLE_OWNERS: Record<string, string[]> = {
   // (CLAUDE.md §10 rule 22) — it reads them and never writes one.
   accJournal: ["src/lib/siba/journal.ts", "src/lib/siba/ledger.ts"],
   accJournalLine: ["src/lib/siba/journal.ts", "src/lib/siba/ledger.ts"],
+  // The Opening Balance snapshot. Written by a close and read by the register;
+  // the figures it is written *from* come from `ledger.ts`, which is the
+  // sanctioned reader of journal lines, so this module never names another
+  // module's table either.
+  accOpeningBalance: ["src/lib/siba/opening-balance.ts"],
+  accOpeningBalanceLine: ["src/lib/siba/opening-balance.ts"],
 };
 
 /**

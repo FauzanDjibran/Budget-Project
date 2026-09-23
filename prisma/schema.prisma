@@ -32,9 +32,9 @@
 //     superseded by partner_category_id.
 //
 // Not yet modelled (present in the DBML and/or the concept doc):
-//   acc_opening_balance(_line), acc_journal(_line), fin_funding_request, the
-//   remaining operational books (prive / titipan / hutang / piutang ledgers),
-//   general_ledger, intercompany_event.
+//   general_ledger and intercompany_event — both deliberately. The General
+//   Ledger is derived from acc_journal_line rather than stored, and the
+//   Funding Request is the intercompany identifier (CLAUDE.md §12).
 
 generator client {
   provider = "prisma-client"
@@ -315,15 +315,16 @@ model SysCompany {
 
   journals AccJournal[]
 
-  fiscal_closings AccFiscalClosing[]
+  fiscal_closings  AccFiscalClosing[]
+  opening_balances AccOpeningBalance[]
 
   @@map("sys_company")
 }
 
 model SysAccountType {
-  id         Int     @id @default(autoincrement())
-  type_code  String  @unique
-  type_label String  @unique
+  id         Int            @id @default(autoincrement())
+  type_code  String         @unique
+  type_label String         @unique
   type_name  String
   /// Neraca or Laba Rugi. Seeded, never edited, never offered on a form: which
   /// statement a type belongs to is not a judgement call.
@@ -570,6 +571,8 @@ model MPartner {
   journal_lines      AccJournalLine[]
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
+
+  opening_balance_lines AccOpeningBalanceLine[]
 
   @@index([company_id])
   @@index([category_id])
@@ -1000,6 +1003,8 @@ model AccAccount {
   mappings      AccBudgetCategoryAccount[]
   journal_lines AccJournalLine[]
 
+  opening_balance_lines AccOpeningBalanceLine[]
+
   @@unique([company_id, account_label])
   @@index([company_id])
   @@index([account_subcategory_id])
@@ -1046,8 +1051,14 @@ model AccFiscalYear {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  periods AccFiscalPeriod[]
+  periods  AccFiscalPeriod[]
   closings AccFiscalClosing[]
+
+  /// The snapshot this year opens with, and the snapshots this year's own
+  /// close produced for the year after it. Two relations to one table, so
+  /// each is named — see `AccOpeningBalance`.
+  opening_balances         AccOpeningBalance[] @relation("OpeningBalanceYear")
+  sourced_opening_balances AccOpeningBalance[] @relation("OpeningBalanceSource")
 
   @@map("acc_fiscal_year")
 }
@@ -1119,6 +1130,101 @@ model AccFiscalClosing {
   @@unique([fiscal_year_id, company_id])
   @@index([company_id])
   @@map("acc_fiscal_closing")
+}
+
+/// One Company's balances at the start of one fiscal year — a snapshot, not a
+/// running store.
+///
+/// It exists so that a report does not have to scan from the first historical
+/// transaction to work out where an account stood, and so that a closed year
+/// hands the next one its position in a form somebody can read. It is
+/// **immutable**: written once, by a close or by a developer injecting go-live
+/// figures, and never edited afterwards. There is no create form and no edit
+/// path in the application.
+///
+/// Base currency only, deliberately: the journal, the General Ledger and the
+/// Trial Balance are all base-currency statements, and a snapshot of them is
+/// the same measure. That is why there is no `currency_id` here.
+///
+/// `source_fiscal_year_id` is what tells a generated snapshot from an injected
+/// one. A close writes the year it closed; a developer seeding go-live
+/// balances leaves it null, because nothing produced them.
+model AccOpeningBalance {
+  id           Int      @id @default(autoincrement())
+  opening_no   String   @unique
+  /// The day the figures speak for — the first day of the year being opened.
+  posting_date DateTime @db.Date
+
+  /// The year this snapshot opens.
+  fiscal_year_id        Int
+  /// The year whose close produced it, or null for injected go-live balances.
+  source_fiscal_year_id Int?
+
+  company_id Int
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  fiscal_year        AccFiscalYear  @relation("OpeningBalanceYear", fields: [fiscal_year_id], references: [id])
+  source_fiscal_year AccFiscalYear? @relation("OpeningBalanceSource", fields: [source_fiscal_year_id], references: [id])
+  company            SysCompany     @relation(fields: [company_id], references: [id])
+
+  lines AccOpeningBalanceLine[]
+
+  /// One snapshot per Company per year. A second would be a second answer to
+  /// "where did this Company stand on 1 January", and the document is
+  /// immutable, so there is no legitimate way to reach two.
+  @@unique([fiscal_year_id, company_id])
+  @@index([company_id])
+  @@map("acc_opening_balance")
+}
+
+/// One balance, at the grain the journal itself keeps: `(account, partner?)`.
+///
+/// A Hutang account owed to three branches produces three lines; an account
+/// naming no Partner produces one line with `partner_id = null`. There is
+/// deliberately **no** parent row holding the account's total — that figure is
+/// the sum of its children, and an immutable snapshot has no rebuild function
+/// to prove a stored duplicate still agrees with what it duplicates.
+///
+/// The grain is derived from the posted journal lines as they actually are,
+/// never from `acc_account.require_partner`: reading the flag would drop a
+/// partner-bearing balance sitting on an unflagged account, and would invent a
+/// null-partner line for an account that has none.
+///
+/// Exactly one of `debit_amount` / `kredit_amount` carries the value, and the
+/// document's two sides sum equal — after the P&L has been closed out, what
+/// remains is a balance sheet.
+model AccOpeningBalanceLine {
+  id          Int @id @default(autoincrement())
+  opening_id  Int
+  sequence_no Int
+
+  account_id Int
+  partner_id Int?
+
+  /// Base currency, like every figure in the journal this is a snapshot of.
+  debit_amount  Decimal @default(0) @db.Decimal(18, 2)
+  kredit_amount Decimal @default(0) @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  opening AccOpeningBalance @relation(fields: [opening_id], references: [id])
+  account AccAccount        @relation(fields: [account_id], references: [id])
+  partner MPartner?         @relation(fields: [partner_id], references: [id])
+
+  /// One line per pair. The index is created `NULLS NOT DISTINCT` in the
+  /// migration's own SQL — Postgres otherwise treats two null-partner rows for
+  /// one account as distinct, which is precisely the duplicate this is for.
+  /// Prisma cannot express that, so the migration says it and this says why.
+  @@unique([opening_id, account_id, partner_id])
+  @@index([opening_id])
+  @@map("acc_opening_balance_line")
 }
 
 // ---------------------------------------------------------------- budget

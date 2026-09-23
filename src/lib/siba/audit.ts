@@ -9,6 +9,7 @@ import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer";
 import { fundingRequestNumbersByIds } from "./funding";
 import { journalNumbersByIds } from "./journal";
+import { openingBalanceNumbersByIds } from "./opening-balance";
 import { userLabels, roleLabels } from "./users";
 
 /**
@@ -86,6 +87,10 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
     resolve: fundingRequestNumbersByIds,
   },
   acc_journal: { label: "Journal", resolve: journalNumbersByIds },
+  acc_opening_balance: {
+    label: "Opening Balance",
+    resolve: openingBalanceNumbersByIds,
+  },
   sys_user: { label: "User", resolve: userLabels },
   sys_role: { label: "Role", resolve: roleLabels },
   // A setting's `row_id` is the id of a `sys_setting` row, not of anything a

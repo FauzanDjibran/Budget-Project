@@ -475,3 +475,123 @@ export async function accountPositions(
     ),
   }));
 }
+
+// -------------------------------------------------------- closing balances
+
+/**
+ * One account's balance against one Partner, at a moment.
+ *
+ * Both measures of it. `net` is the raw `debit − credit`, which is what a
+ * snapshot line stores — positive goes on the debit side, negative on the
+ * credit side. `balance` is the same figure signed in the account's own normal
+ * direction, which is what a ledger prints. Keeping both is what lets a caller
+ * write a snapshot and a reader check it against the General Ledger without
+ * either of them re-deriving the other's convention.
+ */
+export type ClosingBalance = {
+  accountId: number;
+  accountLabel: string;
+  accountName: string;
+  normalBalance: string;
+  partnerId: number | null;
+  partnerLabel: string | null;
+  /** Raw sums over every posted line up to and including `asOf`, base currency. */
+  debit: number;
+  credit: number;
+  /** `debit − credit`. Positive sits on the debit side. */
+  net: number;
+  /** Signed in the account's normal direction — the figure a ledger prints. */
+  balance: number;
+};
+
+/**
+ * Where one Company's accounts stood at the end of a day, at `(account,
+ * partner?)` grain.
+ *
+ * This is the grain `acc_journal_line` itself keeps, and taking it straight
+ * from the posted lines is the point: an account's Partner split is whatever
+ * was actually posted against it, not whatever `require_partner` currently
+ * says. Reading the flag instead would drop a partner-bearing balance sitting
+ * on an unflagged account, and would invent a null-partner line for an account
+ * that has none.
+ *
+ * It lives here because `acc_journal_line` is the Journal's table and the
+ * General Ledger is the one thing allowed to derive from it (CLAUDE.md §10
+ * rule 22). A module that needed these figures and read the table itself would
+ * be crossing a boundary to ask a question this file already answers.
+ *
+ * Inclusive of `asOf`, like every other date range in the application, and
+ * **Posted only** — a draft is not accounting and a snapshot of one would be a
+ * figure nobody posted.
+ *
+ * Pairs whose two sides cancel exactly are left out. A Partner who was invoiced
+ * and has paid in full holds no position, and a snapshot line stating zero is
+ * a row that says nothing.
+ */
+export async function closingBalances(
+  companyId: number,
+  asOf: Date | string
+): Promise<ClosingBalance[]> {
+  const to =
+    asOf instanceof Date
+      ? new Date(`${asOf.toISOString().slice(0, 10)}T00:00:00Z`)
+      : new Date(`${asOf.slice(0, 10)}T00:00:00Z`);
+
+  const lines = await prisma.accJournalLine.findMany({
+    where: {
+      journal: { ...POSTED, company_id: companyId, posting_date: { lte: to } },
+    },
+    select: {
+      account_id: true,
+      partner_id: true,
+      debit_amount: true,
+      kredit_amount: true,
+      account: {
+        select: { account_label: true, account_name: true, normal_balance: true },
+      },
+      partner: { select: { partner_label: true } },
+    },
+  });
+
+  const pairs = new Map<string, ClosingBalance>();
+
+  for (const l of lines) {
+    // The null partner is a key of its own, not an absent one: an account with
+    // a mix of partner-bearing and partner-less postings holds both, and they
+    // are different balances.
+    const key = `${l.account_id}:${l.partner_id ?? "-"}`;
+    let row = pairs.get(key);
+    if (!row) {
+      row = {
+        accountId: l.account_id,
+        accountLabel: l.account.account_label,
+        accountName: l.account.account_name,
+        normalBalance: l.account.normal_balance,
+        partnerId: l.partner_id,
+        partnerLabel: l.partner?.partner_label ?? null,
+        debit: 0,
+        credit: 0,
+        net: 0,
+        balance: 0,
+      };
+      pairs.set(key, row);
+    }
+    row.debit += l.debit_amount.toNumber();
+    row.credit += l.kredit_amount.toNumber();
+  }
+
+  const out: ClosingBalance[] = [];
+  for (const row of pairs.values()) {
+    row.debit = roundBase(row.debit);
+    row.credit = roundBase(row.credit);
+    row.net = roundBase(row.debit - row.credit);
+    row.balance = roundBase(signedMovement(row.normalBalance, row.debit, row.credit));
+    if (Math.round(row.net * 100) !== 0) out.push(row);
+  }
+
+  return out.sort(
+    (a, b) =>
+      compareCodes(a.accountLabel, b.accountLabel) ||
+      (a.partnerLabel ?? "").localeCompare(b.partnerLabel ?? "")
+  );
+}

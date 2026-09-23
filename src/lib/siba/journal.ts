@@ -85,6 +85,17 @@ export type JournalLineInput = {
   description: string;
 };
 
+/**
+ * Which series a posted journal's number comes from.
+ *
+ * `JRN` is every journal a business document produced. `CLS` is a fiscal
+ * year's closing entry, which is the one journal in the application that is
+ * dated anything but today — see `postingDate` below. A manual journal's
+ * `JUR` is not here: it is numbered when its draft is created, not when it is
+ * posted.
+ */
+export type JournalSeries = "JRN" | "CLS";
+
 export type JournalInput = {
   companyId: number;
   description: string;
@@ -92,6 +103,23 @@ export type JournalInput = {
   sourceDocId?: number | null;
   lines: JournalLineInput[];
   actorId: number;
+  /** Defaults to `JRN` — the series of every journal a document produces. */
+  series?: JournalSeries;
+  /**
+   * The day the journal is dated. Omitted everywhere but a close.
+   *
+   * A journal records when the books were written, so it is dated the day it
+   * was posted and never back-dated. The **one** exception is a fiscal year's
+   * closing entry, which belongs to the year it closes and is therefore dated
+   * that year's last day: a closing entry dated after the year it closes would
+   * fall inside the year it opens, and would be the first thing the new year
+   * inherited.
+   *
+   * That exception is why this field is tied to `series: "CLS"` below rather
+   * than simply offered. Nothing else gains a date, and making it
+   * unrepresentable is stronger than writing it down.
+   */
+  postingDate?: Date;
 };
 
 /**
@@ -210,6 +238,10 @@ function lineData(line: ResolvedLine, sequence: number, actorId: number) {
  * A journal is never back-dated: it records when the posting happened, not
  * when somebody decided it should have. That is true of a manual journal too —
  * which is why the date is not a field on its form.
+ *
+ * The single exception is a fiscal year's closing entry, which belongs to the
+ * year it closes and says so through `JournalInput.postingDate`. It is the
+ * only journal that may name its own date, and only in the `CLS` series.
  */
 function postingDateToday(): Date {
   return new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
@@ -233,10 +265,17 @@ export async function postJournal(
   const { resolved, debit, credit } = resolveJournalLines(input.lines);
   if (cents(debit) !== cents(credit)) throw new JournalImbalance(debit, credit);
 
+  const series = input.series ?? "JRN";
+  if (input.postingDate && series !== "CLS") {
+    throw new Error(
+      "Hanya journal penutup tahun buku yang boleh diberi tanggal posting sendiri."
+    );
+  }
+
   const journal = await tx.accJournal.create({
     data: {
-      journal_no: await nextJournalNo(tx, "JRN"),
-      posting_date: postingDateToday(),
+      journal_no: await nextJournalNo(tx, series),
+      posting_date: input.postingDate ?? postingDateToday(),
       source_doc_type_id: input.sourceDocTypeId ?? null,
       source_doc_id: input.sourceDocId ?? null,
       company_id: input.companyId,
@@ -578,13 +617,17 @@ export async function journalNumbersByIds(
 
 /**
  * `JRN-0001` for a journal a posting produced, `JUR-0001` for one a person
- * typed — two independent series in one table, so which kind of journal a
- * number names is readable without opening it.
+ * typed, `CLS-0001` for a fiscal year's closing entry — independent series in
+ * one table, so which kind of journal a number names is readable without
+ * opening it.
  *
  * The highest number is looked up **within the series**: ordering by id alone
  * would hand a `JUR` number back when the newest row happened to be a `JRN`.
  */
-async function nextJournalNo(tx: Client, prefix: "JRN" | "JUR"): Promise<string> {
+async function nextJournalNo(
+  tx: Client,
+  prefix: JournalSeries | "JUR"
+): Promise<string> {
   return nextDocumentNumber(prefix, async () => {
     const row = await tx.accJournal.findFirst({
       where: { journal_no: { startsWith: `${prefix}-` } },

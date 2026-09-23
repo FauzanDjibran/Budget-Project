@@ -133,6 +133,18 @@ export const PERMISSIONS = [
   { code: "FISCAL_YEAR_VIEW", name: "Lihat Fiscal Year", module: "accounting", description: "Termasuk Fiscal Period di dalamnya." },
   { code: "FISCAL_YEAR_CREATE", name: "Tambah Fiscal Year", module: "accounting" },
   { code: "FISCAL_YEAR_EDIT", name: "Ubah Fiscal Year", module: "accounting", description: "Catatan tahun buku. Status bukan isian dan tidak berubah lewat Ubah." },
+  // Viewing is the whole capability. An Opening Balance is written by a
+  // fiscal year's close or injected by a developer before the application has
+  // any history; nothing creates, edits or deletes one through the GUI, so
+  // there is no permission for doing so.
+  {
+    code: "OPENING_BALANCE_VIEW",
+    name: "Lihat Opening Balance",
+    module: "accounting",
+    description:
+      "Saldo awal per Company per tahun buku. Hanya dibaca — dokumennya bersifat final.",
+  },
+
   {
     code: "FISCAL_YEAR_OPEN",
     name: "Aktifkan Fiscal Year",

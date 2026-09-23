@@ -654,7 +654,7 @@ describe("a form is laid out by one component", () => {
   test("no form page carries a `.ph-sub`", () => {
     // A form's subtitle restated the card header 40px below it. Lists and the
     // dashboard keep theirs: there, the sentence says what the table is of.
-    const forms = files.filter((f) => /-form\.tsx$|profile-view\.tsx$|funding-detail\.tsx$|journal-detail\.tsx$/.test(f.rel));
+    const forms = files.filter((f) => /-form\.tsx$|profile-view\.tsx$|funding-detail\.tsx$|journal-detail\.tsx$|opening-balance-detail\.tsx$/.test(f.rel));
     const bad = forms.filter((f) => /className="ph-sub"/.test(code(f.text)));
     assert.deepEqual(
       bad.map((f) => f.rel),
@@ -682,6 +682,7 @@ describe("a form is laid out by one component", () => {
       "src/components/finance/transaction-form.tsx",
       "src/components/finance/funding-detail.tsx",
       "src/components/accounting/journal-detail.tsx",
+      "src/components/accounting/opening-balance-detail.tsx",
     ]) {
       const f = files.find((x) => x.rel === rel);
       assert.ok(f, `${rel} is missing`);

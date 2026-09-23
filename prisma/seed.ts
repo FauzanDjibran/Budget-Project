@@ -144,6 +144,11 @@ const DOC_TYPES: [label: string, table: string][] = [
   ["Journal", "acc_journal"],
   ["Cash Bank Transfer", "fin_cash_bank_transfer"],
   ["Cash Bank Transfer Line", "fin_cash_bank_transfer_line"],
+  ["Opening Balance", "acc_opening_balance"],
+  // A Fiscal Year is a document type because closing one *produces* journals:
+  // the `CLS-` entry names the year it closed as its source, which is what
+  // lets a reader get from a journal line back to the close that wrote it.
+  ["Fiscal Year", "acc_fiscal_year"],
 ];
 
 /**

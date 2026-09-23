@@ -802,6 +802,95 @@ table acc_fiscal_closing {
   }
 }
 
+// One Company's balances at the start of one fiscal year — a snapshot, not a
+// running store.
+//
+// It exists so a report need not scan from the first historical transaction to
+// work out where an account stood, and so a closed year hands the next one its
+// position in a form somebody can read. Immutable: written once, by a close or
+// by a developer injecting go-live figures, and never edited. There is no
+// create form and no edit path in the application.
+//
+// Base currency only, and that is why there is no currency_id: the journal, the
+// General Ledger and the Trial Balance are all base-currency statements, and a
+// snapshot of them is the same measure.
+//
+// source_fiscal_year_id is what tells a generated snapshot from an injected
+// one. A close writes the year it closed; go-live balances leave it null,
+// because nothing produced them.
+
+table acc_opening_balance {
+  id                          int [pk, increment, not null]
+
+  opening_no                  varchar(255) [not null, unique]
+
+  // The day the figures speak for — the first day of the year being opened.
+  posting_date                date [not null]
+
+  // The year this snapshot opens.
+  fiscal_year_id              int [not null, ref : > acc_fiscal_year.id]
+  // The year whose close produced it, or null for injected go-live balances.
+  source_fiscal_year_id       int [ref : >? acc_fiscal_year.id]
+
+  company_id                  int [not null, ref : > sys_company.id]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    // One snapshot per Company per year. A second would be a second answer to
+    // "where did this Company stand on 1 January", and the document is
+    // immutable, so there is no legitimate route to two.
+    (fiscal_year_id, company_id) [unique]
+    company_id
+  }
+}
+
+// One balance, at the grain the journal itself keeps: (account, partner?).
+//
+// A Hutang account owed to three branches produces three lines; an account
+// naming no Partner produces one line with partner_id = null. There is
+// deliberately no parent row holding the account's total — that figure is the
+// sum of its children, and an immutable snapshot has no rebuild function to
+// prove a stored duplicate still agrees with what it duplicates.
+//
+// The grain is derived from the posted journal lines as they actually are,
+// never from acc_account.require_partner: reading the flag would drop a
+// partner-bearing balance sitting on an unflagged account, and would invent a
+// null-partner line for an account that has none.
+
+table acc_opening_balance_line {
+  id                          int [pk, increment, not null]
+
+  opening_id                  int [not null, ref : > acc_opening_balance.id]
+  sequence_no                 int [not null]
+
+  account_id                  int [not null, ref : > acc_account.id]
+  partner_id                  int [ref : >? m_partner.id]
+
+  // Base currency, like every figure in the journal this is a snapshot of.
+  // Exactly one side carries the value, and the document's two sides sum equal.
+  debit_amount                decimal(18,2) [not null, default: 0]
+  kredit_amount               decimal(18,2) [not null, default: 0]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    // Created NULLS NOT DISTINCT in the migration's own SQL, because Postgres
+    // otherwise treats two null-partner rows for one account as distinct —
+    // which is precisely the duplicate this index is for, and the common case.
+    (opening_id, account_id, partner_id) [unique]
+    opening_id
+  }
+}
+
 table acc_journal {
   id                          int [pk, increment, not null]
 

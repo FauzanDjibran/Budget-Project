@@ -387,6 +387,33 @@ export async function cleanupFixtures(): Promise<void> {
     await prisma.accJournal.deleteMany({ where: { id: { in: journalIds } } });
   }
 
+  // An Opening Balance line points at an account and at a Partner, so a
+  // snapshot a suite left behind blocks every later run from clearing its own
+  // accounts. The application never deletes one — it is immutable — and this
+  // is the same exception already made for fixture journals above: these
+  // snapshots were written by a test run against accounts that are about to
+  // stop existing. A whole document goes whenever any of its lines names one,
+  // because what would remain could no longer balance.
+  const snapshots = [
+    ...new Set(
+      (
+        await prisma.accOpeningBalanceLine.findMany({
+          where: { account: { account_code: { startsWith: FIXTURE_PREFIX } } },
+          select: { opening_id: true },
+        })
+      ).map((l) => l.opening_id)
+    ),
+  ];
+  if (snapshots.length) {
+    await prisma.accOpeningBalanceLine.deleteMany({
+      where: { opening_id: { in: snapshots } },
+    });
+    await prisma.auditLog.deleteMany({
+      where: { entity_key: "acc_opening_balance", row_id: { in: snapshots } },
+    });
+    await prisma.accOpeningBalance.deleteMany({ where: { id: { in: snapshots } } });
+  }
+
   // A Cash & Bank resource points at an account, so a fixture resource left
   // behind by an earlier failure blocks every later suite from clearing its own
   // accounts — and the failure surfaces three suites away from its cause. Each
