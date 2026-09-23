@@ -1,6 +1,6 @@
 ---
 name: run-siba
-description: Run the SIBA app so it serves at http://localhost:3010. Use whenever the user says "Run SIBA", "start SIBA", "run the app", "restart SIBA", or otherwise asks to have the application up. Starts PostgreSQL, prepares the database (migrate and seed system data), and leaves `npm run dev:local` serving.
+description: Run the SIBA app so it serves at http://localhost:3010. Use whenever the user says "Run SIBA", "start SIBA", "run the app", "restart SIBA", or otherwise asks to have the application up. Starts PostgreSQL, prepares the database (migrate and seed system data), and leaves the production build serving with `npm start`.
 ---
 
 # Run SIBA
@@ -78,15 +78,23 @@ If the user explicitly asks to start over from nothing, `npm run db:reset` drops
 the database, reapplies every migration and re-seeds. **It destroys all data** —
 only run it on a clear, specific yes.
 
-## 6. Start the dev server
+## 6. Build and start
 
-Run `npm run dev:local` in the background and wait for it to report ready. It
-serves on **3010**, the user's own local run. Every way of running SIBA has a
-fixed port so two can run at once: `npm run dev` is **3000** (the development
-server Claude uses to verify changes), this skill is **3010**, a local run of a
-temporary branch worktree is **3020**, and `npm start` (the production build, run the way Vercel serves it) is **3030**.
+Run `npm run build`, then `npm start` in the background and wait for it to
+report ready. A local run is the **production build**, not the development
+server, and it serves on **3010**. Every way of running SIBA has a fixed port so
+several can run at once:
+
+| Run | Command | Port |
+| --- | --- | --- |
+| Development server (hot reload) | `npm run dev` | 3000 |
+| Local run — production build | `npm run build`, then `npm start` | 3010 |
+| Local run of a temporary branch worktree | `npm run build`, then `npm run start:branch` | 3020 |
+| Vercel-style run | `npm run build`, then `npm run start:vercel` | 3030 |
+
 If 3010 is taken, find out what holds it and tell the user rather than silently
-moving to another port — they are expecting 3010.
+moving to another port — they are expecting 3010. A build that fails is reported
+as it is; do not fall back to `npm run dev`.
 
 Confirm it actually serves before reporting success: fetch `/login` and check for
 a 200. Fetching `/` returns a redirect to `/login` when signed out, which is also

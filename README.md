@@ -110,7 +110,8 @@ database, reapplies every migration and reseeds — it destroys all data.
 ### 6. Run
 
 ```bash
-npm run dev:local
+npm run build
+npm start
 ```
 
 http://localhost:3010
@@ -119,18 +120,19 @@ Each way of running SIBA has its own fixed port, so two can run side by side:
 
 | Run | Command | Port |
 | --- | --- | --- |
-| Development server | `npm run dev` | 3000 |
-| Local run | `npm run dev:local` | 3010 |
-| Local run of a temporary branch worktree | `npm run dev:branch` | 3020 |
-| Production build, run locally the way Vercel serves it (after `npm run build`) | `npm start` | 3030 |
+| Development server (hot reload) | `npm run dev` | 3000 |
+| Local run — production build | `npm run build`, then `npm start` | 3010 |
+| Local run of a temporary branch worktree | `npm run build`, then `npm run start:branch` | 3020 |
+| Vercel-style run | `npm run build`, then `npm run start:vercel` | 3030 |
 
 ## Useful commands
 
 | Command | Does |
 | --- | --- |
 | `npm run dev` | Dev server, port 3000 |
-| `npm run dev:local` | Local run, port 3010 |
-| `npm run dev:branch` | Local run of a branch worktree, port 3020 |
+| `npm start` | Local run of the production build, port 3010 |
+| `npm run start:branch` | A branch worktree's production build, port 3020 |
+| `npm run start:vercel` | Vercel-style production run, port 3030 |
 | `npm run build` | Production build |
 | `npm run lint` | ESLint |
 | `npm test` | Test suite (needs a migrated, seeded database) |
