@@ -1006,3 +1006,26 @@ describe("a menu destination always renders", () => {
     }
   });
 });
+
+describe("a report runs from the header, like a form saves from it", () => {
+  test("only `report-run.tsx` draws Tampilkan, and nothing puts it back in the filter", () => {
+    // Every Report View's run button is the header's primary, top right, where
+    // Simpan sits on a form. A filter that drew its own would put a second,
+    // differently-placed run button on one report and not the others.
+    const drawers = files
+      .filter((f) => f.rel.startsWith("src/components/report/"))
+      .filter((f) => />\s*Tampilkan\s*</.test(code(f.text)) || /\}\s*Tampilkan\s*</.test(code(f.text)))
+      .map((f) => f.rel);
+    assert.deepEqual(drawers, ["src/components/report/report-run.tsx"]);
+  });
+
+  test("a filter lays itself out in rows", () => {
+    // The rows are what make the filter read in the order it is filled in; a
+    // parameter set whose controls sat loose in `.rfil` would wrap as one line.
+    for (const name of ["report-params", "subject-params", "fiscal-period-params"]) {
+      const f = files.find((x) => x.rel === `src/components/report/${name}.tsx`)!;
+      assert.match(code(f.text), /className="rrow"/, `${name} renders no .rrow`);
+      assert.match(code(f.text), /useReportRun\(/, `${name} does not register its run with the header`);
+    }
+  });
+});

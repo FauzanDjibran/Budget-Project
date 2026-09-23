@@ -7,6 +7,7 @@ import { DateInput } from "@/components/ui/date-input";
 import type { RefOption } from "@/lib/siba/records";
 import { reportHref } from "@/lib/siba/reports";
 import { MultiSelect } from "@/components/ui/multi-select";
+import { useReportRun } from "./report-run";
 
 /**
  * The filter for every report whose subject is a **set**: several accounts for
@@ -27,6 +28,10 @@ import { MultiSelect } from "@/components/ui/multi-select";
  * and the statement of what the figures below cover. That is why the controls
  * are compact and why the chosen subjects are chips on a second row rather than
  * a wider picker: the header's height is the report's lost viewport.
+ *
+ * Two rows, in the order they are filled in — the Company (and, on Buku
+ * Subjek, the book) with the subjects, then the period — with *Tampilkan* in
+ * the header's action slot, top right, like Simpan on a form.
  */
 export function SubjectParams({
   slug,
@@ -42,6 +47,7 @@ export function SubjectParams({
   missingHint,
   companyId,
   extraParams,
+  lead,
 }: {
   slug: string;
   subjects: RefOption[];
@@ -67,6 +73,8 @@ export function SubjectParams({
    * reader back to the first one.
    */
   extraParams?: Record<string, string | number | null | undefined>;
+  /** What comes before the subject on the first row — the Company, the book. */
+  lead?: React.ReactNode;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -78,68 +86,63 @@ export function SubjectParams({
   const invalidRange = Boolean(start && end && start > end);
   const missingSubject = subjectRequired && selected.length === 0;
 
-  const run = () => {
-    if (invalidRange || missingSubject) return;
-    startTransition(() => {
-      router.push(
-        reportHref(slug, {
-          company: companyId ?? null,
-          ...extraParams,
-          [param]: selected.join(","),
-          from: start,
-          to: end,
-        })
-      );
-    });
-  };
+  useReportRun(
+    () => {
+      if (invalidRange || missingSubject) return;
+      startTransition(() => {
+        router.push(
+          reportHref(slug, {
+            company: companyId ?? null,
+            ...extraParams,
+            [param]: selected.join(","),
+            from: start,
+            to: end,
+          })
+        );
+      });
+    },
+    {
+      blocked: invalidRange || missingSubject,
+      hint: invalidRange
+        ? "Tanggal akhir tidak boleh lebih awal dari tanggal mulai."
+        : missingHint,
+      pending,
+    }
+  );
 
   return (
     <>
-      <span className="rl">{label}</span>
-      <div className="rf wide">
-        <MultiSelect
-          value={selected}
-          options={subjects}
-          placeholder={addPlaceholder}
-          emptyPlaceholder={subjectRequired ? addPlaceholder : allPlaceholder}
-          removeTitle="Keluarkan dari laporan"
-          onChange={setSelected}
-        />
+      <div className="rrow">
+        {lead}
+        <span className="rl">{label}</span>
+        <div className="rf wide">
+          <MultiSelect
+            value={selected}
+            options={subjects}
+            placeholder={addPlaceholder}
+            emptyPlaceholder={subjectRequired ? addPlaceholder : allPlaceholder}
+            removeTitle="Keluarkan dari laporan"
+            onChange={setSelected}
+          />
+        </div>
       </div>
 
-      <span className="rsep" />
-
-      <span className="rl">Periode</span>
-      <div className="rf date">
-        <DateInput value={start} invalid={invalidRange} onChange={setStart} />
+      <div className="rrow">
+        <span className="rl">Periode</span>
+        <div className="rf date">
+          <DateInput value={start} invalid={invalidRange} onChange={setStart} />
+        </div>
+        <span className="rl">s/d</span>
+        <div className="rf date">
+          <DateInput value={end} invalid={invalidRange} onChange={setEnd} />
+        </div>
+        {invalidRange && (
+          <span className="err">
+            <Icon name="warn" size={11} />
+            Tanggal akhir lebih awal dari tanggal mulai.
+          </span>
+        )}
       </div>
-      <span className="rl">s/d</span>
-      <div className="rf date">
-        <DateInput value={end} invalid={invalidRange} onChange={setEnd} />
-      </div>
-
-      <button
-        className="btn primary sm"
-        onClick={run}
-        disabled={pending || invalidRange || missingSubject}
-        title={
-          invalidRange
-            ? "Tanggal akhir tidak boleh lebih awal dari tanggal mulai."
-            : missingSubject
-              ? missingHint
-              : undefined
-        }
-      >
-        <Icon name="srch" size={13} /> Tampilkan
-      </button>
-
-      {invalidRange && (
-        <span className="err">
-          <Icon name="warn" size={11} />
-          Tanggal akhir lebih awal dari tanggal mulai.
-        </span>
-      )}
-
     </>
   );
 }

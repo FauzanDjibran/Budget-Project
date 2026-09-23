@@ -5,6 +5,7 @@ import { TrialBalanceReport } from "@/components/report/trial-balance-report";
 import { ReportNeedsSubject, ReportView } from "@/components/report/report-view";
 import { requirePermission } from "@/lib/siba/auth";
 import { CompanyFilter, NoCompanyAccess } from "@/components/master/company-filter";
+import { ReportCompany } from "@/components/report/report-run";
 import { companyScope } from "@/lib/siba/company-access";
 import {
   generalLedgerReport,
@@ -18,6 +19,8 @@ import { formatDate } from "@/lib/format";
 import type { OpeningProvenance } from "@/lib/siba/ledger";
 import { FiscalPeriodParams } from "@/components/report/fiscal-period-params";
 import { StatementReport } from "@/components/report/statement-report";
+import { StatementTitle } from "@/components/report/statement-title";
+import { STATEMENT_MODES } from "@/lib/siba/statement-layout";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
 import {
@@ -103,8 +106,8 @@ export default async function Page({
 
   const filterBar = (
     <>
-      <CompanyFilter options={scope.options} selectedId={company.id} />
       <SubjectParams
+        lead={<ReportCompany options={scope.options} selectedId={company.id} />}
         slug={slug}
         subjects={options}
         selectedIds={accountIds}
@@ -246,7 +249,7 @@ function parseIds(raw?: string): number[] {
 async function statementPage(
   report: ReportDef,
   slug: string,
-  company: { id: number; isParent: boolean },
+  company: { id: number; isParent: boolean; label: string },
   companyOptions: Parameters<typeof CompanyFilter>[0]["options"],
   query: {
     year?: string;
@@ -259,7 +262,7 @@ async function statementPage(
   const companyId = company.id;
   const runAt = new Date().toISOString();
   const years = await reportableFiscalYears();
-  const companyFilter = <CompanyFilter options={companyOptions} selectedId={companyId} />;
+  const companyFilter = <ReportCompany options={companyOptions} selectedId={companyId} />;
 
   if (!years.length) {
     return (
@@ -298,8 +301,8 @@ async function statementPage(
 
   const filter = (
     <>
-      {companyFilter}
       <FiscalPeriodParams
+        lead={companyFilter}
         slug={slug}
         companyId={companyId}
         years={years.map((y) => ({
@@ -353,6 +356,16 @@ async function statementPage(
         report={report}
         filter={filter}
         runAt={runAt}
+        title={
+          <StatementTitle
+            name={report.name}
+            companyLabel={company.label}
+            mode="Posisi"
+            columns={data.columns}
+            runAt={runAt}
+            position
+          />
+        }
         footnote={
           <>
             Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}), saldo kumulatif
@@ -388,7 +401,12 @@ async function statementPage(
           </Notice>
         )}
         {data.unplaced.length > 0 && <UnplacedNotice names={data.unplaced} />}
-        <StatementReport columns={data.columns} rows={data.rows} companyId={companyId} position />
+        <StatementReport
+          key={runKey(data.columns)}
+          columns={data.columns}
+          rows={data.rows}
+          companyId={companyId}
+        />
       </ReportView>
     );
   }
@@ -402,6 +420,15 @@ async function statementPage(
       report={report}
       filter={filter}
       runAt={runAt}
+      title={
+        <StatementTitle
+          name={report.name}
+          companyLabel={company.label}
+          mode={STATEMENT_MODES.find((m) => m.value === mode)!.label}
+          columns={data.columns}
+          runAt={runAt}
+        />
+      }
       footnote={
         <>
           Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}), dijumlah dari
@@ -418,9 +445,22 @@ async function statementPage(
         </Notice>
       )}
       {data.unplaced.length > 0 && <UnplacedNotice names={data.unplaced} />}
-      <StatementReport columns={data.columns} rows={data.rows} companyId={companyId} />
+      <StatementReport
+        key={runKey(data.columns)}
+        columns={data.columns}
+        rows={data.rows}
+        companyId={companyId}
+      />
     </ReportView>
   );
+}
+
+/**
+ * A new run starts its tree from the default fold — every heading open, every
+ * Partner breakdown closed — rather than inheriting what the last run left.
+ */
+function runKey(columns: StatementColumn[]): string {
+  return columns.map((c) => `${c.range.from}:${c.range.to}`).join("|");
 }
 
 /** A statement's notice: a warning the reader acts on, or a fault. */

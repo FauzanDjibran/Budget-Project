@@ -2,6 +2,7 @@ import { Icon } from "@/components/icon";
 import { formatTimestamp } from "@/lib/format";
 import { moduleByKey } from "@/lib/siba/nav";
 import type { ReportDef } from "@/lib/siba/reports";
+import { ReportRunButton, ReportRunProvider } from "./report-run";
 
 /**
  * The chrome every Report View wears.
@@ -36,6 +37,7 @@ export function ReportView({
   runAt,
   children,
   footnote,
+  title,
 }: {
   report: ReportDef;
   /** The filter bar — a client component that pushes to the URL. */
@@ -44,38 +46,50 @@ export function ReportView({
   runAt: string;
   children: React.ReactNode;
   footnote?: React.ReactNode;
+  /**
+   * A statement's own title, at the top of its card. It states the run time
+   * itself, so the stamp at the foot is left off rather than said twice.
+   */
+  title?: React.ReactNode;
 }) {
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <span>{moduleByKey(report.module)?.name ?? report.module}</span>
-          <span>/</span>
-          <span>Laporan</span>
-          <span>/</span>
-          <span className="cur">{report.name}</span>
+      <ReportRunProvider>
+        <div className="ph">
+          <div className="crumb">
+            <span>{moduleByKey(report.module)?.name ?? report.module}</span>
+            <span>/</span>
+            <span>Laporan</span>
+            <span>/</span>
+            <span className="cur">{report.name}</span>
+          </div>
+          <div className="ph-row">
+            <h1>
+              <span className="ph-ico">
+                <Icon name={report.icon} size={16} />
+              </span>
+              {report.name}
+              <span className="bdg t-slate">Laporan</span>
+            </h1>
+            {/* Tampilkan is the primary and rightmost, like Simpan on a form;
+                export actions, when they are built, go to its left. */}
+            <div className="ph-act">
+              <ReportRunButton />
+            </div>
+          </div>
+          {filter && <div className="rfil">{filter}</div>}
         </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name={report.icon} size={16} />
-            </span>
-            {report.name}
-            <span className="bdg t-slate">Laporan</span>
-          </h1>
-          {/* Export actions land here when they are built — the slot exists so
-              adding one later changes no layout. */}
-          <div className="ph-act" />
-        </div>
-        {filter && <div className="rfil">{filter}</div>}
-      </div>
+      </ReportRunProvider>
 
       <div className="card">
-        <div className="card-b">{children}</div>
+        <div className="card-b">
+          {title}
+          {children}
+        </div>
       </div>
 
       {footnote && <p className="foot-note">{footnote}</p>}
-      <p className="rstamp">Dibuat {formatTimestamp(runAt)}</p>
+      {!title && <p className="rstamp">Dibuat {formatTimestamp(runAt)}</p>}
     </>
   );
 }

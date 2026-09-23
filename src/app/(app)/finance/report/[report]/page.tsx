@@ -2,10 +2,7 @@ import { notFound } from "next/navigation";
 import { CashBankBalanceReport } from "@/components/report/cash-bank-balance-report";
 import { CashBankLayerReport } from "@/components/report/cash-bank-layer-report";
 import { CashBankLedgerReport } from "@/components/report/cash-bank-ledger-report";
-import {
-  CompanyFilter,
-  NoCompanyAccess,
-} from "@/components/master/company-filter";
+import { NoCompanyAccess } from "@/components/master/company-filter";
 import { ReportParams } from "@/components/report/report-params";
 import { SubjectParams } from "@/components/report/subject-params";
 import { SubledgerReport } from "@/components/report/subledger-report";
@@ -21,6 +18,7 @@ import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { subledgerReport, subledgerSubjects } from "@/lib/siba/subledger";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { BookFilter } from "@/components/report/book-filter";
+import { ReportCompany } from "@/components/report/report-run";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
@@ -101,8 +99,8 @@ export default async function Page({
 
   const filterBar = (
     <>
-      <CompanyFilter options={scope.options} selectedId={company.id} />
       <ReportParams
+        lead={<ReportCompany options={scope.options} selectedId={company.id} />}
         slug={slug}
         resources={resources}
         cashBankId={cashBankId}
@@ -248,9 +246,20 @@ async function subledgerPage({
       report={{ ...report, name: data.book.name, desc: data.book.desc }}
       filter={
         <>
-          <CompanyFilter options={options} selectedId={company.id} />
-          <BookFilter books={books} selectedKey={book.key} />
           <SubjectParams
+            lead={
+              <>
+                <ReportCompany options={options} selectedId={company.id} />
+                {books.length > 1 && (
+                  <>
+                    <span className="rl">Buku</span>
+                    <div className="rf">
+                      <BookFilter books={books} selectedKey={book.key} />
+                    </div>
+                  </>
+                )}
+              </>
+            }
             slug={slug}
             extraParams={{ book: book.key }}
             subjects={subjects}

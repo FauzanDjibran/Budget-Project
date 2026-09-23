@@ -2083,7 +2083,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   Account Type in code order, each closed by its total, and one further line
   totalling every credit-side type (PASIVA dan EKUITAS), the names read from the
   types. The same tree, Partner arrows, Rincian control, comparison columns and
-  drill-through as the Laba Rugi — one component, `StatementReport`. The two
+  drill-through as the Laba Rugi — one component, `StatementReport` — and the
+  same compact title, whose Tipe reads *Posisi* and whose dates read *per
+  30/09/2026*. The two
   equity figures and the rules around them are §10 rule 96.
 - **Reason:** The user's specification, settled across a design discussion:
   a statement never doctors a number — an unclosed previous year is shown as
@@ -2122,9 +2124,13 @@ Specified in the concept doc, **not yet implemented** (see §13):
   Kelompok → Account → sub-account, each heading carrying its total; a kelompok
   that is its category's only one is folded into it. An account whose postings
   name Partners carries an **expand arrow per account**, and a breakdown
-  includes a Tanpa Partner row, so it always adds up to the account. A
-  Rincian control collapses the tree to Kategori or Kelompok. An account number
-  drills to its General Ledger for the first column's range.
+  includes a Tanpa Partner row, so it always adds up to the account. **The
+  tree drills like the Chart of Accounts tree**: every heading carries its own
+  chevron and keeps its total when folded, Partner breakdowns start folded, and
+  Buka Semua / Tutup Semua open or close everything, Partners included — there
+  is no level dropdown, on the user's instruction. Result and total lines never
+  fold. An account number drills to its General Ledger for the first column's
+  range, except on a computed line, whose General Ledger is empty by design.
 - **Reason:** The user's specification, settled across a design discussion: a
   statement is always seen from a period's viewpoint; multi-step because the
   template's categories already separate usaha from diluar usaha and HPP from
@@ -2139,8 +2145,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   dropped from every subtotal.
 - **Do not change unless:** explicitly instructed. **Never let a column read
   its own year's closing journal, never infer a step from a number, never mix
-  modes across the two columns, and do not add a free date range** — the
-  period is the range.
+  modes across the two columns, do not add a free date range** — the
+  period is the range — **and do not bring back a level dropdown**; the tree
+  drills itself.
 - **Status:** Frozen, current.
 
 ### The ledger reports take several accounts, one Company at a time (FROZEN)
@@ -3051,14 +3058,25 @@ below in outline because the half of it that still holds is easy to lose.**
   1. **Parameters live in the URL.** `?cashBank=12&from=…&to=…`. A run is therefore
      linkable, bookmarkable and back-button-able, and the page stays a Server Component
      that queries directly (§3) instead of fetching from the client.
-  2. **The filter lives in the sticky page header, and there is no restatement.**
-     `.rfil` sits inside `.pad > .ph`, so the subject and the period travel with the
-     page and are on screen wherever the reader has scrolled to. That is what a
-     `.critbar` underneath used to buy, at the cost of a slab of vertical space on every
-     run — so the filter *is* the statement of what the figures cover, the run timestamp
-     is one muted line (`.rstamp`) at the foot, and **no Report View carries a
-     `.critbar`**. A Report View also carries no `.ph-sub`: the description belongs to
-     the menu entry that led there, and how to read the figures belongs in the footnote.
+  2. **The filter lives in the sticky page header, in rows, and runs from the
+     header's action slot.** `.rfil` sits inside `.pad > .ph`, so the subject
+     and the period travel with the page. It is laid out as `.rrow` rows in the
+     order a reader fills it in — what the report is about (Company first, then
+     the subject or the Tipe Laporan), then when, then what to compare against —
+     and the first label of each row takes one width so the rows line up.
+     **Tampilkan is the header's primary button**, top right in `.ph-act`
+     where Simpan sits on a form: the filter registers what running means
+     through `useReportRun` and `ReportRunButton` draws it, disabled with a
+     hint naming what is missing. The Company picker navigates on change,
+     because what follows it belongs to the Company. No Report View carries a
+     `.critbar` or a `.ph-sub`. **A financial statement carries a compact
+     title** (`StatementTitle`) at the top of its card — report name, Company
+     label, Tipe Laporan, each column's dates, when it was produced — so a
+     screenshot or a printout cannot be mistaken for another run. It
+     **supersedes the "no restatement" clause for the Laba Rugi and the Neraca
+     only**, on the user's instruction; it stays two lines so the sticky header
+     keeps its room, and it carries the run time in place of the `.rstamp` at
+     the foot. Other reports may follow.
   3. **The subject is explicit** — a Cash & Bank resource, one or more accounts,
      or one or more Partners — and **every report runs for one Company**, named by
      a `CompanyFilter` first in the filter bar and carried in `?company=`. A cash
@@ -3100,7 +3118,7 @@ below in outline because the half of it that still holds is easy to lose.**
       (`.rsub`, `.nb`) or dropped where the filter already states it. A report that has
       to be scrolled horizontally cannot be read across a row, which is the only way a
       ledger is read.
-  12. **Export belongs in `.ph-act`.** The slot exists and is empty; print and XLSX are
+  12. **Export belongs in `.ph-act`, to the left of Tampilkan.** Print and XLSX are
       deferred, and adding them later changes no layout.
   13. **The footnote is one sentence.** It says the single thing a reader needs in
       order to read the figures correctly, and nothing else. Each of the six had
@@ -3835,6 +3853,9 @@ process allowed to restate positions, and it is not built.
   filter on the Cash Bank Ledger (§10, §12).
 - Do **not** invent a new report screen shape or new report CSS; extend the Report View
   convention instead, and do **not** build a generic report engine (§12).
+- Do **not** draw a Tampilkan button inside a report's filter, or lay the filter
+  out as one wrapping line. It runs from `.ph-act` and reads in `.rrow` rows,
+  and `tests/design-system.test.ts` holds both (§12).
 - Do **not** move a Report View's filter out of the sticky page header into a
   `.toolbar`, and do **not** reinstate the `.critbar` restatement or a `.ph-sub` on a
   report — the filter states what was run (§12).

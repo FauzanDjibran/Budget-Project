@@ -2,10 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Icon } from "@/components/icon";
 import { Select } from "@/components/ui/select";
 import { reportHref } from "@/lib/siba/reports";
 import { STATEMENT_MODES, type StatementMode } from "@/lib/siba/statement-layout";
+import { useReportRun } from "./report-run";
 
 export type FiscalYearChoice = {
   id: number;
@@ -16,24 +16,28 @@ export type FiscalYearChoice = {
 type Pick = { yearId: number | null; periodId: number | null };
 
 /**
- * The filter for the `fiscal-period` parameter set: a fiscal year and a period
- * in it, the Periode ini / s.d. Periode ini mode, and optionally a second year
- * and period to compare against.
+ * The filter for the `fiscal-period` parameter set, in the order it is filled
+ * in:
+ *
+ *   Company · Tipe Laporan
+ *   Tahun Buku · Periode · ☐ Bandingkan
+ *   Pembanding · Periode                      (only once Bandingkan is ticked)
  *
  * A statement is always read from a period's viewpoint, so there is no date
- * range here — the period *is* the range, and the mode says whether it starts
- * on the period's first day or the year's. The mode is shown as a control of
- * its own, never implied, because the same figure reads very differently as a
- * month and as a year to date.
+ * range — the period *is* the range, and the Tipe Laporan says whether it
+ * starts on the period's first day or the year's. The Neraca takes no Tipe: it
+ * is a position at the period's end.
  *
- * Periode waits for its Tahun Buku (`Pilih Tahun Buku dulu…`), which is the
- * one prerequisite in the bar; changing the year clears the period, because a
- * period belongs to exactly one year. Parameters live in the URL like every
- * Report View, so a run is linkable and back-button-able.
+ * Periode waits for its Tahun Buku (`Pilih Tahun Buku dulu…`); changing the
+ * year clears the period, because a period belongs to one year. Pembanding is
+ * hidden rather than waiting while Bandingkan is off — it is an option the
+ * reader takes, not a prerequisite of anything. *Tampilkan* is in the header's
+ * action slot, top right, like Simpan on a form.
  */
 export function FiscalPeriodParams({
   slug,
   companyId,
+  lead,
   years,
   main,
   compare,
@@ -42,11 +46,13 @@ export function FiscalPeriodParams({
 }: {
   slug: string;
   companyId: number;
+  /** The Company picker, first on the first row. */
+  lead?: React.ReactNode;
   years: FiscalYearChoice[];
   main: Pick;
   compare: Pick | null;
   mode: StatementMode;
-  /** The Neraca is a position at one date, so it takes no mode. */
+  /** The Neraca is a position at one date, so it takes no Tipe Laporan. */
   showMode: boolean;
 }) {
   const router = useRouter();
@@ -60,63 +66,73 @@ export function FiscalPeriodParams({
   const incomplete = (p: Pick) => !p.yearId || !p.periodId;
   const blocked = incomplete(first) || (comparing && incomplete(second));
 
-  const run = () => {
-    if (blocked) return;
-    startTransition(() => {
-      router.push(
-        reportHref(slug, {
-          company: companyId,
-          year: first.yearId,
-          period: first.periodId,
-          ...(showMode ? { mode: currentMode } : {}),
-          ...(comparing ? { cmpYear: second.yearId, cmpPeriod: second.periodId } : {}),
-        })
-      );
-    });
-  };
+  useReportRun(
+    () => {
+      if (blocked) return;
+      startTransition(() => {
+        router.push(
+          reportHref(slug, {
+            company: companyId,
+            year: first.yearId,
+            period: first.periodId,
+            ...(showMode ? { mode: currentMode } : {}),
+            ...(comparing ? { cmpYear: second.yearId, cmpPeriod: second.periodId } : {}),
+          })
+        );
+      });
+    },
+    {
+      blocked,
+      hint: comparing && incomplete(second)
+        ? "Pilih tahun buku dan periode pembanding terlebih dahulu."
+        : "Pilih tahun buku dan periode terlebih dahulu.",
+      pending,
+    }
+  );
 
   return (
     <>
-      <PeriodPick years={years} value={first} onChange={setFirst} label="Tahun Buku" />
-
-      {showMode && (
-        <>
-          <span className="rsep" />
-          <Select
-            variant="toolbar"
-            value={currentMode}
-            onChange={(v) => setMode(v as StatementMode)}
-            options={STATEMENT_MODES}
-            ariaLabel="Rentang"
-            title="Periode ini: hanya periode terpilih. s.d. Periode ini: dari awal tahun buku."
-          />
-        </>
+      {(lead || showMode) && (
+        <div className="rrow">
+          {lead}
+          {showMode && (
+            <>
+              <span className="rl">Tipe Laporan</span>
+              <div className="rf">
+                <Select
+                  variant="toolbar"
+                  value={currentMode}
+                  onChange={(v) => setMode(v as StatementMode)}
+                  options={STATEMENT_MODES}
+                  ariaLabel="Tipe Laporan"
+                  title="Periode ini: hanya periode terpilih. s.d. Periode ini: dari awal tahun buku."
+                />
+              </div>
+            </>
+          )}
+        </div>
       )}
 
-      <span className="rsep" />
-      <label className="chk sm">
-        <input
-          type="checkbox"
-          checked={comparing}
-          onChange={(e) => setComparing(e.target.checked)}
-        />
-        <span>
-          <span className="ct">Bandingkan</span>
-        </span>
-      </label>
+      <div className="rrow">
+        <PeriodPick years={years} value={first} onChange={setFirst} label="Tahun Buku" />
+        <span className="rsep" />
+        <label className="chk sm">
+          <input
+            type="checkbox"
+            checked={comparing}
+            onChange={(e) => setComparing(e.target.checked)}
+          />
+          <span>
+            <span className="ct">Bandingkan</span>
+          </span>
+        </label>
+      </div>
 
       {comparing && (
-        <PeriodPick years={years} value={second} onChange={setSecond} label="Pembanding" />
+        <div className="rrow">
+          <PeriodPick years={years} value={second} onChange={setSecond} label="Pembanding" />
+        </div>
       )}
-
-      <button
-        className="btn primary sm"
-        onClick={run}
-        disabled={pending || blocked}
-        title={blocked ? "Pilih tahun buku dan periode terlebih dahulu." : undefined}
-      >
-        <Icon name="srch" size={13} /> Tampilkan
-      </button>
     </>
   );
 }

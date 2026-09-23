@@ -1097,8 +1097,13 @@ a{color:inherit;text-decoration:none}
               job of a summary. */
 
 /* ---------- the filter, inside `.pad > .ph` ---------- */
-.rfil{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px;padding-top:9px;
+.rfil{display:flex;flex-direction:column;align-items:stretch;gap:6px;margin-top:9px;padding-top:9px;
   border-top:1px solid var(--line-2)}
+/* The filter reads in rows, in the order it is filled in: what the report is
+   about first, then when, then what to compare against. The first label of each
+   row takes one width, so the rows line up as a column the eye can run down. */
+.rfil .rrow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.rfil .rrow > .rl:first-child{min-width:78px}
 .rfil .rl{font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted-2);white-space:nowrap}
 .rfil .rf{flex:0 1 auto;min-width:0}
 .rfil .rf.wide{flex:0 1 230px;min-width:168px}
@@ -1205,6 +1210,17 @@ table.grid.stm tr.st-par td.stn .nm{font-size:11.5px}
 table.grid.stm tr.st-res td.stn .nm{text-transform:uppercase;letter-spacing:.04em}
 table.grid thead th .rsub{display:block;margin-top:2px;font-family:var(--f-mono);font-size:9.5px;
   font-weight:600;letter-spacing:.02em;text-transform:none;color:var(--muted-2)}
+/* A statement's own title: what it is, for whom, over when, and when it was
+   read — two compact lines, so a screenshot cannot be mistaken for another run
+   and the sticky header above keeps its room. */
+.rtitle{margin:0 0 10px;padding:0 2px 9px;border-bottom:1px solid var(--line-2)}
+.rtitle .rt1{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2)}
+.rtitle .rt1 b{font-size:13px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--brand)}
+.rtitle .rt1 span+span::before,.rtitle .rt1 b+span::before{content:"·";margin-right:8px;color:var(--muted-3)}
+.rtitle .rt2{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:3px;
+  font-family:var(--f-mono);font-size:11px;font-weight:600;color:var(--muted)}
+.rtitle .rt2 .sep{font-family:var(--f-sans);font-weight:700;color:var(--muted-2)}
+.rtitle .rt2 .when{margin-left:auto;color:var(--muted-3)}
 .mny.neg{color:var(--bad)}
 .rfil .chk.sm{height:30px}
 
