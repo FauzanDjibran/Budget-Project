@@ -1,14 +1,14 @@
 ---
 name: run-siba
-description: Run the SIBA app so it serves at http://localhost:3000. Use whenever the user says "Run SIBA", "start SIBA", "run the app", "restart SIBA", or otherwise asks to have the application up. Starts PostgreSQL, prepares the database (migrate and seed system data), and leaves `npm run dev` serving.
+description: Run the SIBA app so it serves at http://localhost:3010. Use whenever the user says "Run SIBA", "start SIBA", "run the app", "restart SIBA", or otherwise asks to have the application up. Starts PostgreSQL, prepares the database (migrate and seed system data), and leaves `npm run dev:local` serving.
 ---
 
 # Run SIBA
 
-Bring the app up at <http://localhost:3000> and leave it running.
+Bring the app up at <http://localhost:3010> and leave it running.
 
 Run it wherever this session is — a local machine or a remote/cloud container.
-In a container, note once that `localhost:3000` is the container's own and may
+In a container, note once that `localhost:3010` is the container's own and may
 not be reachable from the user's browser, then start it anyway; the user asked
 for it running and may be reaching it another way.
 
@@ -80,9 +80,13 @@ only run it on a clear, specific yes.
 
 ## 6. Start the dev server
 
-Run `npm run dev` in the background and wait for it to report ready. If port 3000
-is taken, find out what holds it and tell the user rather than silently moving to
-another port — they are expecting 3000.
+Run `npm run dev:local` in the background and wait for it to report ready. It
+serves on **3010**, the user's own local run. Every way of running SIBA has a
+fixed port so two can run at once: `npm run dev` is **3000** (the development
+server Claude uses to verify changes), this skill is **3010**, a local run of a
+temporary branch worktree is **3020**, and a local Vercel-style run is **3030**.
+If 3010 is taken, find out what holds it and tell the user rather than silently
+moving to another port — they are expecting 3010.
 
 Confirm it actually serves before reporting success: fetch `/login` and check for
 a 200. Fetching `/` returns a redirect to `/login` when signed out, which is also
@@ -92,7 +96,7 @@ a healthy sign.
 
 Give the user:
 
-- the URL, <http://localhost:3000>
+- the URL, <http://localhost:3010>
 - the administrator sign-in the seed printed (`admin@siba.app` by default, or
   whatever `SIBA_ADMIN_EMAIL` is set to). It is the only account the seed
   creates, and it holds every permission

@@ -487,6 +487,9 @@ Verified commands only.
 ```bash
 npm install                  # install
 npm run dev                  # dev server → http://localhost:3000
+npm run dev:local            # local run → http://localhost:3010
+npm run dev:branch           # a branch worktree's local run → http://localhost:3020
+                             # (3030 is reserved for a Vercel-style local run)
 npm run build                # production build (also typechecks)
 npm start                    # run the production build
 npm run build:standalone     # build + assemble .next/standalone (the deploy artifact)
@@ -523,8 +526,8 @@ create the database (`createdb -U postgres siba30`), then `npx prisma migrate de
 
 **"Run SIBA"** — the `run-siba` skill (`.claude/skills/run-siba/`) does the whole
 local bring-up: starts PostgreSQL, prepares `.env`, installs, generates the Prisma
-client, migrates, seeds the system data, and leaves `npm run dev` serving on port
-3000. It refuses to run in a remote/cloud session, where `localhost` is not the
+client, migrates, seeds the system data, and leaves `npm run dev:local` serving on
+port 3010. It refuses to run in a remote/cloud session, where `localhost` is not the
 user's machine.
 
 **Tests cover the security paths, plus the Accounting, Budget and Finance enforcement
