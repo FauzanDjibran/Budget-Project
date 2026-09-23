@@ -2126,7 +2126,10 @@ Specified in the concept doc, **not yet implemented** (see §13):
   name Partners carries an **expand arrow per account**, and a breakdown
   includes a Tanpa Partner row, so it always adds up to the account. **The
   tree drills like the Chart of Accounts tree**: every heading carries its own
-  chevron and keeps its total when folded, Partner breakdowns start folded, and
+  chevron, and **states its total only while folded** — open, its rows are on
+  screen and the figure would only repeat them, which is the user's rule against
+  a page full of numbers; result and total lines always state theirs. Partner
+  breakdowns start folded, and
   Buka Semua / Tutup Semua open or close everything, Partners included — there
   is no level dropdown, on the user's instruction. Result and total lines never
   fold. An account number drills to its General Ledger for the first column's

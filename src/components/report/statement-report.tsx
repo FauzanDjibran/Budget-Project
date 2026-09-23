@@ -15,14 +15,16 @@ const money = (n: number) => formatMoney(n, BASE_CURRENCY_LABEL);
  * A financial statement — the multi-step Laba Rugi or the Neraca.
  *
  * One table whose first column is a tree: a step or an Account Type heads its
- * categories, a result or total line closes it, and each heading carries the
- * total of what sits beneath it (a Neraca section's heading carries none,
- * because its total line follows). With a comparison, three columns join the
- * first — Pembanding, Selisih and Selisih %.
+ * categories, and a result or total line closes it. With a comparison, three
+ * columns join the first — Pembanding, Selisih and Selisih %.
+ *
+ * **A heading states its total only while it is folded.** Open, its rows are
+ * on screen and the figure would only repeat them — the user's rule, to keep
+ * the page from filling with numbers. Result and total lines always state
+ * theirs.
  *
  * **It drills like the Chart of Accounts tree.** Every heading with rows
- * beneath it has its own chevron, and a collapsed heading still states its
- * total. A Partner breakdown is the same mechanism, one level under its
+ * beneath it has its own chevron. A Partner breakdown is the same mechanism, one level under its
  * account, and starts closed because most readers want the account first.
  * Buka Semua opens everything, Partners included; Tutup Semua closes every
  * heading. Result and total lines never collapse — they are what the tree is
@@ -171,9 +173,12 @@ export function StatementReport({
                       )}
                     </div>
                   </td>
-                  {r.values.length === 0 ? (
-                    // A heading whose total is its own closing line: nothing to
-                    // state here, and a dash would read as "nil".
+                  {r.values.length === 0 || (canFold && isOpen) ? (
+                    // An open heading's rows are on screen, so its total would
+                    // only repeat them — it is stated once the heading is
+                    // folded. A Neraca section's heading has none at all: its
+                    // total is its own closing line. Blank, because a dash
+                    // would read as "nil".
                     <td colSpan={columns.length + (comparing ? 2 : 0)} />
                   ) : (
                     <>
