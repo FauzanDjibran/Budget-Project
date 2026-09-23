@@ -14,7 +14,7 @@
  * something.
  *
  * **Anything posted goes through the real engine.** `applyPosting`,
- * `applyTransfer` and `confirmFundingRequest` write the Cash Bank Book, the
+ * `applyTransfer`, `confirmFundingRequest` and `applyDncn` write the Cash Bank Book, the
  * subject books, the journal and the rate layers together, inside one
  * transaction each. Inserting those rows directly would be faster and would
  * produce reports whose figures do not reconcile — which is worse than empty,
@@ -35,6 +35,7 @@ import { nextDocumentNumber } from "@/lib/siba/document-number";
 import { applyTransfer, nextTransferNo } from "@/lib/siba/transfer";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
 import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
+import { applyDncn, nextNoteNo } from "@/lib/siba/dncn";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 
@@ -242,6 +243,8 @@ const CHART: Group[] = [
       { name: "Hasil Investasi dari Cabang", partnerCategory: "Cabang" },
       { name: "Pendapatan Bunga Bank" },
       { name: "Pendapatan Lain-lain" },
+      // Where a Debit Note's counter side lands, through its System Default.
+      { name: "Pendapatan Penyesuaian Nota Debit" },
     ],
   },
   {
@@ -279,7 +282,12 @@ const CHART: Group[] = [
   {
     kelompok: "5.9.1",
     balance: "Debit",
-    accounts: [{ name: "Biaya Bunga Pinjaman" }, { name: "Selisih Kurs" }],
+    accounts: [
+      { name: "Biaya Bunga Pinjaman" },
+      { name: "Selisih Kurs" },
+      // Where a Credit Note's counter side lands, through its System Default.
+      { name: "Beban Penyesuaian Nota Kredit" },
+    ],
   },
 ];
 
@@ -465,7 +473,8 @@ async function ensureForeignCurrency(actor: number): Promise<number> {
 
 /**
  * The settings that **decide** rather than prefill: where a funded
- * confirmation journals, and where an FX difference lands.
+ * confirmation journals, where an FX difference lands, and where a Debit /
+ * Credit Note's counter side posts.
  *
  * Without all four bridge accounts a Funding Request refuses by name, and
  * without the FX account a Pencairan does — so a showcase that skipped these
@@ -505,6 +514,10 @@ async function setDefaults(actor: number) {
       anak_unclosed_pl_account: String(await accountId(anak.id, "Laba Rugi Tahun Lalu Belum Ditutup")),
       induk_current_pl_account: String(await accountId(induk.id, "Laba Rugi Tahun Berjalan")),
       anak_current_pl_account: String(await accountId(anak.id, "Laba Rugi Tahun Berjalan")),
+      induk_debit_note_account: String(await accountId(induk.id, "Pendapatan Penyesuaian Nota Debit")),
+      induk_credit_note_account: String(await accountId(induk.id, "Beban Penyesuaian Nota Kredit")),
+      anak_debit_note_account: String(await accountId(anak.id, "Pendapatan Penyesuaian Nota Debit")),
+      anak_credit_note_account: String(await accountId(anak.id, "Beban Penyesuaian Nota Kredit")),
     },
     actor
   );
@@ -1218,6 +1231,133 @@ async function insertManualJournals(actor: number) {
   }
 }
 
+// ------------------------------------------------------ debit / credit notes
+//
+// A note adjusts a Partner's standing position without cash (§10 rules 97–102),
+// so each one here lands on a position a document above already opened: Budi
+// Santoso's advance in Piutang, H. Suryanto Halim's setoran in Hutang. Both
+// posted notes go through `applyDncn`, which writes the subject-book entry and
+// the journal together; one Draft and one Cancelled put the other two statuses
+// on the register.
+
+type NoteSpec = {
+  type: "Debit" | "Credit";
+  book: "Piutang" | "Hutang";
+  partner: string;
+  amount: number;
+  description: string;
+  reference?: string;
+  /** This script's marker, as a document's note is elsewhere. */
+  note: string;
+  status: "Posted" | "Draft" | "Cancelled";
+};
+
+const NOTES: NoteSpec[] = [
+  {
+    type: "Debit",
+    book: "Piutang",
+    partner: "Budi Santoso",
+    amount: 1_250_000,
+    description: "Kelebihan klaim uang harian perjalanan dinas Surabaya",
+    reference: "SPD-SBY-0142",
+    note: "Kelebihan klaim uang harian perjalanan dinas Surabaya, dibebankan kembali",
+    status: "Posted",
+  },
+  {
+    type: "Credit",
+    book: "Hutang",
+    partner: "H. Suryanto Halim",
+    amount: 7_500_000,
+    description: "Kompensasi atas setoran modal kerja kuartal I",
+    reference: "SK-SYH-03/2026",
+    note: "Kompensasi atas setoran modal kerja kuartal I",
+    status: "Posted",
+  },
+  {
+    type: "Credit",
+    book: "Piutang",
+    partner: "Budi Santoso",
+    amount: 350_000,
+    description: "Biaya tol dan parkir perjalanan dinas disetujui",
+    note: "Biaya tol dan parkir disetujui, mengurangi advance",
+    status: "Draft",
+  },
+  {
+    type: "Debit",
+    book: "Hutang",
+    partner: "H. Suryanto Halim",
+    amount: 2_000_000,
+    description: "Selisih pengembalian setoran modal kerja",
+    note: "Dibatalkan — selisih sudah diselesaikan lewat transfer",
+    status: "Cancelled",
+  },
+];
+
+async function insertNotes(actor: number) {
+  const idr = await prisma.refCurrency.findFirstOrThrow({
+    where: { currency_label: "IDR" },
+    select: { id: true },
+  });
+
+  for (const spec of NOTES) {
+    const already = await prisma.finDncn.findFirst({
+      where: { note: spec.note },
+      select: { id: true },
+    });
+    if (already) continue;
+
+    const category = await prisma.sysBudgetCategory.findFirstOrThrow({
+      where: { category_label: spec.book },
+      select: { id: true },
+    });
+    const partner = await prisma.mPartner.findFirstOrThrow({
+      where: { partner_name: spec.partner },
+      select: { id: true, company_id: true },
+    });
+
+    // Shaped the way `createDncn` writes a Draft: rupiah, so the rate is 1,
+    // and no base figure until Post decides one.
+    const row = await prisma.finDncn.create({
+      data: {
+        note_no: await nextNoteNo(spec.type),
+        note_type: spec.type,
+        company_id: partner.company_id,
+        budget_category_id: category.id,
+        partner_id: partner.id,
+        currency_id: idr.id,
+        exchange_rate: 1,
+        note_amount: spec.amount,
+        reference: spec.reference ?? null,
+        note: spec.note,
+        status: "Draft",
+        created_by: actor,
+        lines: {
+          create: [
+            { sequence_no: 1, description: spec.description, amount: spec.amount, created_by: actor },
+          ],
+        },
+      },
+      select: { id: true, note_no: true },
+    });
+    await audit("fin_dncn", row.id, actor);
+    tally("debit / credit notes");
+
+    if (spec.status === "Posted") {
+      const posted = await applyDncn(row.id, actor);
+      if (!posted.ok) {
+        throw new Error(
+          `Posting ${row.note_no} refused: ${Object.values(posted.errors).join(" ")}`
+        );
+      }
+    } else if (spec.status === "Cancelled") {
+      await prisma.finDncn.update({
+        where: { id: row.id },
+        data: { status: "Cancelled", updated_by: actor },
+      });
+    }
+  }
+}
+
 async function main() {
   const actor = await actorId();
 
@@ -1266,6 +1406,9 @@ async function main() {
   await insertTransfers(actor);
   await insertFunding(budgets, actor);
   await insertManualJournals(actor);
+
+  // Last, because a note adjusts a position the documents above opened.
+  await insertNotes(actor);
 
   report();
 }
