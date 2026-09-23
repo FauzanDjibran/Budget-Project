@@ -2,7 +2,7 @@ import { SystemDefaultForm } from "@/components/settings/system-default-form";
 import { prisma } from "@/lib/prisma";
 import { actorCan } from "@/lib/siba/access";
 import { requirePermission } from "@/lib/siba/auth";
-import type { RefOption } from "@/lib/siba/records";
+import { structuralControlAccountIds, type RefOption } from "@/lib/siba/records";
 import {
   SYSTEM_DEFAULTS,
   type SystemDefaultDef,
@@ -34,6 +34,11 @@ export default async function SystemDefaultPage() {
   });
   const companyId = (which: "induk" | "anak") =>
     companies.find((c) => c.is_parent === (which === "induk"))?.id ?? 0;
+
+  // A note's counter account may not be one a book already reconciles
+  // against — `checkSystemDefaultValue` refuses it, so the picker does not offer
+  // it. Read once for the four settings that need it.
+  const bookAccounts = await structuralControlAccountIds();
 
   const options = {} as Record<SystemDefaultKey, RefOption[]>;
   for (const def of SYSTEM_DEFAULTS) {
@@ -81,6 +86,7 @@ export default async function SystemDefaultPage() {
     });
     return rows
       .filter((a) => keep(a.id, a.is_active))
+      .filter((a) => def.group !== "dncn" || a.id === chosen || !bookAccounts.has(a.id))
       .map((a) => ({
         id: a.id,
         label: a.account_label,

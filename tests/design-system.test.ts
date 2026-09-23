@@ -464,6 +464,7 @@ describe("a header's buttons sit where the user last left them", () => {
     for (const rel of [
       "src/components/budget/budget-form.tsx",
       "src/components/finance/transaction-form.tsx",
+      "src/components/finance/dncn-form.tsx",
     ]) {
       const text = code(files.find((f) => f.rel === rel)!.text);
       assert.ok(
@@ -680,6 +681,7 @@ describe("a form is laid out by one component", () => {
     for (const rel of [
       "src/components/budget/budget-form.tsx",
       "src/components/finance/transaction-form.tsx",
+      "src/components/finance/dncn-form.tsx",
       "src/components/finance/funding-detail.tsx",
       "src/components/accounting/journal-detail.tsx",
       "src/components/accounting/opening-balance-detail.tsx",

@@ -163,6 +163,20 @@ export const MODULES: NavModule[] = [
         ],
       },
       {
+        key: "adjustment",
+        name: "Penyesuaian",
+        entities: [
+          {
+            key: "fin_dncn",
+            slug: "debit-credit-note",
+            name: "Debit / Credit Note",
+            icon: "pen",
+            desc: "Penyesuaian nilai posisi Partner pada buku subjek tanpa perpindahan uang. Debit Note mendebit account Partner, Credit Note mengkreditnya.",
+            permission: "DNCN_VIEW",
+          },
+        ],
+      },
+      {
         key: "report",
         name: "Laporan",
         entities: [
