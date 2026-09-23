@@ -84,7 +84,7 @@ Run `npm run dev:local` in the background and wait for it to report ready. It
 serves on **3010**, the user's own local run. Every way of running SIBA has a
 fixed port so two can run at once: `npm run dev` is **3000** (the development
 server Claude uses to verify changes), this skill is **3010**, a local run of a
-temporary branch worktree is **3020**, and a local Vercel-style run is **3030**.
+temporary branch worktree is **3020**, and `npm start` (the production build, run the way Vercel serves it) is **3030**.
 If 3010 is taken, find out what holds it and tell the user rather than silently
 moving to another port — they are expecting 3010.
 

@@ -489,9 +489,8 @@ npm install                  # install
 npm run dev                  # dev server → http://localhost:3000
 npm run dev:local            # local run → http://localhost:3010
 npm run dev:branch           # a branch worktree's local run → http://localhost:3020
-                             # (3030 is reserved for a Vercel-style local run)
 npm run build                # production build (also typechecks)
-npm start                    # run the production build
+npm start                    # run the production build → http://localhost:3030
 npm run build:standalone     # build + assemble .next/standalone (the deploy artifact)
 npm run start:standalone     # run that artifact exactly as a server would
 npm run lint                 # ESLint

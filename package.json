@@ -7,7 +7,7 @@
     "dev:local": "next dev -p 3010",
     "dev:branch": "next dev -p 3020",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 3030",
     "lint": "eslint",
     "db:seed": "node --env-file-if-exists=.env --conditions=react-server --import tsx prisma/seed.ts",
     "db:neon-migrate": "node scripts/with-remote.mjs npx prisma migrate deploy",
