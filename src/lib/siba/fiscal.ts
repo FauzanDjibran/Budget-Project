@@ -557,6 +557,66 @@ export async function unclosedPriorYear(
   return state.status === "Closed" ? null : older;
 }
 
+/** A fiscal year a statement may be run for, with its twelve periods. */
+export type ReportableFiscalYear = {
+  id: number;
+  label: string;
+  name: string;
+  status: string;
+  /** `YYYY-MM-DD`. */
+  startDate: string;
+  endDate: string;
+  periods: { id: number; sequence: number; name: string; startDate: string; endDate: string }[];
+};
+
+/**
+ * Every year a financial statement can be run for, newest first.
+ *
+ * Open and Closed only. A Draft year has no periods yet — they are generated
+ * when it is activated — so there is no period to pick and nothing could have
+ * been posted into it.
+ */
+export async function reportableFiscalYears(): Promise<ReportableFiscalYear[]> {
+  const rows = await prisma.accFiscalYear.findMany({
+    where: { status: { in: ["Open", "Closed"] } },
+    orderBy: { start_date: "desc" },
+    select: {
+      id: true,
+      year_label: true,
+      year_name: true,
+      status: true,
+      start_date: true,
+      end_date: true,
+      periods: {
+        orderBy: { sequence_no: "asc" },
+        select: {
+          id: true,
+          sequence_no: true,
+          period_name: true,
+          start_date: true,
+          end_date: true,
+        },
+      },
+    },
+  });
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  return rows.map((y) => ({
+    id: y.id,
+    label: y.year_label,
+    name: y.year_name,
+    status: y.status,
+    startDate: day(y.start_date),
+    endDate: day(y.end_date),
+    periods: y.periods.map((p) => ({
+      id: p.id,
+      sequence: p.sequence_no,
+      name: p.period_name,
+      startDate: day(p.start_date),
+      endDate: day(p.end_date),
+    })),
+  }));
+}
+
 /** The years one Company has already closed, for a screen that must still name them. */
 export async function closedFiscalYearsFor(
   companyId: number

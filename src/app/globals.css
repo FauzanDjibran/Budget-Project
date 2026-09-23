@@ -1174,6 +1174,40 @@ table.grid tbody td .rsub{display:block;margin-top:2px;font-family:var(--f-mono)
 .nb{flex:0 0 auto;display:grid;place-items:center;width:15px;height:15px;border-radius:4px;
   background:var(--line-2);color:var(--muted-2);font-family:var(--f-mono);font-size:9px;font-weight:800}
 
+/* ============================================================ financial statement
+   The Laba Rugi and the Neraca are one table whose first column is a tree:
+   a step or section heads its categories, each heading carries the total of
+   what sits beneath it, and a result line closes the steps above it. The
+   indentation is the hierarchy, so it is a class per depth rather than a
+   padding written on each row. */
+table.grid.stm tbody td{height:32px;padding-top:5px;padding-bottom:5px}
+table.grid.stm td.stn .stc{display:flex;align-items:center;gap:7px;min-width:0}
+table.grid.stm td.stn .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
+table.grid.stm td.stn .cd{font-family:var(--f-mono);font-size:11px;font-weight:700;color:var(--muted-2)}
+table.grid.stm td.stn .tgl{width:18px;height:18px;flex:0 0 auto;border:0;background:transparent;padding:0;
+  display:grid;place-items:center;border-radius:4px;color:var(--muted);cursor:pointer}
+table.grid.stm td.stn span.tgl{cursor:default}
+table.grid.stm td.stn button.tgl:hover{background:var(--line-2);color:var(--brand)}
+table.grid.stm td.stn .chev{display:grid;place-items:center;transition:transform .14s}
+table.grid.stm td.stn .chev.o{transform:rotate(90deg)}
+table.grid.stm td.stn.d1{padding-left:25px}
+table.grid.stm td.stn.d2{padding-left:39px}
+table.grid.stm td.stn.d3{padding-left:53px}
+table.grid.stm td.stn.d4{padding-left:67px}
+table.grid.stm td.stn.d5{padding-left:81px}
+table.grid.stm td.stn.d6{padding-left:95px}
+table.grid.stm tr.st-step td{background:var(--line-3)}
+table.grid.stm tr.st-step td.stn .nm{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--brand)}
+table.grid.stm tr.st-cat td.stn .nm{font-weight:700;color:var(--ink)}
+table.grid.stm tr.st-sub td.stn .nm{font-weight:600;color:var(--ink-2)}
+table.grid.stm tr.st-par td{color:var(--muted)}
+table.grid.stm tr.st-par td.stn .nm{font-size:11.5px}
+table.grid.stm tr.st-res td.stn .nm{text-transform:uppercase;letter-spacing:.04em}
+table.grid thead th .rsub{display:block;margin-top:2px;font-family:var(--f-mono);font-size:9.5px;
+  font-weight:600;letter-spacing:.02em;text-transform:none;color:var(--muted-2)}
+.mny.neg{color:var(--bad)}
+.rfil .chk.sm{height:30px}
+
 /* ============================================================ form layout
    The rules themselves live in the form section above, beside the ones they
    replaced; this note is why they read the way they do.

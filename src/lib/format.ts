@@ -148,6 +148,19 @@ export function formatForeignFace(
   return `${formatMoney(amount, currencyLabel)} @ ${formatRate(rate)}`;
 }
 
+/**
+ * A change as a share of what it changed from: `12,5%`, `-3,0%`.
+ *
+ * One decimal, because a statement's comparison column is read for direction
+ * and rough size, and a second decimal only adds noise. Null for a base of
+ * zero: growth from nothing has no percentage, and printing `∞` or a huge
+ * number would be a figure nobody can use.
+ */
+export function formatPercent(change: number, base: number): string | null {
+  if (Math.round(base * 100) === 0) return null;
+  return `${formatNumber((change / Math.abs(base)) * 100, 1)}%`;
+}
+
 /** IDR renders as `Rp 1.250.000` with no decimals; other currencies keep two. */
 export function formatMoney(
   value: number | string | { toString(): string } | null | undefined,

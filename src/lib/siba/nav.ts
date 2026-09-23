@@ -273,6 +273,14 @@ export const MODULES: NavModule[] = [
             desc: "Saldo awal, mutasi debit, mutasi kredit, dan saldo akhir seluruh account — dengan uji keseimbangan debit dan kredit.",
             permission: "REPORT_TRIAL_BALANCE_VIEW",
           },
+          {
+            key: "report_profit_loss",
+            slug: "report/profit-loss",
+            name: "Laba Rugi",
+            icon: "trend",
+            desc: "Laba rugi bertingkat satu Company per periode tahun buku, dengan pembanding opsional.",
+            permission: "REPORT_PROFIT_LOSS_VIEW",
+          },
         ],
       },
       {

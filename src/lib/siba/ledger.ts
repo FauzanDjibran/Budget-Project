@@ -829,3 +829,87 @@ export async function closingBalances(
       (a.partnerLabel ?? "").localeCompare(b.partnerLabel ?? "")
   );
 }
+
+// ------------------------------------------------------- financial statements
+
+/**
+ * Which `sys_doc_type.doc_table` a closing journal names as its source.
+ *
+ * A `CLS-` journal points at the Fiscal Year it closed through the weak
+ * `(doc_type, doc_id)` pair every automatic journal carries. That pair is how a
+ * closing journal is recognised here — never the `CLS-` prefix of its number,
+ * which is a naming convention rather than a stored fact.
+ */
+const CLOSING_SOURCE_TABLE = "acc_fiscal_year";
+
+/** One `(account, partner?)` pair's movement over a range, base currency. */
+export type StatementMovement = {
+  accountId: number;
+  partnerId: number | null;
+  /** Raw sums, unsigned — the statement decides which side is positive. */
+  debit: number;
+  credit: number;
+};
+
+/**
+ * What one Company's accounts on one statement did between two days.
+ *
+ * The Laba Rugi is a **range sum**, never a balance: it adds the posted lines
+ * dated inside the range and reads nothing from before it. That is what keeps
+ * two years apart while the older one is still unclosed — a Pendapatan
+ * account's *balance* would still carry the older year until the close empties
+ * it, but a line dated in the older year simply cannot fall inside a range that
+ * starts on the newer year's first day.
+ *
+ * `excludeClosingOf` leaves out the closing journal **of that one fiscal
+ * year**. A close is dated the year's last day and zeroes every Laba Rugi
+ * account, so a Desember or full-year Laba Rugi that counted it would report a
+ * result of nil for a year that made money — and would read differently before
+ * and after the close for no change in the business. Earlier years' closing
+ * journals are left in: they are dated before this year begins, and on the
+ * Neraca they are what put past results into equity.
+ *
+ * Grouped at the journal line's own grain, the pair, so a Partner breakdown is
+ * the same figures regrouped rather than a second read. Inclusive at both ends
+ * and Posted only, like every other reader here.
+ */
+export async function statementMovements(
+  companyId: number,
+  range: PeriodRange,
+  options: { section: AccountSection; excludeClosingOf?: number | null }
+): Promise<StatementMovement[]> {
+  const rows = await prisma.accJournalLine.groupBy({
+    by: ["account_id", "partner_id"],
+    where: {
+      account: {
+        account_subcategory: {
+          account_category: { account_type: { section: options.section } },
+        },
+      },
+      journal: {
+        ...POSTED,
+        company_id: companyId,
+        posting_date: {
+          gte: new Date(`${range.from}T00:00:00Z`),
+          lte: new Date(`${range.to}T00:00:00Z`),
+        },
+        ...(options.excludeClosingOf
+          ? {
+              NOT: {
+                source_doc_id: options.excludeClosingOf,
+                source_doc_type: { is: { doc_table: CLOSING_SOURCE_TABLE } },
+              },
+            }
+          : {}),
+      },
+    },
+    _sum: { debit_amount: true, kredit_amount: true },
+  });
+
+  return rows.map((r) => ({
+    accountId: r.account_id,
+    partnerId: r.partner_id,
+    debit: roundBase(r._sum.debit_amount?.toNumber() ?? 0),
+    credit: roundBase(r._sum.kredit_amount?.toNumber() ?? 0),
+  }));
+}

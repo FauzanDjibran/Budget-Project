@@ -88,7 +88,7 @@ or invariants that assume a particular row exists.
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
-| Report Views | Done — the screen type plus nine reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs` and the six subject books under Finance › Laporan, and General Ledger + Trial Balance under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
+| Report Views | Done — the screen type plus ten reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs` and the six subject books under Finance › Laporan, and General Ledger, Trial Balance and the multi-step **Laba Rugi** under Accounting. The Neraca is next. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
@@ -164,7 +164,7 @@ of its own.
 | Account numbering | `src/lib/siba/account-code.ts` | The dotted lineage code — parsing, segments, ordering; client-safe |
 | Company access | `src/lib/siba/company-access.ts` | Permissions -> the Companies a user may read; `server-only` |
 | Journal | `src/lib/siba/journal.ts` | The posting engine and the shared balance rule — writes the journal a posting produces, and the draft CRUD a manual journal is edited through. `JRN-` / `JUR-` numbering; `server-only` |
-| General Ledger | `src/lib/siba/ledger.ts` | General Ledger and Trial Balance over journal lines, `closingBalances` at `(account, partner?)` grain, and the shared `openingBasis` that stands on an Opening Balance snapshot rather than scanning a Company's whole history; `server-only` |
+| General Ledger | `src/lib/siba/ledger.ts` | General Ledger and Trial Balance over journal lines, `statementMovements` (a statement's range sum at `(account, partner?)` grain, less one year's closing journal), `closingBalances` at `(account, partner?)` grain, and the shared `openingBasis` that stands on an Opening Balance snapshot rather than scanning a Company's whole history; `server-only` |
 | Opening Balance | `src/lib/siba/opening-balance.ts` | The immutable per-Company, per-year snapshot: writing one, reading one back, and `openingBasisFor`, which is what the two ledger reports open from. `OPB-` numbering; `server-only` |
 | Fiscal Year closing | `src/lib/siba/closing.ts` | The seven blocking checks, the closing journal preview, and the one transaction that writes the `CLS-` journal, the `OPB-` snapshot and the closing record. Names no other module's table; `server-only` |
 | Permission catalogue | `src/lib/siba/permissions.ts` | Every capability in the system; client-safe |
@@ -202,6 +202,8 @@ of its own.
 | Transfer lifecycle | `src/lib/siba/transfer-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Transfer data | `src/lib/siba/transfer.ts` | Header and destination enforcement, `applyTransfer`, `TRF-` numbering; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
+| Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and `buildProfitLoss` — chart + movements to rows, pure; client-safe |
+| Financial statements | `src/lib/siba/statements.ts` | Resolves a year and period to a column, reads the chart and the Partners, asks `ledger.ts` for the figures; `server-only` |
 | Dashboard composition | `src/lib/siba/dashboard.ts` | The commitment funnel, the cash position and the setup gaps, asked of each owning module; names no table itself; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Budget writes | `src/app/actions/budget.ts` | Create, edit, and the lifecycle transitions |
@@ -415,11 +417,12 @@ src/
                          KursSelect (which rate layer a payment draws on),
                          FundingList, FundingDetail,
                          TransferList, TransferForm
-    report/              ReportView chrome, ReportSummary, its two filter bars
-                         (ReportParams for one subject, SubjectParams for
-                         several), and the report bodies: Cash Bank Ledger,
-                         Cash Bank Balance, Cash Bank Layer, General Ledger,
-                         Trial Balance, Subledger
+    report/              ReportView chrome, ReportSummary, its three filter
+                         bars (ReportParams for one subject, SubjectParams for
+                         several, FiscalPeriodParams for a statement), and the
+                         report bodies: Cash Bank Ledger, Cash Bank Balance,
+                         Cash Bank Layer, General Ledger, Trial Balance,
+                         Subledger, Laba Rugi
     dashboard/           Dashboard — the funnel, the cash table, the positions
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
@@ -451,7 +454,8 @@ src/
                          subledger, subledger-catalogue, subledger-data,
                          finance, transaction-workflow, funding,
                          transfer, transfer-catalogue, transfer-valuation,
-                         transfer-workflow, reports,
+                         transfer-workflow, reports, statements,
+                         statement-layout,
                          system-defaults, system-settings
   generated/prisma/      Prisma client output — gitignored, never edit
 tests/                   Security, Accounting, Budget, Finance, Funding, Transfer, the books,
@@ -1014,6 +1018,18 @@ Implemented and enforced:
    and the Trial Balance filter it out, `unbalancedJournals` ignores it, and it
    is allowed **not to balance** — a journal halfway through being typed does
    not, and the balance is a rule about posting rather than about saving.
+95. **A statement is read from a period's viewpoint, and the Laba Rugi is a
+   range sum.** Its filter is a fiscal year and a period in it — never two
+   arbitrary dates — with **Periode ini** (the period alone) or **s.d. Periode
+   ini** (the year's first day to the period's last), shown as a control and
+   restated on every column header. A comparison adds a second year and period
+   in the **same** mode. Each column sums the posted lines dated inside its own
+   range and reads nothing before it, which is what keeps a newer year apart
+   from an older one still unclosed. Each column leaves out **its own year's
+   closing journal** — recognised by its stored source (`acc_fiscal_year`, the
+   year's id), never by the `CLS-` prefix — so a Desember or full-year run
+   shows the result rather than the nil a close leaves, and reads the same
+   before and after the close. One Company per run, no joint report.
 94. **A Laba Rugi step is stored on the Account Category, never inferred.**
    `acc_account_category.pl_group` places each Laba Rugi category in one step
    of the multi-step statement — Pendapatan Usaha, Harga Pokok Penjualan, Beban
@@ -2037,6 +2053,40 @@ Specified in the concept doc, **not yet implemented** (see §13):
   category label.
 - **Status:** Frozen, current. Supersedes "The subject books are one mechanism
   with six books".
+
+### The Laba Rugi is multi-step, per fiscal period, with an optional comparison (FROZEN)
+- **Decision:** A Report View under Accounting (`accounting/report/profit-loss`,
+  `REPORT_PROFIT_LOSS_VIEW`) on the new `fiscal-period` parameter set:
+  Company → Tahun Buku → Periode → Periode ini / s.d. Periode ini → Bandingkan,
+  which reveals a second Tahun Buku and Periode. With a comparison the table
+  gains **Pembanding · Selisih · Selisih %**; the percentage is blank against a
+  zero base. The layout is Pendapatan Usaha − Harga Pokok Penjualan = **Laba
+  Kotor** − Beban Usaha = **Laba Usaha** + Pendapatan Lain-lain − Beban
+  Lain-lain = **Laba Bersih**, each step signed in its own direction so a
+  contra account prints negative where it sits. Under each step: Category →
+  Kelompok → Account → sub-account, each heading carrying its total; a kelompok
+  that is its category's only one is folded into it. An account whose postings
+  name Partners carries an **expand arrow per account**, and a breakdown
+  includes a Tanpa Partner row, so it always adds up to the account. A
+  Rincian control collapses the tree to Kategori or Kelompok. An account number
+  drills to its General Ledger for the first column's range.
+- **Reason:** The user's specification, settled across a design discussion: a
+  statement is always seen from a period's viewpoint; multi-step because the
+  template's categories already separate usaha from diluar usaha and HPP from
+  beban; a Partner breakdown on demand rather than always, because most
+  accounts have none.
+- **Impact:** `buildProfitLoss` is pure, so the layout rules are tested
+  without a database (`tests/profit-loss.test.ts`), including that Laba Bersih
+  equals single-step Pendapatan − Biaya exactly and that a breakdown sums to
+  its account. The engine half runs on journals dated 1980, which nothing real
+  touches. A report whose Company is still carrying an unclosed previous year
+  says so; a moved account whose category names no step is listed rather than
+  dropped from every subtotal.
+- **Do not change unless:** explicitly instructed. **Never let a column read
+  its own year's closing journal, never infer a step from a number, never mix
+  modes across the two columns, and do not add a free date range** — the
+  period is the range.
+- **Status:** Frozen, current.
 
 ### The ledger reports take several accounts, one Company at a time (FROZEN)
 - **Decision:** General Ledger and Trial Balance are Report Views in the

@@ -34,7 +34,13 @@ export type ReportParams =
    * a standing position rather than a period's movement. Rate layers are that:
    * what an account holds right now is what a payment can be made against.
    */
-  | "cash-bank";
+  | "cash-bank"
+  /**
+   * A fiscal year and a period in it, optionally a second pair to compare
+   * against — the financial statements. Always a period viewpoint: a Laba Rugi
+   * or a Neraca is read for a month of a year, never for two arbitrary dates.
+   */
+  | "fiscal-period";
 
 export type ReportDef = {
   key: string;
@@ -133,6 +139,21 @@ const FIXED_REPORTS = [
     permission: "REPORT_TRIAL_BALANCE_VIEW",
     params: "account-period",
     // Every account at once is the whole idea of a trial balance.
+    subjectRequired: false,
+  },
+  {
+    key: "profit_loss",
+    slug: "profit-loss",
+    module: "accounting",
+    name: "Laba Rugi",
+    desc:
+      "Pendapatan, harga pokok dan beban satu Company per periode tahun buku — " +
+      "bertingkat sampai Laba Bersih, dengan pembanding opsional.",
+    icon: "trend",
+    permission: "REPORT_PROFIT_LOSS_VIEW",
+    params: "fiscal-period",
+    // The statement covers the whole chart; the period is what is chosen, and
+    // the route defaults it to the latest one.
     subjectRequired: false,
   },
 ] as const satisfies readonly ReportDef[];
