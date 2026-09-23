@@ -122,7 +122,7 @@ Each way of running SIBA has its own fixed port, so two can run side by side:
 | Development server | `npm run dev` | 3000 |
 | Local run | `npm run dev:local` | 3010 |
 | Local run of a temporary branch worktree | `npm run dev:branch` | 3020 |
-| Vercel-style local run | — | 3030 |
+| Production build, run locally the way Vercel serves it (after `npm run build`) | `npm start` | 3030 |
 
 ## Useful commands
 
