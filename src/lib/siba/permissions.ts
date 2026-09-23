@@ -222,6 +222,22 @@ export const PERMISSIONS = [
   },
   { code: "CASH_BANK_TRANSFER_CANCEL", name: "Batalkan Cash Bank Transfer", module: "finance" },
 
+  // Debit / Credit Note: adjusting a Partner's standing position without cash.
+  // Its own capabilities, because writing a receivable down is an authority of
+  // its own — the one a cash clerk should not hold by default.
+  { code: "DNCN_VIEW", name: "Lihat Debit / Credit Note", module: "finance" },
+  { code: "DNCN_CREATE", name: "Tambah Debit / Credit Note", module: "finance" },
+  { code: "DNCN_EDIT", name: "Ubah Debit / Credit Note", module: "finance" },
+  {
+    code: "DNCN_POST",
+    name: "Post Debit / Credit Note",
+    module: "finance",
+    description:
+      "Menyesuaikan posisi Partner pada buku subjek dan mencatat Journal-nya. " +
+      "Tidak ada uang yang berpindah.",
+  },
+  { code: "DNCN_CANCEL", name: "Batalkan Debit / Credit Note", module: "finance" },
+
   // Funding is the induk's side of the same business event, and a separate
   // capability on purpose: raising a request is the anak's clerk, confirming it
   // releases the induk's money. Nobody should hold one because they hold the

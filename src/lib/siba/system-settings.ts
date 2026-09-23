@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { checkAccountIsLeaf } from "./records";
+import { checkAccountIsLeaf, controlAccountReasons } from "./records";
 import {
   EMPTY_SYSTEM_DEFAULTS,
   SYSTEM_DEFAULTS,
@@ -159,6 +159,19 @@ export async function checkSystemDefaultValue(
     }
     if (!account.is_postable) return "Account tersebut bukan account postable.";
     if (!account.is_active) return "Account tersebut non-aktif.";
+    // A note's counter account must not be one a book already reconciles
+    // against: a Debit Note posted against a Piutang account would move the
+    // General Ledger with no subject-book entry beside it — exactly the
+    // discrepancy the note exists to avoid.
+    if (def.group === "dncn") {
+      const reasons = await controlAccountReasons(id);
+      if (reasons.length) {
+        return (
+          `Account tersebut direkonsiliasi dengan ${reasons.join(", ")} dan tidak ` +
+          "dapat menjadi lawan posting Debit / Credit Note."
+        );
+      }
+    }
     // A parent account is a heading, not a destination — a bridge or FX
     // posting made to one would be money in the chart no leaf accounts for.
     return checkAccountIsLeaf(id);

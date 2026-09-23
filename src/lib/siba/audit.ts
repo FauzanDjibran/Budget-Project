@@ -7,6 +7,7 @@ import { recordTitle } from "./record-title";
 import { budgetsByIds } from "./budget";
 import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer";
+import { noteNumbersByIds } from "./dncn";
 import { fundingRequestNumbersByIds } from "./funding";
 import { fiscalClosingLabels } from "./fiscal";
 import { journalNumbersByIds } from "./journal";
@@ -82,6 +83,10 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
   fin_cash_bank_transfer: {
     label: "Cash Bank Transfer",
     resolve: transferNumbersByIds,
+  },
+  fin_dncn: {
+    label: "Debit / Credit Note",
+    resolve: noteNumbersByIds,
   },
   fin_funding_request: {
     label: "Funding Request",

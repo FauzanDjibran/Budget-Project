@@ -467,6 +467,18 @@ export async function cleanupFixtures(): Promise<void> {
   const fixturePartners = {
     partner: { partner_label: { startsWith: FIXTURE_PREFIX } },
   };
+  // A Debit / Credit Note names its Partner, so a note a suite left behind
+  // would block the Partner's removal below.
+  const notes = (
+    await prisma.finDncn.findMany({ where: fixturePartners, select: { id: true } })
+  ).map((n) => n.id);
+  if (notes.length) {
+    await prisma.finDncnLine.deleteMany({ where: { note_id: { in: notes } } });
+    await prisma.auditLog.deleteMany({
+      where: { entity_key: "fin_dncn", row_id: { in: notes } },
+    });
+    await prisma.finDncn.deleteMany({ where: { id: { in: notes } } });
+  }
   await prisma.subLedgerBalance.deleteMany({ where: fixturePartners });
   await prisma.subLedger.deleteMany({ where: fixturePartners });
 

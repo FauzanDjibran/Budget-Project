@@ -22,6 +22,7 @@
  */
 import type { IconName } from "@/components/icon";
 import { BUDGET_TRANSITIONS } from "./budget-workflow";
+import { DNCN_TRANSITIONS } from "./dncn-workflow";
 import { FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
 import type { ActionTone } from "./header-actions";
 import { JOURNAL_TRANSITIONS } from "./journal-workflow";
@@ -119,6 +120,13 @@ const TRANSFER_EVENTS: Record<string, AuditEventLabel> = {
   cancel: fromTransition(TRANSFER_TRANSITIONS.cancel, "Dibatalkan"),
 };
 
+/** Debit / Credit Note: Draft → Posted, or Draft → Cancelled. */
+const DNCN_EVENTS: Record<string, AuditEventLabel> = {
+  ...COMMON,
+  post: fromTransition(DNCN_TRANSITIONS.post, "Diposting"),
+  cancel: fromTransition(DNCN_TRANSITIONS.cancel, "Dibatalkan"),
+};
+
 /** Funding Request: Open → Closed, or withdrawn by the requester. */
 const FUNDING_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
@@ -193,6 +201,7 @@ const BY_ENTITY: Record<string, Record<string, AuditEventLabel>> = {
   bud_budget: BUDGET_EVENTS,
   fin_cash_bank_transaction: TRANSACTION_EVENTS,
   fin_cash_bank_transfer: TRANSFER_EVENTS,
+  fin_dncn: DNCN_EVENTS,
   fin_funding_request: FUNDING_EVENTS,
   acc_fiscal_year: FISCAL_EVENTS,
   acc_fiscal_closing: FISCAL_CLOSING_EVENTS,

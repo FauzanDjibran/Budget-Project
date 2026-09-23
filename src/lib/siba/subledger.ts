@@ -596,9 +596,10 @@ export async function subledgerPositions(
 export async function subledgerPosition(
   book: string,
   partnerId: number,
-  currencyId: number
+  currencyId: number,
+  db: Db = prisma
 ): Promise<{ foreign: number; base: number }> {
-  const row = await prisma.subLedgerBalance.findUnique({
+  const row = await db.subLedgerBalance.findUnique({
     where: {
       book_partner_id_currency_id: {
         book,
@@ -612,4 +613,66 @@ export async function subledgerPosition(
     foreign: row?.balance.toNumber() ?? 0,
     base: row?.base_balance.toNumber() ?? 0,
   };
+}
+
+/**
+ * Holds one subject's position for the rest of the caller's transaction.
+ *
+ * A writer that decides something *from* the position — a note refusing to
+ * take it below zero — reads it, checks it and then writes; two of them
+ * running at once would each read the same figure and both pass. Taking this
+ * first makes the second wait until the first has committed, so its read sees
+ * the position the first one left.
+ *
+ * An advisory lock rather than `SELECT … FOR UPDATE` on `sub_ledger_balance`,
+ * because the row does not exist until a subject's first entry: a row lock on
+ * a position still at nothing would lock nothing, and creating an empty row
+ * just to lock it would put a position with no entries into every reader.
+ * Keyed on the position's own identity, released when the transaction ends,
+ * and parameterised — no value is interpolated into the SQL text.
+ *
+ * Only a writer that takes it is serialised by it. A cash posting does not
+ * (yet), so it still reads the position the way it always has.
+ */
+export async function lockSubledgerPosition(
+  db: Prisma.TransactionClient,
+  book: string,
+  partnerId: number,
+  currencyId: number
+): Promise<void> {
+  const key = `sub_ledger_balance:${book}:${partnerId}:${currencyId}`;
+  await db.$queryRaw`SELECT 1 AS held FROM (SELECT pg_advisory_xact_lock(hashtext(${key}))) AS lock`;
+}
+
+/**
+ * Every standing position among these books and Partners, on both measures —
+ * `subledgerPosition` for a whole picker at once, in one query. Positions at
+ * nothing on both measures are left out.
+ */
+export async function subledgerPositionsFor(
+  books: string[],
+  partnerIds: number[]
+): Promise<
+  { book: string; partnerId: number; currencyId: number; foreign: number; base: number }[]
+> {
+  if (!books.length || !partnerIds.length) return [];
+  const rows = await prisma.subLedgerBalance.findMany({
+    where: { book: { in: books }, partner_id: { in: partnerIds } },
+    select: {
+      book: true,
+      partner_id: true,
+      currency_id: true,
+      balance: true,
+      base_balance: true,
+    },
+  });
+  return rows
+    .map((r) => ({
+      book: r.book,
+      partnerId: r.partner_id,
+      currencyId: r.currency_id,
+      foreign: r.balance.toNumber(),
+      base: r.base_balance.toNumber(),
+    }))
+    .filter((r) => r.foreign !== 0 || r.base !== 0);
 }

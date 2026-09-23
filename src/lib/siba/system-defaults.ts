@@ -38,7 +38,11 @@ export type SystemDefaultKey =
   | "induk_unclosed_pl_account"
   | "anak_unclosed_pl_account"
   | "induk_current_pl_account"
-  | "anak_current_pl_account";
+  | "anak_current_pl_account"
+  | "induk_debit_note_account"
+  | "induk_credit_note_account"
+  | "anak_debit_note_account"
+  | "anak_credit_note_account";
 
 /** Which master a `ref` setting points at — a registry entity key. */
 export type SystemDefaultRef = "ref_currency" | "acc_account";
@@ -48,7 +52,8 @@ export type SystemDefaultGroupKey =
   | "bridge_induk"
   | "bridge_anak"
   | "fx"
-  | "equity_pl";
+  | "equity_pl"
+  | "dncn";
 
 export type SystemDefaultGroup = {
   key: SystemDefaultGroupKey;
@@ -105,6 +110,15 @@ export const SYSTEM_DEFAULT_GROUPS = [
       "posting saat Fiscal Year ditutup; Tahun Lalu Belum Ditutup dan Tahun " +
       "Berjalan adalah baris Neraca yang nilainya dihitung, tidak pernah diposting.",
     icon: "calc",
+  },
+  {
+    key: "dncn",
+    name: "Debit / Credit Note",
+    desc:
+      "Lawan posting Debit Note dan Credit Note tiap Company. Debit Note selalu " +
+      "mengkredit account-nya, Credit Note selalu mendebit account-nya, apa pun " +
+      "buku subjek yang disesuaikan.",
+    icon: "pen",
   },
 ] as const satisfies readonly SystemDefaultGroup[];
 
@@ -285,6 +299,58 @@ export const SYSTEM_DEFAULTS = [
     company: "anak",
     help: "baris penyajian Neraca, tidak pernah diposting",
   },
+
+  // ------------------------------------------------------------ dn / cn
+  //
+  // Each note type has its own counter account, per Company. A Debit Note
+  // debits the Partner's account, so its own account is always **credited** —
+  // a gain-like entry whichever book it adjusts; a Credit Note is the mirror
+  // and always **debits** its account. That is what lets one account per side
+  // serve every book that allows a note (`allows_dncn`).
+  //
+  // Like every account-valued setting, both become control accounts, so
+  // nothing but a note's posting writes into them. They may not be an account
+  // a book already reconciles against — see `checkSystemDefaultValue`.
+  {
+    key: "induk_debit_note_account",
+    name: "Account Debit Note — Induk",
+    icon: "pen",
+    type: "ref",
+    ref: "acc_account",
+    group: "dncn",
+    company: "induk",
+    help: "dikredit setiap Debit Note diposting",
+  },
+  {
+    key: "induk_credit_note_account",
+    name: "Account Credit Note — Induk",
+    icon: "pen",
+    type: "ref",
+    ref: "acc_account",
+    group: "dncn",
+    company: "induk",
+    help: "didebit setiap Credit Note diposting",
+  },
+  {
+    key: "anak_debit_note_account",
+    name: "Account Debit Note — Anak",
+    icon: "pen",
+    type: "ref",
+    ref: "acc_account",
+    group: "dncn",
+    company: "anak",
+    help: "dikredit setiap Debit Note diposting",
+  },
+  {
+    key: "anak_credit_note_account",
+    name: "Account Credit Note — Anak",
+    icon: "pen",
+    type: "ref",
+    ref: "acc_account",
+    group: "dncn",
+    company: "anak",
+    help: "didebit setiap Credit Note diposting",
+  },
 ] as const satisfies readonly SystemDefaultDef[];
 
 /** What each key is set to; a key that has never been set reads as null. */
@@ -304,6 +370,10 @@ export const EMPTY_SYSTEM_DEFAULTS: SystemDefaultValues = {
   anak_unclosed_pl_account: null,
   induk_current_pl_account: null,
   anak_current_pl_account: null,
+  induk_debit_note_account: null,
+  induk_credit_note_account: null,
+  anak_debit_note_account: null,
+  anak_credit_note_account: null,
 };
 
 export function isSystemDefaultKey(key: string): key is SystemDefaultKey {

@@ -149,6 +149,9 @@ const DOC_TYPES: [label: string, table: string][] = [
   // the `CLS-` entry names the year it closed as its source, which is what
   // lets a reader get from a journal line back to the close that wrote it.
   ["Fiscal Year", "acc_fiscal_year"],
+  // A Debit / Credit Note writes a subject-book entry and a journal, and both
+  // name the note as their source.
+  ["Debit / Credit Note", "fin_dncn"],
 ];
 
 /**
@@ -191,15 +194,23 @@ const BUDGET_CATEGORIES: [
    * so only a database with none showed the gap.
    */
   raises: "In" | "Out" | null,
+  /**
+   * Whether a Debit / Credit Note may adjust this category's book. On for the
+   * three books one Profit & Loss counter account fixes correctly — a deposit
+   * held, a payable, a receivable — and off for Prive, Investasi and Hasil
+   * Investasi, whose counter entry is not an income or an expense. Written on
+   * create only: afterwards the flag is the category's own, set on its form.
+   */
+  allowsDncn: boolean,
 ][] = [
-  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder.", ["In", "Out"], ["Cabang", "Stakeholder"], "In"],
-  ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "In"],
-  ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "Out"],
-  ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder.", ["In", "Out"], ["Stakeholder"], "Out"],
-  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null],
-  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null],
-  ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran.", ["Out"], ["Cabang"], "Out"],
-  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan.", ["In"], ["Cabang"], "In"],
+  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder.", ["In", "Out"], ["Cabang", "Stakeholder"], "In", true],
+  ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "In", true],
+  ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "Out", true],
+  ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder.", ["In", "Out"], ["Stakeholder"], "Out", false],
+  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null, false],
+  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null, false],
+  ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran.", ["Out"], ["Cabang"], "Out", false],
+  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan.", ["In"], ["Cabang"], "In", false],
 ];
 
 const PARTNER_CATEGORIES: [label: string, name: string, note: string][] = [
@@ -669,7 +680,7 @@ async function ensureReferenceData(
     tally("document types", made);
   }
 
-  for (const [i, [label, note, directions, _partners, raises]] of BUDGET_CATEGORIES.entries()) {
+  for (const [i, [label, note, directions, _partners, raises, allowsDncn]] of BUDGET_CATEGORIES.entries()) {
     const made = await create(
       () => prisma.sysBudgetCategory.findFirst({ where: { category_label: label } }),
       () =>
@@ -682,6 +693,7 @@ async function ensureReferenceData(
             allows_out: directions.includes("Out"),
             require_partner: _partners.length > 0,
             raises,
+            allows_dncn: allowsDncn,
             note,
             ...audit,
           },

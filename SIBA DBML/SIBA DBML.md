@@ -235,6 +235,15 @@ table sys_budget_category {
   book_icon                   varchar(255)
   book_closing_label          varchar(255)
 
+  // Whether a Debit / Credit Note may adjust this category's subject book.
+  // Stored rather than inferred: a note's counter side is one Profit & Loss
+  // account per note type, which fixes a deposit, a payable or a receivable
+  // correctly and would book income or expense against owner drawings or an
+  // investment's own return. Seeded on for Titipan, Hutang and Piutang.
+  // CHECK sys_budget_category_dncn_needs_book: only a category that keeps a
+  // book (require_partner and raises set) may carry it.
+  allows_dncn                 boolean [not null, default: false]
+
   note                        text
 
   status                      enum('Active', 'Inactive') [not null, default: 'Active']
@@ -1184,6 +1193,104 @@ table fin_funding_request {
   indexes {
     status
     transaction_id
+  }
+}
+
+//----------------------------------
+// Debit / Credit Note Table
+//----------------------------------
+
+// The adjustment document for a Partner's standing position in a subject book.
+// No cash moves: Post writes one Adjustment entry in sub_ledger and one
+// balanced journal, in one transaction, and touches no Cash Bank Book, no rate
+// layer and no Budget.
+//
+// It adjusts a position (book x Partner x currency), not a document — SIBA
+// keeps no invoice to reference. A Debit Note debits the Partner's account and
+// a Credit Note credits it; whether that raises or lowers the position is the
+// book's own `raises`, exactly as for a cash posting. The counter side is the
+// Company's Debit Note or Credit Note System Default.
+//
+// Nothing below zero: a note may not lower a position past nil, nor touch one
+// that is already negative. Post takes a transaction-scoped advisory lock on
+// the position before re-checking it.
+
+table fin_dncn {
+  id                          int [pk, increment, not null]
+
+  // DN-0001 or CN-0001: two series in one table.
+  note_no                     varchar(255) [not null, unique]
+
+  note_type                   enum('Debit', 'Credit') [not null]
+
+  // Null until posted — a Draft has adjusted nothing.
+  document_date               date
+  posting_date                timestamptz
+
+  // The Partner's Company, derived rather than picked.
+  company_id                  int [not null, ref : > sys_company.id]
+
+  // The book: a Budget Category carrying allows_dncn.
+  budget_category_id          int [not null, ref : > sys_budget_category.id]
+
+  partner_id                  int [not null, ref : > m_partner.id]
+
+  // The position's currency.
+  currency_id                 int [not null, ref : > ref_currency.id]
+
+  // Only ever an input: entered where a note raises a foreign position, 1 for
+  // base currency, null where a note lowers a foreign position — that releases
+  // at the position's carrying rate, which is never stored on a document.
+  exchange_rate               decimal(18,6)
+
+  note_amount                 decimal(18,2) [not null]
+  // Written at Post.
+  note_base_amount            decimal(18,2) [not null, default: 0]
+
+  // The counterparty's own document number, where there is one.
+  reference                   varchar(255)
+
+  note                        text
+
+  status                      enum('Draft', 'Pending', 'Posted', 'Cancelled') [not null, default: 'Draft']
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    company_id
+    partner_id
+    status
+  }
+}
+
+// One reason a note adjusts by. The journal writes one counter line per note
+// line, so the General Ledger reads back to the reason.
+table fin_dncn_line {
+  id                          int [pk, increment, not null]
+
+  note_id                     int [not null, ref : > fin_dncn.id]
+
+  sequence_no                 int [not null]
+
+  description                 varchar(255) [not null]
+
+  amount                      decimal(18,2) [not null]
+  // This line's share of note_base_amount, written at Post; the shares add
+  // back to the total exactly.
+  base_amount                 decimal(18,2) [not null, default: 0]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (note_id, sequence_no) [unique]
   }
 }
 

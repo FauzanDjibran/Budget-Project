@@ -328,6 +328,7 @@ model SysCompany {
   budgets      BudBudget[]
   transactions FinCashBankTransaction[]
   transfers    FinCashBankTransfer[]
+  dncn_notes   FinDncn[]
 
   journals AccJournal[]
 
@@ -428,6 +429,14 @@ model SysBudgetCategory {
   book_icon          String?
   book_closing_label String?
 
+  /// Whether this category's subject book may be adjusted by a Debit / Credit
+  /// Note. Stored rather than inferred: a note's counter account is one Profit
+  /// & Loss account per side, which fixes a Titipan, a Hutang or a Piutang
+  /// correctly and would book income or expense against owner drawings or an
+  /// investment's own return. Only a category that keeps a book may carry it —
+  /// `sys_budget_category_dncn_needs_book` is the backstop.
+  allows_dncn Boolean @default(false)
+
   note   String?
   status ActiveStatus @default(Active)
 
@@ -440,6 +449,7 @@ model SysBudgetCategory {
   mappings           AccBudgetCategoryAccount[]
   partner_categories SysBudgetPartnerCategoryMapping[]
   purposes           SysPurpose[]
+  dncn_notes         FinDncn[]
 
   @@map("sys_budget_category")
 }
@@ -565,6 +575,7 @@ model RefCurrency {
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
   funding_requests   FinFundingRequest[]
+  dncn_notes         FinDncn[]
 
   @@map("ref_currency")
 }
@@ -594,6 +605,7 @@ model MPartner {
   journal_lines      AccJournalLine[]
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
+  dncn_notes         FinDncn[]
 
   opening_balance_lines AccOpeningBalanceLine[]
 
@@ -1588,6 +1600,116 @@ model FinCashBankTransferLine {
   @@unique([transfer_id, sequence_no])
   @@index([to_cash_bank_id])
   @@map("fin_cash_bank_transfer_line")
+}
+
+// ---------------------------------------------------------------- dn / cn
+
+/// Which side of the Partner's account a note touches, in **our** books.
+///
+/// That is the whole definition, and it is what lets one document serve every
+/// subject book: a Debit Note debits the Partner's account and so moves the
+/// position the way money leaving would; a Credit Note credits it and moves it
+/// the way money arriving would. Whether that raises or lowers the position is
+/// the book's own `raises`, exactly as for a cash posting.
+enum DncnType {
+  Debit
+  Credit
+}
+
+/// A Debit / Credit Note: the adjustment document for a Partner's position in
+/// a subject book. No cash moves, so it writes no Cash Bank Book entry and
+/// realizes no Budget — it writes one `Adjustment` entry in the subject book
+/// and one balanced journal, in one transaction, at Post.
+///
+/// It adjusts a **position** (book x Partner x currency), not a document: SIBA
+/// keeps no invoice for a note to reference, and what is being fixed is the
+/// value that stands. `reference` carries the counterparty's own document
+/// number where there is one.
+///
+/// The counter account is the Company's Debit Note or Credit Note System
+/// Default: a Debit Note always credits its account and a Credit Note always
+/// debits its own, whichever book the Partner line sits in.
+model FinDncn {
+  id        Int      @id @default(autoincrement())
+  /// `DN-0001` or `CN-0001` — two series in one table, so which kind of note a
+  /// number names is readable without opening it.
+  note_no   String   @unique
+  note_type DncnType
+
+  /// Null until posted: a Draft has adjusted nothing and so has no date.
+  document_date DateTime? @db.Date
+  posting_date  DateTime? @db.Timestamptz(6)
+
+  /// The Partner's Company, derived rather than picked — a Partner belongs to
+  /// one Company, and so does the book position it holds.
+  company_id         Int
+  /// The book. A subject book is a Budget Category (CLAUDE.md §12), and only
+  /// one carrying `allows_dncn` may be adjusted.
+  budget_category_id Int
+  partner_id         Int
+  /// The position's currency. A Partner owing in two currencies holds two
+  /// positions, and a note adjusts exactly one of them.
+  currency_id        Int
+
+  /// Currency to base, and only ever an **input**. Entered where a note
+  /// raises a foreign position — that is origination, and the rate is what
+  /// creates the base value; `1` for base currency. Null where a note lowers a
+  /// foreign position: that releases at the position's own carrying rate, which
+  /// is an output and is never stored on a document (CLAUDE.md §12). What it
+  /// released is `note_base_amount`.
+  exchange_rate Decimal? @db.Decimal(18, 6)
+
+  /// Sum of the lines, in the position's currency.
+  note_amount      Decimal @db.Decimal(18, 2)
+  /// What the adjustment was worth in base. Written at Post, never before.
+  note_base_amount Decimal @default(0) @db.Decimal(18, 2)
+
+  /// The counterparty's own document number, where there is one.
+  reference String?
+  note      String?
+  status    TransactionStatus @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company         SysCompany        @relation(fields: [company_id], references: [id])
+  budget_category SysBudgetCategory @relation(fields: [budget_category_id], references: [id])
+  partner         MPartner          @relation(fields: [partner_id], references: [id])
+  currency        RefCurrency       @relation(fields: [currency_id], references: [id])
+
+  lines FinDncnLine[]
+
+  @@index([company_id])
+  @@index([partner_id])
+  @@index([status])
+  @@map("fin_dncn")
+}
+
+/// One reason a note adjusts by, and how much. The journal writes one counter
+/// line per note line, so the General Ledger reads back to the reason.
+model FinDncnLine {
+  id          Int    @id @default(autoincrement())
+  note_id     Int
+  sequence_no Int
+  description String
+
+  /// In the position's currency.
+  amount      Decimal @db.Decimal(18, 2)
+  /// This line's share of the note's base value, written at Post. The shares
+  /// add back to `note_base_amount` exactly — the last line takes the residue.
+  base_amount Decimal @default(0) @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  dncn FinDncn @relation(fields: [note_id], references: [id], onDelete: Cascade)
+
+  @@unique([note_id, sequence_no])
+  @@map("fin_dncn_line")
 }
 
 // ---------------------------------------------------------------- audit
