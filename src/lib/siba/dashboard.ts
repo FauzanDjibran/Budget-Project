@@ -15,7 +15,12 @@ import { accountPositions, type AccountPosition } from "./ledger";
 import { companyStructure } from "./records";
 import { subledgerPositions, type SubledgerPosition } from "./subledger";
 import { loadSubledgers } from "./subledger-data";
-import { intercompanyBridge, missingClosingAccounts } from "./system-settings";
+import { unclosedPriorYear } from "./fiscal";
+import {
+  intercompanyBridge,
+  missingClosingAccounts,
+  missingNeracaAccounts,
+} from "./system-settings";
 
 /**
  * The dashboard's data, composed from what each module says about its own
@@ -425,6 +430,27 @@ async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[
           closingMissing.join(", ") +
           ". Fiscal Year tidak dapat ditutup sebelum tiap Company menunjuk " +
           "account tempat hasil tahun berjalan dipindahkan.",
+      });
+    }
+
+    // The Neraca refuses to run without the accounts its computed lines sit
+    // on. Belum Ditutup is asked for only from a Company still carrying an
+    // unclosed previous year, because only that Company's Neraca prints it.
+    const induk = companies.find((c) => c.is_parent);
+    const anak = companies.find((c) => !c.is_parent);
+    const neracaMissing = await missingNeracaAccounts({
+      induk: induk ? (await unclosedPriorYear(induk.id)) !== null : false,
+      anak: anak ? (await unclosedPriorYear(anak.id)) !== null : false,
+    });
+    if (neracaMissing.length) {
+      items.push({
+        href: "/settings/system-default",
+        title: "Account Laba/Rugi pada Neraca belum diatur",
+        detail:
+          "Belum diatur: " +
+          neracaMissing.join(", ") +
+          ". Neraca tidak dapat ditampilkan sebelum account tempat laba/rugi " +
+          "yang dihitung diletakkan ditunjuk.",
       });
     }
   }

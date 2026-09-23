@@ -2,6 +2,7 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { closingPlan, executeClosing } from "../src/lib/siba/closing";
+import { unclosedPriorYear } from "../src/lib/siba/fiscal";
 import { closingBalances, generalLedgerReport } from "../src/lib/siba/ledger";
 import { getOpeningBalance } from "../src/lib/siba/opening-balance";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
@@ -563,6 +564,27 @@ describe("closing writes the journal, the snapshot and the record", () => {
   let journalNo = "";
   let openingNo = "";
 
+  /**
+   * `unclosedPriorYear` answers only while a newer year also stands Open, so
+   * 1991 is opened for the assertion and put back to Draft after it. 1990 is
+   * the oldest year in any database this runs against, so it is the one found.
+   */
+  const withNextYearOpen = async (fn: () => Promise<void>) => {
+    await prisma.accFiscalYear.update({ where: { id: nextYear }, data: { status: "Open" } });
+    try {
+      await fn();
+    } finally {
+      await prisma.accFiscalYear.update({ where: { id: nextYear }, data: { status: "Draft" } });
+    }
+  };
+
+  test("before any close, both Companies carry the older year into the newer", async () => {
+    await withNextYearOpen(async () => {
+      assert.equal((await unclosedPriorYear(induk))?.id, fiscalYear);
+      assert.equal((await unclosedPriorYear(anak))?.id, fiscalYear);
+    });
+  });
+
   test("the induk closes, and the year does not", async () => {
     const result = await executeClosing(induk, fiscalYear, actor);
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -584,6 +606,15 @@ describe("closing writes the journal, the snapshot and the record", () => {
       select: { status: true },
     });
     assert.equal(year.status, "Open");
+  });
+
+  test("the Company that closed stops carrying the year, the other still does", async () => {
+    // Per Company, like the close itself: the induk's Neraca of 1991 no longer
+    // has an unclosed year to state, while the anak's still does.
+    await withNextYearOpen(async () => {
+      assert.equal(await unclosedPriorYear(induk), null);
+      assert.equal((await unclosedPriorYear(anak))?.id, fiscalYear);
+    });
   });
 
   test("the closing journal is dated the year's last day", async () => {

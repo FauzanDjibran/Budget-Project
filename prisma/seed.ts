@@ -315,6 +315,32 @@ const ACCOUNT_TYPE_SECTIONS: Record<string, "BalanceSheet" | "ProfitLoss"> = {
   "5": "ProfitLoss", //  BIAYA
 };
 
+/**
+ * Which step of the multi-step Laba Rugi each Laba Rugi category sits in.
+ *
+ * Keyed on the category's code, like `ACCOUNT_TYPE_SECTIONS`, and declared for
+ * the same reason: `5.1` being Harga Pokok Penjualan is how Sheet1 is laid out,
+ * not something the application may infer from a number. Every category under
+ * a ProfitLoss type appears here and no Neraca category does — which
+ * `tests/accounting.test.ts` asserts against the database. Re-synced on every
+ * run, because nothing in the application can write it.
+ *
+ * `5.3.2 BIAYA PAJAK` sits inside Biaya Umum dan Administrasi, so it is an
+ * operating expense: the template has no income-tax category, and therefore
+ * the statement has no "Laba Sebelum Pajak" step.
+ */
+const ACCOUNT_CATEGORY_PL_GROUPS: Record<
+  string,
+  "OperatingRevenue" | "CostOfSales" | "OperatingExpense" | "OtherIncome" | "OtherExpense"
+> = {
+  "4.1": "OperatingRevenue", // PENDAPATAN DARI USAHA
+  "4.9": "OtherIncome", //      PENDAPATAN DILUAR USAHA
+  "5.1": "CostOfSales", //      HARGA POKOK PENJUALAN
+  "5.2": "OperatingExpense", // BIAYA PENJUALAN
+  "5.3": "OperatingExpense", // BIAYA UMUM DAN ADMINISTRASI
+  "5.9": "OtherExpense", //     BIAYA DILUAR USAHA
+};
+
 /** The skeleton rows at one depth, in the order the sheet lists them. */
 const skeletonLevel = (depth: number) =>
   COA_SKELETON.filter(([c]) => c.split(".").length === depth);
@@ -670,6 +696,7 @@ async function ensureReferenceData(
   // A category hangs off the type its own code names: `1.1` belongs to `1`.
   // Nothing has to be stated twice, and the skeleton cannot contradict itself.
   for (const [i, [label, name]] of skeletonLevel(2).entries()) {
+    const plGroup = ACCOUNT_CATEGORY_PL_GROUPS[label] ?? null;
     const made = await create(
       () => prisma.accAccountCategory.findFirst({ where: { category_label: label } }),
       () =>
@@ -679,11 +706,27 @@ async function ensureReferenceData(
             category_code: code("acat", i + 1),
             category_label: label,
             category_name: name,
+            pl_group: plGroup,
             ...audit,
           },
         })
     );
     tally("account categories", made);
+
+    // Same reasoning as the type's section: nothing in the application writes
+    // this, so a disagreeing row was changed outside it, and the Laba Rugi
+    // reads it to decide which subtotal an account falls under.
+    if (!made) {
+      const fixed = await prisma.accAccountCategory.updateMany({
+        // `<> X` never matches a null in SQL, so a missing step is asked for
+        // separately from a wrong one.
+        where: plGroup
+          ? { category_label: label, OR: [{ pl_group: null }, { pl_group: { not: plGroup } }] }
+          : { category_label: label, pl_group: { not: null } },
+        data: { pl_group: plGroup },
+      });
+      if (fixed.count) tally("account category Laba Rugi steps corrected", fixed.count);
+    }
   }
 
   const categoryId = new Map(

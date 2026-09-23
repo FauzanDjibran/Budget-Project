@@ -419,6 +419,39 @@ describe("an account code states its own lineage", () => {
     );
   });
 
+  test("every Laba Rugi category names its step, and no Neraca category does", async () => {
+    const categories = await prisma.accAccountCategory.findMany({
+      select: {
+        category_label: true,
+        pl_group: true,
+        account_type: { select: { section: true } },
+      },
+    });
+    assert.ok(categories.length, "the skeleton seeds its categories");
+
+    // Across two tables, so no CHECK constraint can say it: the step exists
+    // exactly where the type's section is Laba Rugi. A category that
+    // lacked one would drop its accounts out of every subtotal of the
+    // statement, and nothing else would fail.
+    for (const c of categories) {
+      if (c.account_type.section === "ProfitLoss") {
+        assert.ok(c.pl_group, `${c.category_label} is Laba Rugi and names no step`);
+      } else {
+        assert.equal(c.pl_group, null, `${c.category_label} is Neraca and names a step`);
+      }
+    }
+
+    // And the seeded six sit where Template COA Sheet1 lays them out.
+    const step = (label: string) =>
+      categories.find((c) => c.category_label === label)?.pl_group;
+    assert.equal(step("4.1"), "OperatingRevenue");
+    assert.equal(step("5.1"), "CostOfSales");
+    assert.equal(step("5.2"), "OperatingExpense");
+    assert.equal(step("5.3"), "OperatingExpense");
+    assert.equal(step("4.9"), "OtherIncome");
+    assert.equal(step("5.9"), "OtherExpense");
+  });
+
   test("every account resolves to exactly one section through its own lineage", async () => {
     const company = await parentCompanyId();
     // One account either side of the boundary, so the assertion is never

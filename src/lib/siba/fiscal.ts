@@ -532,6 +532,31 @@ export async function fiscalClosingLabels(
   );
 }
 
+/**
+ * The year this Company is still carrying behind the newest Open one, if any.
+ *
+ * At most two years stand Open, and only the older is closable. While this
+ * Company has not closed that older year, the newer one runs as its
+ * extension: the older year's result has not been moved into Laba/Rugi Tahun
+ * Sebelumnya, so a Neraca of the newer year has to state it on a line of its
+ * own. That is the only thing this answers — a Company that has already closed
+ * the older year, or a calendar with one Open year, carries nothing.
+ *
+ * Asked of the calendar rather than of the journal: whether a year is still
+ * owed a close is a fact recorded in `acc_fiscal_closing`, not inferred from
+ * whether anything happened to be posted in it.
+ */
+export async function unclosedPriorYear(
+  companyId: number,
+  db: Db = prisma
+): Promise<OpenYearSummary | null> {
+  const open = await openFiscalYears(db);
+  if (open.length < 2) return null;
+  const older = open[0];
+  const state = await fiscalClosingState(older.id, companyId, db);
+  return state.status === "Closed" ? null : older;
+}
+
 /** The years one Company has already closed, for a screen that must still name them. */
 export async function closedFiscalYearsFor(
   companyId: number

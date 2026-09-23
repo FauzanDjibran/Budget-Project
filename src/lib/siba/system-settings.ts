@@ -186,9 +186,9 @@ const ACCUMULATED_PL_KEYS = [
  * that has since been deactivated, made non-postable or given a sub-account
  * reads as unset rather than as ready.
  *
- * The current-year accounts are deliberately **not** checked here. Nothing
- * posts to one, so an unset one blocks nothing — it is a report that is
- * missing a line, not a process that cannot run.
+ * The Neraca's two computed-line accounts are deliberately **not** checked
+ * here. Nothing posts to either, so closing does not need them — the Neraca
+ * does, and `missingNeracaAccounts` asks on its behalf.
  */
 export async function missingClosingAccounts(): Promise<string[]> {
   const values = await systemDefaults();
@@ -201,6 +201,40 @@ export async function missingClosingAccounts(): Promise<string[]> {
     }
   }
 
+  return missing;
+}
+
+/**
+ * The Neraca's two computed-line settings that are not usable, by name.
+ *
+ * Laba/Rugi Tahun Berjalan and Laba/Rugi Tahun Lalu Belum Ditutup are never
+ * posted to; the Neraca computes each figure and **places** it on the account
+ * the setting names, so the user decides the line's name and position in the
+ * chart. Without the account the report has nowhere to put the figure and is
+ * not produced — refused by name, like every other account a process needs.
+ *
+ * Tahun Berjalan is needed by every Neraca. Belum Ditutup is needed only by a
+ * Company still carrying an unclosed previous year, so it is asked for only
+ * where the caller says so — the same reasoning that resolves the FX account
+ * only when a difference arises: a setting blocks only where it is used.
+ *
+ * Resolved against the master exactly as `missingClosingAccounts` is.
+ */
+export async function missingNeracaAccounts(
+  carryingUnclosedYear: { induk: boolean; anak: boolean }
+): Promise<string[]> {
+  const values = await systemDefaults();
+  const keys: SystemDefaultKey[] = ["induk_current_pl_account", "anak_current_pl_account"];
+  if (carryingUnclosedYear.induk) keys.push("induk_unclosed_pl_account");
+  if (carryingUnclosedYear.anak) keys.push("anak_unclosed_pl_account");
+
+  const missing: string[] = [];
+  for (const key of keys) {
+    const id = refValueOf(values, key);
+    if (!id || (await checkSystemDefaultValue(key, id))) {
+      missing.push(systemDefaultDef(key).name);
+    }
+  }
   return missing;
 }
 

@@ -375,8 +375,9 @@ describe("a manual journal may not touch a control account", () => {
     // table behind it: a System Default names where a posting engine writes,
     // and what an engine owns a person does not hand-write into. Laba/Rugi
     // Tahun Sebelumnya is where a Fiscal Year's result lands at closing;
-    // Laba/Rugi Tahun Berjalan is a computed presentation line that nothing
-    // posts to at all, which is a stronger reason still.
+    // Laba/Rugi Tahun Berjalan and Tahun Lalu Belum Ditutup are where the
+    // Neraca places figures it computes, and nothing posts to either at all —
+    // a hand-written line would sit beside the computed figure unexplained.
     const accumulated = await makeAccount({
       companyId: company,
       subcategoryLabel: "3.3.1",
@@ -387,27 +388,35 @@ describe("a manual journal may not touch a control account", () => {
       subcategoryLabel: "3.4.1",
       normalBalance: "Kredit",
     });
+    const unclosed = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "3.4.1",
+      normalBalance: "Kredit",
+    });
 
     const before = await systemDefaults();
     await writeSystemDefaults(
       {
         induk_accumulated_pl_account: String(accumulated),
+        induk_unclosed_pl_account: String(unclosed),
         induk_current_pl_account: String(current),
       },
       actor
     );
     await syncControlAccounts(
-      [accumulated, current],
+      [accumulated, current, unclosed],
       await systemDefaultAccountIds(),
       actor
     );
 
     assert.equal(await isControl(accumulated), true);
     assert.equal(await isControl(current), true);
+    assert.equal(await isControl(unclosed), true);
 
     for (const [account, name] of [
       [accumulated, "Tahun Sebelumnya"],
       [current, "Tahun Berjalan"],
+      [unclosed, "Belum Ditutup"],
     ] as const) {
       const refused = await checkManualJournal(headerFor(), [
         line(account, 0, 75_000),
@@ -426,12 +435,13 @@ describe("a manual journal may not touch a control account", () => {
     await writeSystemDefaults(
       {
         induk_accumulated_pl_account: before.induk_accumulated_pl_account,
+        induk_unclosed_pl_account: before.induk_unclosed_pl_account,
         induk_current_pl_account: before.induk_current_pl_account,
       },
       actor
     );
     await syncControlAccounts(
-      [accumulated, current],
+      [accumulated, current, unclosed],
       await systemDefaultAccountIds(),
       actor
     );

@@ -35,6 +35,8 @@ export type SystemDefaultKey =
   | "anak_fx_account"
   | "induk_accumulated_pl_account"
   | "anak_accumulated_pl_account"
+  | "induk_unclosed_pl_account"
+  | "anak_unclosed_pl_account"
   | "induk_current_pl_account"
   | "anak_current_pl_account";
 
@@ -99,9 +101,9 @@ export const SYSTEM_DEFAULT_GROUPS = [
     key: "equity_pl",
     name: "Laba/Rugi pada Ekuitas",
     desc:
-      "Dua account ekuitas milik tiap Company. Tahun Sebelumnya adalah tujuan " +
-      "posting saat Fiscal Year ditutup; Tahun Berjalan adalah baris penyajian " +
-      "Neraca selama tahun berjalan dan tidak pernah diposting.",
+      "Tiga account ekuitas milik tiap Company. Tahun Sebelumnya adalah tujuan " +
+      "posting saat Fiscal Year ditutup; Tahun Lalu Belum Ditutup dan Tahun " +
+      "Berjalan adalah baris Neraca yang nilainya dihitung, tidak pernah diposting.",
     icon: "calc",
   },
 ] as const satisfies readonly SystemDefaultGroup[];
@@ -210,19 +212,19 @@ export const SYSTEM_DEFAULTS = [
 
   // ---------------------------------------------------------- equity / P&L
   //
-  // Two accounts per Company, and they are opposites in the one way that
-  // matters. The **accumulated** account is a posting target: it is where a
-  // Fiscal Year's result lands when the year is closed. The **current-year**
-  // account is never posted to at all — Laba/Rugi Tahun Berjalan is a
-  // presentation line, computed as Pendapatan minus Biaya for the year still
-  // open, and a posted balance on it would leave the line named "tahun
-  // berjalan" carrying the previous year's result for twelve months.
+  // Three accounts per Company, listed Company by Company so each one's three
+  // share a row of the card, in the order the Neraca prints them.
   //
-  // Both are still declared here, and both become control accounts through the
-  // ordinary mechanism every account-valued setting uses, so neither can be
-  // written into by hand. The current-year one is read by nothing until a
-  // Neraca report exists; it is named now because the account is real in the
-  // chart and its job is already decided.
+  // The **accumulated** account is a posting target: it is where a Fiscal
+  // Year's result lands when the year is closed. The other two are never posted
+  // to at all. They are where the Neraca **places** two computed figures — the
+  // result of a previous year that has not been closed yet, and the reported
+  // year's result to date. Each is a real account only so that the user decides
+  // what the line is called and where it sits, by editing the account; the
+  // report computes the figure and hardcodes neither.
+  //
+  // All three become control accounts through the ordinary mechanism every
+  // account-valued setting uses, so none of them can be written into by hand.
   {
     key: "induk_accumulated_pl_account",
     name: "Account Laba/Rugi Tahun Sebelumnya — Induk",
@@ -232,6 +234,26 @@ export const SYSTEM_DEFAULTS = [
     group: "equity_pl",
     company: "induk",
     help: "tujuan posting saat Fiscal Year ditutup",
+  },
+  {
+    key: "induk_unclosed_pl_account",
+    name: "Account Laba/Rugi Tahun Lalu Belum Ditutup — Induk",
+    icon: "clock",
+    type: "ref",
+    ref: "acc_account",
+    group: "equity_pl",
+    company: "induk",
+    help: "baris Neraca, tidak pernah diposting",
+  },
+  {
+    key: "induk_current_pl_account",
+    name: "Account Laba/Rugi Tahun Berjalan — Induk",
+    icon: "calc",
+    type: "ref",
+    ref: "acc_account",
+    group: "equity_pl",
+    company: "induk",
+    help: "baris penyajian Neraca, tidak pernah diposting",
   },
   {
     key: "anak_accumulated_pl_account",
@@ -244,14 +266,14 @@ export const SYSTEM_DEFAULTS = [
     help: "tujuan posting saat Fiscal Year ditutup",
   },
   {
-    key: "induk_current_pl_account",
-    name: "Account Laba/Rugi Tahun Berjalan — Induk",
-    icon: "calc",
+    key: "anak_unclosed_pl_account",
+    name: "Account Laba/Rugi Tahun Lalu Belum Ditutup — Anak",
+    icon: "clock",
     type: "ref",
     ref: "acc_account",
     group: "equity_pl",
-    company: "induk",
-    help: "baris penyajian Neraca, tidak pernah diposting",
+    company: "anak",
+    help: "baris Neraca, tidak pernah diposting",
   },
   {
     key: "anak_current_pl_account",
@@ -278,6 +300,8 @@ export const EMPTY_SYSTEM_DEFAULTS: SystemDefaultValues = {
   anak_fx_account: null,
   induk_accumulated_pl_account: null,
   anak_accumulated_pl_account: null,
+  induk_unclosed_pl_account: null,
+  anak_unclosed_pl_account: null,
   induk_current_pl_account: null,
   anak_current_pl_account: null,
 };

@@ -74,6 +74,22 @@ enum AccountSection {
   ProfitLoss
 }
 
+/// Which step of the multi-step Laba Rugi an Account Category sits in.
+///
+/// Declared in this order on purpose: it is the order the statement reads,
+/// and each subtotal — Laba Kotor after HPP, Laba Usaha after Beban Usaha,
+/// Laba Bersih after Beban Lain-lain — closes the steps above it. Stored on
+/// the category rather than read off its number for the same reason `section`
+/// is: `5.1` being HPP is a convention, and a convention that merely holds
+/// can be broken with nothing failing.
+enum ProfitLossGroup {
+  OperatingRevenue
+  CostOfSales
+  OperatingExpense
+  OtherIncome
+  OtherExpense
+}
+
 enum FiscalStatus {
   Draft
   Open
@@ -928,6 +944,11 @@ model AccAccountCategory {
   /// carried no numbering scheme — see lib/siba/account-code.ts.
   category_label  String       @unique
   category_name   String
+  /// The Laba Rugi step this category belongs to. Set exactly when the
+  /// category's type is `ProfitLoss`, null on every Neraca category. Seeded
+  /// from Template COA Sheet1, never edited, on no form — an account inherits
+  /// its step through subcategory -> category, so a new account needs no setup.
+  pl_group        ProfitLossGroup?
   note            String?
   status          ActiveStatus @default(Active)
 

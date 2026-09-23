@@ -589,6 +589,17 @@ table acc_account_category {
   category_label              varchar(255) [not null, unique]
   category_name               varchar(255) [not null]
 
+  // The step of the multi-step Laba Rugi this category sits in. Set exactly
+  // when the category's type is ProfitLoss, null on every Neraca category —
+  // across two tables, so asserted by a test rather than a CHECK. Seeded from
+  // Template COA Sheet1 (4.1 OperatingRevenue, 5.1 CostOfSales, 5.2 and 5.3
+  // OperatingExpense, 4.9 OtherIncome, 5.9 OtherExpense), never edited, on no
+  // form. Stored rather than read off the category's number, for the reason
+  // `sys_account_type.section` is. The enum's order is the statement's order:
+  // Laba Kotor after CostOfSales, Laba Usaha after OperatingExpense, Laba
+  // Bersih after OtherExpense.
+  pl_group                    enum('OperatingRevenue', 'CostOfSales', 'OperatingExpense', 'OtherIncome', 'OtherExpense')
+
   note                        text
 
   status                      enum('Active', 'Inactive') [not null, default: 'Active']

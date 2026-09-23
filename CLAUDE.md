@@ -92,7 +92,7 @@ or invariants that assume a particular row exists.
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
-| System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Default Currency, the four intercompany bridge accounts, and each Company's FX difference account |
+| System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Default Currency, the four intercompany bridge accounts, each Company's FX difference account, and each Company's three Laba/Rugi equity accounts |
 | Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
@@ -978,13 +978,20 @@ Implemented and enforced:
    subject book, so the account reconciles against the General Ledger and
    nothing else.
    The **equity/P&L System Defaults** are claimed by that same third source,
-   and one of them for a different reason worth stating: Laba/Rugi Tahun
+   and two of them for a different reason worth stating: Laba/Rugi Tahun
    Sebelumnya is a posting engine's target, like the bridge accounts, but
-   **Laba/Rugi Tahun Berjalan is closed to hand entry because nothing posts to
-   it at all** — it is a Balance Sheet presentation line, computed as
-   Σ Pendapatan − Σ Biaya for the year still open. The mechanism needed no
-   change to cover them: both are account-valued System Defaults, and
-   `systemDefaultAccountIds` is generic over every one of those.
+   **Laba/Rugi Tahun Berjalan and Laba/Rugi Tahun Lalu Belum Ditutup are
+   closed to hand entry because nothing posts to them at all.** They are where
+   the Neraca *places* two figures it computes — the reported year's result to
+   date, and a previous year's result that has not been closed yet. Each is a
+   real account only so that the user decides the line's name and position by
+   editing it in the chart, rather than the report hardcoding either; the
+   user's choice, over making them purely computed lines, and the shape Xero
+   and Odoo take. Tahun Berjalan is needed by every Neraca, Belum Ditutup only
+   by a Company still carrying an unclosed year (`unclosedPriorYear` in
+   `fiscal.ts`), and `missingNeracaAccounts` asks for exactly those. The
+   mechanism needed no change to cover them: all are account-valued System
+   Defaults, and `systemDefaultAccountIds` is generic over every one of those.
 80. **Whether an account may be written to is `is_postable` and
    `is_control_account`, and neither is an isian.** The user's own rule, and
    every place an account is chosen asks it. Both are decided by the backend:
@@ -1007,6 +1014,19 @@ Implemented and enforced:
    and the Trial Balance filter it out, `unbalancedJournals` ignores it, and it
    is allowed **not to balance** — a journal halfway through being typed does
    not, and the balance is a rule about posting rather than about saving.
+94. **A Laba Rugi step is stored on the Account Category, never inferred.**
+   `acc_account_category.pl_group` places each Laba Rugi category in one step
+   of the multi-step statement — Pendapatan Usaha, Harga Pokok Penjualan, Beban
+   Usaha, Pendapatan Lain-lain, Beban Lain-lain — and the enum's order is the
+   statement's: Laba Kotor after HPP, Laba Usaha after Beban Usaha, Laba Bersih
+   after Beban Lain-lain. It is set exactly on the categories whose type is
+   `ProfitLoss`, seeded from Template COA Sheet1 and re-synced by the seed
+   like `section`, on no form. An account inherits its step through its
+   subcategory, so a new account needs no setup. The template has no
+   income-tax category (`5.3.2 BIAYA PAJAK` is an operating expense under
+   Biaya Umum), so there is no Laba Sebelum Pajak step.
+   `tests/accounting.test.ts` holds the "exactly the ProfitLoss categories"
+   half, which no CHECK can, since it spans two tables.
 83. **A manual journal's accounts are re-checked at Post.** A mapping made since
    the draft was written can have turned one of them into a control account, and
    posting against a chart that has moved on would write exactly the discrepancy
@@ -3611,9 +3631,12 @@ process allowed to restate positions, and it is not built.
   (§12).
 - Do **not** back-date a journal. A `CLS-` closing entry is the single exception,
   and `postJournal` refuses a `postingDate` outside that series (§10 rule 49).
-- Do **not** post to Laba/Rugi Tahun Berjalan. It is a Balance Sheet presentation
-  line, computed as Σ Pendapatan − Σ Biaya; the closing journal moves the result
-  straight into Laba/Rugi Tahun Sebelumnya (§12).
+- Do **not** post to Laba/Rugi Tahun Berjalan or Laba/Rugi Tahun Lalu Belum
+  Ditutup. The Neraca computes both and places them on the accounts System
+  Default names; the closing journal moves a year's result straight into
+  Laba/Rugi Tahun Sebelumnya (§10 rule 79, §12).
+- Do **not** read a Laba Rugi step off an account category's number. It is
+  `acc_account_category.pl_group`, seeded and never edited (§10 rule 94).
 - Do **not** add an edit, delete or reversal path to `acc_opening_balance`, or a
   create form for it. A snapshot is written by a close or injected at go-live with a
   null source, and is immutable (§12).
