@@ -284,3 +284,267 @@ export async function checkPostingPeriod(
 
   return { ok: true, fiscalYearId: year.id };
 }
+
+// ---------------------------------------------------------------- closing
+
+/** A fiscal year as the closing workspace needs to name and bound it. */
+export type FiscalYearForClosing = {
+  id: number;
+  label: string;
+  name: string;
+  status: string;
+  /** UTC midnight, the two days a close is bounded by. */
+  startDate: Date;
+  endDate: Date;
+};
+
+export async function fiscalYearForClosing(
+  id: number,
+  db: Db = prisma
+): Promise<FiscalYearForClosing | null> {
+  const row = await db.accFiscalYear.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      year_label: true,
+      year_name: true,
+      status: true,
+      start_date: true,
+      end_date: true,
+    },
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    label: row.year_label,
+    name: row.year_name,
+    status: row.status,
+    startDate: row.start_date,
+    endDate: row.end_date,
+  };
+}
+
+/**
+ * The year that follows this one, whatever state it is in.
+ *
+ * Found by its start date rather than by adding one to a label, because the
+ * label is a string somebody typed and the dates are what the calendar
+ * actually spans. It is the **nearest** year starting after this one ends: a
+ * calendar with a gap in it has exactly one candidate, and this is it — there
+ * is nowhere else a snapshot could sensibly go. `Draft` counts: a close needs
+ * somewhere to put the snapshot it produces, and a Draft year is somewhere —
+ * activating it later generates
+ * its twelve periods exactly as it does today. A fiscal year is chosen by a
+ * person (CLAUDE.md §12), so a missing one is **refused**, never created.
+ */
+export async function fiscalYearAfter(
+  year: FiscalYearForClosing,
+  db: Db = prisma
+): Promise<FiscalYearForClosing | null> {
+  const row = await db.accFiscalYear.findFirst({
+    where: { start_date: { gt: year.endDate } },
+    orderBy: { start_date: "asc" },
+    select: {
+      id: true,
+      year_label: true,
+      year_name: true,
+      status: true,
+      start_date: true,
+      end_date: true,
+    },
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    label: row.year_label,
+    name: row.year_name,
+    status: row.status,
+    startDate: row.start_date,
+    endDate: row.end_date,
+  };
+}
+
+/** One Company's closing state for one year, and who shut it. */
+export type FiscalClosingState = {
+  status: "Open" | "Closed";
+  closedAt: Date | null;
+  closedBy: number | null;
+  closingJournalId: number | null;
+  openingBalanceId: number | null;
+};
+
+/**
+ * Has this Company finished with this year?
+ *
+ * A year with no row at all is Open for that Company: the row is written when
+ * the year is closed, and its absence is the honest answer rather than a
+ * missing fact. `checkPostingPeriod` reads the same table the same way.
+ */
+export async function fiscalClosingState(
+  fiscalYearId: number,
+  companyId: number,
+  db: Db = prisma
+): Promise<FiscalClosingState> {
+  const row = await db.accFiscalClosing.findUnique({
+    where: {
+      fiscal_year_id_company_id: { fiscal_year_id: fiscalYearId, company_id: companyId },
+    },
+    select: {
+      status: true,
+      closed_at: true,
+      closed_by: true,
+      closing_journal_id: true,
+      opening_balance_id: true,
+    },
+  });
+  if (!row) {
+    return {
+      status: "Open",
+      closedAt: null,
+      closedBy: null,
+      closingJournalId: null,
+      openingBalanceId: null,
+    };
+  }
+  return {
+    status: row.status,
+    closedAt: row.closed_at,
+    closedBy: row.closed_by,
+    closingJournalId: row.closing_journal_id,
+    openingBalanceId: row.opening_balance_id,
+  };
+}
+
+/**
+ * Shuts one Company's year, and rolls the year itself when it is the last.
+ *
+ * Written here rather than in `closing.ts` because `acc_fiscal_closing` and
+ * `acc_fiscal_year` are this module's tables — the closing process decides
+ * *whether* a year may be shut and what that produces, and the calendar
+ * records that it has been.
+ *
+ * Takes a transaction: the row, the year's rollup and the documents the close
+ * produced are one act, and a Company recorded as closed without the journal
+ * that closed it would be a year nobody could reconcile.
+ *
+ * **`AccFiscalYear.status` is a rollup**, not a fact anybody sets: the year
+ * reads Closed once *every* Company has closed it, written in the same
+ * transaction as the last Company's close. Until then the year is still Open
+ * and the other Company goes on posting into it, which is the whole reason
+ * closing is per Company in the first place.
+ */
+export async function recordFiscalClosing(
+  tx: Prisma.TransactionClient,
+  options: {
+    fiscalYearId: number;
+    companyId: number;
+    closingJournalId: number | null;
+    openingBalanceId: number | null;
+    actorId: number;
+  }
+): Promise<{ yearClosed: boolean }> {
+  const { fiscalYearId, companyId, actorId } = options;
+
+  const row = await tx.accFiscalClosing.upsert({
+    where: {
+      fiscal_year_id_company_id: { fiscal_year_id: fiscalYearId, company_id: companyId },
+    },
+    update: {
+      status: "Closed",
+      closed_at: new Date(),
+      closed_by: actorId,
+      closing_journal_id: options.closingJournalId,
+      opening_balance_id: options.openingBalanceId,
+      updated_by: actorId,
+    },
+    create: {
+      fiscal_year_id: fiscalYearId,
+      company_id: companyId,
+      status: "Closed",
+      closed_at: new Date(),
+      closed_by: actorId,
+      closing_journal_id: options.closingJournalId,
+      opening_balance_id: options.openingBalanceId,
+      created_by: actorId,
+    },
+    select: { id: true },
+  });
+
+  await tx.auditLog.create({
+    data: {
+      entity_key: "acc_fiscal_closing",
+      row_id: row.id,
+      action: "UPDATE",
+      event: "close",
+      by: actorId,
+    },
+  });
+
+  const companies = await tx.sysCompany.count();
+  const closed = await tx.accFiscalClosing.count({
+    where: { fiscal_year_id: fiscalYearId, status: "Closed" },
+  });
+  const yearClosed = closed >= companies;
+
+  if (yearClosed) {
+    await tx.accFiscalYear.update({
+      where: { id: fiscalYearId },
+      data: { status: "Closed", updated_by: actorId },
+    });
+    await tx.auditLog.create({
+      data: {
+        entity_key: "acc_fiscal_year",
+        row_id: fiscalYearId,
+        action: "UPDATE",
+        event: "close",
+        by: actorId,
+      },
+    });
+  }
+
+  return { yearClosed };
+}
+
+/**
+ * How a closing row names itself in an audit panel: `ABHC · 2026`.
+ *
+ * A closing row's identity is the pair it is about, and neither half alone
+ * says which record it is — the calendar is shared, so "2026" names a year
+ * both Companies close separately.
+ */
+export async function fiscalClosingLabels(
+  ids: number[]
+): Promise<Map<number, string>> {
+  if (!ids.length) return new Map();
+  const rows = await prisma.accFiscalClosing.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      company: { select: { company_label: true } },
+      fiscal_year: { select: { year_label: true } },
+    },
+  });
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      `${r.company.company_label} · ${r.fiscal_year.year_label}`,
+    ])
+  );
+}
+
+/** The years one Company has already closed, for a screen that must still name them. */
+export async function closedFiscalYearsFor(
+  companyId: number
+): Promise<OpenYearSummary[]> {
+  const rows = await prisma.accFiscalClosing.findMany({
+    where: { company_id: companyId, status: "Closed" },
+    select: {
+      fiscal_year: { select: { id: true, year_label: true, year_name: true } },
+    },
+  });
+  return rows.map((r) => ({
+    id: r.fiscal_year.id,
+    label: r.fiscal_year.year_label,
+    name: r.fiscal_year.year_name,
+  }));
+}

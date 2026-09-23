@@ -265,3 +265,36 @@ export async function intercompanyBridge(): Promise<BridgeSetup> {
     },
   };
 }
+
+export type ClosingAccount =
+  | { ok: true; accountId: number }
+  | { ok: false; missing: string };
+
+/**
+ * Where one Company's closing journal posts its result, resolved by name.
+ *
+ * The same shape the intercompany bridge takes, and for the same reason: a
+ * posting target is named, never guessed and never fallen back to. Resolved
+ * against the master rather than trusted as stored, so a setting pointing at
+ * an account that has since been deactivated, made non-postable or given a
+ * sub-account reads as unset — posting to it would be posting somewhere the
+ * application itself would no longer offer.
+ *
+ * `missingClosingAccounts` answers the same question for the dashboard, across
+ * both Companies at once. This one answers it for the Company actually being
+ * closed, which is what a refusal has to be about.
+ */
+export async function closingAccountFor(
+  isParent: boolean
+): Promise<ClosingAccount> {
+  const key: SystemDefaultKey = isParent
+    ? "induk_accumulated_pl_account"
+    : "anak_accumulated_pl_account";
+  const def = systemDefaultDef(key);
+
+  const id = refValueOf(await systemDefaults(), key);
+  if (!id) return { ok: false, missing: def.name };
+  if (await checkSystemDefaultValue(key, id)) return { ok: false, missing: def.name };
+
+  return { ok: true, accountId: id };
+}

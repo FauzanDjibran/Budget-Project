@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import type { AccountSection, Prisma } from "@/generated/prisma/client";
 import { compareCodes } from "./account-code";
 import { isBaseCurrency } from "./currency";
 import { roundBase } from "./fx";
@@ -38,6 +39,9 @@ import type { PeriodRange } from "./period";
  */
 
 export type Balance = "Debit" | "Kredit";
+
+/** Either the client or a transaction — see `closingBalances`. */
+type Client = typeof prisma | Prisma.TransactionClient;
 
 /**
  * Only a **Posted** journal is accounting.
@@ -493,6 +497,17 @@ export type ClosingBalance = {
   accountLabel: string;
   accountName: string;
   normalBalance: string;
+  /**
+   * Which statement the account is on, read from its type rather than from the
+   * first segment of its number.
+   *
+   * Closing needs it: a ProfitLoss balance is moved into equity and a
+   * BalanceSheet balance is carried forward, and those are opposite fates. The
+   * convention that `4` and `5` are Laba Rugi happens to hold, and a
+   * convention that merely happens to hold is one a maintainer can break with
+   * nothing failing — so the column is asked instead (phase plan §3.3).
+   */
+  section: AccountSection;
   partnerId: number | null;
   partnerLabel: string | null;
   /** Raw sums over every posted line up to and including `asOf`, base currency. */
@@ -530,14 +545,20 @@ export type ClosingBalance = {
  */
 export async function closingBalances(
   companyId: number,
-  asOf: Date | string
+  asOf: Date | string,
+  /**
+   * Read inside a transaction where the caller needs to see its own writes —
+   * a close takes this twice, once to work out what to move and once, after
+   * the closing journal is in, to snapshot what is left.
+   */
+  db: Client = prisma
 ): Promise<ClosingBalance[]> {
   const to =
     asOf instanceof Date
       ? new Date(`${asOf.toISOString().slice(0, 10)}T00:00:00Z`)
       : new Date(`${asOf.slice(0, 10)}T00:00:00Z`);
 
-  const lines = await prisma.accJournalLine.findMany({
+  const lines = await db.accJournalLine.findMany({
     where: {
       journal: { ...POSTED, company_id: companyId, posting_date: { lte: to } },
     },
@@ -553,6 +574,34 @@ export async function closingBalances(
     },
   });
 
+  // The section is asked for once per account rather than joined onto every
+  // line: it is three levels up the chart (subcategory -> category -> type),
+  // and a ledger of a thousand lines would otherwise carry the same three
+  // joins a thousand times.
+  const sections = new Map<number, AccountSection>();
+  const accountIds = [...new Set(lines.map((l) => l.account_id))];
+  if (accountIds.length) {
+    const rows = await db.accAccount.findMany({
+      where: { id: { in: accountIds } },
+      select: {
+        id: true,
+        account_subcategory: {
+          select: {
+            account_category: {
+              select: { account_type: { select: { section: true } } },
+            },
+          },
+        },
+      },
+    });
+    for (const r of rows) {
+      sections.set(
+        r.id,
+        r.account_subcategory.account_category.account_type.section
+      );
+    }
+  }
+
   const pairs = new Map<string, ClosingBalance>();
 
   for (const l of lines) {
@@ -567,6 +616,7 @@ export async function closingBalances(
         accountLabel: l.account.account_label,
         accountName: l.account.account_name,
         normalBalance: l.account.normal_balance,
+        section: sections.get(l.account_id)!,
         partnerId: l.partner_id,
         partnerLabel: l.partner?.partner_label ?? null,
         debit: 0,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -20,9 +21,15 @@ import { headerButtonClass } from "@/lib/siba/header-actions";
  * The Fiscal Year lifecycle, as buttons in the page header.
  *
  * Status is not an isian anywhere on this screen: a year is created as Draft,
- * activated here, and closed by a process that does not exist yet. What is
- * offered comes from the transition table, so this can never offer a move the
- * Server Action would refuse.
+ * activated here, and closed on a screen of its own. What is offered comes
+ * from the transition table, so this can never offer a move the Server Action
+ * would refuse.
+ *
+ * **Closing leaves this header on purpose.** It is per Company, it needs a
+ * validation checklist and a preview of the journal it is about to post, and
+ * it is irreversible — none of which fits behind a yes/no on a record that
+ * belongs to neither Company. The transition declares a `runAt`, so the step
+ * is offered here as a link to that workspace rather than as a confirm button.
  */
 export function FiscalYearActions({
   id,
@@ -62,15 +69,20 @@ export function FiscalYearActions({
     router.refresh();
   };
 
-  // Header order — danger, then neutral, then the one primary — puts the
-  // disabled closing step to the left of anything activatable. Only one of the
-  // two ever renders, so no sort is needed here.
+  // Header order — danger, then neutral, then the one primary. The closing
+  // link is neutral rather than primary: it does not close anything, it opens
+  // the screen where closing is decided. Only one of the two ever renders on a
+  // given status, so no sort is needed here.
   return (
     <>
-      {status === "Open" && (
-        <button className="btn" disabled title={FISCAL_YEAR_CLOSING_NOTE}>
+      {status === "Open" && can.close && (
+        <Link
+          className="btn"
+          href="/accounting/closing"
+          title={FISCAL_YEAR_CLOSING_NOTE}
+        >
           <Icon name="lock" size={15} /> Tutup Tahun Buku
-        </button>
+        </Link>
       )}
 
       {actions.map((a) => {

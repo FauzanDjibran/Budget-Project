@@ -806,3 +806,37 @@ export async function unbalancedJournals(
     .map((j) => ({ id: j.id, journalNo: j.journal_no, ...totalOf(j.lines) }))
     .filter((j) => cents(j.debit) !== cents(j.credit));
 }
+
+/**
+ * Draft journals a Company created inside a date range.
+ *
+ * Asked before a fiscal year is closed: a draft is somebody's unfinished
+ * accounting, and closing the year it belongs to would leave it permanently
+ * unpostable — the lock refuses a posting into a closed year, so the draft
+ * could then only ever be cancelled. The refusal names them so whoever is
+ * closing can go and finish or cancel each one.
+ *
+ * **The range is read against `created_at`, not `posting_date`**, and that is a
+ * stated assumption rather than a fact the schema supplies: a draft has no
+ * posting date at all, because the date is written when the books are. When it
+ * was typed is the only thing that says which year it was meant for, and a
+ * draft typed inside the year is the one somebody intended to post into it.
+ */
+export async function draftJournalsCreatedBetween(
+  companyId: number,
+  from: Date,
+  to: Date
+): Promise<{ id: number; journalNo: string }[]> {
+  const rows = await prisma.accJournal.findMany({
+    where: {
+      company_id: companyId,
+      status: "Draft",
+      // Inclusive of the year's last day: `to` is a date at UTC midnight and
+      // `created_at` is a timestamp, so the whole of that day has to be inside.
+      created_at: { gte: from, lt: new Date(to.getTime() + 86_400_000) },
+    },
+    orderBy: { id: "asc" },
+    select: { id: true, journal_no: true },
+  });
+  return rows.map((r) => ({ id: r.id, journalNo: r.journal_no }));
+}

@@ -310,17 +310,35 @@ describe("a Fiscal Year is activated, not edited into Open", () => {
     assert.equal(transitionAllowed("open", "Closed"), false);
   });
 
-  test("nothing returns a year to Draft, and nothing closes it from here", () => {
-    // Closing locks periods against posting and belongs with the journal, which
-    // is not built. Until it is, no transition may write Closed — a status that
-    // only pretends to close a book is worse than none.
+  test("nothing returns a year to Draft", () => {
     for (const transition of Object.values(FISCAL_YEAR_TRANSITIONS)) {
       assert.notEqual(transition.to, "Draft", "Open is a one-way door");
-      assert.notEqual(transition.to, "Closed", "closing is a process, not a status change");
     }
+  });
+
+  test("Closed is reached only by the closing process", () => {
+    // Closing exists now, and it is still not a status change: the one
+    // transition that produces Closed carries a `runAt`, so it is run on a
+    // screen that checks the year, previews the journal and asks once — never
+    // as a value anybody picks.
+    const producing = Object.entries(FISCAL_YEAR_TRANSITIONS).filter(
+      ([, t]) => t.to === "Closed"
+    );
+    assert.deepEqual(
+      producing.map(([key]) => key),
+      ["close"],
+      "exactly one transition closes a year"
+    );
+    assert.deepEqual(FISCAL_YEAR_TRANSITIONS.close.from, ["Open"]);
+    assert.equal(FISCAL_YEAR_TRANSITIONS.close.permission, "FISCAL_YEAR_CLOSE");
     assert.ok(
-      !PERMISSION_CODES.includes("FISCAL_YEAR_CLOSE" as never),
-      "a capability is a catalogue entry first — do not declare one nothing performs"
+      PERMISSION_CODES.includes("FISCAL_YEAR_CLOSE" as never),
+      "the permission lands in the change that builds the process, never before"
+    );
+    assert.equal(
+      FISCAL_YEAR_TRANSITIONS.close.runAt,
+      "/accounting/closing",
+      "a step that needs a Company, a checklist and a preview is not a confirm button"
     );
   });
 
@@ -335,6 +353,21 @@ describe("a Fiscal Year is activated, not edited into Open", () => {
       "seeing and editing a year is not permission to start it"
     );
     assert.deepEqual(availableActions("Open" as FiscalYearStatus, allowed), []);
+  });
+
+  test("closing is never offered as a header button", () => {
+    // It has its own screen. Offering it here as well would be a one-click
+    // version of a step that has to state its Company and show its journal.
+    const everything = fiscalYearAbilities([
+      "FISCAL_YEAR_OPEN",
+      "FISCAL_YEAR_CLOSE",
+    ]);
+    for (const status of ["Draft", "Open", "Closed"] as FiscalYearStatus[]) {
+      assert.ok(
+        !availableActions(status, everything).includes("close"),
+        `close must not be a header action on a ${status} year`
+      );
+    }
   });
 });
 

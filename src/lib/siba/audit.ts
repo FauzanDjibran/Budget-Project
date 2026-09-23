@@ -8,6 +8,7 @@ import { budgetsByIds } from "./budget";
 import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer";
 import { fundingRequestNumbersByIds } from "./funding";
+import { fiscalClosingLabels } from "./fiscal";
 import { journalNumbersByIds } from "./journal";
 import { openingBalanceNumbersByIds } from "./opening-balance";
 import { userLabels, roleLabels } from "./users";
@@ -90,6 +91,10 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
   acc_opening_balance: {
     label: "Opening Balance",
     resolve: openingBalanceNumbersByIds,
+  },
+  acc_fiscal_closing: {
+    label: "Penutupan Fiscal Year",
+    resolve: fiscalClosingLabels,
   },
   sys_user: { label: "User", resolve: userLabels },
   sys_role: { label: "Role", resolve: roleLabels },

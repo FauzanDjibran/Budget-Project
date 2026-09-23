@@ -102,6 +102,13 @@ const TABLE_OWNERS: Record<string, string[]> = {
   // module's table either.
   accOpeningBalance: ["src/lib/siba/opening-balance.ts"],
   accOpeningBalanceLine: ["src/lib/siba/opening-balance.ts"],
+  // One Company's closing state for one year. The calendar owns it, and the
+  // closing process records itself through a function there rather than by
+  // writing the row: closing.ts decides whether a year may be shut, and
+  // fiscal.ts records that it has been. acc_fiscal_year itself is left
+  // unconstrained because it is a registry entity, which the registry reaches
+  // generically by design.
+  accFiscalClosing: ["src/lib/siba/fiscal.ts"],
 };
 
 /**

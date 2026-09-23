@@ -288,6 +288,14 @@ export const MODULES: NavModule[] = [
             permission: "FISCAL_YEAR_VIEW",
           },
           {
+            key: "acc_fiscal_closing",
+            slug: "closing",
+            name: "Fiscal Year Closing",
+            icon: "lock",
+            desc: "Menutup satu tahun buku untuk satu Company: memindahkan hasil tahun berjalan ke ekuitas dan membuat Opening Balance tahun berikutnya.",
+            permission: "FISCAL_YEAR_CLOSE",
+          },
+          {
             key: "acc_opening_balance",
             slug: "opening-balance",
             name: "Opening Balance",
