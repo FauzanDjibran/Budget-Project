@@ -35,7 +35,7 @@ export function CashBankBookCard({
   return (
     <div className="card" style={{ marginTop: 14 }}>
       <div className="card-h">
-        <span className="ci" style={{ background: "var(--ok-bg)", color: "var(--ok)" }}>
+        <span className="ci t-ok">
           <Icon name="book" size={15} />
         </span>
         <div className="ct">

@@ -21,7 +21,7 @@ import type { TreeAccount, TreeCategory, TreeCompany } from "@/lib/siba/records"
  * Category and kelompok rows are seeded structure, not accounts: only numbered
  * rows can carry a Journal Line. Detail, create and edit stay generic.
  *
- * The tree shows the chart of the Company in context, chosen from the topbar.
+ * The tree shows the chart of the Company in context, chosen from the picker in its own toolbar.
  * Each Company numbers its own chart independently, so the induk's `1.1.4.1`
  * and the anak's are different accounts that happen to share a number —
  * listing both together reads as duplicated rows rather than as two books.

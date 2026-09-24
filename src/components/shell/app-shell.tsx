@@ -194,7 +194,7 @@ export function AppShell({
           <div className="sub-l">
             {(visibleModule?.groups ?? []).map((g) => (
               <div className="grp" key={g.key}>
-                <div className="grp-b on open">
+                <div className="grp-b on">
                   <span className="dot" />
                   <span className="gt">{g.name}</span>
                 </div>

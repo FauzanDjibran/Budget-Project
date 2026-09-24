@@ -34,7 +34,6 @@ import { AnchoredPopup } from "@/components/ui/anchored-popup";
  *   field    `.cbx`  — form controls, identical to the FK picker beside them
  *   toolbar  `.tsel` — list and filter bars
  *   compact  `.psel` — pagers and dense filter rows
- *   ctx      bare    — the topbar company selector, styled by `.ctx select`
  */
 
 export type SelectOption = {
@@ -56,7 +55,6 @@ const TRIGGER_CLASS = {
   field: "cbx",
   toolbar: "tsel",
   compact: "psel",
-  ctx: "ctxsel",
 } as const;
 
 /**

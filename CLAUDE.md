@@ -1836,6 +1836,14 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Reason:** It is a coherent, finished token system that already encodes the decisions
   from `akui_proto_ui_reference.md`. Rewriting discards that work.
 - **Impact:** Styling means reusing classes, not authoring new CSS.
+- **Unused rules were removed, deliberately** (shared design convention D16):
+  the mockup's global search, command palette, topbar Company selector
+  (`.ctx` / `.ctxsel`, and `Select`'s `ctx` variant), reset-simulation button,
+  row-filter inputs, report pager, the read-only `.rolock` box, `kbd`, and the
+  submenu's chevron and count. Nothing rendered them. "Near-unmodified" no
+  longer covers those; `tests/design-system.test.ts` keeps them from returning.
+  The print block (`.psheet` / `.ps-*`) stays, because report output is still
+  planned (§13).
 - **Do not change unless:** a genuinely new component has no existing class — then extend
   the sheet in its own section, matching the token vocabulary.
 

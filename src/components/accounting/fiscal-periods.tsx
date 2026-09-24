@@ -29,7 +29,7 @@ export function FiscalPeriods({
   return (
     <div className="card" style={{ marginTop: 14 }}>
       <div className="card-h">
-        <span className="ci" style={{ background: "var(--info-bg)", color: "var(--info)" }}>
+        <span className="ci t-info">
           <Icon name="clock" size={15} />
         </span>
         <div className="ct">

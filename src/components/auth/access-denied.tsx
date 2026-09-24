@@ -32,7 +32,7 @@ export function AccessDenied({
 
       <div className="card">
         <div className="empty">
-          <div className="ic" style={{ background: "var(--bad-bg)", color: "var(--bad)" }}>
+          <div className="ic t-bad">
             <Icon name="lock" size={20} />
           </div>
           <h4>{title}</h4>

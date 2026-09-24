@@ -277,7 +277,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
             </div>
           ) : (
             <div className="empty sm">
-              <div className="ic" style={{ background: "var(--warn-bg)", color: "var(--warn)" }}>
+              <div className="ic t-warn">
                 <Icon name="warn" size={20} />
               </div>
               <h4>Bridge belum lengkap</h4>
@@ -300,7 +300,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
       {flagged > 0 && (
         <div className="card" style={{ marginTop: 14 }}>
           <div className="card-h">
-            <span className="ci" style={{ background: "var(--warn-bg)", color: "var(--warn)" }}>
+            <span className="ci t-warn">
               <Icon name="warn" size={15} />
             </span>
             <div className="ct">

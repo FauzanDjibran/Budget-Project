@@ -1181,3 +1181,31 @@ describe("the shell and the breadcrumb", () => {
     assert.match(text, /className="scrim"/);
   });
 });
+
+describe("tints, icons and the stylesheet stay lean", () => {
+  test("no component tints itself inline", () => {
+    const bad = files.filter(
+      (f) => f.rel.startsWith("src/components/") && /style=\{\{ background: "var\(--/.test(code(f.text))
+    );
+    assert.deepEqual(bad.map((f) => f.rel), [], "Use the tone classes: `t-ok`, `t-warn`, `t-info`, `t-bad`.");
+  });
+
+  test("only `components/icon.tsx` draws an <svg>", () => {
+    const bad = files.filter(
+      (f) => !f.rel.endsWith("components/icon.tsx") && /<svg[\s>]/.test(code(f.text))
+    );
+    assert.deepEqual(bad.map((f) => f.rel), [], "Use `<Icon name=… />`.");
+  });
+
+  test("selectors removed as unused do not come back", () => {
+    const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const dead = [
+      /\.gsearch/, /\.ctx(?![\w-])/, /\.ctxsel/, /\.cmd(?![\w-])/, /\.cmd-/, /\.ci2/,
+      /\.cme(?![\w-])/, /\.tb-reset/, /\.wipe/, /\.rolock/, /\.rnav/, /tr\.fr(?![\w-])/,
+      /\.fin(?![\w-])/, /\.flbl/, /\.leaf(\.on)? \.n(?![\w-])/, /\.grp-b \.chev/,
+      /(^|[\s,}>])\.back(?![\w-])/m, /(^|[\s,}])kbd(?![\w-])/m, /\.kbrow/,
+    ];
+    const back = dead.filter((re) => re.test(stripped)).map(String);
+    assert.deepEqual(back, [], "These rules styled nothing the application renders.");
+  });
+});

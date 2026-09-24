@@ -70,19 +70,7 @@ button,input,select,textarea{font:inherit;color:inherit}
   font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;line-height:1.4}
 .tb-div{width:1px;height:22px;background:var(--line);flex:0 0 auto}
 .tb-spacer{flex:1 1 auto}
-.ctx{display:flex;align-items:center;gap:8px;height:32px;padding:0 4px 0 11px;border:1px solid var(--line);
-  border-radius:var(--r);background:#fff;flex:0 0 auto;box-shadow:var(--sh-xs)}
-.ctx > span{font-size:9.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted-2)}
-.ctx select{border:0;background:transparent;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;
-  padding:0 22px 0 0;appearance:none;max-width:220px;text-overflow:ellipsis;outline:none;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='3' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");
-  background-repeat:no-repeat;background-position:right 6px center}
-.gsearch{position:relative;flex:0 1 300px;min-width:140px}
-.gsearch svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);stroke:var(--muted-2);pointer-events:none}
-.gsearch input{width:100%;height:32px;border:1px solid var(--line);border-radius:var(--r);background:var(--line-3);
-  padding:0 44px 0 31px;font-size:12.5px;font-weight:500;cursor:pointer}
-.gsearch input::placeholder{color:var(--muted-2)}
-.gsearch kbd{position:absolute;right:6px;top:50%;transform:translateY(-50%);pointer-events:none}
+
 .ticon{width:32px;height:32px;border:1px solid var(--line);background:#fff;border-radius:var(--r);
   display:grid;place-items:center;cursor:pointer;color:var(--muted);flex:0 0 auto;box-shadow:var(--sh-xs)}
 .ticon:hover{background:var(--line-3);color:var(--ink-2)}
@@ -130,16 +118,14 @@ body.sub-off .sub,body.no-sub .sub{width:0;border-width:0;opacity:0;pointer-even
 .grp-b .dot{width:6px;height:6px;border-radius:50%;background:var(--muted-3);flex:0 0 auto}
 .grp-b.on .dot{background:var(--accent)}
 .grp-b .gt{flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.grp-b .chev{flex:0 0 auto;opacity:.7;transition:transform .15s}
-.grp-b.open .chev{transform:rotate(90deg)}
+
 .grp-i{padding:3px 0 5px 10px;margin-left:10px;border-left:1px solid var(--line-2)}
 .leaf{width:100%;display:flex;align-items:center;gap:8px;padding:7px 10px;border:0;background:transparent;
   border-radius:9px;cursor:pointer;font-size:12.5px;font-weight:500;color:var(--muted);text-align:left;margin-bottom:1px}
 .leaf:hover{background:var(--line-3);color:var(--ink)}
 .leaf.on{background:var(--line-2);color:var(--brand);font-weight:700}
 .leaf .lt{flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.leaf .n{font-size:10px;font-weight:700;color:var(--muted-2);font-variant-numeric:tabular-nums;background:var(--line-2);padding:1px 6px;border-radius:5px}
-.leaf.on .n{background:#fff;color:var(--brand)}
+
 
 .content{flex:1 1 auto;min-width:0;overflow-y:auto;position:relative}
 .pad{padding:0 4px 44px}
@@ -161,10 +147,7 @@ body.sub-off .sub,body.no-sub .sub{width:0;border-width:0;opacity:0;pointer-even
 .crumb button{border:0;background:none;padding:0;font:inherit;text-transform:uppercase;letter-spacing:inherit;color:var(--muted-2);cursor:pointer}
 .crumb button:hover{color:var(--brand)}
 .crumb .cur{color:var(--brand)}
-.crumb .back{text-transform:none;letter-spacing:normal}
-.back{width:28px;height:28px;border:1px solid var(--line);background:#fff;border-radius:50%;display:grid;place-items:center;
-  cursor:pointer;color:var(--ink-2);flex:0 0 auto;box-shadow:var(--sh-xs);margin-right:2px}
-.back:hover{background:var(--line-3)}
+
 .ph-row{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap}
 .ph-row h1{margin:0;font-size:19px;font-weight:800;letter-spacing:-.45px;color:var(--brand);
   display:flex;align-items:center;gap:9px;flex:1 1 300px;min-width:0;flex-wrap:wrap}
@@ -228,21 +211,12 @@ body.sub-off .sub,body.no-sub .sub{width:0;border-width:0;opacity:0;pointer-even
 table.grid{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
 table.grid thead th{position:sticky;top:0;z-index:3;background:#fff;text-align:left;font-size:10px;font-weight:800;
   letter-spacing:.1em;text-transform:uppercase;color:var(--muted-2);padding:10px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
-table.grid thead tr.fr th{top:35px;z-index:2;background:#FBFCFD;border-bottom:1px solid var(--line-2);padding:6px 9px}
+
 th.srt{cursor:pointer;user-select:none}
 th.srt:hover{color:var(--ink-2);background:var(--line-3)}
 th .ar{display:inline-block;margin-left:5px;opacity:.35;font-size:8px;vertical-align:1.5px}
 th.act .ar{opacity:1;color:var(--brand)}
-.fin{position:relative;display:block}
-.fin input,.fin select{width:100%;height:26px;border:1px solid var(--line);border-radius:var(--r-sm);background:#fff;
-  font-size:11px;font-weight:500;padding:0 6px 0 22px;color:var(--ink-2)}
-.fin select{padding-left:7px;padding-right:18px;cursor:pointer;appearance:none;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='3' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");
-  background-repeat:no-repeat;background-position:right 5px center}
-.fin input:focus,.fin select:focus{border-color:var(--accent-s);outline:none;box-shadow:0 0 0 2px var(--accent-50)}
-.fin > svg{position:absolute;left:6px;top:50%;transform:translateY(-50%);stroke:var(--muted-3);pointer-events:none}
-.fin.set input,.fin.set select{border-color:var(--accent-s);background:var(--accent-50)}
-.flbl{font-size:9px;font-weight:800;letter-spacing:.1em;color:var(--muted-3);text-transform:uppercase}
+
 table.grid tbody td{padding:8px 11px;border-bottom:1px solid var(--line-2);vertical-align:middle;white-space:nowrap;height:38px}
 table.grid tbody td.wrapok{white-space:normal}
 table.grid tbody tr{cursor:pointer}
@@ -473,13 +447,6 @@ td.acts{width:88px;padding-right:7px}
 .cbpop .cbgh + .cbo{margin-top:3px}
 .cbe{padding:20px;text-align:center;font-size:12px;color:var(--muted-2)}
 
-.rnav{display:inline-flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#fff;box-shadow:var(--sh-xs)}
-.rnav button{width:28px;height:31px;border:0;background:#fff;cursor:pointer;color:var(--ink-2);display:grid;place-items:center}
-.rnav button:hover:not([disabled]){background:var(--line-3)}
-.rnav button[disabled]{opacity:.3;cursor:not-allowed}
-.rnav span{display:grid;place-items:center;padding:0 9px;font-size:11px;font-weight:700;color:var(--muted);
-  border-left:1px solid var(--line);border-right:1px solid var(--line);font-variant-numeric:tabular-nums}
-
 /* Unsaved changes, stated beside the Simpan button that resolves them. */
 .ph-dirty{display:inline-flex;align-items:center;gap:6px;height:33px;padding:0 11px;border-radius:var(--r);
   border:1px solid var(--warn-line);background:var(--warn-bg);color:var(--warn);
@@ -598,22 +565,6 @@ td.acts{width:88px;padding-right:7px}
 .reflist b{display:block;margin-bottom:5px;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
 .reflist ul{margin:0;padding-left:17px}
 
-.cmd{width:min(560px,100%);background:#fff;border-radius:var(--r-xl);box-shadow:var(--sh-xl);overflow:hidden;
-  align-self:flex-start;margin-top:9vh;border:1px solid var(--line-2)}
-.cmd-i{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line-2)}
-.cmd-i input{flex:1 1 auto;border:0;font-size:14px;font-weight:500;outline:none}
-.cmd-l{max-height:56vh;overflow-y:auto;padding:6px}
-.ci2{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:var(--r);cursor:pointer;font-size:12.5px}
-.ci2.on,.ci2:hover{background:var(--brand-50)}
-.ci2 .ic{width:26px;height:26px;border-radius:7px;background:var(--line-2);display:grid;place-items:center;flex:0 0 auto;color:var(--muted)}
-.ci2.on .ic{background:#fff;color:var(--brand)}
-.ci2 .lb{flex:1 1 auto;min-width:0}
-.ci2 .lb b{display:block;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ci2 .lb span{font-size:11px;color:var(--muted)}
-.ci2 .k{font-size:9.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--muted-2);
-  border:1px solid var(--line);padding:2px 6px;border-radius:4px}
-.cme{padding:28px;text-align:center;color:var(--muted-2);font-size:12.5px}
-
 .menu{position:fixed;z-index:95;background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-xl);padding:5px;min-width:190px}
 .menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:none;padding:8px 10px;
   border-radius:var(--r-sm);cursor:pointer;font-size:12.5px;font-weight:500;color:var(--ink-2)}
@@ -625,11 +576,7 @@ td.acts{width:88px;padding-right:7px}
 .menu .hd span{font-size:11px;color:var(--muted)}
 .menu .dv{height:1px;background:var(--line-2);margin:4px 2px}
 
-kbd{font-family:var(--f);font-size:9.5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;
-  padding:1px 5px;background:#fff;color:var(--muted);font-weight:700}
-.kbrow{display:flex;gap:7px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
 .scrim{display:none}
-
 
 /* ============================================================ budget */
 .mny{font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -808,35 +755,10 @@ table.pkt .mny.in{color:var(--ok)}
   tr{break-inside:avoid}
 }
 
-
-/* tombol reset simulasi di topbar */
-.tb-reset{flex:0 0 auto;height:30px;gap:6px;border-color:var(--line);color:var(--muted);font-size:11.5px}
-.tb-reset:hover{border-color:var(--bad-line);background:var(--bad-bg);color:var(--bad)}
-@media (max-width:1100px){ .tb-reset span.t{display:none} }
-.wipe{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;text-align:left}
-.wipe > div{border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;background:#fff}
-.wipe .h{display:flex;align-items:center;gap:6px;font-size:9.5px;font-weight:800;letter-spacing:.09em;
-  text-transform:uppercase;margin-bottom:7px}
-.wipe.k .h{color:var(--bad)}
-.wipe ul{margin:0;padding-left:15px;font-size:11.5px;line-height:1.75;color:var(--ink-2)}
-.wipe ul b{font-family:var(--f-mono);font-size:11px;font-weight:700}
-.wipe .del{border-color:var(--bad-line);background:var(--bad-bg)}
-.wipe .del .h{color:var(--bad)}
-.wipe .keep{border-color:var(--ok-line);background:var(--ok-bg)}
-.wipe .keep .h{color:var(--ok)}
-
 /* ============================================================ finance */
-/* field yang diisi sistem â€” tampil seperti input yang dinonaktifkan */
-.rolock{display:flex;align-items:center;gap:8px;height:38px;padding:0 11px;border:1px solid var(--line);
-  border-radius:var(--r);background:var(--line-3);color:var(--muted);font-size:13px;
-  cursor:not-allowed;user-select:none}
-.rolock .lab{background:#fff;color:var(--muted);border:1px solid var(--line)}
-.rolock .mono{font-family:var(--f-mono);font-size:12.5px;color:var(--ink-2)}
-.ro .rate,.rolock .rate{margin-left:auto;font-family:var(--f-mono);font-size:10.5px;color:var(--muted-2);
+.ro .rate{margin-left:auto;font-family:var(--f-mono);font-size:10.5px;color:var(--muted-2);
   background:#fff;border:1px solid var(--line);border-radius:5px;padding:1px 6px;flex:0 0 auto}
-.ro .nil,.rolock .nil{color:var(--muted-3);font-style:italic}
-/* select wajib yang belum dipilih */
-
+.ro .nil{color:var(--muted-3);font-style:italic}
 /* chip filter aktif di toolbar */
 .fchip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 4px 0 11px;border-radius:var(--r);
   background:var(--brand-50);border:1px solid var(--brand-100);color:var(--brand);font-size:11.5px;font-weight:600;flex:0 0 auto}
@@ -891,6 +813,12 @@ table.ltab tfoot td{padding:11px}
    different hand-written paddings between them. */
 .empty.sm{padding:30px 18px}
 .empty.sm .ic{width:38px;height:38px}
+/* A card or empty-state icon tinted by the global tone classes, which lose to
+   the icon's own two-class background without these. */
+.card-h .ci.t-ok,.empty .ic.t-ok{background:var(--ok-bg);color:var(--ok)}
+.card-h .ci.t-warn,.empty .ic.t-warn{background:var(--warn-bg);color:var(--warn)}
+.card-h .ci.t-info,.empty .ic.t-info{background:var(--info-bg);color:var(--info)}
+.card-h .ci.t-bad,.empty .ic.t-bad{background:var(--bad-bg);color:var(--bad)}
 .empty.sm h4{font-size:13px}
 
 /* kriteria header pada modal pemilihan budget */
@@ -927,7 +855,7 @@ table.pkt2 tbody tr.on:hover td{background:#F7F0D4}
    Di bawah 1080px layout tetap berfungsi, bukan target utama.
    ============================================================ */
 @media (max-width:1320px){ .fgrid{grid-template-columns:minmax(0,1fr)} }
-@media (max-width:1000px){ .frow > .fld{grid-column:1/-1} .gsearch{display:none} .ctx > span{display:none} }
+@media (max-width:1000px){ .frow > .fld{grid-column:1/-1} }
 @media (max-width:860px){
   .tb-burger{display:flex}
   .body{padding:0;gap:0}
@@ -941,7 +869,6 @@ table.pkt2 tbody tr.on:hover td{background:#F7F0D4}
   .content{padding:12px}
 }
 @media print{ .topbar,.rail,.sub,.toolbar,.pager,.ph-act,.ract{display:none!important} .pad > .ph{position:static;box-shadow:none} .content{overflow:visible} body{background:#fff} }
-
 
 /* ============================================================ font wiring
    The mockup pulled Plus Jakarta Sans and JetBrains Mono from a Google Fonts
@@ -1058,12 +985,9 @@ a{color:inherit;text-decoration:none}
 .cal-f .btn{flex:1 1 auto;justify-content:center}
 
 /* ---------- dropdown rendered by the app, not by the OS ---------- */
-.ctxsel{border:0;background:transparent;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer;
-  padding:0 22px 0 0;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='3' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");
-  background-repeat:no-repeat;background-position:right 6px center}
+
 .tsel,.psel{text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tsel.open,.psel.open,.ctxsel.open{border-color:var(--accent-s)}
+.tsel.open,.psel.open{border-color:var(--accent-s)}
 .cbx.ph .nm,.cbx .ph{color:var(--muted-3)}
 .cbo.off{opacity:.45;cursor:not-allowed}
 .cbo.off:hover{background:transparent}
@@ -1071,17 +995,17 @@ a{color:inherit;text-decoration:none}
 /* The triggers are `<div>`s, not `<button>`s — a button may not contain the
    input the search turns it into — so a disabled one says so with a class and
    centres its own label rather than relying on a button's own layout. */
-.tsel,.psel,.ctxsel{display:inline-flex;align-items:center}
-.tsel .tv,.psel .tv,.ctxsel .tv{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cbx.dis,.tsel.dis,.psel.dis,.ctxsel.dis{background-color:var(--line-3);color:var(--muted-2);
+.tsel,.psel{display:inline-flex;align-items:center}
+.tsel .tv,.psel .tv{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cbx.dis,.tsel.dis,.psel.dis{background-color:var(--line-3);color:var(--muted-2);
   cursor:not-allowed;border-color:var(--line)}
 .cbx.dis .cv{opacity:.5}
 /* Waiting for its prerequisite, not locked against one. `.dis` means never
    and `.wait` means not yet, so the clause naming what to choose first is set
    the way the segment input's "menunggu induk" prefix is — italic, muted, and
    plainly not a value. */
-.cbx.wait,.tsel.wait,.psel.wait,.ctxsel.wait{cursor:default}
-.cbx.wait .ph,.tsel.wait .tv,.psel.wait .tv,.ctxsel.wait .tv{font-style:italic;font-size:11.5px}
+.cbx.wait,.tsel.wait,.psel.wait{cursor:default}
+.cbx.wait .ph,.tsel.wait .tv,.psel.wait .tv{font-style:italic;font-size:11.5px}
 
 /* ============================================================ report view
    A Report View gives the viewport to its figures. Two pieces make that
