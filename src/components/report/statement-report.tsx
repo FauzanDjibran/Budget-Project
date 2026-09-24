@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
+import { ExpandAll } from "@/components/ui/expand-all";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { reportHref } from "@/lib/siba/reports";
@@ -85,12 +86,11 @@ export function StatementReport({
     <>
       <div className="rhead">
         <div className="tspace" />
-        <button className="btn sm" onClick={() => setClosed(new Set())} disabled={allOpen}>
-          <Icon name="expand" size={13} /> Buka Semua
-        </button>
-        <button className="btn sm" onClick={() => setClosed(new Set(foldable))}>
-          <Icon name="collapse" size={13} /> Tutup Semua
-        </button>
+        <ExpandAll
+          onExpand={() => setClosed(new Set())}
+          onCollapse={() => setClosed(new Set(foldable))}
+          allOpen={allOpen}
+        />
       </div>
 
       <div className="tw">

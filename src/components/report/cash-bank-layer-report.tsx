@@ -28,7 +28,7 @@ import type { LayerReport as Report } from "@/lib/siba/cash-bank-layers";
 export function CashBankLayerReport({ report }: { report: Report }) {
   if (!report.blocks.length) {
     return (
-      <div className="empty">
+      <div className="empty sm">
         <div className="ic">
           <Icon name="layers" size={20} />
         </div>

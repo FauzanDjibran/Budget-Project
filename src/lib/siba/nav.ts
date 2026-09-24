@@ -260,7 +260,7 @@ export const MODULES: NavModule[] = [
       },
       {
         key: "journal",
-        name: "Journal & Buku Besar",
+        name: "Journal",
         entities: [
           {
             key: "acc_journal",
@@ -271,6 +271,12 @@ export const MODULES: NavModule[] = [
             desc: "Journal dari posting dokumen, dan Journal Manual untuk entri yang tidak berasal dari dokumen. Final setelah diposting.",
             permission: "JOURNAL_VIEW",
           },
+        ],
+      },
+      {
+        key: "report",
+        name: "Laporan",
+        entities: [
           {
             key: "report_general_ledger",
             slug: "report/general-ledger",

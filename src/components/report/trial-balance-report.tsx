@@ -46,7 +46,7 @@ export function TrialBalanceReport({
 }) {
   if (!report.rows.length) {
     return (
-      <div className="empty">
+      <div className="empty sm">
         <div className="ic">
           <Icon name="calc" size={20} />
         </div>

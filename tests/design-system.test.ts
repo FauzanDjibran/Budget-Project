@@ -1125,3 +1125,44 @@ describe("a form is left the same way everywhere", () => {
     );
   });
 });
+
+describe("reports sit together, and open and close the same way", () => {
+  test("every Report View in the menu is in a group named Laporan", () => {
+    const bad: string[] = [];
+    for (const mod of MODULES) {
+      for (const g of mod.groups ?? []) {
+        for (const e of g.entities) {
+          if (e.slug.startsWith("report/") && g.name !== "Laporan") bad.push(`${mod.key}/${e.slug}`);
+        }
+      }
+    }
+    assert.deepEqual(bad, [], "A report is found under Laporan in every module.");
+  });
+
+  test("ExpandAll is never put in the page header", () => {
+    const bad = files.filter((f) => {
+      const src = code(f.text);
+      const i = src.indexOf('<div className="ph-act"');
+      if (i === -1) return false;
+      const close = src.indexOf("</div>", i);
+      return src.slice(i, close).includes("<ExpandAll");
+    });
+    assert.deepEqual(bad.map((f) => f.rel), [], "Buka / Tutup Semua sits in the bar above the content.");
+  });
+
+  test("an empty state inside a report body is the small one", () => {
+    const bad = files.filter(
+      (f) => f.rel.startsWith("src/components/report/") && /className="empty"/.test(code(f.text))
+    );
+    assert.deepEqual(bad.map((f) => f.rel), [], "Use `empty sm` inside a report.");
+  });
+
+  test("only `ui/expand-all.tsx` writes Buka Semua / Tutup Semua", () => {
+    const bad = files.filter(
+      (f) =>
+        !f.rel.endsWith("components/ui/expand-all.tsx") &&
+        /Buka Semua|Tutup Semua/.test(code(f.text))
+    );
+    assert.deepEqual(bad.map((f) => f.rel), [], "Use `<ExpandAll>`.");
+  });
+});

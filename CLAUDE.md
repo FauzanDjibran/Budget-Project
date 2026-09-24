@@ -703,6 +703,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Rate layers | `KursSelect` — a layer is *chosen*, never a rate typed, and it is chosen in a `Dialog` where date, kurs, sisa and sumber are four columns. The field afterwards carries **only the kurs** |
 | Pagination | `Pager`, at the foot of every list that grows with use — Budget Month and Role included, since a list of user-created rows has no size ceiling. It shows the **current page only**, never a run of page numbers, with `Tampil 10/25/50/100`; changing a filter returns to page 1 (`usePaging`) |
 | Row actions | Every row keeps its icons in the same columns: an action a row does not offer leaves a `.sp` in `.ract`. "Aksi lain" is the `more` icon. A toolbar filter names its facet — `Status: semua` |
+| Expand all | `ExpandAll` — a `Buka Semua` + `Tutup Semua` pair, always both, in the bar directly above the content it opens (a card `.toolbar`, a report's `.rhead`). **Never in `.ph-act`**: it changes what is on screen, not the record. A button that would do nothing is disabled rather than relabelled |
 | Search | `SearchField` in the `.toolbar` — icon, `Cari <what>…`, clear button. `grow` when it is the only control |
 | Picker prompts | Always `Pilih <what>…` — for a `Combobox`, a `Select`, and anything that stands in for one |
 | Prerequisites | A picker whose options another field decides takes `waitingFor` — **shown, in its place, not collecting an answer**, reading `Pilih <what> dulu…`. Never hidden, and never an open list saying "Tidak ada pilihan yang cocok" |
@@ -2134,8 +2135,11 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Menu placement deviates from the concept doc, deliberately.** §21 lists the
   ledgers under Accounting › Ledger beside the General Ledger. The one entry
   lives under **Finance › Laporan** instead, on the user's instruction: the books
-  are written by Finance's Post, and Accounting's two reports are the ones that
-  derive from journals.
+  are written by Finance's Post, and Accounting's reports are the ones that
+  derive from journals. Both modules now keep their reports in a group named
+  **Laporan** — Accounting › Laporan holds General Ledger, Trial Balance, Laba
+  Rugi and Neraca, and Accounting › Journal holds the Journal alone — so a
+  report is found in the same place in every module.
 - **Do not change unless:** explicitly instructed. **Never add an update, delete
   or reversal path to `sub_ledger`**, never derive a subject book from a journal
   line, never write one outside `recordSubledgerEntry`, do not split the books

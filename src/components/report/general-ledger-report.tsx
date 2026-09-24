@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
+import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatForeignFace, formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
@@ -70,10 +71,12 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
             {formatDate(report.range.from)} – {formatDate(report.range.to)}
           </span>
           <div className="tspace" />
-          <button className="btn sm" onClick={() => setAll(!allOpen)}>
-            <Icon name={allOpen ? "collapse" : "expand"} size={13} />
-            {allOpen ? "Tutup Semua" : "Buka Semua"}
-          </button>
+          <ExpandAll
+            onExpand={() => setAll(true)}
+            onCollapse={() => setAll(false)}
+            allOpen={allOpen}
+            allClosed={open.size === 0}
+          />
         </div>
       )}
 

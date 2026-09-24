@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { ExpandAll } from "@/components/ui/expand-all";
 import { SearchField } from "@/components/ui/search-field";
 import { CompanyFilter, NoCompanyAccess } from "./company-filter";
 import type { EntityAbilities } from "@/lib/siba/entity-access";
@@ -297,12 +298,6 @@ export function AccountTree({
             {entity.name}
           </h1>
           <div className="ph-act">
-            <button className="btn sm" onClick={() => setAll(true)}>
-              <Icon name="expand" size={13} /> Buka Semua
-            </button>
-            <button className="btn sm" onClick={() => setAll(false)}>
-              <Icon name="collapse" size={13} /> Tutup Semua
-            </button>
             {can.create && (
               <Link className="btn primary" href={`${basePath}/new`}>
                 <Icon name="plus" size={15} /> {createLabel(entity)}
@@ -332,6 +327,7 @@ export function AccountTree({
           <span className="count">
             <b>{visibleAccounts.length}</b> account
           </span>
+          <ExpandAll onExpand={() => setAll(true)} onCollapse={() => setAll(false)} />
         </div>
 
         <div

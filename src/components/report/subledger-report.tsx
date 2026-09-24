@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Icon } from "@/components/icon";
+import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { SubledgerReport as Report } from "@/lib/siba/subledger";
@@ -76,10 +77,12 @@ export function SubledgerReport({ report }: { report: Report }) {
         </span>
         <div className="tspace" />
         {report.subjects.length > 1 && (
-          <button className="btn sm" onClick={() => setAll(!allOpen)}>
-            <Icon name={allOpen ? "collapse" : "expand"} size={13} />
-            {allOpen ? "Tutup Semua" : "Buka Semua"}
-          </button>
+          <ExpandAll
+            onExpand={() => setAll(true)}
+            onCollapse={() => setAll(false)}
+            allOpen={allOpen}
+            allClosed={open.size === 0}
+          />
         )}
       </div>
 

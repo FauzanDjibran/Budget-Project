@@ -22,10 +22,10 @@ export function ExpandAll({
   return (
     <>
       <button className="btn sm" onClick={onExpand} disabled={allOpen}>
-        <Icon name="expand" size={14} /> Buka Semua
+        <Icon name="expand" size={13} /> Buka Semua
       </button>
       <button className="btn sm" onClick={onCollapse} disabled={allClosed}>
-        <Icon name="collapse" size={14} /> Tutup Semua
+        <Icon name="collapse" size={13} /> Tutup Semua
       </button>
     </>
   );
