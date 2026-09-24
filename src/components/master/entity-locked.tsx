@@ -26,7 +26,7 @@ export function EntityLocked({
     <>
       <div className="ph">
         <div className="crumb">
-          <Link href="/dashboard">Master</Link>
+          <span>Master</span>
           <span>/</span>
           <Link href={basePath}>{entity.name}</Link>
           <span>/</span>

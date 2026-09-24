@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/icon";
@@ -33,6 +33,17 @@ export function AppShell({
   const { module: activeModule, entity: activeEntity } = resolvePath(pathname);
 
   const [subOpen, setSubOpen] = useState(true);
+  const narrow = useNarrow();
+  const [navOpen, setNavOpen] = useState(false);
+  // A rail press navigates to the module's first leaf and should leave the
+  // drawer open on its submenu; every other navigation closes it.
+  const [railTarget, setRailTarget] = useState<string | null>(null);
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (seenPath !== pathname) {
+    setSeenPath(pathname);
+    if (railTarget === pathname) setRailTarget(null);
+    else if (navOpen) setNavOpen(false);
+  }
   const [userOpen, setUserOpen] = useState(false);
   const userRef = useRef<HTMLDivElement>(null);
 
@@ -51,9 +62,28 @@ export function AppShell({
   const hasSub = Boolean(visibleModule?.groups?.length);
   const showSub = hasSub && subOpen;
 
+  // Below 860px the rail and submenu are a drawer, driven by classes on
+  // <body> that the stylesheet already carries.
+  useEffect(() => {
+    const on = narrow && navOpen;
+    document.body.classList.toggle("nav-open", on);
+    document.body.classList.toggle("no-sub", !hasSub);
+    return () => {
+      document.body.classList.remove("nav-open", "no-sub");
+    };
+  }, [narrow, navOpen, hasSub]);
+
   return (
     <div className="app">
       <header className="topbar">
+        <button
+          className="tb-burger"
+          onClick={() => setNavOpen((o) => !o)}
+          aria-label={navOpen ? "Tutup menu" : "Buka menu"}
+          aria-expanded={navOpen}
+        >
+          <Icon name="menu" size={17} />
+        </button>
         <div className="brand">
           <div className="brand-mark">S3</div>
           <div className="brand-txt">SIBA</div>
@@ -119,21 +149,34 @@ export function AppShell({
                 area sat underneath the sticky page header, where nobody could
                 reach it. Pressing a module always *opens* its menu rather than
                 toggling it, so one press never has two outcomes. */}
-            {modules.map((m) => (
-              <Link
-                key={m.key}
-                href={m.groups ? firstLeafHref(modules, m.key) : `/${m.key}`}
-                className={`ri${activeModule?.key === m.key ? " on" : ""}`}
-                onClick={() => setSubOpen(true)}
-              >
-                <Icon name={m.icon} size={18} />
-                <span className="ri-tip">{m.name}</span>
-              </Link>
-            ))}
+            {modules.map((m) => {
+              const href = m.groups ? firstLeafHref(modules, m.key) : `/${m.key}`;
+              return (
+                <Link
+                  key={m.key}
+                  href={href}
+                  className={`ri${activeModule?.key === m.key ? " on" : ""}`}
+                  onClick={() => {
+                    setSubOpen(true);
+                    if (narrow && m.groups) setRailTarget(href);
+                  }}
+                >
+                  <Icon name={m.icon} size={18} />
+                  <span className="ri-tip">{m.name}</span>
+                </Link>
+              );
+            })}
           </div>
         </nav>
 
-        <nav className="sub" style={showSub ? undefined : { width: 0, borderWidth: 0, opacity: 0, pointerEvents: "none" }}>
+        <nav
+          className="sub"
+          style={
+            showSub || narrow
+              ? undefined
+              : { width: 0, borderWidth: 0, opacity: 0, pointerEvents: "none" }
+          }
+        >
           <div className="sub-h">
             <div className="t">
               <h2>{activeModule?.name ?? ""}</h2>
@@ -141,7 +184,7 @@ export function AppShell({
             </div>
             <button
               className="collapse"
-              onClick={() => setSubOpen(false)}
+              onClick={() => (narrow ? setNavOpen(false) : setSubOpen(false))}
               title="Sembunyikan menu"
             >
               <Icon name="back" size={13} />
@@ -161,6 +204,7 @@ export function AppShell({
                       key={e.key}
                       href={entityHref(visibleModule!.key, e.slug)}
                       className={`leaf${activeEntity?.key === e.key ? " on" : ""}`}
+                      onClick={() => setNavOpen(false)}
                     >
                       <span className="lt">{e.name}</span>
                     </Link>
@@ -171,11 +215,27 @@ export function AppShell({
           </div>
         </nav>
 
+        <div className="scrim" onClick={() => setNavOpen(false)} />
+
         <main className="content">
           <div className="pad">{children}</div>
         </main>
       </div>
     </div>
+  );
+}
+
+/** Whether the viewport is at the width where the navigation becomes a drawer. */
+const NARROW = "(max-width: 860px)";
+function useNarrow(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const mq = window.matchMedia(NARROW);
+      mq.addEventListener("change", notify);
+      return () => mq.removeEventListener("change", notify);
+    },
+    () => window.matchMedia(NARROW).matches,
+    () => false
   );
 }
 

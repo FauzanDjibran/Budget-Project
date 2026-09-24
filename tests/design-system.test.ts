@@ -1166,3 +1166,18 @@ describe("reports sit together, and open and close the same way", () => {
     assert.deepEqual(bad.map((f) => f.rel), [], "Use `<ExpandAll>`.");
   });
 });
+
+describe("the shell and the breadcrumb", () => {
+  test("a breadcrumb's module segment is text, not a link to the dashboard", () => {
+    const bad = files.filter((f) =>
+      /className="crumb"[\s\S]{0,200}?href="\/dashboard"/.test(code(f.text))
+    );
+    assert.deepEqual(bad.map((f) => f.rel), [], "A module has no page of its own; `/dashboard` is not it.");
+  });
+
+  test("the shell renders the burger and the scrim the narrow layout expects", () => {
+    const text = code(files.find((f) => f.rel === "src/components/shell/app-shell.tsx")!.text);
+    assert.match(text, /className="tb-burger"/);
+    assert.match(text, /className="scrim"/);
+  });
+});

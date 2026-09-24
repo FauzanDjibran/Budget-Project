@@ -714,7 +714,8 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Feedback | Toasts via `useToast()` |
 | Empty states | `.empty` — icon, heading, explanation, CTA only when the user can act. Two sizes: `.empty` fills a page, `.empty.sm` sits inside a card, a dialog or a report body. **Never a hand-written padding** |
 | Icon tints | `.mi` + `.t-ok` / `.t-bad` / `.t-brand` / `.t-warn` — never a `background`/`color` pair written inline |
-| Responsive | Desktop-first. `.fgrid` collapses at 1320px, `.frow` at 1000px, nav at 860px. |
+| Responsive | Desktop-first. `.fgrid` collapses at 1320px, `.frow` at 1000px, nav at 860px — where the rail and submenu become a drawer opened by the topbar's burger (`.tb-burger`, `body.nav-open`) and closed by the `.scrim`, by choosing a page, or by any navigation not started from the rail |
+| Breadcrumb | The module segment is plain text — a module has no page of its own; the entity segment links to its list |
 
 **Anti-patterns explicitly rejected** (from `akui_proto_ui_reference.md`, its §9 and §11):
 

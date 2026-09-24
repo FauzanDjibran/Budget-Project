@@ -271,7 +271,7 @@ export function EntityList({
     <>
       <div className="ph">
         <div className="crumb">
-          <Link href="/dashboard">{moduleName}</Link>
+          <span>{moduleName}</span>
           <span>/</span>
           <span className="cur">{entity.name}</span>
         </div>

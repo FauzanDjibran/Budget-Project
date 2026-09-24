@@ -44,7 +44,7 @@ export function BudgetMonthList({ months }: { months: BudgetMonth[] }) {
     <>
       <div className="ph">
         <div className="crumb">
-          <Link href="/dashboard">Budget</Link>
+          <span>Budget</span>
           <span>/</span>
           <span className="cur">Budget Month</span>
         </div>

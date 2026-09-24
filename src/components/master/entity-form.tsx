@@ -324,7 +324,7 @@ export function EntityForm({
     <>
       <div className="ph">
         <div className="crumb">
-          <Link href="/dashboard">{moduleName}</Link>
+          <span>{moduleName}</span>
           <span>/</span>
           <Link href={basePath}>{entity.name}</Link>
           <span>/</span>

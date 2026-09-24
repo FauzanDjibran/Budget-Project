@@ -231,7 +231,7 @@ export function BudgetForm({
     <>
       <div className="ph">
         <div className="crumb">
-          <Link href="/dashboard">Budget</Link>
+          <span>Budget</span>
           <span>/</span>
           <Link href="/budget/budget">Budget Month</Link>
           <span>/</span>
