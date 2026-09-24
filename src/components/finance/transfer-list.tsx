@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
+import { Pager } from "@/components/ui/pager";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionTransfer } from "@/app/actions/transfer";
@@ -172,7 +173,7 @@ export function TransferList({
           style={{ textAlign: "left", font: "inherit" }}
         >
           <div className="h">
-            <span className="i" style={{ background: "var(--warn-bg)", color: "var(--warn)" }}>
+            <span className="i t-warn">
               <Icon name="clock" size={14} />
             </span>
             <span className="l">Belum Diposting</span>
@@ -190,7 +191,7 @@ export function TransferList({
           style={{ textAlign: "left", font: "inherit" }}
         >
           <div className="h">
-            <span className="i" style={{ background: "var(--info-bg)", color: "var(--info)" }}>
+            <span className="i t-info">
               <Icon name="check" size={14} />
             </span>
             <span className="l">Sudah Diposting</span>
@@ -212,7 +213,7 @@ export function TransferList({
           style={{ textAlign: "left", font: "inherit" }}
         >
           <div className="h">
-            <span className="i" style={{ background: "var(--bad-bg)", color: "var(--bad)" }}>
+            <span className="i t-bad">
               <Icon name="block" size={14} />
             </span>
             <span className="l">Dibatalkan</span>
@@ -361,7 +362,7 @@ export function TransferList({
                                 <Icon name="pen" size={15} />
                               </Link>
                             ) : (
-                              <span style={{ width: 24, display: "inline-block" }} />
+                              <span className="sp" />
                             )}
                             {actions.length > 0 ? (
                               <button
@@ -379,10 +380,10 @@ export function TransferList({
                                   });
                                 }}
                               >
-                                <Icon name="hist" size={15} />
+                                <Icon name="more" size={15} />
                               </button>
                             ) : (
-                              <span style={{ width: 24, display: "inline-block" }} />
+                              <span className="sp" />
                             )}
                           </span>
                         </td>
@@ -393,51 +394,17 @@ export function TransferList({
               </table>
             </div>
 
-            <div className="pager">
-              <span className="inf">
-                Halaman <b>{current}</b> dari <b>{pages}</b> ({filtered.length} total)
-              </span>
-              <Select
-                variant="compact"
-                value={String(perPage)}
-                ariaLabel="Baris per halaman"
-                options={[10, 25, 50, 100].map((n) => ({
-                  value: String(n),
-                  label: `Tampil ${n}`,
-                }))}
-                onChange={(v) => {
-                  setPerPage(Number(v));
-                  setPage(1);
-                }}
-              />
-              <div className="pgs">
-                <button className="pg" disabled={current <= 1} onClick={() => setPage(1)}>
-                  «
-                </button>
-                <button
-                  className="pg"
-                  disabled={current <= 1}
-                  onClick={() => setPage(current - 1)}
-                >
-                  ‹
-                </button>
-                <span className="pg act">{current}</span>
-                <button
-                  className="pg"
-                  disabled={current >= pages}
-                  onClick={() => setPage(current + 1)}
-                >
-                  ›
-                </button>
-                <button
-                  className="pg"
-                  disabled={current >= pages}
-                  onClick={() => setPage(pages)}
-                >
-                  »
-                </button>
-              </div>
-            </div>
+            <Pager
+              page={current}
+              pages={pages}
+              total={filtered.length}
+              perPage={perPage}
+              onPage={setPage}
+              onPerPage={(n) => {
+                setPerPage(n);
+                setPage(1);
+              }}
+            />
           </>
         ) : (
           <div className="empty">

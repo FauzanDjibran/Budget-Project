@@ -28,10 +28,10 @@ import { reportHref } from "@/lib/siba/reports";
  * Money is never summed across currencies (CLAUDE.md §12).
  */
 
-const STAGE_TINT: Record<StageKey, { bg: string; fg: string; icon: IconName }> = {
-  approval: { bg: "var(--warn-bg)", fg: "var(--warn)", icon: "clock" },
-  execution: { bg: "var(--info-bg)", fg: "var(--info)", icon: "send" },
-  funding: { bg: "var(--vio-bg)", fg: "var(--vio)", icon: "link" },
+const STAGE_TINT: Record<StageKey, { tone: string; icon: IconName }> = {
+  approval: { tone: "t-warn", icon: "clock" },
+  execution: { tone: "t-info", icon: "send" },
+  funding: { tone: "t-vio", icon: "link" },
 };
 
 /** What the row wants done, in one word — the queue is mixed, so it must say. */
@@ -86,7 +86,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
               style={{ display: "block", textDecoration: "none" }}
             >
               <div className="h">
-                <span className="i" style={{ background: tint.bg, color: tint.fg }}>
+                <span className={`i ${tint.tone}`}>
                   <Icon name={tint.icon} size={14} />
                 </span>
                 <span className="l">{s.name}</span>
@@ -315,7 +315,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
               className="att"
               style={{ textDecoration: "none" }}
             >
-              <span className="i" style={{ background: "var(--bad-bg)", color: "var(--bad)" }}>
+              <span className="i t-bad">
                 <Icon name="warn" size={14} />
               </span>
               <span className="b">
@@ -339,7 +339,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
               className="att"
               style={{ textDecoration: "none" }}
             >
-              <span className="i" style={{ background: "var(--warn-bg)", color: "var(--warn)" }}>
+              <span className="i t-warn">
                 <Icon name="warn" size={14} />
               </span>
               <span className="b">
@@ -358,7 +358,7 @@ function QueueRow({ task }: { task: TaskRow }) {
   const tint = STAGE_TINT[task.stage];
   return (
     <Link href={task.href} className="att" style={{ textDecoration: "none" }}>
-      <span className="i" style={{ background: tint.bg, color: tint.fg }}>
+      <span className={`i ${tint.tone}`}>
         <Icon name={tint.icon} size={14} />
       </span>
       <span className="b">

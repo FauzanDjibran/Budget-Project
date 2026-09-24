@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Pager, usePaging } from "@/components/ui/pager";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { formatDate, formatMoney, formatTotals } from "@/lib/format";
@@ -79,6 +80,8 @@ export function FundingList({
     return out;
   }, [requests, status, query, purposeLabelOf]);
 
+  const paging = usePaging(filtered, `${query}|${status}`);
+
   return (
     <>
       <div className="ph">
@@ -111,8 +114,7 @@ export function FundingList({
         >
           <div className="h">
             <span
-              className="i"
-              style={{ background: "var(--warn-bg)", color: "var(--warn)" }}
+              className="i t-warn"
             >
               <Icon name="clock" size={14} />
             </span>
@@ -132,8 +134,7 @@ export function FundingList({
         >
           <div className="h">
             <span
-              className="i"
-              style={{ background: "var(--ok-bg)", color: "var(--ok)" }}
+              className="i t-ok"
             >
               <Icon name="check" size={14} />
             </span>
@@ -186,87 +187,97 @@ export function FundingList({
         </div>
 
         {filtered.length ? (
-          <div className="tw">
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th style={{ width: 38 }}>No</th>
-                  <th style={{ width: 100 }}>Nomor</th>
-                  <th style={{ width: 104 }}>Tanggal</th>
-                  <th>Pemohon / Realisasi</th>
-                  <th className="num" style={{ width: 160 }}>
-                    Nominal
-                  </th>
-                  <th style={{ width: 116 }}>Status</th>
-                  <th style={{ width: 44 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r, i) => {
-                  const href = `/finance/funding-request/${r.id}`;
-                  const inn = r.transaction?.transaction_type === "In";
-                  return (
-                    <tr key={r.id} onClick={() => router.push(href)}>
-                      <td className="no">{i + 1}</td>
-                      <td>
-                        <Link href={href}>
-                          <span className="lab">{r.funding_request_no}</span>
-                        </Link>
-                      </td>
-                      <td>{formatDate(r.request_date)}</td>
-                      <td className="pri">
-                        <Link href={href}>
-                          <span className="dstack">
-                            <span className="d1">
-                              {companyOf(r.transaction?.company_id)} ·{" "}
-                              {purposeLabelOf(r.transaction?.purpose)}
+          <>
+            <div className="tw">
+              <table className="grid">
+                <thead>
+                  <tr>
+                    <th style={{ width: 38 }}>No</th>
+                    <th style={{ width: 100 }}>Nomor</th>
+                    <th style={{ width: 104 }}>Tanggal</th>
+                    <th>Pemohon / Realisasi</th>
+                    <th className="num" style={{ width: 160 }}>
+                      Nominal
+                    </th>
+                    <th style={{ width: 116 }}>Status</th>
+                    <th style={{ width: 44 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {paging.pageRows.map((r, i) => {
+                    const href = `/finance/funding-request/${r.id}`;
+                    const inn = r.transaction?.transaction_type === "In";
+                    return (
+                      <tr key={r.id} onClick={() => router.push(href)}>
+                        <td className="no">{i + 1}</td>
+                        <td>
+                          <Link href={href}>
+                            <span className="lab">{r.funding_request_no}</span>
+                          </Link>
+                        </td>
+                        <td>{formatDate(r.request_date)}</td>
+                        <td className="pri">
+                          <Link href={href}>
+                            <span className="dstack">
+                              <span className="d1">
+                                {companyOf(r.transaction?.company_id)} ·{" "}
+                                {purposeLabelOf(r.transaction?.purpose)}
+                              </span>
+                              <span className="d2">
+                                {r.transaction?.transaction_no ?? "—"} ·{" "}
+                                {r.transaction?.line_count ?? 0} Budget
+                              </span>
                             </span>
-                            <span className="d2">
-                              {r.transaction?.transaction_no ?? "—"} ·{" "}
-                              {r.transaction?.line_count ?? 0} Budget
-                            </span>
+                          </Link>
+                        </td>
+                        <td className="num">
+                          <span className={`mny ${inn ? "in" : "out"}`}>
+                            {inn ? "+ " : "− "}
+                            {formatMoney(r.request_amount, currencyOf(r.currency_id))}
                           </span>
-                        </Link>
-                      </td>
-                      <td className="num">
-                        <span className={`mny ${inn ? "in" : "out"}`}>
-                          {inn ? "+ " : "− "}
-                          {formatMoney(r.request_amount, currencyOf(r.currency_id))}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={`bdg ${
-                            r.status === "Open"
-                              ? "s-warn"
-                              : STATUS_CLASS[r.status] ?? "s-mute"
-                          }`}
-                        >
-                          {r.status === "Open"
-                            ? "Menunggu"
-                            : STATUS_TEXT[r.status] ?? r.status}
-                        </span>
-                      </td>
-                      <td className="acts">
-                        <Link
-                          className="iact"
-                          href={href}
-                          title={
-                            r.status === "Open" && canConfirm
-                              ? "Tinjau dan konfirmasi"
-                              : "Lihat detail"
-                          }
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Icon name="eye" size={15} />
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td>
+                          <span
+                            className={`bdg ${
+                              r.status === "Open"
+                                ? "s-warn"
+                                : STATUS_CLASS[r.status] ?? "s-mute"
+                            }`}
+                          >
+                            {r.status === "Open"
+                              ? "Menunggu"
+                              : STATUS_TEXT[r.status] ?? r.status}
+                          </span>
+                        </td>
+                        <td className="acts">
+                          <Link
+                            className="iact"
+                            href={href}
+                            title={
+                              r.status === "Open" && canConfirm
+                                ? "Tinjau dan konfirmasi"
+                                : "Lihat detail"
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Icon name="eye" size={15} />
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              page={paging.page}
+              pages={paging.pages}
+              total={paging.total}
+              perPage={paging.perPage}
+              onPage={paging.setPage}
+              onPerPage={paging.setPerPage}
+            />
+          </>
         ) : (
           <div className="empty">
             <div className="ic">

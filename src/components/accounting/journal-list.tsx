@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Pager, usePaging } from "@/components/ui/pager";
 import { CompanyFilter, NoCompanyAccess } from "@/components/master/company-filter";
 import { SearchField } from "@/components/ui/search-field";
 import { formatDate, formatMoney } from "@/lib/format";
@@ -64,6 +65,8 @@ export function JournalList({
 
   const cents = (n: number) => Math.round(n * 100);
 
+  const paging = usePaging(rows, q);
+
   return (
     <>
       <div className="ph">
@@ -116,80 +119,90 @@ export function JournalList({
         </div>
 
         {rows.length ? (
-          <div className="tw">
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th style={{ width: 118 }}>Nomor</th>
-                  <th style={{ width: 96 }}>Status</th>
-                  <th style={{ width: 106 }}>Tanggal</th>
-                  <th>Keterangan</th>
-                  <th style={{ width: 150 }}>Sumber</th>
-                  <th className="num" style={{ width: 64 }}>
-                    Baris
-                  </th>
-                  <th className="num" style={{ width: 150 }}>
-                    Debit
-                  </th>
-                  <th className="num" style={{ width: 150 }}>
-                    Kredit
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((j) => {
-                  const balanced = cents(j.debit) === cents(j.credit);
-                  return (
-                    <tr
-                      key={j.id}
-                      onClick={() => router.push(`/accounting/journal/${j.id}`)}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <td>
-                        <Link className="lab" href={`/accounting/journal/${j.id}`}>
-                          {j.journalNo}
-                        </Link>
-                      </td>
-                      <td>
-                        <span
-                          className={`bdg ${
-                            JOURNAL_STATUS_BADGE[j.status as JournalStatus] ??
-                            "s-mute"
-                          }`}
-                        >
-                          {j.status}
-                        </span>
-                      </td>
-                      <td>
-                        {j.postingDate ? (
-                          formatDate(j.postingDate)
-                        ) : (
-                          <span className="dash">—</span>
-                        )}
-                      </td>
-                      <td className="pri">{j.description}</td>
-                      {/* A manual journal has no source document — it is the
-                          source. Saying so in the same column keeps the two
-                          kinds readable without a column of its own. */}
-                      <td className="mut">
-                        {j.sourceDocLabel ?? (j.isManual ? "Manual" : "—")}
-                      </td>
-                      <td className="num">{j.lineCount}</td>
-                      <td className="num">{formatMoney(j.debit, BASE_CURRENCY_LABEL)}</td>
-                      <td className="num">
-                        {formatMoney(j.credit, BASE_CURRENCY_LABEL)}
-                        {!balanced && j.status === "Posted" && (
-                          <span className="bdg s-bad" style={{ marginLeft: 6 }}>
-                            Tidak seimbang
+          <>
+            <div className="tw">
+              <table className="grid">
+                <thead>
+                  <tr>
+                    <th style={{ width: 118 }}>Nomor</th>
+                    <th style={{ width: 96 }}>Status</th>
+                    <th style={{ width: 106 }}>Tanggal</th>
+                    <th>Keterangan</th>
+                    <th style={{ width: 150 }}>Sumber</th>
+                    <th className="num" style={{ width: 64 }}>
+                      Baris
+                    </th>
+                    <th className="num" style={{ width: 150 }}>
+                      Debit
+                    </th>
+                    <th className="num" style={{ width: 150 }}>
+                      Kredit
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paging.pageRows.map((j) => {
+                    const balanced = cents(j.debit) === cents(j.credit);
+                    return (
+                      <tr
+                        key={j.id}
+                        onClick={() => router.push(`/accounting/journal/${j.id}`)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <td>
+                          <Link className="lab" href={`/accounting/journal/${j.id}`}>
+                            {j.journalNo}
+                          </Link>
+                        </td>
+                        <td>
+                          <span
+                            className={`bdg ${
+                              JOURNAL_STATUS_BADGE[j.status as JournalStatus] ??
+                              "s-mute"
+                            }`}
+                          >
+                            {j.status}
                           </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td>
+                          {j.postingDate ? (
+                            formatDate(j.postingDate)
+                          ) : (
+                            <span className="dash">—</span>
+                          )}
+                        </td>
+                        <td className="pri">{j.description}</td>
+                        {/* A manual journal has no source document — it is the
+                            source. Saying so in the same column keeps the two
+                            kinds readable without a column of its own. */}
+                        <td className="mut">
+                          {j.sourceDocLabel ?? (j.isManual ? "Manual" : "—")}
+                        </td>
+                        <td className="num">{j.lineCount}</td>
+                        <td className="num">{formatMoney(j.debit, BASE_CURRENCY_LABEL)}</td>
+                        <td className="num">
+                          {formatMoney(j.credit, BASE_CURRENCY_LABEL)}
+                          {!balanced && j.status === "Posted" && (
+                            <span className="bdg s-bad" style={{ marginLeft: 6 }}>
+                              Tidak seimbang
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              page={paging.page}
+              pages={paging.pages}
+              total={paging.total}
+              perPage={paging.perPage}
+              onPage={paging.setPage}
+              onPerPage={paging.setPerPage}
+            />
+          </>
         ) : (
           <div className="empty">
             <div className="ic">

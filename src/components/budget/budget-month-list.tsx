@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Pager, usePaging } from "@/components/ui/pager";
 import { SearchField } from "@/components/ui/search-field";
 import { formatDate } from "@/lib/format";
 import type { BudgetMonth } from "@/lib/siba/budget";
@@ -36,6 +37,8 @@ export function BudgetMonthList({ months }: { months: BudgetMonth[] }) {
   }, [months, query]);
 
   const withData = rows.filter((m) => m.count > 0).length;
+
+  const paging = usePaging(rows, query);
 
   return (
     <>
@@ -78,33 +81,43 @@ export function BudgetMonthList({ months }: { months: BudgetMonth[] }) {
         </div>
 
         {rows.length ? (
-          <div className="tw">
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th style={{ width: 38 }}>No</th>
-                  <th style={{ width: 104 }}>Bulan</th>
-                  <th>Nama Period</th>
-                  <th style={{ width: 196 }}>Rentang Tanggal</th>
-                  <th className="num" style={{ width: 96 }}>
-                    Budget
-                  </th>
-                  <th style={{ width: 96 }}>Period</th>
-                  <th style={{ width: 44 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((m, i) => (
-                  <MonthRow
-                    key={m.periodId}
-                    month={m}
-                    index={i + 1}
-                    onOpen={() => router.push(`/budget/budget/month/${m.periodId}`)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="tw">
+              <table className="grid">
+                <thead>
+                  <tr>
+                    <th style={{ width: 38 }}>No</th>
+                    <th style={{ width: 104 }}>Bulan</th>
+                    <th>Nama Period</th>
+                    <th style={{ width: 196 }}>Rentang Tanggal</th>
+                    <th className="num" style={{ width: 96 }}>
+                      Budget
+                    </th>
+                    <th style={{ width: 96 }}>Period</th>
+                    <th style={{ width: 44 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {paging.pageRows.map((m, i) => (
+                    <MonthRow
+                      key={m.periodId}
+                      month={m}
+                      index={i + 1}
+                      onOpen={() => router.push(`/budget/budget/month/${m.periodId}`)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              page={paging.page}
+              pages={paging.pages}
+              total={paging.total}
+              perPage={paging.perPage}
+              onPage={paging.setPage}
+              onPerPage={paging.setPerPage}
+            />
+          </>
         ) : (
           <div className="empty">
             <div className="ic">

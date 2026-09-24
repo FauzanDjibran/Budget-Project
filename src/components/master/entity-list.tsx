@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
+import { Pager } from "@/components/ui/pager";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { toggleStatus } from "@/app/actions/master";
@@ -321,12 +322,12 @@ export function EntityList({
 
           {status && (
             <Select
-              variant="compact"
+              variant="toolbar"
               value={filters[status.field] ?? ""}
               set={Boolean(filters[status.field])}
               ariaLabel="Filter status"
               options={[
-                { value: "", label: "Semua status" },
+                { value: "", label: "Status: semua" },
                 ...status.options.map((o) => ({
                   value: o,
                   label: STATUS_TEXT[o] ?? o,
@@ -386,7 +387,7 @@ export function EntityList({
                           >
                             <Icon name="eye" size={15} />
                           </button>
-                          {canEdit && (
+                          {canEdit ? (
                             <button
                               className="iact"
                               title="Ubah"
@@ -397,8 +398,10 @@ export function EntityList({
                             >
                               <Icon name="pen" size={15} />
                             </button>
+                          ) : (
+                            <span className="sp" />
                           )}
-                          {canToggle(row) && (
+                          {canToggle(row) ? (
                             <button
                               className="iact"
                               title={rowIsActive(row) ? "Nonaktifkan" : "Aktifkan"}
@@ -409,7 +412,9 @@ export function EntityList({
                             >
                               <Icon name="gear" size={15} />
                             </button>
-                          )}
+                          ) : status?.toggle ? (
+                            <span className="sp" />
+                          ) : null}
                         </span>
                       </td>
                     </tr>
@@ -418,51 +423,17 @@ export function EntityList({
               </table>
             </div>
 
-            <div className="pager">
-              <span className="inf">
-                Halaman <b>{current}</b> dari <b>{pages}</b> ({filtered.length} total)
-              </span>
-              <Select
-                variant="compact"
-                value={String(perPage)}
-                ariaLabel="Baris per halaman"
-                options={[10, 25, 50, 100].map((n) => ({
-                  value: String(n),
-                  label: `Tampil ${n}`,
-                }))}
-                onChange={(v) => {
-                  setPerPage(Number(v));
-                  setPage(1);
-                }}
-              />
-              <div className="pgs">
-                <button className="pg" disabled={current <= 1} onClick={() => setPage(1)}>
-                  «
-                </button>
-                <button className="pg" disabled={current <= 1} onClick={() => setPage(current - 1)}>
-                  ‹
-                </button>
-                {Array.from({ length: pages }, (_, i) => i + 1).map((p) => (
-                  <button
-                    key={p}
-                    className={`pg${p === current ? " on" : ""}`}
-                    onClick={() => setPage(p)}
-                  >
-                    {p}
-                  </button>
-                ))}
-                <button
-                  className="pg"
-                  disabled={current >= pages}
-                  onClick={() => setPage(current + 1)}
-                >
-                  ›
-                </button>
-                <button className="pg" disabled={current >= pages} onClick={() => setPage(pages)}>
-                  »
-                </button>
-              </div>
-            </div>
+            <Pager
+              page={current}
+              pages={pages}
+              total={filtered.length}
+              perPage={perPage}
+              onPage={setPage}
+              onPerPage={(n) => {
+                setPerPage(n);
+                setPage(1);
+              }}
+            />
           </>
         ) : (
           <>

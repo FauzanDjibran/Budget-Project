@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Pager, usePaging } from "@/components/ui/pager";
 import { CompanyFilter, NoCompanyAccess } from "@/components/master/company-filter";
 import { SearchField } from "@/components/ui/search-field";
 import { formatDate, formatMoney } from "@/lib/format";
@@ -56,6 +57,8 @@ export function OpeningBalanceList({
 
   const cents = (n: number) => Math.round(n * 100);
 
+  const paging = usePaging(rows, q);
+
   return (
     <>
       <div className="ph">
@@ -99,73 +102,83 @@ export function OpeningBalanceList({
           </div>
 
           {rows.length ? (
-            <div className="tw">
-              <table className="grid">
-                <thead>
-                  <tr>
-                    <th style={{ width: 118 }}>Nomor</th>
-                    <th style={{ width: 106 }}>Tanggal</th>
-                    <th>Tahun Buku</th>
-                    <th style={{ width: 150 }}>Sumber</th>
-                    <th className="num" style={{ width: 64 }}>
-                      Baris
-                    </th>
-                    <th className="num" style={{ width: 150 }}>
-                      Debit
-                    </th>
-                    <th className="num" style={{ width: 150 }}>
-                      Kredit
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((o) => {
-                    const balanced = cents(o.debit) === cents(o.credit);
-                    return (
-                      <tr
-                        key={o.id}
-                        onClick={() =>
-                          router.push(`/accounting/opening-balance/${o.id}`)
-                        }
-                        style={{ cursor: "pointer" }}
-                      >
-                        <td>
-                          <Link
-                            className="lab"
-                            href={`/accounting/opening-balance/${o.id}`}
-                          >
-                            {o.openingNo}
-                          </Link>
-                        </td>
-                        <td>{formatDate(o.postingDate)}</td>
-                        <td className="pri">{o.fiscalYearName}</td>
-                        {/* A snapshot a close produced names the year it came
-                            from. One with nothing behind it was injected at
-                            go-live, and saying so is the only thing that tells
-                            the two apart. */}
-                        <td className="mut">
-                          {o.sourceFiscalYearLabel
-                            ? `Penutupan ${o.sourceFiscalYearLabel}`
-                            : "Saldo awal go-live"}
-                        </td>
-                        <td className="num">{o.lineCount}</td>
-                        <td className="num">
-                          {formatMoney(o.debit, BASE_CURRENCY_LABEL)}
-                        </td>
-                        <td className="num">
-                          {formatMoney(o.credit, BASE_CURRENCY_LABEL)}
-                          {!balanced && (
-                            <span className="bdg s-bad" style={{ marginLeft: 6 }}>
-                              Tidak seimbang
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="tw">
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 118 }}>Nomor</th>
+                      <th style={{ width: 106 }}>Tanggal</th>
+                      <th>Tahun Buku</th>
+                      <th style={{ width: 150 }}>Sumber</th>
+                      <th className="num" style={{ width: 64 }}>
+                        Baris
+                      </th>
+                      <th className="num" style={{ width: 150 }}>
+                        Debit
+                      </th>
+                      <th className="num" style={{ width: 150 }}>
+                        Kredit
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paging.pageRows.map((o) => {
+                      const balanced = cents(o.debit) === cents(o.credit);
+                      return (
+                        <tr
+                          key={o.id}
+                          onClick={() =>
+                            router.push(`/accounting/opening-balance/${o.id}`)
+                          }
+                          style={{ cursor: "pointer" }}
+                        >
+                          <td>
+                            <Link
+                              className="lab"
+                              href={`/accounting/opening-balance/${o.id}`}
+                            >
+                              {o.openingNo}
+                            </Link>
+                          </td>
+                          <td>{formatDate(o.postingDate)}</td>
+                          <td className="pri">{o.fiscalYearName}</td>
+                          {/* A snapshot a close produced names the year it came
+                              from. One with nothing behind it was injected at
+                              go-live, and saying so is the only thing that tells
+                              the two apart. */}
+                          <td className="mut">
+                            {o.sourceFiscalYearLabel
+                              ? `Penutupan ${o.sourceFiscalYearLabel}`
+                              : "Saldo awal go-live"}
+                          </td>
+                          <td className="num">{o.lineCount}</td>
+                          <td className="num">
+                            {formatMoney(o.debit, BASE_CURRENCY_LABEL)}
+                          </td>
+                          <td className="num">
+                            {formatMoney(o.credit, BASE_CURRENCY_LABEL)}
+                            {!balanced && (
+                              <span className="bdg s-bad" style={{ marginLeft: 6 }}>
+                                Tidak seimbang
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <Pager
+                page={paging.page}
+                pages={paging.pages}
+                total={paging.total}
+                perPage={paging.perPage}
+                onPage={paging.setPage}
+                onPerPage={paging.setPerPage}
+              />
+            </>
           ) : (
             <div className="empty">
               <div className="ic">

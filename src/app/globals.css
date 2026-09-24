@@ -282,6 +282,7 @@ button.bdg:hover{filter:brightness(1.07);box-shadow:var(--sh-xs)}
 
 /* row actions */
 .ract{display:flex;align-items:center;gap:2px;justify-content:flex-end}
+.ract .sp{width:24px;display:inline-block}
 .iact{width:24px;height:24px;border:0;background:transparent;border-radius:var(--r-sm);cursor:pointer;display:grid;place-items:center;color:var(--muted-2)}
 .iact:hover{background:var(--line-2);color:var(--brand)}
 .iact.kb{opacity:.55}

@@ -1031,3 +1031,45 @@ describe("a report runs from the header, like a form saves from it", () => {
     }
   });
 });
+
+describe("the shared convention's controls are one component each", () => {
+  test("only `ui/pager.tsx` renders a pager, and it shows the current page alone", () => {
+    const bad = files.filter(
+      (f) =>
+        !f.rel.endsWith("components/ui/pager.tsx") &&
+        (/className=["'`]pager["'`]/.test(code(f.text)) || /pg act/.test(code(f.text)))
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Use `<Pager>` from `components/ui/pager.tsx` — five lists each drew their own, two different ways."
+    );
+  });
+
+});
+
+describe("a list reads the same wherever it is", () => {
+  test("the \"Aksi lain\" trigger is the `more` icon", () => {
+    const bad = files.filter((f) =>
+      /title="Aksi lain"[\s\S]{0,800}?<Icon name="(?!more")/.test(code(f.text))
+    );
+    assert.deepEqual(bad.map((f) => f.rel), [], "Use `<Icon name=\"more\" />` — `hist` reads as a history.");
+  });
+
+  test("an absent row action leaves a `.sp`, never an inline spacer", () => {
+    const bad = files.filter((f) => /style=\{\{ width: 24/.test(code(f.text)));
+    assert.deepEqual(bad.map((f) => f.rel), [], "Use `<span className=\"sp\" />` inside `.ract`.");
+  });
+
+  test("a toolbar filter names its facet: `Status: semua`, never `Semua status`", () => {
+    const bad = files.filter((f) => /label: "Semua /.test(code(f.text)));
+    assert.deepEqual(bad.map((f) => f.rel), []);
+  });
+
+  test("a KPI tile takes its tint from a tone class", () => {
+    const bad = files.filter((f) =>
+      /className="i"\s*style=/.test(code(f.text))
+    );
+    assert.deepEqual(bad.map((f) => f.rel), [], "Use `className=\"i t-warn\"` and its siblings.");
+  });
+});

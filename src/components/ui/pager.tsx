@@ -8,11 +8,17 @@ export const PAGE_SIZES = [10, 25, 50, 100] as const;
 /**
  * Client-side paging state for a list that holds every row in memory.
  * `current` is clamped, so a filter that shrinks the list never strands the
- * reader on a page that no longer exists.
+ * reader on a page that no longer exists; `resetOn` — the filter's own state —
+ * sends the reader back to page 1 whenever it changes.
  */
-export function usePaging<T>(rows: T[], initialPerPage = 25) {
+export function usePaging<T>(rows: T[], resetOn = "", initialPerPage = 25) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(initialPerPage);
+  const [seen, setSeen] = useState(resetOn);
+  if (seen !== resetOn) {
+    setSeen(resetOn);
+    setPage(1);
+  }
   const pages = Math.max(1, Math.ceil(rows.length / perPage));
   const current = Math.min(page, pages);
   const start = (current - 1) * perPage;

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Pager, usePaging } from "@/components/ui/pager";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -77,6 +78,8 @@ export function UserList({
   const toggleAllowed = (u: UserRow) =>
     u.status === "Active" ? can.deactivate : can.activate;
 
+  const paging = usePaging(filtered, `${query}|${status}`);
+
   return (
     <>
       <div className="ph">
@@ -115,13 +118,13 @@ export function UserList({
           />
 
           <Select
-            variant="compact"
+            variant="toolbar"
             value={status}
             set={Boolean(status)}
             onChange={setStatus}
             ariaLabel="Filter status"
             options={[
-              { value: "", label: "Semua status" },
+              { value: "", label: "Status: semua" },
               { value: "Active", label: "Aktif" },
               { value: "Inactive", label: "Non Aktif" },
             ]}
@@ -134,97 +137,107 @@ export function UserList({
         </div>
 
         {filtered.length ? (
-          <div className="tw">
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th style={{ width: 38 }}>No</th>
-                  <th style={{ width: 120 }}>Kode</th>
-                  <th>Nama</th>
-                  <th style={{ width: 230 }}>Email</th>
-                  <th style={{ width: 210 }}>Role</th>
-                  <th style={{ width: 112 }}>Status</th>
-                  <th style={{ width: 88 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((u, i) => (
-                  <tr key={u.id} onClick={() => router.push(`/settings/user/${u.id}`)}>
-                    <td className="no">{i + 1}</td>
-                    <td className="mut mono">{u.user_code}</td>
-                    <td className="pri">
-                      <span className="idc">
-                        <span className="lab">{u.initials}</span>
-                        <span className="nm">{u.name}</span>
-                      </span>
-                      {u.id === currentUserId && (
-                        <span className="bdg t-info" style={{ marginLeft: 6 }}>
-                          Anda
-                        </span>
-                      )}
-                    </td>
-                    <td className="mut">{u.email}</td>
-                    <td>
-                      {u.role_names.length ? (
-                        <span className="rchips">
-                          {u.role_names.map((r) => (
-                            <span className="bdg t-slate" key={r}>
-                              {r}
-                            </span>
-                          ))}
-                        </span>
-                      ) : (
-                        <span className="bdg s-mute">Tanpa Role</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className={`bdg ${STATUS_CLASS[u.status] ?? "s-mute"}`}>
-                        {STATUS_TEXT[u.status] ?? u.status}
-                      </span>
-                    </td>
-                    <td className="acts">
-                      <span className="ract">
-                        <button
-                          className="iact"
-                          title="Lihat detail"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            router.push(`/settings/user/${u.id}`);
-                          }}
-                        >
-                          <Icon name="eye" size={15} />
-                        </button>
-                        {can.edit && (
-                          <button
-                            className="iact"
-                            title="Ubah"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              router.push(`/settings/user/${u.id}/edit`);
-                            }}
-                          >
-                            <Icon name="pen" size={15} />
-                          </button>
-                        )}
-                        {toggleAllowed(u) && u.id !== currentUserId && (
-                          <button
-                            className="iact"
-                            title={u.status === "Active" ? "Nonaktifkan" : "Aktifkan"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPending(u);
-                            }}
-                          >
-                            <Icon name="gear" size={15} />
-                          </button>
-                        )}
-                      </span>
-                    </td>
+          <>
+            <div className="tw">
+              <table className="grid">
+                <thead>
+                  <tr>
+                    <th style={{ width: 38 }}>No</th>
+                    <th style={{ width: 120 }}>Kode</th>
+                    <th>Nama</th>
+                    <th style={{ width: 230 }}>Email</th>
+                    <th style={{ width: 210 }}>Role</th>
+                    <th style={{ width: 112 }}>Status</th>
+                    <th style={{ width: 88 }} />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {paging.pageRows.map((u, i) => (
+                    <tr key={u.id} onClick={() => router.push(`/settings/user/${u.id}`)}>
+                      <td className="no">{paging.start + i + 1}</td>
+                      <td className="mut mono">{u.user_code}</td>
+                      <td className="pri">
+                        <span className="idc">
+                          <span className="lab">{u.initials}</span>
+                          <span className="nm">{u.name}</span>
+                        </span>
+                        {u.id === currentUserId && (
+                          <span className="bdg t-info" style={{ marginLeft: 6 }}>
+                            Anda
+                          </span>
+                        )}
+                      </td>
+                      <td className="mut">{u.email}</td>
+                      <td>
+                        {u.role_names.length ? (
+                          <span className="rchips">
+                            {u.role_names.map((r) => (
+                              <span className="bdg t-slate" key={r}>
+                                {r}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="bdg s-mute">Tanpa Role</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`bdg ${STATUS_CLASS[u.status] ?? "s-mute"}`}>
+                          {STATUS_TEXT[u.status] ?? u.status}
+                        </span>
+                      </td>
+                      <td className="acts">
+                        <span className="ract">
+                          <button
+                            className="iact"
+                            title="Lihat detail"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              router.push(`/settings/user/${u.id}`);
+                            }}
+                          >
+                            <Icon name="eye" size={15} />
+                          </button>
+                          {can.edit && (
+                            <button
+                              className="iact"
+                              title="Ubah"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`/settings/user/${u.id}/edit`);
+                              }}
+                            >
+                              <Icon name="pen" size={15} />
+                            </button>
+                          )}
+                          {toggleAllowed(u) && u.id !== currentUserId && (
+                            <button
+                              className="iact"
+                              title={u.status === "Active" ? "Nonaktifkan" : "Aktifkan"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPending(u);
+                              }}
+                            >
+                              <Icon name="gear" size={15} />
+                            </button>
+                          )}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              page={paging.page}
+              pages={paging.pages}
+              total={paging.total}
+              perPage={paging.perPage}
+              onPage={paging.setPage}
+              onPerPage={paging.setPerPage}
+            />
+          </>
         ) : (
           <div className="empty">
             <div className="ic">

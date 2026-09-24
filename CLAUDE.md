@@ -443,6 +443,9 @@ src/
                          form in the application is built from these),
                          Combobox, Select, DateInput, MoneyInput, RateInput,
                          SearchField, AnchoredPopup (every dropdown hangs off it),
+                         Pager (every list that grows), CancelButton (a form's
+                         Batal, which asks while dirty), ExpandAll (Buka / Tutup
+                         Semua),
                          RecordHistory + RecordHistoryCard (a record's own
                          audit trail, at the foot of every form),
                          Dialog, ConfirmDialog, ToastProvider
@@ -698,6 +701,8 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Foreign face | `formatForeignFace` — what a base figure was before it was base: `USD 1.000,00 @ 16.000,00`, in `.rsub` beside the row it belongs to. One function, because the Journal and the General Ledger had drifted to two |
 | Separators | **`.` groups thousands, `,` separates decimals** — in what is displayed and in what is typed. A typed `.` groups; a decimal is reached with `,` (§12) |
 | Rate layers | `KursSelect` — a layer is *chosen*, never a rate typed, and it is chosen in a `Dialog` where date, kurs, sisa and sumber are four columns. The field afterwards carries **only the kurs** |
+| Pagination | `Pager`, at the foot of every list that grows with use — Budget Month and Role included, since a list of user-created rows has no size ceiling. It shows the **current page only**, never a run of page numbers, with `Tampil 10/25/50/100`; changing a filter returns to page 1 (`usePaging`) |
+| Row actions | Every row keeps its icons in the same columns: an action a row does not offer leaves a `.sp` in `.ract`. "Aksi lain" is the `more` icon. A toolbar filter names its facet — `Status: semua` |
 | Search | `SearchField` in the `.toolbar` — icon, `Cari <what>…`, clear button. `grow` when it is the only control |
 | Picker prompts | Always `Pilih <what>…` — for a `Combobox`, a `Select`, and anything that stands in for one |
 | Prerequisites | A picker whose options another field decides takes `waitingFor` — **shown, in its place, not collecting an answer**, reading `Pilih <what> dulu…`. Never hidden, and never an open list saying "Tidak ada pilihan yang cocok" |
@@ -1628,14 +1633,17 @@ Specified in the concept doc, **not yet implemented** (see §13):
   component in `src/components/ui/`, not by markup copied between pages. That is
   now: `Combobox`, `Select`, `DateInput`, **`MoneyInput`**, **`SearchField`**,
   **`AnchoredPopup`** (the popup all three pickers hang off their trigger),
-  **`Dialog`** (the wide panel) and `ConfirmDialog` (the small question).
+  **`Dialog`** (the wide panel), `ConfirmDialog` (the small question),
+  **`Pager`** (the foot of a list), **`CancelButton`** (a form's Batal) and
+  **`ExpandAll`** (the Buka Semua / Tutup Semua pair).
   `tests/design-system.test.ts` enforces the ones that had already drifted —
   no native `<select>`, date or number input; no bare `.ph` rule; no `.srch`
   markup outside `SearchField`; no `.ovl` outside the two dialog components; no
   `.cbpop` rendered outside `AnchoredPopup` and nothing anchoring a popup with
   `top: calc(100% …)`; no `.mi` tinted inline; no date or number formatted
-  outside `lib/format.ts`; and no `.ph-act` block writing a danger button after
-  its primary.
+  outside `lib/format.ts`; no `.ph-act` block writing a danger button after
+  its primary; no pager outside `Pager`, no `Batal` written by a form, and no
+  Buka Semua / Tutup Semua outside `ExpandAll`.
 - **Reason:** A CLAUDE.md line cannot enforce a convention, because none of these
   mistakes breaks a build, fails a type check or throws at runtime. They just make
   one screen behave unlike the rest, and the drift is only visible to whoever holds

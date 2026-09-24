@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { Pager, usePaging } from "@/components/ui/pager";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { RoleRow } from "@/lib/siba/user-admin";
 
@@ -20,6 +21,8 @@ export function RoleList({
   canCreate: boolean;
 }) {
   const router = useRouter();
+
+  const paging = usePaging(roles);
 
   return (
     <>
@@ -71,9 +74,9 @@ export function RoleList({
               </tr>
             </thead>
             <tbody>
-              {roles.map((r, i) => (
+              {paging.pageRows.map((r, i) => (
                 <tr key={r.id} onClick={() => router.push(`/settings/role/${r.id}`)}>
-                  <td className="no">{i + 1}</td>
+                  <td className="no">{paging.start + i + 1}</td>
                   <td className="mut mono">{r.role_code}</td>
                   <td>
                     <span className="lab">{r.role_label}</span>
@@ -114,6 +117,14 @@ export function RoleList({
             </tbody>
           </table>
         </div>
+        <Pager
+          page={paging.page}
+          pages={paging.pages}
+          total={paging.total}
+          perPage={paging.perPage}
+          onPage={paging.setPage}
+          onPerPage={paging.setPerPage}
+        />
       </div>
     </>
   );
