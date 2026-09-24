@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { CancelButton } from "@/components/ui/cancel-button";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
 import { DateInput } from "@/components/ui/date-input";
@@ -293,7 +294,7 @@ export function DncnForm({
             ) : (
               "Nota Baru"
             )}
-            {mode === "edit" && <span className="bdg t-vio">Mode Ubah</span>}
+            {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
           </h1>
           <div className="ph-act">
             {editing && dirty && (
@@ -314,9 +315,7 @@ export function DncnForm({
             )}
             {editing && (
               <>
-                <Link className="btn" href={backHref}>
-                  <Icon name="back" size={15} /> Batal
-                </Link>
+                <CancelButton href={backHref} dirty={dirty} disabled={saving} />
                 <button className="btn primary" onClick={onSave} disabled={saving}>
                   <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
                 </button>
@@ -337,7 +336,7 @@ export function DncnForm({
         </div>
       )}
 
-      <div className="fgrid">
+      <div className="fgrid solo">
         <div>
           <div className="card">
             <div className="card-h">

@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { headerButtonClass, masterHeaderActions } from "@/lib/siba/header-actions";
+import { CancelButton } from "@/components/ui/cancel-button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
@@ -212,28 +214,34 @@ export function RoleForm({
             )}
             {editing ? (
               <>
-                <Link
-                  className="btn"
-                  href={mode === "new" ? "/settings/role" : `/settings/role/${role!.id}`}
-                >
-                  Batal
-                </Link>
+                <CancelButton href={mode === "new" ? "/settings/role" : `/settings/role/${role!.id}`} dirty={dirty} disabled={saving} />
                 <button className="btn primary" onClick={onSave} disabled={saving}>
                   <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
                 </button>
               </>
             ) : (
               <>
-                {canToggle && (
-                  <button className="btn" onClick={() => setStatusOpen(true)}>
-                    <Icon name="gear" size={15} />
-                    {status === "Active" ? "Nonaktifkan" : "Aktifkan"}
-                  </button>
-                )}
-                {can.edit && (
-                  <Link className="btn primary" href={`/settings/role/${role!.id}/edit`}>
-                    <Icon name="pen" size={15} /> Ubah
-                  </Link>
+                {masterHeaderActions({
+                  toggle: canToggle ? (status === "Active" ? "deactivate" : "activate") : null,
+                  edit: Boolean(can.edit),
+                }).map((a) =>
+                  a.key === "edit" ? (
+                    <Link
+                      key={a.key}
+                      className={headerButtonClass(a.tone)}
+                      href={`/settings/role/${role!.id}/edit`}
+                    >
+                      <Icon name="pen" size={15} /> {a.label}
+                    </Link>
+                  ) : (
+                    <button
+                      key={a.key}
+                      className={headerButtonClass(a.tone)}
+                      onClick={() => setStatusOpen(true)}
+                    >
+                      <Icon name="gear" size={15} /> {a.label}
+                    </button>
+                  )
                 )}
               </>
             )}
@@ -253,13 +261,12 @@ export function RoleForm({
               help={editing ? "kunci di kode — tidak ikut berubah dengan nama" : undefined}
               error={errors.role_label}
             >
-              {editing ? (
+              {editing && !role?.is_system ? (
                 <input
                   className={`inp idf${errors.role_label ? " bad" : ""}`}
                   value={values.role_label}
                   onChange={(e) => set("role_label", e.target.value.toUpperCase())}
                   placeholder="APPROVER"
-                  disabled={role?.is_system}
                   autoComplete="off"
                 />
               ) : (

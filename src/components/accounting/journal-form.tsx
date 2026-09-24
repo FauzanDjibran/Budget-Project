@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { CancelButton } from "@/components/ui/cancel-button";
 import { Combobox } from "@/components/ui/combobox";
 import { DateInput } from "@/components/ui/date-input";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
@@ -260,7 +261,7 @@ export function JournalForm({
             ) : (
               "Journal Manual Baru"
             )}
-            {mode === "edit" && <span className="bdg t-vio">Mode Ubah</span>}
+            {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
           </h1>
           <div className="ph-act">
             {dirty && (
@@ -268,9 +269,7 @@ export function JournalForm({
                 <span className="pulse" /> Belum disimpan
               </span>
             )}
-            <Link className="btn" href={backHref}>
-              <Icon name="back" size={15} /> Batal
-            </Link>
+            <CancelButton href={backHref} dirty={dirty} disabled={saving} />
             <button className="btn primary" onClick={onSave} disabled={saving}>
               <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
             </button>

@@ -6,6 +6,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   orderForHeader,
+  masterHeaderActions,
   type ActionTone,
 } from "../src/lib/siba/header-actions";
 import {
@@ -1071,5 +1072,56 @@ describe("a list reads the same wherever it is", () => {
       /className="i"\s*style=/.test(code(f.text))
     );
     assert.deepEqual(bad.map((f) => f.rel), [], "Use `className=\"i t-warn\"` and its siblings.");
+  });
+});
+
+describe("a form and a detail page read the same wherever they are", () => {
+  test("a status badge is read, never pressed", () => {
+    const bad = files.filter((f) => /<button\s+className=\{`bdg/.test(code(f.text)));
+    assert.deepEqual(bad.map((f) => f.rel), [], "Change a status from a header button — `masterHeaderActions`.");
+  });
+
+  test("a locked registry field is shown as text, never as a disabled control", () => {
+    const text = code(files.find((f) => f.rel === "src/components/master/entity-form.tsx")!.text);
+    assert.doesNotMatch(text, /disabled=\{locked\}/);
+  });
+
+  test("every form grid is `fgrid solo` — there is no side column to leave empty", () => {
+    const bad = files.filter((f) => /className="fgrid"/.test(code(f.text)));
+    assert.deepEqual(bad.map((f) => f.rel), []);
+  });
+
+  test("Mode Ubah is always the warn tone", () => {
+    const bad = files.filter((f) =>
+      /className="bdg (?!t-warn")[^"]*">Mode Ubah/.test(code(f.text))
+    );
+    assert.deepEqual(bad.map((f) => f.rel), []);
+  });
+
+  test("a master record's header reads Nonaktifkan · Ubah", () => {
+    const labels = (o: Parameters<typeof masterHeaderActions>[0]) =>
+      masterHeaderActions(o).map((a) => a.label).join(" · ");
+    assert.equal(labels({ toggle: "deactivate", edit: true }), "Nonaktifkan · Ubah");
+    assert.equal(labels({ toggle: "activate", edit: true }), "Aktifkan · Ubah");
+    assert.equal(
+      labels({ toggle: "deactivate", resetPassword: true, edit: true }),
+      "Nonaktifkan · Reset Password · Ubah"
+    );
+    assert.equal(masterHeaderActions({ toggle: "deactivate", edit: true })[0].tone, "danger");
+  });
+});
+
+describe("a form is left the same way everywhere", () => {
+  test("no form writes its own Batal", () => {
+    const bad = files.filter(
+      (f) =>
+        /-form\.tsx$/.test(f.rel) &&
+        />\s*(<Icon[^>]*\/>\s*)?Batal\s*<\/(Link|button)>/.test(code(f.text))
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Use `<CancelButton>` — it is what asks before a dirty form is thrown away."
+    );
   });
 });

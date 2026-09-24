@@ -65,3 +65,30 @@ export function headerButtonClass(tone: ActionTone): string {
 export function menuButtonClass(tone: ActionTone): string | undefined {
   return tone === "danger" ? "dg" : undefined;
 }
+
+export type MasterHeaderKey = "toggle" | "resetPassword" | "edit";
+
+/**
+ * A master record's view header. Status is changed by a button here, never by
+ * clicking the status badge — a badge is read, not pressed. Deactivating is
+ * the danger action; activating is merely another step.
+ */
+export function masterHeaderActions({
+  toggle,
+  resetPassword,
+  edit,
+  editTone = "primary",
+}: {
+  /** Which way the status toggle would go, or null when it is not offered. */
+  toggle: "deactivate" | "activate" | null;
+  resetPassword?: boolean;
+  edit: boolean;
+  editTone?: ActionTone;
+}): { key: MasterHeaderKey; label: string; tone: ActionTone }[] {
+  const items: { key: MasterHeaderKey; label: string; tone: ActionTone }[] = [];
+  if (toggle === "deactivate") items.push({ key: "toggle", label: "Nonaktifkan", tone: "danger" });
+  if (toggle === "activate") items.push({ key: "toggle", label: "Aktifkan", tone: "neutral" });
+  if (resetPassword) items.push({ key: "resetPassword", label: "Reset Password", tone: "neutral" });
+  if (edit) items.push({ key: "edit", label: "Ubah", tone: editTone });
+  return orderForHeader(items, (i) => i.tone);
+}

@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { headerButtonClass, masterHeaderActions } from "@/lib/siba/header-actions";
+import { CancelButton } from "@/components/ui/cancel-button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
@@ -211,33 +213,42 @@ export function UserForm({
             )}
             {editing ? (
               <>
-                <Link
-                  className="btn"
-                  href={mode === "new" ? "/settings/user" : `/settings/user/${user!.id}`}
-                >
-                  Batal
-                </Link>
+                <CancelButton href={mode === "new" ? "/settings/user" : `/settings/user/${user!.id}`} dirty={dirty} disabled={saving} />
                 <button className="btn primary" onClick={onSave} disabled={saving}>
                   <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
                 </button>
               </>
             ) : (
               <>
-                {can.resetPassword && !isSelf && (
-                  <button className="btn" onClick={() => setResetOpen(true)}>
-                    <Icon name="lock" size={15} /> Reset Password
-                  </button>
-                )}
-                {canToggle && !isSelf && (
-                  <button className="btn" onClick={() => setStatusOpen(true)}>
-                    <Icon name="gear" size={15} />
-                    {user!.status === "Active" ? "Nonaktifkan" : "Aktifkan"}
-                  </button>
-                )}
-                {can.edit && (
-                  <Link className="btn primary" href={`/settings/user/${user!.id}/edit`}>
-                    <Icon name="pen" size={15} /> Ubah
-                  </Link>
+                {masterHeaderActions({
+                  toggle:
+                    canToggle && !isSelf
+                      ? user!.status === "Active"
+                        ? "deactivate"
+                        : "activate"
+                      : null,
+                  resetPassword: can.resetPassword && !isSelf,
+                  edit: Boolean(can.edit),
+                }).map((a) =>
+                  a.key === "edit" ? (
+                    <Link
+                      key={a.key}
+                      className={headerButtonClass(a.tone)}
+                      href={`/settings/user/${user!.id}/edit`}
+                    >
+                      <Icon name="pen" size={15} /> {a.label}
+                    </Link>
+                  ) : (
+                    <button
+                      key={a.key}
+                      className={headerButtonClass(a.tone)}
+                      onClick={() =>
+                        a.key === "toggle" ? setStatusOpen(true) : setResetOpen(true)
+                      }
+                    >
+                      <Icon name={a.key === "toggle" ? "gear" : "lock"} size={15} /> {a.label}
+                    </button>
+                  )
                 )}
               </>
             )}

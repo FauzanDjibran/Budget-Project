@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Icon } from "@/components/icon";
+import { CancelButton } from "@/components/ui/cancel-button";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { Combobox } from "@/components/ui/combobox";
 import { useToast } from "@/components/ui/toast";
@@ -102,9 +103,7 @@ export function SystemDefaultForm({
                 <span className="ph-dirty">
                   <span className="pulse" /> Belum disimpan
                 </span>
-                <button className="btn" onClick={reset} disabled={saving}>
-                  Batal
-                </button>
+                <CancelButton onCancel={reset} dirty={dirty} disabled={saving} />
                 <button className="btn primary" onClick={onSave} disabled={saving}>
                   <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
                 </button>

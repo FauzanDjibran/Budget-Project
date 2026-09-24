@@ -681,14 +681,14 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Cards | `.card` + `.card-h` (icon `.ci`, title `.ct`) |
 | Tables | `.tw` wrapper → `table.grid`; sortable `th.srt`; `.pri` `.mut` `.num` cells |
 | Identity cells | `.idc` = `.lab` code chip + `.nm` name |
-| Status | `.bdg` + `s-ok` / `s-bad` / `s-warn` / `s-info` / `s-mute` |
+| Status | `.bdg` + `s-ok` / `s-bad` / `s-warn` / `s-info` / `s-mute`. A badge is read, never pressed — a status changes from a header button |
 | Tags | `.bdg` + `t-info` / `t-vio` / `t-acc` / `t-slate` |
 | Forms | `.fgrid solo` → `FormBody` → `FormSection` → `FormRow` → `Field`, all from `components/ui/form.tsx`. **Never hand-written** |
 | Form rows | Twelve columns. A field declares its share — `span={3\|4\|5\|6\|8\|12}`, half by default. Registry entities say it as `span` on the field config |
 | Field help | One clause, lower case, no full stop, **on the label row** — never a `.help` div under the control. An error replaces it |
 | Page heading | A document's number (`.docno`, mono) with its status badge beside it; a master record's name with its code as a `.docno sm` chip. Before the first save, a placeholder — `Budget Baru`, `User Baru` |
 | Summary cards | **None.** Each fact sits where it is read; a closing note about the record's state is a `.fnote` at the foot of its card |
-| Read-only fields | `.ro` — presented as text, **never disabled inputs** |
+| Read-only fields | `.ro` — presented as text, **never disabled inputs**. A field locked after creation is shown the same way on the edit page, with its `Terkunci` chip |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options. **The control itself is the search box**: opening turns it into a text input in place, and the popup carries no filter bar of its own |
 | Sets | `MultiSelect` — a searchable picker that adds, chips that remove. **Never a checkbox per option**: a grid grows with the catalogue rather than with the answer |
 | Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`). Searchable once the list is long, and searched the same way — in the trigger. A long list of combinations takes `group` on its options and `listWidth="wide"` |
@@ -707,7 +707,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Picker prompts | Always `Pilih <what>…` — for a `Combobox`, a `Select`, and anything that stands in for one |
 | Prerequisites | A picker whose options another field decides takes `waitingFor` — **shown, in its place, not collecting an answer**, reading `Pilih <what> dulu…`. Never hidden, and never an open list saying "Tidak ada pilihan yang cocok" |
 | Validation | Inline `.err` under the field + `.bad` on the control + error toast |
-| Unsaved changes | `.ph-dirty` chip with pulse indicator, in `.ph-act` beside Simpan |
+| Unsaved changes | `.ph-dirty` chip with pulse indicator, in `.ph-act` beside Simpan. `Batal` is `CancelButton`: it leaves at once while the form is clean and asks — *Konfirmasi Buang Perubahan* — while it is dirty. `Mode Ubah` is always `t-warn` |
 | Confirmations | `ConfirmDialog` — small, centred, one question: tinted icon, subject chip, **consequence copy** |
 | Panel dialogs | `Dialog` — wide and left-aligned: fixed header (tinted `.mi sm`, title, subtitle, close), scrolling `.rp-body`, fixed `.rp-foot`. Everything that is not a confirmation |
 | Feedback | Toasts via `useToast()` |
@@ -1939,7 +1939,12 @@ Specified in the concept doc, **not yet implemented** (see §13):
   and a Draft Fiscal Year reads `Ubah · Aktifkan Tahun Buku` — Ubah steps down
   to neutral wherever a lifecycle action is offered beside it, which is what
   `EntityForm`'s `editTone` prop carries. Two buttons of one tone keep the
-  order their transition table declares, because the sort is stable.
+  order their transition table declares, because the sort is stable. A
+  **master record** reads `Nonaktifkan · Ubah`, `Aktifkan · Ubah`, or on a User
+  `Nonaktifkan · Reset Password · Ubah` — `masterHeaderActions` is the one
+  statement of it. Nonaktifkan is danger, Aktifkan neutral, and **the status
+  badge beside the heading is display only**: it used to be the button, which
+  nobody could tell by looking at it.
 - **Ordered in the markup, never with CSS `order`.** `order` moves a button on
   screen without moving it in the document, so the tab order would stop
   matching what a keyboard user is looking at. A one-line stylesheet rule was

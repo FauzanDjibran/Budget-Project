@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { CancelButton } from "@/components/ui/cancel-button";
 import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
@@ -258,6 +259,7 @@ export function BudgetForm({
             ) : (
               "Budget Baru"
             )}
+            {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
           </h1>
           <div className="ph-act">
             {editing && dirty && (
@@ -268,9 +270,7 @@ export function BudgetForm({
             {mode === "view" && budget && viewActions.map((i) => i.node)}
             {editing && (
               <>
-                <Link className="btn" href={backHref}>
-                  <Icon name="back" size={15} /> Batal
-                </Link>
+                <CancelButton href={backHref} dirty={dirty} disabled={saving} />
                 <button className="btn primary" onClick={onSave} disabled={saving}>
                   <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
                 </button>

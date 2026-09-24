@@ -4,7 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
-import { headerButtonClass, type ActionTone } from "@/lib/siba/header-actions";
+import { CancelButton } from "@/components/ui/cancel-button";
+import {
+  headerButtonClass,
+  masterHeaderActions,
+  type ActionTone,
+} from "@/lib/siba/header-actions";
 import { Combobox } from "@/components/ui/combobox";
 import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
@@ -130,6 +135,11 @@ export function EntityForm({
     : true;
   const canToggleStatus =
     Boolean(statusModel?.toggle) && (active ? can.deactivate : can.activate);
+  const viewActions = masterHeaderActions({
+    toggle: canToggleStatus && !locked ? (active ? "deactivate" : "activate") : null,
+    edit: canEdit,
+    editTone,
+  });
 
   const setField = (field: Field, value: string | boolean | null) => {
     setValues((v) => {
@@ -333,19 +343,9 @@ export function EntityForm({
                 beside it rather than in a card of its own. */}
             {code && <span className="docno sm">{code}</span>}
             {mode === "view" && statusValue && (
-              canToggleStatus ? (
-                <button
-                  className={`bdg ${STATUS_CLASS[statusValue] ?? "s-mute"}`}
-                  title="Klik untuk mengubah status"
-                  onClick={() => setConfirmToggle(true)}
-                >
-                  {STATUS_TEXT[statusValue] ?? statusValue}
-                </button>
-              ) : (
-                <span className={`bdg ${STATUS_CLASS[statusValue] ?? "s-mute"}`}>
-                  {STATUS_TEXT[statusValue] ?? statusValue}
-                </span>
-              )
+              <span className={`bdg ${STATUS_CLASS[statusValue] ?? "s-mute"}`}>
+                {STATUS_TEXT[statusValue] ?? statusValue}
+              </span>
             )}
             {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
           </h1>
@@ -356,15 +356,22 @@ export function EntityForm({
                 <span className="pulse" /> Belum disimpan
               </span>
             )}
+            {mode === "view" &&
+              viewActions
+                .filter((a) => a.key === "toggle")
+                .map((a) => (
+                  <button
+                    key={a.key}
+                    className={headerButtonClass(a.tone)}
+                    onClick={() => setConfirmToggle(true)}
+                  >
+                    <Icon name="gear" size={15} /> {a.label}
+                  </button>
+                ))}
             {mode === "view" && editTone === "primary" && headerActions}
             {editing ? (
               <>
-                <Link
-                  className="btn"
-                  href={mode === "new" ? basePath : `${basePath}/${row!.id}`}
-                >
-                  Batal
-                </Link>
+                <CancelButton href={mode === "new" ? basePath : `${basePath}/${row!.id}`} dirty={dirty} disabled={saving} />
                 <button className="btn primary" onClick={onSave} disabled={saving}>
                   <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
                 </button>
@@ -373,7 +380,7 @@ export function EntityForm({
               <span className="bdg s-mute" title={COMPANY_LOCK_BODY}>
                 <Icon name="lock" size={11} /> {COMPANY_LOCK_BADGE}
               </span>
-            ) : canEdit ? (
+            ) : viewActions.some((a) => a.key === "edit") ? (
               <Link
                 className={headerButtonClass(editTone)}
                 href={`${basePath}/${row!.id}/edit`}
@@ -562,19 +569,22 @@ function FieldControl({
   const span: FieldSpan =
     field.span ?? (field.full || field.type === "textarea" ? 12 : 4);
 
-  const node = editing
-    ? editableControl({
-        field,
-        value,
-        locked,
-        error,
-        options,
-        prefix,
-        currencyLabel,
-        waitingFor: locked ? null : waitingFor,
-        onChange,
-      })
-    : readOnlyBody({ field, row, options, currencyLabel, statusLike });
+  // A locked field is shown as what it holds, never as a disabled control: it
+  // cannot be changed, and a greyed-out input reads as one that merely is not
+  // available right now. The Server Action ignores it whatever is submitted.
+  const node =
+    editing && !locked
+      ? editableControl({
+          field,
+          value,
+          error,
+          options,
+          prefix,
+          currencyLabel,
+          waitingFor,
+          onChange,
+        })
+      : readOnlyBody({ field, row, options, currencyLabel, statusLike });
 
   return (
     <FormField
@@ -721,7 +731,6 @@ function idsOf(value: unknown): number[] {
 function editableControl({
   field,
   value,
-  locked,
   error,
   options,
   prefix,
@@ -731,7 +740,6 @@ function editableControl({
 }: {
   field: Field;
   value: string | boolean | null | undefined;
-  locked: boolean;
   error?: string;
   options: RefOption[];
   prefix?: string | null;
@@ -751,7 +759,6 @@ function editableControl({
         emptyPlaceholder={`Pilih ${field.label}…`}
         removeTitle={`Keluarkan dari ${field.label}`}
         invalid={Boolean(error)}
-        disabled={locked}
         onChange={(ids) => onChange(ids.join(","))}
       />
     );
@@ -762,14 +769,11 @@ function editableControl({
     const compact = !field.captionDetail;
     return (
       <label
-        className={`chk${compact ? " sm" : ""}${error ? " bad" : ""}${
-          locked ? " dis" : ""
-        }`}
+        className={`chk${compact ? " sm" : ""}${error ? " bad" : ""}`}
       >
         <input
           type="checkbox"
           checked={Boolean(value)}
-          disabled={locked}
           onChange={(e) => onChange(e.target.checked)}
         />
         <span>
@@ -809,7 +813,6 @@ function editableControl({
         options={options}
         placeholder={`Pilih ${field.label}…`}
         invalid={Boolean(error)}
-        disabled={locked}
         waitingFor={waitingFor}
         onChange={(v) => onChange(v == null ? null : String(v))}
       />
@@ -828,7 +831,6 @@ function editableControl({
         ]}
         placeholder={`Pilih ${field.label}…`}
         invalid={Boolean(error)}
-        disabled={locked}
         onChange={onChange}
       />
     );
@@ -838,7 +840,6 @@ function editableControl({
       <DateInput
         value={value == null ? "" : String(value)}
         invalid={Boolean(error)}
-        disabled={locked}
         onChange={onChange}
       />
     );
@@ -849,7 +850,6 @@ function editableControl({
         value={value == null ? "" : String(value)}
         currencyLabel={currencyLabel}
         invalid={Boolean(error)}
-        disabled={locked}
         placeholder={field.placeholder ?? "0"}
         onChange={onChange}
       />
@@ -867,7 +867,6 @@ function editableControl({
         value={value == null ? "" : String(value)}
         pairLabel={pair}
         invalid={Boolean(error)}
-        disabled={locked}
         placeholder={field.placeholder ?? "0"}
         onChange={onChange}
       />
@@ -891,7 +890,6 @@ function editableControl({
       inputMode={field.type === "number" ? "numeric" : undefined}
       value={value == null ? "" : String(value)}
       placeholder={field.placeholder}
-      disabled={locked}
       autoComplete="off"
       onChange={(e) => onChange(e.target.value)}
     />
