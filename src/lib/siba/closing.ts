@@ -11,6 +11,7 @@ import {
   fiscalYearForClosing,
   openFiscalYears,
   recordFiscalClosing,
+  carriedYearsBefore,
   type FiscalYearForClosing,
 } from "./fiscal";
 import {
@@ -187,21 +188,23 @@ async function runChecks(
         : `${year.name} berstatus ${year.status}, bukan Open.`,
   });
 
-  // 2. Only the oldest Open year may be closed. Closing the newer one would
-  //    leave an Open year with no successor to inherit into — the snapshot
-  //    this close writes is what the next year opens from.
-  const open = await openFiscalYears();
-  const oldest = open[0] ?? null;
+  // 2. Only this Company's oldest unclosed year may be closed. Closing a newer
+  //    one would leave an older year with no successor to inherit into — the
+  //    snapshot this close writes is what the next year opens from. Per
+  //    Company, because the other Company still working in an older year must
+  //    not stop this one closing the next.
+  const older = await carriedYearsBefore(
+    subject.companyId,
+    year.startDate.toISOString().slice(0, 10)
+  );
+  const oldest = older[0] ?? null;
   checks.push({
     key: "oldest_open",
-    label: "Tahun buku Open yang paling lama",
-    ok: oldest?.id === year.id,
-    detail:
-      oldest?.id === year.id
-        ? "Tidak ada tahun buku Open yang lebih lama."
-        : oldest
-          ? `${oldest.name} masih terbuka dan lebih lama. Tutup tahun buku itu lebih dahulu.`
-          : "Tidak ada tahun buku Open sama sekali.",
+    label: `Tahun buku tertua yang belum ditutup ${subject.companyLabel}`,
+    ok: oldest === null,
+    detail: oldest
+      ? `${oldest.name} belum ditutup Company ini dan lebih lama. Tutup tahun buku itu lebih dahulu.`
+      : "Tidak ada tahun buku lebih lama yang belum ditutup Company ini.",
   });
 
   // 3. This Company must not already have closed it. Closing is per Company

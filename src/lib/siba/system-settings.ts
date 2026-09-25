@@ -199,8 +199,8 @@ const ACCUMULATED_PL_KEYS = [
  * that has since been deactivated, made non-postable or given a sub-account
  * reads as unset rather than as ready.
  *
- * The Neraca's two computed-line accounts are deliberately **not** checked
- * here. Nothing posts to either, so closing does not need them — the Neraca
+ * The Neraca's computed-line account, Tahun Berjalan, is deliberately **not**
+ * checked here. Nothing posts to it, so closing does not need it — the Neraca
  * does, and `missingNeracaAccounts` asks on its behalf.
  */
 export async function missingClosingAccounts(): Promise<string[]> {
@@ -218,18 +218,20 @@ export async function missingClosingAccounts(): Promise<string[]> {
 }
 
 /**
- * The Neraca's two computed-line settings that are not usable, by name.
+ * The Neraca's settings that are not usable, by name.
  *
- * Laba/Rugi Tahun Berjalan and Laba/Rugi Tahun Lalu Belum Ditutup are never
- * posted to; the Neraca computes each figure and **places** it on the account
- * the setting names, so the user decides the line's name and position in the
- * chart. Without the account the report has nowhere to put the figure and is
- * not produced — refused by name, like every other account a process needs.
+ * Laba/Rugi Tahun Berjalan is never posted to; the Neraca computes the figure
+ * and **places** it on the account the setting names, so the user decides the
+ * line's name and position in the chart. Laba/Rugi Tahun Sebelumnya is where
+ * the closing journal posts, and the Neraca prints one computed line per
+ * unclosed year directly beneath it. Without either account the report has
+ * nowhere to put a figure and is not produced — refused by name, like every
+ * other account a process needs.
  *
- * Tahun Berjalan is needed by every Neraca. Belum Ditutup is needed only by a
- * Company still carrying an unclosed previous year, so it is asked for only
- * where the caller says so — the same reasoning that resolves the FX account
- * only when a difference arises: a setting blocks only where it is used.
+ * Tahun Berjalan is needed by every Neraca. Tahun Sebelumnya is needed only by
+ * a Company still carrying an unclosed year, so it is asked for only where the
+ * caller says so — the same reasoning that resolves the FX account only when a
+ * difference arises: a setting blocks only where it is used.
  *
  * Resolved against the master exactly as `missingClosingAccounts` is.
  */
@@ -238,8 +240,8 @@ export async function missingNeracaAccounts(
 ): Promise<string[]> {
   const values = await systemDefaults();
   const keys: SystemDefaultKey[] = ["induk_current_pl_account", "anak_current_pl_account"];
-  if (carryingUnclosedYear.induk) keys.push("induk_unclosed_pl_account");
-  if (carryingUnclosedYear.anak) keys.push("anak_unclosed_pl_account");
+  if (carryingUnclosedYear.induk) keys.push("induk_accumulated_pl_account");
+  if (carryingUnclosedYear.anak) keys.push("anak_accumulated_pl_account");
 
   const missing: string[] = [];
   for (const key of keys) {
@@ -252,7 +254,7 @@ export async function missingNeracaAccounts(
 }
 
 export type NeracaAccounts =
-  | { ok: true; currentId: number; unclosedId: number | null }
+  | { ok: true; currentId: number; accumulatedId: number | null }
   | { ok: false; missing: string[] };
 
 /**
@@ -260,13 +262,13 @@ export type NeracaAccounts =
  * missing, by name.
  *
  * The Neraca is **not produced** without them — the user's rule — so this is
- * the refusal's source as well as the placement's. Belum Ditutup is resolved
- * only when the caller has a figure for it to hold, the same reasoning
+ * the refusal's source as well as the placement's. Tahun Sebelumnya is resolved
+ * only when the caller has year lines to anchor beneath it, the same reasoning
  * `missingNeracaAccounts` applies for the dashboard.
  */
 export async function neracaAccountsFor(
   isParent: boolean,
-  needsUnclosed: boolean
+  needsYearLines: boolean
 ): Promise<NeracaAccounts> {
   const values = await systemDefaults();
   const prefix = isParent ? "induk" : "anak";
@@ -277,16 +279,16 @@ export async function neracaAccountsFor(
   };
 
   const currentKey: SystemDefaultKey = `${prefix}_current_pl_account`;
-  const unclosedKey: SystemDefaultKey = `${prefix}_unclosed_pl_account`;
+  const accumulatedKey: SystemDefaultKey = `${prefix}_accumulated_pl_account`;
   const currentId = await resolve(currentKey);
-  const unclosedId = needsUnclosed ? await resolve(unclosedKey) : null;
+  const accumulatedId = needsYearLines ? await resolve(accumulatedKey) : null;
 
   const missing: string[] = [];
   if (!currentId) missing.push(systemDefaultDef(currentKey).name);
-  if (needsUnclosed && !unclosedId) missing.push(systemDefaultDef(unclosedKey).name);
+  if (needsYearLines && !accumulatedId) missing.push(systemDefaultDef(accumulatedKey).name);
   if (missing.length) return { ok: false, missing };
 
-  return { ok: true, currentId: currentId!, unclosedId };
+  return { ok: true, currentId: currentId!, accumulatedId };
 }
 
 export type IntercompanyBridge = {

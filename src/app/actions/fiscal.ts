@@ -59,11 +59,9 @@ export async function transitionFiscalYear(
     };
   }
 
-  // At most two years stand Open at once (`MAX_OPEN_FISCAL_YEARS`). The
-  // overlap at a year-end is real — December's invoices arrive while January
-  // is already being worked in — but a third open year is not that case, and
-  // every month it stays open is a month that cannot be carried forward. The
-  // refusal names the year to close, because "too many" is not actionable.
+  // Any number of years may stand Open, but never one behind a close: that
+  // close froze the Opening Balance every later report stands on. The refusal
+  // names the closes in the way.
   const openable = await checkYearOpenable(id);
   if (!openable.ok) return { ok: false, message: openable.message };
 

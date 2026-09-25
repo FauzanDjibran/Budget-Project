@@ -3,6 +3,7 @@ import { Icon } from "@/components/icon";
 import { formatDate, formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { reportHref } from "@/lib/siba/reports";
+import { Drill } from "./drill";
 import type { TrialBalanceReport as Report } from "@/lib/siba/ledger";
 
 /**
@@ -116,18 +117,25 @@ export function TrialBalanceReport({
               </tr>
             </thead>
             <tbody>
-              {report.rows.map((r) => (
+              {report.rows.map((r) => {
+                const gl = reportHref("general-ledger", {
+                  company: companyId,
+                  accounts: r.id,
+                  from: report.range.from,
+                  to: report.range.to,
+                });
+                const drill = (figure: React.ReactNode) => (
+                  <Drill href={gl} title="Buka General Ledger account ini">
+                    {figure}
+                  </Drill>
+                );
+                return (
                 <tr key={r.id}>
                   <td className="pri">
                     <span className="idc">
                       <Link
                         className="lab"
-                        href={reportHref("general-ledger", {
-                          company: companyId,
-                          accounts: r.id,
-                          from: report.range.from,
-                          to: report.range.to,
-                        })}
+                        href={gl}
                         title="Buka General Ledger account ini"
                       >
                         {r.label}
@@ -142,31 +150,32 @@ export function TrialBalanceReport({
                     </span>
                   </td>
                   <td className="num">
-                    <span className={`mny${r.opening ? "" : " z"}`}>
-                      {money(r.opening)}
-                    </span>
+                    {drill(
+                      <span className={`mny${r.opening ? "" : " z"}`}>{money(r.opening)}</span>
+                    )}
                   </td>
                   <td className="num">
                     {r.debit ? (
-                      <span className="mny">{money(r.debit)}</span>
+                      drill(<span className="mny">{money(r.debit)}</span>)
                     ) : (
                       <span className="dash">–</span>
                     )}
                   </td>
                   <td className="num">
                     {r.credit ? (
-                      <span className="mny">{money(r.credit)}</span>
+                      drill(<span className="mny">{money(r.credit)}</span>)
                     ) : (
                       <span className="dash">–</span>
                     )}
                   </td>
                   <td className="num">
-                    <span className={`mny${r.closing ? "" : " z"}`}>
-                      {money(r.closing)}
-                    </span>
+                    {drill(
+                      <span className={`mny${r.closing ? "" : " z"}`}>{money(r.closing)}</span>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
             <tfoot>
               <tr className="totrow">

@@ -2,7 +2,7 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { closingPlan, executeClosing } from "../src/lib/siba/closing";
-import { unclosedPriorYear } from "../src/lib/siba/fiscal";
+import { carriedYearsBefore } from "../src/lib/siba/fiscal";
 import { closingBalances, generalLedgerReport } from "../src/lib/siba/ledger";
 import { getOpeningBalance } from "../src/lib/siba/opening-balance";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
@@ -565,10 +565,12 @@ describe("closing writes the journal, the snapshot and the record", () => {
   let openingNo = "";
 
   /**
-   * `unclosedPriorYear` answers only while a newer year also stands Open, so
-   * 1991 is opened for the assertion and put back to Draft after it. 1990 is
-   * the oldest year in any database this runs against, so it is the one found.
+   * A Neraca of 1991 carries 1990 on a line of its own until the Company closes
+   * it. 1991 is opened for the assertion, as a real calendar would have it, and
+   * put back to Draft after.
    */
+  const carries = async (companyId: number) =>
+    (await carriedYearsBefore(companyId, `${FY + 1}-01-01`)).some((y) => y.id === fiscalYear);
   const withNextYearOpen = async (fn: () => Promise<void>) => {
     await prisma.accFiscalYear.update({ where: { id: nextYear }, data: { status: "Open" } });
     try {
@@ -580,8 +582,8 @@ describe("closing writes the journal, the snapshot and the record", () => {
 
   test("before any close, both Companies carry the older year into the newer", async () => {
     await withNextYearOpen(async () => {
-      assert.equal((await unclosedPriorYear(induk))?.id, fiscalYear);
-      assert.equal((await unclosedPriorYear(anak))?.id, fiscalYear);
+      assert.equal(await carries(induk), true);
+      assert.equal(await carries(anak), true);
     });
   });
 
@@ -612,8 +614,8 @@ describe("closing writes the journal, the snapshot and the record", () => {
     // Per Company, like the close itself: the induk's Neraca of 1991 no longer
     // has an unclosed year to state, while the anak's still does.
     await withNextYearOpen(async () => {
-      assert.equal(await unclosedPriorYear(induk), null);
-      assert.equal((await unclosedPriorYear(anak))?.id, fiscalYear);
+      assert.equal(await carries(induk), false);
+      assert.equal(await carries(anak), true);
     });
   });
 

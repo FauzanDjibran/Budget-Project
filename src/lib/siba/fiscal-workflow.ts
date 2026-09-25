@@ -106,41 +106,35 @@ export const FISCAL_YEAR_CLOSING_NOTE =
   "Penutupan dilakukan per Company, di layar Fiscal Year Closing: di sana " +
   "validasinya diperiksa dan journal penutup ditampilkan sebelum dijalankan.";
 
-/**
- * How many fiscal years may stand Open at once.
- *
- * Two, and the reason is the overlap at a year-end: January's work belongs to
- * the new year while December's invoices are still arriving against the old
- * one, so a book that had to be shut before the next one opened would refuse
- * one of them. Three is not that case — it is a year nobody has got round to
- * closing, and every month it stays open is a month of figures that cannot be
- * carried forward.
- */
-export const MAX_OPEN_FISCAL_YEARS = 2;
-
 /** Just enough of a Fiscal Year to say which one is being talked about. */
 export type OpenYearSummary = { id: number; label: string; name: string };
 
-/**
- * Why one more year may not be opened, or null when it may.
- *
- * Pure, and takes the years already Open rather than reading them, so the rule
- * can be exercised directly at every count instead of only at whatever the
- * database happens to hold. Ordered here rather than by the caller: the refusal
- * has to name the **oldest** open year — the only one that can be closed next,
- * since closing a newer one would leave an Open year with no successor to
- * inherit into — and "oldest" is a property of the list, not of the query.
- */
-export function openLimitRefusal(open: OpenYearSummary[]): string | null {
-  if (open.length < MAX_OPEN_FISCAL_YEARS) return null;
+/** A close some Company has already run, as the activation rule needs it. */
+export type LaterClosing = { yearLabel: string; yearName: string; companyLabel: string };
 
-  const ordered = [...open].sort((a, b) => a.label.localeCompare(b.label));
-  const oldest = ordered[0];
+/**
+ * Why a year may not be activated, or null when it may.
+ *
+ * **Any number of years may stand Open** — the business has carried several at
+ * once while working back through its history, and the posting lock is what
+ * keeps each one honest. What may not happen is a year opening **behind** a
+ * close: that close wrote the next year's Opening Balance snapshot, and every
+ * report opening after it stands on the snapshot, so a posting into an older
+ * year would move a figure the snapshot has already frozen. The refusal names
+ * the closes in the way, because "not allowed" is not actionable.
+ *
+ * Pure, and takes the later closes rather than reading them, so the rule is
+ * exercised directly instead of against whatever the database holds.
+ */
+export function activationRefusal(yearLabel: string, later: LaterClosing[]): string | null {
+  if (!later.length) return null;
+  const named = [...later]
+    .sort((a, b) => a.yearLabel.localeCompare(b.yearLabel) || a.companyLabel.localeCompare(b.companyLabel))
+    .map((c) => `${c.yearName} (${c.companyLabel})`)
+    .join(", ");
   return (
-    `Sudah ada ${ordered.length} tahun buku aktif (${ordered
-      .map((y) => y.label)
-      .join(", ")}). Tutup ${oldest.name} lebih dahulu sebelum mengaktifkan ` +
-    "tahun buku berikutnya."
+    `Tahun buku ${yearLabel} tidak dapat diaktifkan karena tahun buku setelahnya ` +
+    `sudah ditutup: ${named}. Opening Balance-nya sudah dibekukan.`
   );
 }
 

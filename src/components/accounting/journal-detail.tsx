@@ -10,6 +10,8 @@ import {
   type JournalAbilities,
   type JournalStatus,
 } from "@/lib/siba/journal-workflow";
+import { documentHref } from "@/lib/siba/document-links";
+import { Drill } from "@/components/report/drill";
 import { JournalActions } from "./journal-actions";
 
 /**
@@ -34,6 +36,7 @@ export function JournalDetail({
 }) {
   const balanced = Math.round(journal.debit * 100) === Math.round(journal.credit * 100);
   const status = journal.status as JournalStatus;
+  const source = documentHref(journal.sourceDocTable, journal.sourceDocId);
 
   return (
     <>
@@ -94,9 +97,18 @@ export function JournalDetail({
               </Field>
               <Field label="Sumber" span={3}>
                 <div className="ro">
-                  {journal.sourceDocLabel ?? <span className="dash">—</span>}
-                  {journal.sourceDocId && (
-                    <span className="mut">#{journal.sourceDocId}</span>
+                  {source ? (
+                    <Drill href={source} title="Buka dokumen sumber journal ini">
+                      {journal.sourceDocLabel}
+                      <span className="mut">#{journal.sourceDocId}</span>
+                    </Drill>
+                  ) : (
+                    <>
+                      {journal.sourceDocLabel ?? <span className="dash">—</span>}
+                      {journal.sourceDocId && (
+                        <span className="mut">#{journal.sourceDocId}</span>
+                      )}
+                    </>
                   )}
                 </div>
               </Field>

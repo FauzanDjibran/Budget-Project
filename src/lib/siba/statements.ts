@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import type { ReportableFiscalYear } from "./fiscal";
+import { carriedYearsBefore, type ReportableFiscalYear } from "./fiscal";
 import { roundBase } from "./fx";
 import {
   statementBalances,
@@ -19,6 +19,7 @@ import {
   type StatementMode,
   type StatementPartner,
   type StatementRow,
+  type TrailingLine,
 } from "./statement-layout";
 
 /**
@@ -179,43 +180,73 @@ export type BalanceSheetReport =
       openingFrom: (OpeningProvenance | null)[];
       /** Computed-line accounts that nonetheless carry postings, by name. */
       postedOnComputed: string[];
+      /** The unclosed years the Neraca prints a line for, oldest first. */
+      carried: { name: string }[];
       /**
-       * Columns whose profit from before the year is not nil although no
-       * earlier year is still open — a closed year that was not emptied.
+       * Columns whose profit from before the year is not wholly accounted for
+       * by the unclosed years — a closed year that was not emptied, or a line
+       * dated outside every fiscal year.
        */
-      unclosedWithoutYear: number[];
+      unattributed: number[];
     }
   | { ok: false; missing: string[] };
+
+/** The label a year's own line carries on the Neraca. */
+export function carriedYearLineName(yearLabel: string): string {
+  return `Laba/Rugi ${yearLabel}`;
+}
 
 /**
  * The Neraca for one Company, at the end of each column's period.
  *
  * Every balance-sheet account stands at its **cumulative** balance, opened
  * from the snapshot on or before the column's year start and carried forward
- * from there. Equity then needs the profit nothing has posted into it yet, and
- * that is split at the year's first day into two computed figures, each placed
- * on the account System Default names:
+ * from there. Equity then needs the profit nothing has posted into it yet:
  *
  *   - **Tahun Berjalan** — the Laba Rugi lines dated from the year's first day
- *     to the column's last, leaving out the year's own closing journal. It is
- *     the same range sum as the Laba Rugi's s.d. Periode ini, by construction.
- *   - **Tahun Lalu Belum Ditutup** — every Laba Rugi line dated before the
- *     year that no close has emptied. Nil once the previous year is closed;
- *     the previous year's result while it is not.
+ *     to the column's last, leaving out the year's own closing journal, placed
+ *     on the account System Default names. It is the same range sum as the Laba
+ *     Rugi's s.d. Periode ini, by construction.
+ *   - **one line per unclosed year** — every earlier year this Company has not
+ *     closed, each stating that year's whole result, printed directly beneath
+ *     Laba/Rugi Tahun Sebelumnya. A year stays on its own line until its close
+ *     moves the result into Tahun Sebelumnya, so a reader sees each year apart
+ *     rather than one figure blending several.
  *
- * Nothing is posted and nothing is estimated: both figures are sums of lines
- * that were posted, and the Neraca balances because every journal does.
+ * Nothing is posted and nothing is estimated: every figure is a sum of lines
+ * that were posted, and the Neraca balances because every journal does. The
+ * year lines together equal the whole Laba Rugi before the year; whatever they
+ * do not account for is added on a line of its own and named, never dropped.
  *
  * Refused, by name, when the accounts to place them on are not set — the
- * user's rule. Belum Ditutup is asked for only when some column has a figure
- * for it.
+ * user's rule. Tahun Sebelumnya is asked for only when there are year lines to
+ * anchor beneath it.
  */
 export async function balanceSheetReport(
   company: { id: number; isParent: boolean },
   columns: StatementColumn[],
-  /** The first day of the year this Company is still carrying unclosed, if any. */
-  carriedYearStart: string | null
+  years: ReportableFiscalYear[]
 ): Promise<BalanceSheetReport> {
+  const latestStart = columns.map((c) => c.range.from).sort().at(-1)!;
+  const result = (pairs: StatementMovement[]) =>
+    roundBase(pairs.reduce((s, p) => s + p.credit - p.debit, 0));
+
+  // A year's result is the same whichever column asks, so it is summed once.
+  // Its own range, with nothing left out: an unclosed year has no closing
+  // journal to leave out.
+  const carried = await Promise.all(
+    (await carriedYearsBefore(company.id, latestStart)).map(async (y) => ({
+      ...y,
+      result: result(
+        await statementMovements(
+          company.id,
+          { from: y.startDate, to: y.endDate },
+          { section: "ProfitLoss" }
+        )
+      ),
+    }))
+  );
+
   const figures = await Promise.all(
     columns.map(async (c) => {
       const yearStart = c.range.from;
@@ -236,37 +267,52 @@ export async function balanceSheetReport(
           to: dayBefore(yearStart),
         }),
       ]);
-      const result = (pairs: StatementMovement[]) =>
-        roundBase(pairs.reduce((s, p) => s + p.credit - p.debit, 0));
+      // Only the years before this column's own year are carried by it.
+      const lines = carried.map((y) => (y.startDate < yearStart ? y.result : 0));
+      const priorTotal = result(prior.pairs);
       return {
         balances,
         current: result(current),
-        prior: result(prior.pairs),
-        carrying: carriedYearStart !== null && carriedYearStart < yearStart,
+        lines,
+        residue: roundBase(priorTotal - lines.reduce((s, v) => s + v, 0)),
       };
     })
   );
 
-  const needsUnclosed = figures.some((f) => f.carrying || Math.round(f.prior * 100) !== 0);
-  const accounts = await neracaAccountsFor(company.isParent, needsUnclosed);
+  const shown = carried.filter((y) => columns.some((c) => y.startDate < c.range.from));
+  const hasResidue = figures.some((f) => Math.round(f.residue * 100) !== 0);
+  const accounts = await neracaAccountsFor(company.isParent, shown.length > 0 || hasResidue);
   if (!accounts.ok) return accounts;
 
   const placed = new Map<number, number[]>();
   placed.set(accounts.currentId, figures.map((f) => f.current));
-  if (accounts.unclosedId) {
-    const unclosed = figures.map((f) => f.prior);
-    placed.set(
-      accounts.unclosedId,
-      accounts.unclosedId === accounts.currentId
-        ? unclosed.map((v, i) => roundBase(v + figures[i].current))
-        : unclosed
-    );
+
+  const trailing = new Map<number, TrailingLine[]>();
+  if (accounts.accumulatedId) {
+    const lines: TrailingLine[] = shown.map((y) => {
+      const i = carried.indexOf(y);
+      const last = years.find((fy) => fy.id === y.id)?.periods.at(-1);
+      return {
+        key: `y${y.id}`,
+        name: carriedYearLineName(y.label),
+        values: figures.map((f) => f.lines[i]),
+        ...(last ? { profitLoss: { yearId: y.id, periodId: last.id } } : {}),
+      };
+    });
+    if (hasResidue) {
+      lines.push({
+        key: "yrest",
+        name: "Laba/Rugi lain yang belum dipindahkan",
+        values: figures.map((f) => f.residue),
+      });
+    }
+    trailing.set(accounts.accumulatedId, lines);
   }
 
   const chart = await balanceSheetChart(company.id);
   const pairs = figures.map((f) => f.balances.pairs);
   const partnerIds = [...new Set(pairs.flat().flatMap((p) => (p.partnerId ? [p.partnerId] : [])))];
-  const built = buildBalanceSheet(chart, pairs, await partnerNames(partnerIds), placed);
+  const built = buildBalanceSheet(chart, pairs, await partnerNames(partnerIds), placed, trailing);
 
   // A computed line's account is a control account nothing may post to, so a
   // balance on it was written some other way. It is added in rather than
@@ -289,9 +335,8 @@ export async function balanceSheetReport(
     unplaced: built.unplaced,
     openingFrom: figures.map((f) => f.balances.openingFrom),
     postedOnComputed,
-    unclosedWithoutYear: figures.flatMap((f, i) =>
-      !f.carrying && Math.round(f.prior * 100) !== 0 ? [i] : []
-    ),
+    carried: shown.map((y) => ({ name: y.name })),
+    unattributed: figures.flatMap((f, i) => (Math.round(f.residue * 100) !== 0 ? [i] : [])),
   };
 }
 

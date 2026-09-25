@@ -24,8 +24,8 @@ import { STATEMENT_MODES } from "@/lib/siba/statement-layout";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
 import {
+  carriedYearsBefore,
   reportableFiscalYears,
-  unclosedPriorYear,
   type ReportableFiscalYear,
 } from "@/lib/siba/fiscal";
 import {
@@ -288,16 +288,12 @@ async function statementPage(
   const compare = resolveColumn(years, toId(query.cmpYear), toId(query.cmpPeriod), mode);
   const columns = compare ? [main, compare] : [main];
 
-  // A previous year this Company has not closed yet. The books are running as
-  // an extension of that year, and the report says so rather than leaving a
+  // The earlier years this Company has not closed yet. The books are running
+  // as an extension of them, and the report says so rather than leaving a
   // reader to find out from a figure.
-  const carried = await unclosedPriorYear(companyId);
-  const carriedYear = carried ? (years.find((y) => y.id === carried.id) ?? null) : null;
-  const yearOf = (c: StatementColumn) => years.find((y) => y.id === c.yearId)!;
-  const carrying =
-    carriedYear && columns.some((c) => carriedYear.startDate < yearOf(c).startDate)
-      ? carriedYear
-      : null;
+  const latestStart = columns.map((c) => c.range.from).sort().at(-1)!;
+  const carried = await carriedYearsBefore(companyId, latestStart);
+  const carrying = carried.length ? carried.map((y) => y.name).join(", ") : null;
 
   const filter = (
     <>
@@ -322,7 +318,7 @@ async function statementPage(
   // ----------------------------------------------------------------- neraca
 
   if (neraca) {
-    const data = await balanceSheetReport(company, columns, carriedYear?.startDate ?? null);
+    const data = await balanceSheetReport(company, columns, years);
 
     if (!data.ok) {
       return (
@@ -370,15 +366,15 @@ async function statementPage(
           <>
             Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}), saldo kumulatif
             per akhir periode tiap kolom — laba rugi yang belum dipindahkan ke ekuitas
-            dihitung dari journal dan diletakkan pada account System Default
+            dihitung dari journal, satu baris per tahun yang belum ditutup
             {openingSource(opening)}.
           </>
         }
       >
         {carrying && (
-          <Notice tone="warn" title={`${carrying.name} belum ditutup untuk Company ini.`}>
-            Ekuitas memuat laba rugi {carrying.name} yang belum dipindahkan ke Laba/Rugi
-            Tahun Sebelumnya — angkanya berpindah ke sana saat {carrying.name} ditutup.
+          <Notice tone="warn" title={`${carrying} belum ditutup untuk Company ini.`}>
+            Laba rugi tiap tahun itu tampil pada barisnya sendiri di bawah Laba/Rugi
+            Tahun Sebelumnya, dan berpindah ke sana saat tahunnya ditutup.
           </Notice>
         )}
         {off.length > 0 && (
@@ -393,11 +389,11 @@ async function statementPage(
             dijumlahkan dengan angka yang dihitung: {data.postedOnComputed.join(", ")}.
           </Notice>
         )}
-        {data.unclosedWithoutYear.length > 0 && (
-          <Notice tone="bad" title="Laba rugi tahun lalu tidak nol padahal tahunnya sudah ditutup.">
-            Account Laba Rugi sebelum awal tahun masih bersaldo walau tahun buku
-            sebelumnya sudah ditutup. Angkanya tetap ditampilkan pada account Tahun Lalu
-            Belum Ditutup agar Neraca seimbang.
+        {data.unattributed.length > 0 && (
+          <Notice tone="bad" title="Laba rugi sebelum awal tahun tidak seluruhnya milik tahun yang belum ditutup.">
+            Account Laba Rugi masih bersaldo dari tahun yang sudah ditutup atau dari
+            tanggal di luar tahun buku. Angkanya ditampilkan pada baris Laba/Rugi lain
+            yang belum dipindahkan agar Neraca seimbang.
           </Notice>
         )}
         {data.unplaced.length > 0 && <UnplacedNotice names={data.unplaced} />}
@@ -438,9 +434,9 @@ async function statementPage(
       }
     >
       {carrying && (
-        <Notice tone="warn" title={`${carrying.name} belum ditutup untuk Company ini.`}>
+        <Notice tone="warn" title={`${carrying} belum ditutup untuk Company ini.`}>
           Angka Laba Rugi tetap benar karena setiap kolom hanya menjumlah periodenya
-          sendiri, tetapi hasil {carrying.name} belum dipindahkan ke Laba/Rugi Tahun
+          sendiri, tetapi hasil tahun itu belum dipindahkan ke Laba/Rugi Tahun
           Sebelumnya.
         </Notice>
       )}

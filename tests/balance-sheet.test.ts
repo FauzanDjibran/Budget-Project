@@ -2,7 +2,6 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { executeClosing } from "../src/lib/siba/closing";
-import { unclosedPriorYear } from "../src/lib/siba/fiscal";
 import {
   buildBalanceSheet,
   type StatementAccount,
@@ -100,6 +99,47 @@ describe("the Neraca layout", () => {
   test("a section heading carries no figure — its total line follows", () => {
     assert.deepEqual(row("s1")?.values, []);
   });
+
+  test("year lines print directly after their account and count towards everything above it", () => {
+    const withLines = buildBalanceSheet(
+      CHART,
+      [[pair(1, 450, 0), pair(5, 0, 400)]],
+      new Map(),
+      new Map(),
+      new Map([
+        [
+          5,
+          [
+            { key: "y25", name: "Laba/Rugi 2025", values: [50], profitLoss: { yearId: 25, periodId: 250 } },
+            { key: "y26", name: "Laba/Rugi 2026", values: [0] },
+          ],
+        ],
+      ])
+    );
+    const keys = withLines.rows.map((r) => r.key);
+    const at = keys.indexOf("a5");
+    assert.deepEqual(keys.slice(at, at + 3), ["a5", "y25", "y26"], "in year order, beneath the account");
+    const y25 = withLines.rows.find((r) => r.key === "y25")!;
+    assert.equal(y25.computed, true);
+    assert.equal(y25.depth, withLines.rows[at].depth, "a sibling of the account, not a child");
+    assert.deepEqual(y25.profitLoss, { yearId: 25, periodId: 250 });
+    assert.ok(keys.includes("y26"), "a year whose result is nil is still stated");
+    assert.deepEqual(withLines.rows[at].values, [400], "the account keeps its own figure");
+    assert.deepEqual(withLines.rows.find((r) => r.key === "t3")?.values, [450]);
+    assert.deepEqual(withLines.creditTotal, withLines.debitTotal);
+  });
+
+  test("an account with year lines shows even at nil", () => {
+    const quiet = buildBalanceSheet(
+      CHART,
+      [[]],
+      new Map(),
+      new Map(),
+      new Map([[5, [{ key: "y25", name: "Laba/Rugi 2025", values: [0] }]]])
+    );
+    assert.ok(quiet.rows.some((r) => r.key === "a5"));
+    assert.ok(quiet.rows.some((r) => r.key === "c31"), "and so does its category");
+  });
 });
 
 // ------------------------------------------------------------- the engine
@@ -109,6 +149,7 @@ let actor = 0;
 let induk = 0;
 let year1980 = 0;
 let year1981 = 0;
+let year1982 = 0;
 let baseCurrency = 0;
 
 const a = {
@@ -119,7 +160,6 @@ const a = {
   capital: 0,
   accumulated: 0,
   current: 0,
-  unclosed: 0,
   revenue: 0,
   expense: 0,
 };
@@ -196,18 +236,22 @@ const column = (yearId: number, from: string, to: string): StatementColumn => ({
 });
 const march1981 = () => column(year1981, "1981-01-01", "1981-03-31");
 const december1980 = () => column(year1980, "1980-01-01", "1980-12-31");
+const march1982 = () => column(year1982, "1982-01-01", "1982-03-31");
+
+const run = (columns: StatementColumn[]) =>
+  balanceSheetReport({ id: induk, isParent: true }, columns, []);
 
 async function neraca(columns: StatementColumn[]) {
-  const carried = await unclosedPriorYear(induk);
-  const start = carried ? `${carried.label}-01-01` : null;
-  const report = await balanceSheetReport({ id: induk, isParent: true }, columns, start);
+  const report = await run(columns);
   assert.equal(report.ok, true, JSON.stringify(report));
   if (!report.ok) throw new Error("refused");
   return report;
 }
 
-const valueOf = (report: Awaited<ReturnType<typeof neraca>>, accountId: number, col = 0) =>
+type Neraca = Awaited<ReturnType<typeof neraca>>;
+const valueOf = (report: Neraca, accountId: number, col = 0) =>
   report.rows.find((r) => r.accountId === accountId)?.values[col] ?? 0;
+const lineOf = (report: Neraca, yearId: number) => report.rows.find((r) => r.key === `y${yearId}`);
 
 async function wipeFixtureYears() {
   const ids = (
@@ -245,6 +289,7 @@ before(async () => {
   await wipeFixtureYears();
   year1980 = await makeYear(1980);
   year1981 = await makeYear(1981);
+  year1982 = await makeYear(1982);
 
   const mk = (subcategoryLabel: string, normalBalance: "Debit" | "Kredit" = "Debit") =>
     makeAccount({ companyId: induk, subcategoryLabel, normalBalance });
@@ -255,14 +300,12 @@ before(async () => {
   a.capital = await mk("3.1.1", "Kredit");
   a.accumulated = await mk("3.3.1", "Kredit");
   a.current = await mk("3.4.1", "Kredit");
-  a.unclosed = await mk("3.4.1", "Kredit");
   a.revenue = await mk("4.1.1", "Kredit");
   a.expense = await mk("5.3.1");
   branch = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
 
   await setSetting("induk_accumulated_pl_account", String(a.accumulated));
   await setSetting("induk_current_pl_account", String(a.current));
-  await setSetting("induk_unclosed_pl_account", String(a.unclosed));
 
   // 1980: capital in, a loan, equipment bought and depreciated, one sale and
   // one expense naming a branch. Result: 400.000 − 100.000 − 50.000 = 250.000.
@@ -300,6 +343,12 @@ before(async () => {
     { accountId: a.expense, debit: 30_000, credit: 0 },
     { accountId: a.cash, debit: 0, credit: 30_000 },
   ]);
+
+  // 1982, with both earlier years still open: 10.000 in by March.
+  await journal(d(1982, 2, 5), [
+    { accountId: a.cash, debit: 10_000, credit: 0 },
+    { accountId: a.revenue, debit: 0, credit: 10_000 },
+  ]);
 });
 
 after(async () => {
@@ -315,7 +364,7 @@ after(async () => {
   await disconnect();
 });
 
-describe("the Neraca while the previous year is still open", () => {
+describe("the Neraca while earlier years are still open", () => {
   test("1981 runs as an extension of 1980, and balances", async () => {
     const report = await neraca([march1981()]);
     // Cash 1.000 + 200 − 300 + 400 − 100 + 200 − 30 = 1.370; equipment 300,
@@ -325,12 +374,41 @@ describe("the Neraca while the previous year is still open", () => {
     assert.equal(valueOf(report, a.depreciation), -50_000, "a deduction inside AKTIVA");
   });
 
-  test("equity splits at the year's first day: 1980 unclosed, 1981 to date", async () => {
+  test("equity splits at the year's first day: a line for 1980, 1981 to date", async () => {
     const report = await neraca([march1981()]);
-    assert.equal(valueOf(report, a.unclosed), 250_000, "1980's result, not yet closed into equity");
+    const line = lineOf(report, year1980);
+    assert.equal(line?.name, "Laba/Rugi 1980");
+    assert.deepEqual(line?.values, [250_000], "1980's result, not yet closed into equity");
+    assert.equal(line?.computed, true);
     assert.equal(valueOf(report, a.current), 170_000, "1981 to the end of March");
     assert.equal(valueOf(report, a.accumulated), 0, "nothing has been closed into it yet");
     assert.equal(report.rows.find((r) => r.accountId === a.current)?.computed, true);
+    assert.deepEqual(report.carried.map((y) => y.name), ["Tahun Buku 1980"]);
+
+    const keys = report.rows.map((r) => r.key);
+    assert.equal(
+      keys.indexOf(`y${year1980}`),
+      keys.indexOf(`a${a.accumulated}`) + 1,
+      "printed directly beneath Laba/Rugi Tahun Sebelumnya"
+    );
+  });
+
+  test("several open years each keep a line of their own", async () => {
+    const report = await neraca([march1982()]);
+    assert.deepEqual(lineOf(report, year1980)?.values, [250_000]);
+    assert.deepEqual(lineOf(report, year1981)?.values, [170_000]);
+    assert.equal(valueOf(report, a.current), 10_000);
+    const keys = report.rows.map((r) => r.key);
+    assert.ok(keys.indexOf(`y${year1980}`) < keys.indexOf(`y${year1981}`), "oldest first");
+    assert.deepEqual(report.debitTotal, report.creditTotal);
+    assert.deepEqual(report.unattributed, [], "the year lines account for every earlier result");
+  });
+
+  test("a comparison column carries only the years before its own", async () => {
+    const report = await neraca([march1982(), march1981()]);
+    assert.deepEqual(lineOf(report, year1980)?.values, [250_000, 250_000]);
+    assert.deepEqual(lineOf(report, year1981)?.values, [170_000, 0], "1981 is the comparison's own year");
+    assert.deepEqual(report.debitTotal, report.creditTotal);
   });
 
   test("Tahun Berjalan is exactly the Laba Rugi's year to date", async () => {
@@ -350,7 +428,7 @@ describe("the Neraca while the previous year is still open", () => {
   test("no Tahun Berjalan account: the Neraca is not produced, and says which setting", async () => {
     await setSetting("induk_current_pl_account", null);
     try {
-      const refused = await balanceSheetReport({ id: induk, isParent: true }, [march1981()], "1980-01-01");
+      const refused = await run([march1981()]);
       assert.equal(refused.ok, false);
       assert.deepEqual(!refused.ok && refused.missing, ["Account Laba/Rugi Tahun Berjalan — Induk"]);
     } finally {
@@ -358,45 +436,54 @@ describe("the Neraca while the previous year is still open", () => {
     }
   });
 
-  test("no Belum Ditutup account while a year is carried: refused by name", async () => {
-    await setSetting("induk_unclosed_pl_account", null);
+  test("no Tahun Sebelumnya account while a year is carried: refused by name", async () => {
+    await setSetting("induk_accumulated_pl_account", null);
     try {
-      const refused = await balanceSheetReport({ id: induk, isParent: true }, [march1981()], "1980-01-01");
-      assert.deepEqual(!refused.ok && refused.missing, ["Account Laba/Rugi Tahun Lalu Belum Ditutup — Induk"]);
+      const refused = await run([march1981()]);
+      assert.deepEqual(!refused.ok && refused.missing, ["Account Laba/Rugi Tahun Sebelumnya — Induk"]);
     } finally {
-      await setSetting("induk_unclosed_pl_account", String(a.unclosed));
+      await setSetting("induk_accumulated_pl_account", String(a.accumulated));
     }
   });
 });
 
 describe("the Neraca across the close", () => {
-  let before1980: Awaited<ReturnType<typeof neraca>>;
-  let before1981: Awaited<ReturnType<typeof neraca>>;
+  let before1980: Neraca;
+  let before1981: Neraca;
+  let before1982: Neraca;
 
   test("closing 1980 goes through the real engine", async () => {
     before1980 = await neraca([december1980()]);
     before1981 = await neraca([march1981()]);
+    before1982 = await neraca([march1982()]);
     const result = await executeClosing(induk, year1980, actor);
     assert.equal(result.ok, true, JSON.stringify(result));
   });
 
-  test("1981 now opens from the snapshot, and the unclosed profit has moved into equity", async () => {
+  test("1981 now opens from the snapshot, and 1980's line has moved into equity", async () => {
     const report = await neraca([march1981()]);
     assert.ok(report.openingFrom[0]?.openingNo.startsWith("OPB-"), "stood on the 1981 snapshot");
     assert.equal(valueOf(report, a.accumulated), 250_000, "the close moved 1980's result here");
-    assert.equal(valueOf(report, a.unclosed), 0, "and nothing is carried any more");
+    assert.equal(lineOf(report, year1980), undefined, "and nothing is carried any more");
     assert.equal(valueOf(report, a.current), 170_000);
     assert.deepEqual(report.creditTotal, before1981.creditTotal, "total equity did not move");
     assert.deepEqual(report.debitTotal, before1981.debitTotal);
   });
 
-  test("the Belum Ditutup account is no longer needed once nothing is carried", async () => {
-    await setSetting("induk_unclosed_pl_account", null);
+  test("1982 still carries 1981, and only 1981", async () => {
+    const report = await neraca([march1982()]);
+    assert.equal(lineOf(report, year1980), undefined);
+    assert.deepEqual(lineOf(report, year1981)?.values, [170_000]);
+    assert.equal(valueOf(report, a.accumulated), 250_000);
+    assert.deepEqual(report.creditTotal, before1982.creditTotal);
+  });
+
+  test("Tahun Sebelumnya is still needed while a later year is carried", async () => {
+    await setSetting("induk_accumulated_pl_account", null);
     try {
-      const report = await balanceSheetReport({ id: induk, isParent: true }, [march1981()], null);
-      assert.equal(report.ok, true);
+      assert.equal((await run([march1982()])).ok, false, "1981 is still carried");
     } finally {
-      await setSetting("induk_unclosed_pl_account", String(a.unclosed));
+      await setSetting("induk_accumulated_pl_account", String(a.accumulated));
     }
   });
 

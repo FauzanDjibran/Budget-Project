@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { ExpandAll } from "@/components/ui/expand-all";
+import { Drill } from "./drill";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { reportHref } from "@/lib/siba/reports";
@@ -31,8 +32,11 @@ const money = (n: number) => formatMoney(n, BASE_CURRENCY_LABEL);
  * heading. Result and total lines never collapse — they are what the tree is
  * read towards.
  *
- * An account number links to its General Ledger for the first column's range,
- * except on a computed line, whose General Ledger is empty by design.
+ * **Every figure drills** (`drillFor`): a posted account's amount into its
+ * General Ledger for that column's range, a computed profit line into the Laba
+ * Rugi that produced it. The account number keeps its own link to the first
+ * column's General Ledger, except on a computed line, whose General Ledger is
+ * empty by design.
  */
 export function StatementReport({
   columns,
@@ -182,11 +186,21 @@ export function StatementReport({
                     <td colSpan={columns.length + (comparing ? 2 : 0)} />
                   ) : (
                     <>
-                      {r.values.map((v, i) => (
-                        <td key={i} className="num">
-                          <Figure value={v} strong={r.kind === "subtotal"} />
-                        </td>
-                      ))}
+                      {r.values.map((v, i) => {
+                        const drill = drillFor(r, columns[i], companyId);
+                        const figure = <Figure value={v} strong={r.kind === "subtotal"} />;
+                        return (
+                          <td key={i} className="num">
+                            {drill ? (
+                              <Drill href={drill.href} title={drill.title}>
+                                {figure}
+                              </Drill>
+                            ) : (
+                              figure
+                            )}
+                          </td>
+                        );
+                      })}
                       {comparing && <Difference current={r.values[0]} base={r.values[1]} />}
                     </>
                   )}
@@ -198,6 +212,51 @@ export function StatementReport({
       </div>
     </>
   );
+}
+
+/**
+ * Where one figure opens, or null where there is nothing beneath it.
+ *
+ * A posted account's figure — or a Partner's share of it — opens that
+ * account's General Ledger over **this column's** range, so a comparison
+ * column drills into its own year. A computed profit line opens the Laba Rugi
+ * that produced it: Tahun Berjalan the column's own year to date, an unclosed
+ * year its whole result. Headings and totals do not drill; their rows do.
+ */
+function drillFor(
+  r: StatementRow,
+  column: StatementColumn,
+  companyId: number
+): { href: string; title: string } | null {
+  if (r.profitLoss) {
+    const target =
+      r.profitLoss === "column"
+        ? { yearId: column.yearId, periodId: column.periodId }
+        : r.profitLoss;
+    return {
+      href: reportHref("profit-loss", {
+        company: companyId,
+        year: target.yearId,
+        period: target.periodId,
+        mode: "ytd",
+      }),
+      title: "Buka Laba Rugi yang menghasilkan angka ini",
+    };
+  }
+  if (r.computed) return null;
+
+  const accountId =
+    r.kind === "account" ? r.accountId : r.kind === "partner" ? Number(r.partnerOf?.slice(1)) : null;
+  if (!accountId) return null;
+  return {
+    href: reportHref("general-ledger", {
+      company: companyId,
+      accounts: accountId,
+      from: column.range.from,
+      to: column.range.to,
+    }),
+    title: `Buka General Ledger account ini, ${column.periodName}`,
+  };
 }
 
 const ROW_CLASS: Record<StatementRow["kind"], string> = {

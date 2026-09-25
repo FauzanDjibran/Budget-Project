@@ -52,8 +52,6 @@ let previous: string | null = null;
 const EQUITY_KEYS = [
   "induk_accumulated_pl_account",
   "anak_accumulated_pl_account",
-  "induk_unclosed_pl_account",
-  "anak_unclosed_pl_account",
   "induk_current_pl_account",
   "anak_current_pl_account",
 ] as const;
@@ -286,32 +284,20 @@ describe("the equity accounts closing posts into", () => {
       subcategoryLabel: "3.4.1",
       normalBalance: "Kredit",
     });
-    const unclosed = await makeAccount({
-      companyId: company,
-      subcategoryLabel: "3.4.1",
-      normalBalance: "Kredit",
-    });
-
     await writeSystemDefaults(
       {
         induk_accumulated_pl_account: String(first),
-        induk_unclosed_pl_account: String(unclosed),
         induk_current_pl_account: String(current),
       },
       actor
     );
-    await sync([first, current, unclosed]);
+    await sync([first, current]);
 
     assert.equal(await isControl(first), true, "closing posts here");
     assert.equal(
       await isControl(current),
       true,
       "and nothing posts here at all, which is a stronger reason still"
-    );
-    assert.equal(
-      await isControl(unclosed),
-      true,
-      "the Neraca places a computed figure here, so a hand-written line would sit beside it"
     );
     assert.deepEqual(await systemDefaultsUsingAccount(first), [
       "Account Laba/Rugi Tahun Sebelumnya — Induk",
@@ -384,13 +370,13 @@ describe("the equity accounts closing posts into", () => {
     });
   });
 
-  test("the Neraca's accounts: Tahun Berjalan always, Belum Ditutup only while a year is carried", async () => {
+  test("the Neraca's accounts: Tahun Berjalan always, Tahun Sebelumnya only while a year is carried", async () => {
     await writeSystemDefaults(
       {
         induk_current_pl_account: null,
         anak_current_pl_account: null,
-        induk_unclosed_pl_account: null,
-        anak_unclosed_pl_account: null,
+        induk_accumulated_pl_account: null,
+        anak_accumulated_pl_account: null,
       },
       actor
     );
@@ -402,12 +388,13 @@ describe("the equity accounts closing posts into", () => {
       "Account Laba/Rugi Tahun Berjalan — Anak",
     ]);
 
-    // Belum Ditutup is asked for only from the Company still carrying an
-    // unclosed year: a setting blocks only where it is used.
+    // Tahun Sebelumnya anchors the per-year lines, so it is asked for only
+    // from the Company still carrying an unclosed year: a setting blocks only
+    // where it is used.
     assert.deepEqual(await missingNeracaAccounts({ induk: false, anak: true }), [
       "Account Laba/Rugi Tahun Berjalan — Induk",
       "Account Laba/Rugi Tahun Berjalan — Anak",
-      "Account Laba/Rugi Tahun Lalu Belum Ditutup — Anak",
+      "Account Laba/Rugi Tahun Sebelumnya — Anak",
     ]);
 
     const company = await parentCompanyId();
@@ -416,19 +403,19 @@ describe("the equity accounts closing posts into", () => {
       subcategoryLabel: "3.4.1",
       normalBalance: "Kredit",
     });
-    const unclosed = await makeAccount({
+    const accumulated = await makeAccount({
       companyId: company,
-      subcategoryLabel: "3.4.1",
+      subcategoryLabel: "3.3.1",
       normalBalance: "Kredit",
     });
     await writeSystemDefaults(
       {
         induk_current_pl_account: String(current),
-        induk_unclosed_pl_account: String(unclosed),
+        induk_accumulated_pl_account: String(accumulated),
       },
       actor
     );
-    await sync([current, unclosed]);
+    await sync([current, accumulated]);
 
     assert.deepEqual(await missingNeracaAccounts({ induk: true, anak: false }), [
       "Account Laba/Rugi Tahun Berjalan — Anak",
@@ -436,11 +423,11 @@ describe("the equity accounts closing posts into", () => {
 
     // Resolved against the master: a deactivated account is not somewhere a
     // line can be placed any more than somewhere a posting can land.
-    await prisma.accAccount.update({ where: { id: unclosed }, data: { is_active: false } });
+    await prisma.accAccount.update({ where: { id: accumulated }, data: { is_active: false } });
     assert.deepEqual(await missingNeracaAccounts({ induk: true, anak: false }), [
       "Account Laba/Rugi Tahun Berjalan — Anak",
-      "Account Laba/Rugi Tahun Lalu Belum Ditutup — Induk",
+      "Account Laba/Rugi Tahun Sebelumnya — Induk",
     ]);
-    await prisma.accAccount.update({ where: { id: unclosed }, data: { is_active: true } });
+    await prisma.accAccount.update({ where: { id: accumulated }, data: { is_active: true } });
   });
 });

@@ -11,15 +11,14 @@ import {
   ensureFiscalPeriods,
   fiscalYearPeriods,
   fiscalYearShape,
-  openFiscalYears,
+  unclosedYearsFor,
   parseYear,
 } from "../src/lib/siba/fiscal";
 import {
   FISCAL_YEAR_TRANSITIONS,
-  MAX_OPEN_FISCAL_YEARS,
+  activationRefusal,
   availableActions,
   fiscalYearAbilities,
-  openLimitRefusal,
   transitionAllowed,
   type FiscalYearStatus,
 } from "../src/lib/siba/fiscal-workflow";
@@ -483,75 +482,84 @@ describe("the calendar decides what may be posted into it", () => {
   });
 });
 
-describe("at most two fiscal years stand Open", () => {
-  test("the limit is two, and the refusal names the year to close", () => {
-    assert.equal(MAX_OPEN_FISCAL_YEARS, 2);
-    assert.equal(openLimitRefusal([]), null);
-    assert.equal(
-      openLimitRefusal([{ id: 1, label: "2026", name: "Tahun Buku 2026" }]),
-      null,
-      "one open year is the ordinary case; the second is the year-end overlap"
-    );
+describe("any number of years stand Open, never one behind a close", () => {
+  test("the refusal is empty with no later close, and names every one there is", () => {
+    assert.equal(activationRefusal("2026", []), null);
 
-    const refusal = openLimitRefusal([
-      { id: 2, label: "2027", name: "Tahun Buku 2027" },
-      { id: 1, label: "2026", name: "Tahun Buku 2026" },
+    const refusal = activationRefusal("2025", [
+      { yearLabel: "2027", yearName: "Tahun Buku 2027", companyLabel: "SBTC" },
+      { yearLabel: "2026", yearName: "Tahun Buku 2026", companyLabel: "ABHC" },
     ]);
     assert.ok(refusal);
-    assert.match(
-      refusal!,
-      /Tutup Tahun Buku 2026/,
-      "the oldest is the only one that can be closed next — a newer one would " +
-        "leave an Open year with no successor to inherit into"
-    );
-    // Ordered by the rule, not by the caller: the list above is newest-first.
-    assert.ok(!/Tutup Tahun Buku 2027/.test(refusal!));
+    assert.match(refusal!, /Tahun Buku 2026 \(ABHC\), Tahun Buku 2027 \(SBTC\)/);
   });
 
-  test("activating a third year is refused", async () => {
+  test("a fourth year opens, but not one older than a closed year", async () => {
+    const induk = await parentCompanyId();
+
+    // The years this file opened earlier are this file's to stand down.
+    await prisma.accFiscalYear.updateMany({
+      where: { year_code: { startsWith: "test.fyr." } },
+      data: { status: "Draft" },
+    });
+
     const candidate = await makeYear(LOCK_THIRD_YEAR, "Draft");
-
-    // The years this file opened earlier are this file's to stand down, and
-    // standing them down is what makes the count start from the database's own
-    // rather than from whatever ran before. Nothing else is touched: a real
-    // Open year belongs to whoever uses the database.
-    await prisma.accFiscalYear.updateMany({
-      where: { year_code: { startsWith: "test.fyr." }, id: { not: candidate } },
-      data: { status: "Draft" },
-    });
-
-    const filler: number[] = [];
-    let open = (await openFiscalYears()).filter((y) => y.id !== candidate);
-    assert.ok(
-      open.length < MAX_OPEN_FISCAL_YEARS,
-      "the database itself holds fewer than the limit, so the rule can be reached from both sides"
-    );
-    while (open.length < MAX_OPEN_FISCAL_YEARS) {
-      assert.equal(
-        (await checkYearOpenable(candidate)).ok,
-        true,
-        "below the limit, a year opens"
-      );
-      filler.push(await makeYear(LOCK_FILLER_YEAR + filler.length, "Open"));
-      open = (await openFiscalYears()).filter((y) => y.id !== candidate);
-    }
-
-    const refused = await checkYearOpenable(candidate);
-    assert.equal(refused.ok, false, "at the limit, it does not");
-    assert.match(
-      (refused as { message: string }).message,
-      /Tutup Tahun Buku/,
-      "the refusal has to say which year to close; \"too many\" is not actionable"
-    );
-
-    await prisma.accFiscalYear.updateMany({
-      where: { id: { in: filler } },
-      data: { status: "Draft" },
-    });
+    const later = [
+      await makeYear(LOCK_FILLER_YEAR, "Open"),
+      await makeYear(LOCK_FILLER_YEAR + 1, "Open"),
+      await makeYear(LOCK_FILLER_YEAR + 8, "Open"),
+    ];
     assert.equal(
       (await checkYearOpenable(candidate)).ok,
       true,
-      "and with room again, the same year opens"
+      "three Open years do not stop a fourth — there is no limit any more"
     );
+
+    const reopen = await closeYearFor(later[0], induk);
+    try {
+      const refused = await checkYearOpenable(candidate);
+      assert.equal(refused.ok, false, "a year behind a close would move a frozen snapshot");
+      assert.match((refused as { message: string }).message, new RegExp(`${LOCK_FILLER_YEAR}`));
+    } finally {
+      await reopen();
+    }
+    assert.equal((await checkYearOpenable(candidate)).ok, true);
+
+    await prisma.accFiscalYear.updateMany({
+      where: { id: { in: later } },
+      data: { status: "Draft" },
+    });
+  });
+
+  test("the oldest unclosed year is each Company's own", async () => {
+    const [induk, anak] = [await parentCompanyId(), await childCompanyId()];
+    const ids = await prisma.accFiscalYear.findMany({
+      where: { year_code: { in: [LOCK_FILLER_YEAR, LOCK_FILLER_YEAR + 1].map((y) => `test.fyr.${y}`) } },
+      orderBy: { start_date: "asc" },
+      select: { id: true },
+    });
+    const [older, newer] = ids.map((r) => r.id);
+    await prisma.accFiscalYear.updateMany({
+      where: { id: { in: [older, newer] } },
+      data: { status: "Open" },
+    });
+
+    const reopen = await closeYearFor(older, induk);
+    try {
+      const mine = (c: number) =>
+        unclosedYearsFor(c).then((ys) => ys.map((y) => y.id).filter((id) => id === older || id === newer));
+      assert.deepEqual(await mine(induk), [newer], "the induk has closed the older year");
+      assert.deepEqual(
+        await mine(anak),
+        [older, newer],
+        "the anak still owes the older one, and that must not hold the induk back"
+      );
+    } finally {
+      await reopen();
+      await prisma.accFiscalYear.updateMany({
+        where: { id: { in: [older, newer] } },
+        data: { status: "Draft" },
+      });
+    }
   });
 });

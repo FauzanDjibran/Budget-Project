@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { MONTHS_LONG, formatDate } from "@/lib/format";
 import {
-  openLimitRefusal,
+  activationRefusal,
   type OpenYearSummary,
 } from "./fiscal-workflow";
 
@@ -175,21 +175,60 @@ export async function openFiscalYears(db: Db = prisma): Promise<OpenYearSummary[
 }
 
 /**
- * Whether one more year may be activated — the max-two-Open rule.
+ * Whether a year may be activated — never behind a close.
  *
- * Asked by the Server Action before it moves a year to Open, and testable on
- * its own because the counting rule it delegates to is pure
- * (`openLimitRefusal`). The year being activated is excluded from the count:
- * re-activating a year that is somehow already Open is the transition table's
- * refusal to make, not this one's.
+ * There is no limit on how many years stand Open. What is refused is a year
+ * older than one any Company has already closed, because that close froze the
+ * Opening Balance every later report stands on (`activationRefusal`).
  */
 export async function checkYearOpenable(
   id: number,
   db: Db = prisma
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const open = (await openFiscalYears(db)).filter((y) => y.id !== id);
-  const refusal = openLimitRefusal(open);
+  const year = await db.accFiscalYear.findUnique({
+    where: { id },
+    select: { year_label: true, start_date: true },
+  });
+  if (!year) return { ok: false, message: "Tahun buku tidak ditemukan." };
+
+  const later = await db.accFiscalClosing.findMany({
+    where: { status: "Closed", fiscal_year: { start_date: { gt: year.start_date } } },
+    select: {
+      company: { select: { company_label: true } },
+      fiscal_year: { select: { year_label: true, year_name: true } },
+    },
+  });
+  const refusal = activationRefusal(
+    year.year_label,
+    later.map((c) => ({
+      yearLabel: c.fiscal_year.year_label,
+      yearName: c.fiscal_year.year_name,
+      companyLabel: c.company.company_label,
+    }))
+  );
   return refusal ? { ok: false, message: refusal } : { ok: true };
+}
+
+/**
+ * The Open years one Company has not closed yet, oldest first.
+ *
+ * Closing is per Company, so "the oldest open year" is too: once the induk has
+ * closed 2025 its next close is 2026, even while the anak keeps 2025 Open and
+ * the calendar still reads it as Open.
+ */
+export async function unclosedYearsFor(
+  companyId: number,
+  db: Db = prisma
+): Promise<OpenYearSummary[]> {
+  const rows = await db.accFiscalYear.findMany({
+    where: {
+      status: "Open",
+      closings: { none: { company_id: companyId, status: "Closed" } },
+    },
+    orderBy: { start_date: "asc" },
+    select: { id: true, year_label: true, year_name: true },
+  });
+  return rows.map((r) => ({ id: r.id, label: r.year_label, name: r.year_name }));
 }
 
 export type PostingPeriodCheck =
@@ -645,29 +684,49 @@ export async function fiscalClosingLabels(
   );
 }
 
+/** A year a Company is carrying unclosed, with the range its result sums over. */
+export type CarriedYear = OpenYearSummary & { startDate: string; endDate: string };
+
 /**
- * The year this Company is still carrying behind the newest Open one, if any.
+ * Every year this Company has not closed that begins before `before`, oldest
+ * first — the years a Neraca dated after them carries as one line each.
  *
- * At most two years stand Open, and only the older is closable. While this
- * Company has not closed that older year, the newer one runs as its
- * extension: the older year's result has not been moved into Laba/Rugi Tahun
- * Sebelumnya, so a Neraca of the newer year has to state it on a line of its
- * own. That is the only thing this answers — a Company that has already closed
- * the older year, or a calendar with one Open year, carries nothing.
- *
- * Asked of the calendar rather than of the journal: whether a year is still
- * owed a close is a fact recorded in `acc_fiscal_closing`, not inferred from
- * whether anything happened to be posted in it.
+ * While a year is unclosed its result has not been moved into Laba/Rugi Tahun
+ * Sebelumnya, so every later Neraca has to state it on a line of its own. Asked
+ * of the calendar rather than of the journal: whether a year is still owed a
+ * close is a fact recorded in `acc_fiscal_closing`, not inferred from whether
+ * anything happened to be posted in it.
  */
-export async function unclosedPriorYear(
+export async function carriedYearsBefore(
   companyId: number,
+  before: string,
   db: Db = prisma
-): Promise<OpenYearSummary | null> {
-  const open = await openFiscalYears(db);
-  if (open.length < 2) return null;
-  const older = open[0];
-  const state = await fiscalClosingState(older.id, companyId, db);
-  return state.status === "Closed" ? null : older;
+): Promise<CarriedYear[]> {
+  const rows = await db.accFiscalYear.findMany({
+    where: {
+      status: "Open",
+      start_date: { lt: new Date(`${before}T00:00:00Z`) },
+      closings: { none: { company_id: companyId, status: "Closed" } },
+    },
+    orderBy: { start_date: "asc" },
+    select: { id: true, year_label: true, year_name: true, start_date: true, end_date: true },
+  });
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.year_label,
+    name: r.year_name,
+    startDate: day(r.start_date),
+    endDate: day(r.end_date),
+  }));
+}
+
+/**
+ * Whether this Company carries any unclosed year behind a newer Open one —
+ * which is when its current Neraca prints year lines at all.
+ */
+export async function isCarryingUnclosedYear(companyId: number, db: Db = prisma): Promise<boolean> {
+  return (await unclosedYearsFor(companyId, db)).length > 1;
 }
 
 /** A fiscal year a statement may be run for, with its twelve periods. */

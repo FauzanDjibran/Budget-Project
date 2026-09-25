@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
+import { Drill } from "@/components/report/drill";
 import { formatDate, formatForeignFace, formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { GeneralLedgerReport as Report } from "@/lib/siba/ledger";
@@ -152,12 +152,12 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                           {formatDate(e.date)}
                         </td>
                         <td>
-                          <Link
-                            className="lab"
+                          <Drill
                             href={`/accounting/journal/${e.journalId}`}
+                            title="Buka journal ini"
                           >
-                            {e.journalNo}
-                          </Link>
+                            <span className="lab">{e.journalNo}</span>
+                          </Drill>
                         </td>
                         <td className="pri wrapok">
                           {e.description}

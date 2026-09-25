@@ -689,6 +689,8 @@ export type JournalRow = {
   /** Typed by a person rather than produced by a document being posted. */
   isManual: boolean;
   sourceDocLabel: string | null;
+  /** The source document's table, which says where it is read. */
+  sourceDocTable: string | null;
   sourceDocId: number | null;
   debit: number;
   credit: number;
@@ -709,7 +711,7 @@ export async function listJournals(companyIds: number[]): Promise<JournalRow[]> 
     orderBy: [{ posting_date: { sort: "desc", nulls: "first" } }, { id: "desc" }],
     include: {
       company: { select: { company_label: true } },
-      source_doc_type: { select: { doc_label: true } },
+      source_doc_type: { select: { doc_label: true, doc_table: true } },
       lines: { select: { debit_amount: true, kredit_amount: true } },
     },
   });
@@ -734,6 +736,7 @@ export async function listJournals(companyIds: number[]): Promise<JournalRow[]> 
     status: j.status,
     isManual: j.is_manual,
     sourceDocLabel: j.source_doc_type?.doc_label ?? null,
+    sourceDocTable: j.source_doc_type?.doc_table ?? null,
     sourceDocId: j.source_doc_id,
     lineCount: j.lines.length,
     ...totalOf(j.lines),
@@ -748,7 +751,7 @@ export async function getJournal(
     where: { id, company_id: { in: companyIds } },
     include: {
       company: { select: { company_label: true } },
-      source_doc_type: { select: { doc_label: true } },
+      source_doc_type: { select: { doc_label: true, doc_table: true } },
       lines: {
         orderBy: { sequence_no: "asc" },
         include: {
@@ -771,6 +774,7 @@ export async function getJournal(
     status: j.status,
     isManual: j.is_manual,
     sourceDocLabel: j.source_doc_type?.doc_label ?? null,
+    sourceDocTable: j.source_doc_type?.doc_table ?? null,
     sourceDocId: j.source_doc_id,
     lineCount: j.lines.length,
     ...totalOf(j.lines),

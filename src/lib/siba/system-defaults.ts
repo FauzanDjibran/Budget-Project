@@ -35,8 +35,6 @@ export type SystemDefaultKey =
   | "anak_fx_account"
   | "induk_accumulated_pl_account"
   | "anak_accumulated_pl_account"
-  | "induk_unclosed_pl_account"
-  | "anak_unclosed_pl_account"
   | "induk_current_pl_account"
   | "anak_current_pl_account"
   | "induk_debit_note_account"
@@ -106,9 +104,10 @@ export const SYSTEM_DEFAULT_GROUPS = [
     key: "equity_pl",
     name: "Laba/Rugi pada Ekuitas",
     desc:
-      "Tiga account ekuitas milik tiap Company. Tahun Sebelumnya adalah tujuan " +
-      "posting saat Fiscal Year ditutup; Tahun Lalu Belum Ditutup dan Tahun " +
-      "Berjalan adalah baris Neraca yang nilainya dihitung, tidak pernah diposting.",
+      "Dua account ekuitas milik tiap Company. Tahun Sebelumnya adalah tujuan " +
+      "posting saat Fiscal Year ditutup, dan di bawahnya Neraca menampilkan " +
+      "laba rugi tiap tahun yang belum ditutup; Tahun Berjalan adalah baris " +
+      "Neraca yang nilainya dihitung, tidak pernah diposting.",
     icon: "calc",
   },
   {
@@ -226,19 +225,19 @@ export const SYSTEM_DEFAULTS = [
 
   // ---------------------------------------------------------- equity / P&L
   //
-  // Three accounts per Company, listed Company by Company so each one's three
-  // share a row of the card, in the order the Neraca prints them.
+  // Two accounts per Company, listed Company by Company so each one's pair
+  // shares a row of the card, in the order the Neraca prints them.
   //
   // The **accumulated** account is a posting target: it is where a Fiscal
-  // Year's result lands when the year is closed. The other two are never posted
-  // to at all. They are where the Neraca **places** two computed figures — the
-  // result of a previous year that has not been closed yet, and the reported
-  // year's result to date. Each is a real account only so that the user decides
-  // what the line is called and where it sits, by editing the account; the
-  // report computes the figure and hardcodes neither.
+  // Year's result lands when the year is closed. It is also where the Neraca
+  // anchors one computed line per year the Company has not closed yet, printed
+  // directly beneath it. The **current** account is never posted to at all: the
+  // Neraca places the reported year's result to date on it. Both are real
+  // accounts so that the user decides what the lines are called and where they
+  // sit, by editing the account; the report computes the figures.
   //
-  // All three become control accounts through the ordinary mechanism every
-  // account-valued setting uses, so none of them can be written into by hand.
+  // Both become control accounts through the ordinary mechanism every
+  // account-valued setting uses, so neither can be written into by hand.
   {
     key: "induk_accumulated_pl_account",
     name: "Account Laba/Rugi Tahun Sebelumnya — Induk",
@@ -248,16 +247,6 @@ export const SYSTEM_DEFAULTS = [
     group: "equity_pl",
     company: "induk",
     help: "tujuan posting saat Fiscal Year ditutup",
-  },
-  {
-    key: "induk_unclosed_pl_account",
-    name: "Account Laba/Rugi Tahun Lalu Belum Ditutup — Induk",
-    icon: "clock",
-    type: "ref",
-    ref: "acc_account",
-    group: "equity_pl",
-    company: "induk",
-    help: "baris Neraca, tidak pernah diposting",
   },
   {
     key: "induk_current_pl_account",
@@ -278,16 +267,6 @@ export const SYSTEM_DEFAULTS = [
     group: "equity_pl",
     company: "anak",
     help: "tujuan posting saat Fiscal Year ditutup",
-  },
-  {
-    key: "anak_unclosed_pl_account",
-    name: "Account Laba/Rugi Tahun Lalu Belum Ditutup — Anak",
-    icon: "clock",
-    type: "ref",
-    ref: "acc_account",
-    group: "equity_pl",
-    company: "anak",
-    help: "baris Neraca, tidak pernah diposting",
   },
   {
     key: "anak_current_pl_account",
@@ -366,8 +345,6 @@ export const EMPTY_SYSTEM_DEFAULTS: SystemDefaultValues = {
   anak_fx_account: null,
   induk_accumulated_pl_account: null,
   anak_accumulated_pl_account: null,
-  induk_unclosed_pl_account: null,
-  anak_unclosed_pl_account: null,
   induk_current_pl_account: null,
   anak_current_pl_account: null,
   induk_debit_note_account: null,

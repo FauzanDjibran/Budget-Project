@@ -96,10 +96,29 @@ export type StatementRow = {
   /** A partner row's account, which collapses it. */
   partnerOf?: string;
   /**
-   * A figure the statement computed and placed on this account rather than one
-   * posted to it — Laba/Rugi Tahun Berjalan and Tahun Lalu Belum Ditutup.
+   * A figure the statement computed rather than one posted — Laba/Rugi Tahun
+   * Berjalan, placed on its account, and one line per unclosed year.
    */
   computed?: boolean;
+  /**
+   * Where a computed profit line drills to: the Laba Rugi that produced it.
+   * `column` is each column's own year and period, year to date — Tahun
+   * Berjalan; a fixed year and period is an unclosed year's whole result.
+   */
+  profitLoss?: "column" | { yearId: number; periodId: number };
+};
+
+/**
+ * A computed line printed directly after an account, at its depth — the
+ * Neraca's one line per unclosed year beneath Laba/Rugi Tahun Sebelumnya. Its
+ * values count towards everything above that account, exactly as a sibling
+ * account's would.
+ */
+export type TrailingLine = {
+  key: string;
+  name: string;
+  values: number[];
+  profitLoss?: StatementRow["profitLoss"];
 };
 
 /** One account of the chart, placed by its own lineage. */
@@ -155,7 +174,8 @@ function statementTree(
   columns: StatementPair[][],
   partners: Map<number, StatementPartner>,
   sideOf: (a: StatementAccount) => boolean | null,
-  placed: Map<number, number[]> = new Map()
+  placed: Map<number, number[]> = new Map(),
+  trailing: Map<number, TrailingLine[]> = new Map()
 ) {
   const n = columns.length;
   const zeros = () => new Array<number>(n).fill(0);
@@ -207,19 +227,34 @@ function statementTree(
   const byLabel = (x: StatementAccount, y: StatementAccount) => compareCodes(x.label, y.label);
   for (const list of children.values()) list.sort(byLabel);
 
+  // An account with trailing lines always shows, and so does everything above
+  // it: a year line is stated even when its result is nil.
+  const forced = new Set<number>();
+  for (const id of trailing.keys()) {
+    let a = accountById.get(id);
+    while (a && !forced.has(a.id)) {
+      forced.add(a.id);
+      a = a.parentId === null ? undefined : accountById.get(a.parentId);
+    }
+  }
+  const trailingSum = (id: number) =>
+    (trailing.get(id) ?? []).reduce((sum, l) => add(sum, l.values), zeros());
+
   const totals = new Map<number, number[]>();
   const totalOf = (a: StatementAccount): number[] => {
     const cached = totals.get(a.id);
     if (cached) return cached;
     let sum = own.get(a.id) ?? zeros();
-    for (const c of children.get(a.id) ?? []) sum = add(sum, totalOf(c));
+    for (const c of children.get(a.id) ?? []) sum = add(sum, withTrailing(c));
     totals.set(a.id, sum);
     return sum;
   };
+  /** An account's total plus the lines printed after it, as its parent counts it. */
+  const withTrailing = (a: StatementAccount) => add(totalOf(a), trailingSum(a.id));
 
   const emitAccount = (rows: StatementRow[], a: StatementAccount, depth: number) => {
     const values = totalOf(a);
-    if (isZero(values)) return;
+    if (isZero(values) && !forced.has(a.id)) return;
 
     const split = byPartner.get(a.id);
     const named = split ? [...split.entries()].filter(([pid, v]) => pid !== null && !isZero(v)) : [];
@@ -233,7 +268,7 @@ function statementTree(
       values,
       accountId: a.id,
       hasPartners: named.length > 0,
-      ...(placed.has(a.id) ? { computed: true } : {}),
+      ...(placed.has(a.id) ? { computed: true, profitLoss: "column" as const } : {}),
     });
 
     if (named.length && split) {
@@ -266,6 +301,19 @@ function statementTree(
     }
 
     for (const c of children.get(a.id) ?? []) emitAccount(rows, c, depth + 1);
+
+    for (const l of trailing.get(a.id) ?? []) {
+      rows.push({
+        key: l.key,
+        kind: "account",
+        depth,
+        code: null,
+        name: l.name,
+        values: clean(l.values),
+        computed: true,
+        ...(l.profitLoss ? { profitLoss: l.profitLoss } : {}),
+      });
+    }
   };
 
   /**
@@ -302,9 +350,9 @@ function statementTree(
         .map((s) => ({
           ...s,
           roots: s.roots.sort(byLabel),
-          total: s.roots.reduce((sum, r) => add(sum, totalOf(r)), zeros()),
+          total: s.roots.reduce((sum, r) => add(sum, withTrailing(r)), zeros()),
         }))
-        .filter((s) => !isZero(s.total));
+        .filter((s) => !isZero(s.total) || s.roots.some((r) => forced.has(r.id)));
       if (!shown.length) continue;
 
       const catTotal = shown.reduce((sum, s) => add(sum, s.total), zeros());
@@ -381,16 +429,26 @@ export type BuiltBalanceSheet = {
  * the figure a balanced Neraca matches against the debit side. The names come
  * from the types, never from this file.
  *
- * `placed` carries the computed equity figures, keyed by the account System
- * Default names; each is already credit-positive, the side of EKUITAS.
+ * `placed` carries Laba/Rugi Tahun Berjalan, keyed by the account System
+ * Default names; `trailing` carries one line per unclosed year, keyed by the
+ * Tahun Sebelumnya account they print beneath. Each figure is already
+ * credit-positive, the side of EKUITAS.
  */
 export function buildBalanceSheet(
   accounts: StatementAccount[],
   columns: StatementPair[][],
   partners: Map<number, StatementPartner>,
-  placed: Map<number, number[]> = new Map()
+  placed: Map<number, number[]> = new Map(),
+  trailing: Map<number, TrailingLine[]> = new Map()
 ): BuiltBalanceSheet {
-  const tree = statementTree(accounts, columns, partners, (a) => a.type?.credit ?? null, placed);
+  const tree = statementTree(
+    accounts,
+    columns,
+    partners,
+    (a) => a.type?.credit ?? null,
+    placed,
+    trailing
+  );
 
   const types = new Map<number, NonNullable<StatementAccount["type"]>>();
   for (const a of accounts) if (a.type) types.set(a.type.id, a.type);

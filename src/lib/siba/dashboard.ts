@@ -15,7 +15,7 @@ import { accountPositions, type AccountPosition } from "./ledger";
 import { companyStructure } from "./records";
 import { subledgerPositions, type SubledgerPosition } from "./subledger";
 import { loadSubledgers } from "./subledger-data";
-import { unclosedPriorYear } from "./fiscal";
+import { isCarryingUnclosedYear } from "./fiscal";
 import {
   intercompanyBridge,
   missingClosingAccounts,
@@ -434,13 +434,13 @@ async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[
     }
 
     // The Neraca refuses to run without the accounts its computed lines sit
-    // on. Belum Ditutup is asked for only from a Company still carrying an
-    // unclosed previous year, because only that Company's Neraca prints it.
+    // on. Tahun Sebelumnya anchors the per-year lines, so it is asked for
+    // only from a Company still carrying an unclosed year, whose Neraca prints them.
     const induk = companies.find((c) => c.is_parent);
     const anak = companies.find((c) => !c.is_parent);
     const neracaMissing = await missingNeracaAccounts({
-      induk: induk ? (await unclosedPriorYear(induk.id)) !== null : false,
-      anak: anak ? (await unclosedPriorYear(anak.id)) !== null : false,
+      induk: induk ? await isCarryingUnclosedYear(induk.id) : false,
+      anak: anak ? await isCarryingUnclosedYear(anak.id) : false,
     });
     if (neracaMissing.length) {
       items.push({

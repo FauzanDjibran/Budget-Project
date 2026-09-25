@@ -84,7 +84,7 @@ or invariants that assume a particular row exists.
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is created Draft, activated into Open, and its twelve periods are generated at that moment. |
 | Backdating | Done — every posting document carries a Tanggal Dokumen chosen on the draft, any day up to today inside a year every Company it writes into still has open. All its book entries and its journal are dated by it; the moment of posting is kept beside it. A posting and a close hold one lock per year and Company, so neither can land inside the other. The book reports read by date and carry no running balance (§12) |
-| Period control (lock, closing, Opening Balance) | Done — a posting is allowed only inside an Open year its Company has not closed, enforced on all four posting paths. **Fiscal Year Closing** moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, and stamps `acc_fiscal_closing`; the year itself reads Closed only once every Company has closed it. At most two years stand Open and only the oldest is closable. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
+| Period control (lock, closing, Opening Balance) | Done — a posting is allowed only inside an Open year its Company has not closed, enforced on all four posting paths. **Fiscal Year Closing** moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, and stamps `acc_fiscal_closing`; the year itself reads Closed only once every Company has closed it. Any number of years may stand Open; each Company closes its own oldest first, and no year opens behind a close. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
 | Transaction Purpose | Done — rows in `sys_purpose` a maintainer **enters** under Pengaturan › Klasifikasi. Nothing generates them, so a Budget Category with none cannot be transacted; the Budget Category list states the count. The label is composed from direction × Category × Partner Category and never stored |
 | Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
 | Finance module | Cash Bank Transaction done for draft → post — header context (Purpose · Company · Partner · Cash & Bank · Currency · kurs), multi-Budget realization, Post writing the Cash Bank Book, the subject book, the Journal, the rate layer and `realized_amount` in one transaction. Bespoke, not registry-driven. |
@@ -184,7 +184,7 @@ of its own.
 | Audit vocabulary | `src/lib/siba/audit-events.ts` | An `event` key -> its past-tense label, icon and tone, read from the owning workflow table; client-safe |
 | Audit reading | `src/lib/siba/audit.ts` | `entity_key` -> subject, `row_id` -> title, each resolved by the owning module; `server-only` |
 | Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, reading them back, the posting lock (`checkPostingPeriod`), and the per-Company closing record with the year's `Closed` rollup over it; `server-only` |
-| Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open → Closed, each transition's permission, the max-two-Open rule, and the `runAt` that sends closing to its own screen; client-safe |
+| Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open → Closed, each transition's permission, the no-opening-behind-a-close rule, and the `runAt` that sends closing to its own screen; client-safe |
 | Startup check | `src/lib/siba/startup-check.ts` | Is the database the one this build expects; read at boot by `instrumentation-node.ts`; `server-only` |
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
 | System Default store | `src/lib/siba/system-settings.ts` | Reads and writes `sys_setting`, resolves a default against its master; `server-only` |
@@ -207,6 +207,7 @@ of its own.
 | DN/CN lifecycle | `src/lib/siba/dncn-workflow.ts` | Draft → Post / Cancel, the two note types, and `dncnDirection` — the cash direction a note moves the position like; client-safe |
 | DN/CN data | `src/lib/siba/dncn.ts` | Header, line and zero-rule enforcement, `applyDncn`, `DN-` / `CN-` numbering; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
+| Document links | `src/lib/siba/document-links.ts` | `documentHref` — a `(doc_table, doc_id)` pair to the page that shows it, so a journal can link its source without the book knowing any route; client-safe |
 | Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and the two builders — `buildProfitLoss` and `buildBalanceSheet` over one shared tree — chart + figures to rows, pure; client-safe |
 | Financial statements | `src/lib/siba/statements.ts` | Resolves a year and period to a column, reads the chart and the Partners, asks `ledger.ts` for the figures, computes the Neraca's two equity lines and places them; `server-only` |
 | Dashboard composition | `src/lib/siba/dashboard.ts` | The commitment funnel, the cash position and the setup gaps, asked of each owning module; names no table itself; `server-only` |
@@ -347,12 +348,13 @@ scripts/
                          and their audit rows, in one transaction. Reports and
                          refuses without `--confirm`. Run by hand, never by
                          install or CI
-  seed-showcase.ts       Dev convenience: a believable year of business data, so
-                         every menu has something in it — Partners for both
+  seed-showcase.ts       Dev convenience: four believable years of business data,
+                         so every menu has something in it — Partners for both
                          Companies, a Chart of Accounts, the mappings, the cash
-                         resources with their opening balances and layers, a
-                         fiscal year, Budgets across the lifecycle, and the
-                         documents that realize them. **Not** the seeder —
+                         resources and their layers, four fiscal years (the
+                         oldest closed by both Companies), Budgets across the
+                         lifecycle, and the documents that realize them, each
+                         backdated in date order. **Not** the seeder —
                          ordinary inserts, run by hand, never by
                          install/migrate/reset/CI. Anything posted goes through
                          the real engine, never a direct book insert
@@ -502,7 +504,7 @@ npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
                              # (runs under --conditions=react-server: it imports
                              #  `purposes.ts`, which is server-only)
-npm run db:seed-showcase     # dev only: a believable year of business data (NOT the seeder)
+npm run db:seed-showcase     # dev only: four believable years of business data (NOT the seeder)
 npm run db:backfill-subledger  # one-off: subject books for already-posted documents
 npm run db:backfill-account-flags  # one-off: resync Postable + Control Account to the structure
 npm run db:truncate-transactions          # reports what it would delete, deletes nothing
@@ -516,7 +518,7 @@ npx prisma studio            # browse the database
 # Against the DEPLOYED database rather than the local one. Both read the
 # connection from `.env.neon` through `scripts/with-remote.js`.
 npm run db:neon-seed         # sync system data on Neon; idempotent, destroys nothing
-npm run db:neon-seed-showcase  # dev/demo only: the same believable year, on Neon
+npm run db:neon-seed-showcase  # dev/demo only: the same four years, on Neon
 npm run db:neon-reset        # reports what it would destroy, destroys nothing
 npm run db:neon-reset -- --confirm  # DESTRUCTIVE: drops and re-migrates the deployed
                                     # database. Run db:neon-seed afterwards — reset
@@ -1002,20 +1004,22 @@ Implemented and enforced:
    subject book, so the account reconciles against the General Ledger and
    nothing else.
    The **equity/P&L System Defaults** are claimed by that same third source,
-   and two of them for a different reason worth stating: Laba/Rugi Tahun
+   and one of them for a different reason worth stating: Laba/Rugi Tahun
    Sebelumnya is a posting engine's target, like the bridge accounts, but
-   **Laba/Rugi Tahun Berjalan and Laba/Rugi Tahun Lalu Belum Ditutup are
-   closed to hand entry because nothing posts to them at all.** They are where
-   the Neraca *places* two figures it computes — the reported year's result to
-   date, and a previous year's result that has not been closed yet. Each is a
-   real account only so that the user decides the line's name and position by
-   editing it in the chart, rather than the report hardcoding either; the
-   user's choice, over making them purely computed lines, and the shape Xero
-   and Odoo take. Tahun Berjalan is needed by every Neraca, Belum Ditutup only
-   by a Company still carrying an unclosed year (`unclosedPriorYear` in
-   `fiscal.ts`), and `missingNeracaAccounts` asks for exactly those. The
-   mechanism needed no change to cover them: all are account-valued System
-   Defaults, and `systemDefaultAccountIds` is generic over every one of those.
+   **Laba/Rugi Tahun Berjalan is closed to hand entry because nothing posts to
+   it at all.** It is where the Neraca *places* the reported year's result to
+   date. It is a real account only so that the user decides the line's name and
+   position by editing it in the chart, rather than the report hardcoding
+   either; the user's choice, over a purely computed line, and the shape Xero
+   and Odoo take. Tahun Sebelumnya is also the **anchor** of the per-year lines
+   an unclosed year gets (rule 96). Tahun Berjalan is needed by every Neraca,
+   Tahun Sebelumnya only by a Company still carrying an unclosed year
+   (`isCarryingUnclosedYear` in `fiscal.ts`), and `missingNeracaAccounts` asks
+   for exactly those. There used to be a third, **Laba/Rugi Tahun Lalu Belum
+   Ditutup**, holding every unclosed year's result as one figure; it was retired
+   when the business came to carry several open years at once — see rule 96.
+   The mechanism needed no change: all are account-valued System Defaults, and
+   `systemDefaultAccountIds` is generic over every one of those.
 80. **Whether an account may be written to is `is_postable` and
    `is_control_account`, and neither is an isian.** The user's own rule, and
    every place an account is chosen asks it. Both are decided by the backend:
@@ -1050,27 +1054,34 @@ Implemented and enforced:
    year's id), never by the `CLS-` prefix — so a Desember or full-year run
    shows the result rather than the nil a close leaves, and reads the same
    before and after the close. One Company per run, no joint report.
-96. **The Neraca is cumulative, and carries unclosed profit on two computed
-   lines.** Every balance-sheet account stands at its balance at the end of
+96. **The Neraca is cumulative, and carries each unclosed year on a line of
+   its own.** Every balance-sheet account stands at its balance at the end of
    the chosen period, opened from the Opening Balance snapshot dated **on or
    before the reported year's first day** — never the next year's, which
    already holds this year's closing journal — and with that closing journal
    left out, so a Desember Neraca reads the same before and after the close.
    Equity then needs the profit nothing has posted into it, split at the
-   year's first day: **Laba/Rugi Tahun Berjalan** is the Laba Rugi lines
-   from that day to the period's end (exactly the Laba Rugi's s.d. Periode
-   ini), and **Laba/Rugi Tahun Lalu Belum Ditutup** is every Laba Rugi line
-   before it that no close has emptied — the previous year's result while
-   that year is unclosed, nil after. While a previous year is open the newer
-   one runs as its extension, and the report says so. Each figure is placed
-   on the account its System Default names, marked *dihitung*; the Neraca is
-   **not produced** without Tahun Berjalan, nor without Belum Ditutup where
-   there is a figure for it, and the refusal names the setting. A type's
-   rows are signed by `sys_account_type.normal_balance`, never the
-   account's, so Akumulasi Penyusutan prints as a deduction inside AKTIVA.
-   Balance is stated only when it breaks. A computed account that somehow
-   carries postings, and a pre-year Laba Rugi residue with no year left
-   unclosed, are each added in rather than dropped, and named.
+   year's first day. **Laba/Rugi Tahun Berjalan** is the Laba Rugi lines from
+   that day to the period's end (exactly the Laba Rugi's s.d. Periode ini),
+   placed on the account its System Default names. And **every earlier year
+   this Company has not closed gets one line** — `Laba/Rugi 2025`, `Laba/Rugi
+   2026`, oldest first — printed directly beneath **Laba/Rugi Tahun
+   Sebelumnya**, stating that year's whole result, and stated even when it is
+   nil; a closed year never appears, because its close already moved the
+   result into Tahun Sebelumnya. The user's requirement, because the business
+   carries several years open while working back through its history, and
+   one figure blending them could not show what each year did. The lines
+   together equal every Laba Rugi line before the year; whatever they do not
+   account for — a closed year left non-nil, a line outside every fiscal
+   year — is added as *Laba/Rugi lain yang belum dipindahkan* and named,
+   never dropped. A comparison column carries only the years before its own.
+   All are marked *dihitung*; the Neraca is **not produced** without Tahun
+   Berjalan, nor without Tahun Sebelumnya where there are year lines to
+   anchor, and the refusal names the setting. A type's rows are signed by
+   `sys_account_type.normal_balance`, never the account's, so Akumulasi
+   Penyusutan prints as a deduction inside AKTIVA. Balance is stated only when
+   it breaks. A computed account that somehow carries postings is added in
+   rather than dropped, and named.
 94. **A Laba Rugi step is stored on the Account Category, never inferred.**
    `acc_account_category.pl_group` places each Laba Rugi category in one step
    of the multi-step statement — Pendapatan Usaha, Harga Pokok Penjualan, Beban
@@ -1534,14 +1545,33 @@ Specified in the concept doc, **not yet implemented** (see §13):
   Tests build their own business fixtures (`tests/helpers.ts`) and clean them up.
 - **Sample business data has its own script, outside the seed.**
   `scripts/seed-showcase.ts` (`npm run db:seed-showcase`) fills a development
-  database with a believable year of it: Partners for both Companies, a full
-  Chart of Accounts each, every Budget Category × Partner Category → account
-  mapping, the cash and bank resources with their opening balances and the
-  foreign one's first rate layer, an open fiscal year, Budgets across the
-  lifecycle, and the documents that realize them — Cash Bank Transactions, all
-  three kinds of Transfer, a confirmed and an open Funding Request, and a posted
-  and a draft manual journal. The goal is that **no menu is empty**, so a screen
-  can be judged on what it shows rather than on an empty state.
+  database with **four years** of it, the current year and the three before:
+  Partners for both Companies, a full Chart of Accounts each, every Budget
+  Category × Partner Category → account mapping, the cash and bank resources,
+  and per year Budgets across the lifecycle and the documents that realize
+  them — Cash Bank Transactions, Transfers of all three kinds, Funding
+  Requests, quarterly depreciation and a year-end accrual with its January
+  reversal, and Debit / Credit Notes. The goal is that **no menu is empty**, so
+  a screen can be judged on what it shows rather than on an empty state — and,
+  since backdating, that the multi-year concepts are demonstrable: all four
+  years stand Open, the oldest is **closed by both Companies** through
+  `executeClosing` (so `CLS-` journals and the next year's `OPB-` snapshots
+  exist), and the current Neraca carries one Laba/Rugi line per unclosed year.
+  The results are deliberately mixed — the founding year a loss, the others
+  profits of different sizes — so a negative year line is on screen.
+- **Each year is a plan posted in date order.** A book refuses to go below zero
+  and a layer to be overdrawn at the moment of posting, so the runner sorts a
+  year's events by Tanggal Dokumen and posts them in that order, exactly as a
+  user entering them would have to. Only the current year holds Drafts, a
+  Pending request, a Submitted Budget and Cancelled documents: a year being
+  closed may not hold a draft journal.
+- **The cash resources open at nil.** The founders' money arrives as backdated
+  Cash Bank Transactions instead. An opening balance writes the Cash Bank Book
+  alone, and a go-live Opening Balance snapshot for the ledger half is not
+  carried through a close — `closingBalances` reads journal lines only (§17) —
+  so the closed year would hand its successor a Neraca missing its cash. It
+  needs a database whose resources were not registered earlier: on one that
+  already holds the single-year showcase, reset first.
   It replaced `scripts/sample-data.ts` (`npm run db:sample`), which stopped at
   the setup tables and left every document screen blank.
   It is deliberately *not* part of the seed, is never run by install, migrate,
@@ -1549,7 +1579,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
   entries, editable through the GUI. It reuses anything already present rather
   than overwriting it, and deletes nothing.
 - **Everything it posts goes through the real engine.** `applyPosting`,
-  `applyTransfer`, `confirmFundingRequest` and `postManualJournal`, never a
+  `applyTransfer`, `confirmFundingRequest`, `applyDncn`, `postManualJournal`
+  and `executeClosing`, never a
   direct insert into a book. Inserting those rows would be faster and would
   produce reports whose figures do not reconcile — which is worse than an empty
   screen, because it looks like the application is wrong. It is also what makes
@@ -2158,7 +2189,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Status:** Frozen, current. Supersedes "The subject books are one mechanism
   with six books".
 
-### The Neraca is cumulative, per fiscal period, with unclosed profit on computed lines (FROZEN)
+### The Neraca is cumulative, per fiscal period, with each unclosed year on its own line (FROZEN)
 - **Decision:** A Report View under Accounting (`accounting/report/balance-sheet`,
   `REPORT_BALANCE_SHEET_VIEW`) on the `fiscal-period` parameter set, without the
   Laba Rugi's mode — a Neraca is a position at the period's end. One section per
@@ -2167,30 +2198,41 @@ Specified in the concept doc, **not yet implemented** (see §13):
   types. The same tree, Partner arrows, Rincian control, comparison columns and
   drill-through as the Laba Rugi — one component, `StatementReport` — and the
   same compact title, whose Tipe reads *Posisi* and whose dates read *per
-  30/09/2026*. The two
-  equity figures and the rules around them are §10 rule 96.
+  30/09/2026*. The computed equity figures — Tahun Berjalan, and one line per
+  unclosed year beneath Tahun Sebelumnya — and the rules around them are §10
+  rule 96.
 - **Reason:** The user's specification, settled across a design discussion:
   a statement never doctors a number — an unclosed previous year is shown as
   what it is, the newer year running as its extension until the close — and
-  the computed lines sit on **real accounts named by System Default** so the
-  user controls their name and position, the shape Xero and Odoo take, rather
-  than the report hardcoding a line. Refusing to run without them is the
-  user's rule, over a warning.
+  the computed lines sit on or beneath **real accounts named by System
+  Default** so the user controls their name and position, the shape Xero and
+  Odoo take, rather than the report hardcoding a line. Refusing to run without
+  them is the user's rule, over a warning.
+- **One line per year supersedes the single Belum Ditutup line**, on the
+  user's instruction once several years could stand Open at once (see "A Fiscal
+  Year has a lifecycle"). Odoo's single *Previous Years Unallocated Earnings*
+  line is the common shape; the split states the same total and shows what
+  each year did. The `*_unclosed_pl_account` System Defaults are gone: their
+  stored rows are ignored as unknown keys, and the accounts they named stop
+  being control accounts the next time `syncControlAccounts` runs over them
+  (`npm run db:backfill-account-flags` does it at once).
 - **Impact:** `sys_account_type.normal_balance` was added for the signing —
   an additive migration, seeded like `section`, because neither account-level
   normal balance nor the type's number can say it. `statementBalances` in
   `ledger.ts` is the cumulative reader, and the snapshot reader now also
   returns its lines at pair grain for the Partner breakdown.
-  `tests/balance-sheet.test.ts` runs a whole year-end on 1980/1981 fixtures
-  with a real `executeClosing` in the middle: the unclosed line holds 1980's
-  result until the close moves it into Tahun Sebelumnya, total equity does not
-  move, Tahun Berjalan equals the Laba Rugi to the cent, and Desember 1980 is
-  identical before and after.
+  `tests/balance-sheet.test.ts` runs a whole year-end on 1980/1981/1982
+  fixtures with a real `executeClosing` in the middle: 1982 carries a line for
+  1980 and one for 1981, the 1980 line disappears when the close moves its
+  result into Tahun Sebelumnya, total equity does not move, Tahun Berjalan
+  equals the Laba Rugi to the cent, and Desember 1980 is identical before and
+  after. `buildBalanceSheet` takes the year lines as `trailing`, keyed by the
+  account they print beneath, so the layout is tested without a database.
 - **Do not change unless:** explicitly instructed. **Never open a Neraca from
-  the next year's snapshot, never post to either computed account, never
-  hardcode a computed line's position, never sign a row by its own account's
-  normal balance, and never produce the Neraca without the accounts it places
-  its figures on.**
+  the next year's snapshot, never post to Tahun Berjalan, never blend the
+  unclosed years back into one figure, never hardcode a computed line's
+  position, never sign a row by its own account's normal balance, and never
+  produce the Neraca without the accounts it places its figures on.**
 - **Status:** Frozen, current.
 
 ### The Laba Rugi is multi-step, per fiscal period, with an optional comparison (FROZEN)
@@ -2787,14 +2829,22 @@ they relate. Keep the table; keep it out of the UI's write path.
   header carries the lifecycle buttons through `EntityForm`'s `headerActions` slot —
   the registry describes fields, not lifecycles, so the escape hatch is a slot rather
   than a config key nothing else would use.
-- **At most two years stand Open at once**, and only the **oldest** is closable. The
-  overlap at a year-end is real — December's invoices arrive while January is already
-  being worked in — but a third open year is not that case, and every month it stays
-  open is a month that cannot be carried forward. Closing the newer of two would leave
-  an Open year with no successor to inherit into, since the snapshot a close writes is
-  what the next year opens from. `MAX_OPEN_FISCAL_YEARS` and `openLimitRefusal` in
-  `fiscal-workflow.ts` are the rule; the refusal **names the year to close**, because
-  "too many" is not actionable.
+- **Any number of years may stand Open**, on the user's instruction: the business has
+  carried several at once while working back through its history, and backdating is
+  exactly that work. This supersedes the earlier limit of two. Two rules survive it,
+  because the Opening Balance chain rests on them:
+  - **Each Company closes its own oldest unclosed year first.** Closing a newer one
+    would leave an older year with no successor to inherit into, since the snapshot a
+    close writes is what the next year opens from. It is asked **per Company**
+    (`carriedYearsBefore` in the `oldest_open` check), so the anak still working in
+    2025 never stops the induk closing 2026 — a global "oldest Open year" would have.
+  - **No year opens behind a close.** A year older than one any Company has closed is
+    refused activation, because that close froze the Opening Balance every later report
+    stands on, and a posting into the older year would move a figure it already froze.
+    `activationRefusal` in `fiscal-workflow.ts` is the rule, `checkYearOpenable` asks
+    it, and the refusal **names the closes in the way**.
+  Gaps are allowed: 2028 may be opened while 2027 does not exist, and closing 2026 is
+  refused until 2027 does.
 - **`Closed` is reachable now, and it is a rollup rather than a status anybody sets.**
   Closing happens **per Company** — the induk can shut 2026 while the anak is still
   finishing it — and that state lives in `acc_fiscal_closing`, one row per
@@ -2817,8 +2867,9 @@ they relate. Keep the table; keep it out of the UI's write path.
   into it by that Company on all four posting paths.
 - **Do not change unless:** explicitly instructed. **Never make `status` an editable
   field again, never add a transition back to Draft, never add a path that reopens a
-  closed year, do not let a third year stand Open, and do not offer `close` as a header
-  confirm button** — it is run where its checklist and its preview are.
+  closed year, do not let a year open behind a close, do not ask "oldest unclosed"
+  across both Companies, and do not offer `close` as a header confirm button** — it is
+  run where its checklist and its preview are.
 - **Status:** Frozen, current. Supersedes the earlier statement that closing was not
   built and that no transition might produce `Closed`.
 
@@ -3183,8 +3234,18 @@ below in outline because the half of it that still holds is easy to lose.**
   5. **Empty is not zero.** A period with no movement still reports its opening and
      closing. An empty state means "no subject chosen yet", which is a different screen.
   6. **Read-only, always.**
-  7. **Drill-through downward.** A summary row links to the detail report for the same
-     parameters, so a figure is one click from the rows that produced it.
+  7. **Drill-through downward, and visibly.** A summary row links to the detail report
+     for the same parameters, so a figure is one click from the rows that produced it.
+     The chain is Laba Rugi / Neraca / Trial Balance → General Ledger → Journal →
+     source document, and **the figure itself is the link**: every amount of a
+     statement opens its account's General Ledger for **that column's own range**, a
+     computed profit line opens the Laba Rugi that produced it (Tahun Berjalan the
+     column's year to date, an unclosed year its whole result), a ledger entry's journal
+     number opens the journal, and a journal's Sumber opens its document
+     (`documentHref` in `lib/siba/document-links.ts`, keyed on `doc_table`). One
+     component draws every one of them — `Drill` in `components/report/drill.tsx`, a
+     chevron revealed on row hover and a tint on the link — so which numbers can be
+     clicked is visible without guessing, the user's requirement.
   8. **A report states one measure, and says which.** Reports over the operational
      books group per currency at face value and never add two together — that is
      what a Cash & Bank account or a Partner position actually holds. The Journal,
@@ -3934,9 +3995,10 @@ process allowed to restate positions, and it is not built.
 - Do **not** make a Fiscal Year's `status` an editable field, add a transition back
   to Draft, or add a path that reopens a closed year. `Closed` is a rollup over
   `acc_fiscal_closing`, never a value anybody sets (§12).
-- Do **not** let a third Fiscal Year stand Open, and do **not** close any but the
-  oldest Open one — the newer would have no successor to inherit its snapshot
-  (§12).
+- Do **not** put a limit back on how many Fiscal Years stand Open, and do **not**
+  let a Company close any but its own oldest unclosed year — the newer would have
+  no successor to inherit its snapshot. Do **not** activate a year older than one
+  any Company has closed; that close froze its Opening Balance (§12).
 - Do **not** offer `close` as a header confirm button. It carries a `runAt` because
   it needs a Company, a checklist and a preview of the journal it is about to post
   (§12).
@@ -3947,10 +4009,15 @@ process allowed to restate positions, and it is not built.
   A backdated posting and a close must never interleave (§12).
 - Do **not** print a running balance on a book report again, or order one by id.
   An entry may be backdated in among entries written before it (§12).
-- Do **not** post to Laba/Rugi Tahun Berjalan or Laba/Rugi Tahun Lalu Belum
-  Ditutup. The Neraca computes both and places them on the accounts System
-  Default names; the closing journal moves a year's result straight into
-  Laba/Rugi Tahun Sebelumnya (§10 rule 79, §12).
+- Do **not** post to Laba/Rugi Tahun Berjalan. The Neraca computes it and places
+  it on the account System Default names; the closing journal moves a year's
+  result straight into Laba/Rugi Tahun Sebelumnya (§10 rule 79, §12).
+- Do **not** blend the unclosed years back into one Neraca figure, or bring back a
+  Belum Ditutup setting. Each unclosed year is its own computed line beneath
+  Tahun Sebelumnya (§10 rule 96, §12).
+- Do **not** make a report figure clickable any way but `Drill`, and do **not**
+  resolve a journal's source document anywhere but `documentHref` (§12, Report
+  View rule 7).
 - Do **not** open a Neraca from a snapshot dated after the reported year's first
   day, or let it read that year's own closing journal (§10 rule 96).
 - Do **not** sign a statement row by its own account's normal balance. The
@@ -4204,6 +4271,7 @@ process allowed to restate positions, and it is not built.
 | The FX difference on a payment is a user decision | Which layer the user picks sets the gain or loss recognised. Under averaging it would be deterministic. This is the feature working as intended — the source document calls layer selection an auditable control point — but it does mean two clerks can post the same payment to different results, and nothing flags that. |
 | A standing foreign position is never retranslated | A Hutang in USD keeps the base value it was carried at until something settles it. Without period-end revaluation (§13) there is no unrealised gain or loss anywhere in the system, so the base measure of an open position drifts from what it would be worth today — by design for now, and the one thing revaluation exists to fix. |
 | A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
+| A close drops a go-live Opening Balance | `closingBalances` in `ledger.ts`, which a close snapshots the next year from, sums **journal lines only** — it does not stand on an earlier snapshot the way `openingBasis` does. A developer-injected go-live snapshot (null source) therefore reaches the reports of its own year and is left out of the snapshot the close writes, so every year after the first close would open without the go-live figures. Harmless while no go-live snapshot exists; the showcase avoids it by funding the business with postings. The fix is to make `closingBalances` open from `openingBasisFor` like the reports do, which touches the close and needs its own test at the boundary. |
 | A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
 | A backdated settlement is valued at today's carrying rate | A subject-book relief releases base at the carrying rate the position holds when the posting is written, not as of the backdated day, so the FX difference can land in a different period than an on-time posting would have put it. Lifetime totals are identical. Accepted, because the alternative restates stored base figures (§12). |
