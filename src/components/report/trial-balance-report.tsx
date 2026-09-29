@@ -23,7 +23,9 @@ const HEADERS = ["Saldo Awal", "Mutasi Debit", "Mutasi Kredit", "Saldo Akhir"];
  *
  * Saldo Awal and Saldo Akhir have no total: they are signed by each type's
  * side, and sides that oppose add to nothing. A heading states its figures
- * only while it is folded, the statements' rule. Every account figure opens
+ * only while it is folded, the statements' rule. A nil figure reads `Rp 0`,
+ * never a dash — the user's rule, because a trial balance is read for its
+ * figures and a dash can be taken for a missing one. Every account figure opens
  * that account's General Ledger for the same range.
  */
 export function TrialBalanceReport({
@@ -103,10 +105,10 @@ export function TrialBalanceReport({
                       <td key={i} className="num">
                         {href ? (
                           <Drill href={href} title="Buka General Ledger account ini">
-                            <Figure value={v} />
+                            <Figure value={v} zero />
                           </Drill>
                         ) : (
-                          <Figure value={v} />
+                          <Figure value={v} zero />
                         )}
                       </td>
                     ))

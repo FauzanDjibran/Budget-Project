@@ -2303,7 +2303,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   six-column D/K layout. Saldo is signed by the **type's** normal balance, the
   Neraca's rule, so a heading's figure is a sum and a contra account prints
   negative; the two movement columns are one side each and never signed. Only
-  the movement is totalled, at the foot; there is no total per type. It carries
+  the movement is totalled, at the foot; there is no total per type. A nil
+  figure reads a muted `Rp 0`, never the statements' dash — the user's rule,
+  because a trial balance is read for its figures. It carries
   the statements' `StatementTitle`, whose mode states which accounts are listed,
   and its faults — debit ≠ kredit, an unbalanced journal — are one slim notice
   each above the table. `trialBalanceStatement` in `statements.ts` lays out
