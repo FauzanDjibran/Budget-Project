@@ -710,6 +710,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Amounts | `MoneyInput` — **never `<input type="number">`**; mono, right-aligned, grouped in thousands as it is typed, currency label inside the box. `size="sm"` inside a table |
 | Rates | `RateInput` — a thin wrapper over `MoneyInput`, never a second control. `decimals={6}` and the pair inside the box (`USD → IDR`, `labelWidth="pair"`) are the whole difference (§12) |
 | Foreign face | `formatForeignFace` — what a base figure was before it was base: `USD 1.000,00 @ 16.000,00`, in `.rsub` beside the row it belongs to. One function, because the Journal and the General Ledger had drifted to two |
+| Ledger figures | On the **Journal and the General Ledger**, debit, kredit and saldo read the accountant's way: the header names the currency once (`Debit (Rp)` — a journal is always base currency), the cells carry digits alone, a negative is `(1.500.000)` and an empty side is `—`. `Amount` with `ledger` is the one implementation, `formatAccounting` in `lib/format.ts` underneath it; a figure with no header over it — a summary strip, a total while editing — keeps its symbol. **Other screens are not converted yet**, pending their own analysis |
 | Separators | **`.` groups thousands, `,` separates decimals** — in what is displayed and in what is typed. A typed `.` groups; a decimal is reached with `,` (§12) |
 | Rate layers | `KursSelect` — a layer is *chosen*, never a rate typed, and it is chosen in a `Dialog` where date, kurs, sisa and sumber are four columns. The field afterwards carries **only the kurs** |
 | Pagination | `Pager`, at the foot of every list that grows with use — Budget Month and Role included, since a list of user-created rows has no size ceiling. It shows the **current page only**, never a run of page numbers, with `Tampil 10/25/50/100`; changing a filter returns to page 1 (`usePaging`) |
@@ -4113,6 +4114,9 @@ process allowed to restate positions, and it is not built.
   exists — `.empty.sm`, `.mi.t-ok`, `.tw.boxed`, `.srch.grow` (§8).
 - Do **not** phrase a picker's prompt any way but `Pilih <what>…` (§8).
 - Do **not** format a date anywhere but `formatDate`. Every date reads `dd/mm/yyyy`.
+- Do **not** print a Journal or General Ledger figure outside `Amount`'s `ledger`
+  mode, write a minus sign or a hand-made dash in one of its money cells, or leave
+  a debit, kredit or saldo header without its currency (§8).
 - Do **not** give Fiscal Period a menu entry, a route, a registry config, or
   permissions, and do **not** let a period's dates be edited by hand. Periods are
   generated when a Fiscal Year is activated (§12).

@@ -13,7 +13,8 @@ import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { CompanyFilter, NoCompanyAccess } from "@/components/master/company-filter";
 import { transitionJournal } from "@/app/actions/journal";
-import { formatDate } from "@/lib/format";
+import { currencySymbol, formatDate } from "@/lib/format";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { Company } from "@/lib/siba/company-access";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import { menuButtonClass } from "@/lib/siba/header-actions";
@@ -192,10 +193,10 @@ export function JournalList({
                         Baris
                       </th>
                       <th className="num" style={{ width: 150 }}>
-                        Debit
+                        Debit ({currencySymbol(BASE_CURRENCY_LABEL)})
                       </th>
                       <th className="num" style={{ width: 150 }}>
-                        Kredit
+                        Kredit ({currencySymbol(BASE_CURRENCY_LABEL)})
                       </th>
                       <th style={{ width: 104 }}>Status</th>
                       <th style={{ width: 88 }} />
@@ -234,10 +235,10 @@ export function JournalList({
                           </td>
                           <td className="num">{j.lineCount}</td>
                           <td className="num">
-                            <Amount value={j.debit} />
+                            <Amount value={j.debit} ledger />
                           </td>
                           <td className="num">
-                            <Amount value={j.credit} />
+                            <Amount value={j.credit} ledger />
                             {broken && <span className="overtag">tidak seimbang</span>}
                           </td>
                           <td>

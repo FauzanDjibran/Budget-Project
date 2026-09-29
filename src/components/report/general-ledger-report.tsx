@@ -5,8 +5,9 @@ import { Icon } from "@/components/icon";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
 import { Drill } from "@/components/report/drill";
+import { Amount } from "@/components/ui/amount";
 import { PartnerCell } from "@/components/ui/partner-cell";
-import { formatDate, formatForeignFace, formatMoney } from "@/lib/format";
+import { currencySymbol, formatAccounting, formatDate, formatForeignFace } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { GeneralLedgerReport as Report } from "@/lib/siba/ledger";
 
@@ -69,6 +70,7 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
   const faultyLines = faulty.reduce((t, a) => t + mismatchesOf(a), 0);
 
   const allOpen = open.size === report.accounts.length;
+  const symbol = currencySymbol(BASE_CURRENCY_LABEL);
   const setAll = (o: boolean) =>
     setOpen(o ? new Set(report.accounts.map((a) => a.id)) : new Set());
 
@@ -106,10 +108,11 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
 
       {report.accounts.map((a) => {
         const isOpen = open.has(a.id);
-        // Every figure here is base currency, so one formatter serves the whole
-        // table. The transaction-currency face lives on the entries that have
-        // one, beside the description.
-        const money = (n: number) => formatMoney(n, BASE_CURRENCY_LABEL);
+        // Every figure here is base currency, so the column headers state it
+        // once and the cells carry digits alone. The summary strip keeps the
+        // symbol: a figure standing on its own has no header to lean on. The
+        // transaction-currency face lives beside the description.
+        const money = (n: number) => formatAccounting(n, BASE_CURRENCY_LABEL);
         return (
           <div className="cblock" key={a.id}>
             <div
@@ -157,13 +160,13 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                       <th style={{ width: 220 }}>Partner</th>
                       <th>Keterangan</th>
                       <th className="num" style={{ width: 126 }}>
-                        Debit
+                        Debit ({symbol})
                       </th>
                       <th className="num" style={{ width: 126 }}>
-                        Kredit
+                        Kredit ({symbol})
                       </th>
                       <th className="num" style={{ width: 134 }}>
-                        Saldo
+                        Saldo ({symbol})
                       </th>
                     </tr>
                   </thead>
@@ -172,9 +175,15 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                       <td colSpan={4}>
                         Saldo awal per {formatDate(report.range.from)}
                       </td>
-                      <td className="num mut">—</td>
-                      <td className="num mut">—</td>
-                      <td className="num">{money(a.opening)}</td>
+                      <td className="num">
+                        <Amount value={0} nil="dash" ledger />
+                      </td>
+                      <td className="num">
+                        <Amount value={0} nil="dash" ledger />
+                      </td>
+                      <td className="num">
+                        <Amount value={a.opening} ledger />
+                      </td>
                     </tr>
 
                     {a.entries.map((e, i) => (
@@ -209,12 +218,14 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                           )}
                         </td>
                         <td className="num">
-                          {e.debit ? money(e.debit) : <span className="dash">–</span>}
+                          <Amount value={e.debit} nil="dash" ledger />
                         </td>
                         <td className="num">
-                          {e.credit ? money(e.credit) : <span className="dash">–</span>}
+                          <Amount value={e.credit} nil="dash" ledger />
                         </td>
-                        <td className="num">{money(e.balance)}</td>
+                        <td className="num">
+                          <Amount value={e.balance} ledger />
+                        </td>
                       </tr>
                     ))}
 
@@ -231,10 +242,16 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                       <td colSpan={4}>
                         Saldo akhir per {formatDate(report.range.to)}
                       </td>
-                      <td className="num">{money(a.debit)}</td>
-                      <td className="num">{money(a.credit)}</td>
                       <td className="num">
-                        <b>{money(a.closing)}</b>
+                        <Amount value={a.debit} ledger />
+                      </td>
+                      <td className="num">
+                        <Amount value={a.credit} ledger />
+                      </td>
+                      <td className="num">
+                        <b>
+                          <Amount value={a.closing} ledger />
+                        </b>
                       </td>
                     </tr>
                   </tbody>

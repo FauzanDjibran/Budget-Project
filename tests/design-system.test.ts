@@ -1309,6 +1309,59 @@ test("a journal line's Partner is drawn by one cell, on the Journal and the Gene
   assert.deepEqual(own.map((f) => f.rel), [], "The Partner warning is PartnerCell's alone.");
 });
 
+describe("a Journal and General Ledger figure reads the accountant's way", () => {
+  // The screens where debit and kredit are read: every figure goes through
+  // Amount in its ledger mode — digits only under a header that names the
+  // currency, a negative in parentheses, an empty side as an em dash.
+  const LEDGER_SCREENS = [
+    "src/components/report/general-ledger-report.tsx",
+    "src/components/accounting/journal-form.tsx",
+    "src/components/accounting/journal-list.tsx",
+  ];
+
+  test("a money header sits over the same edge as its figures", () => {
+    // `table.grid thead th` sets text-align:left and outranks `th.num`.
+    assert.match(css, /table\.grid thead th\.num\s*\{[^}]*text-align:\s*right/);
+  });
+
+  for (const rel of LEDGER_SCREENS) {
+    test(`${rel.split("/").pop()} prints every figure through a ledger Amount`, () => {
+      const text = fileText(rel);
+      assert.doesNotMatch(
+        text,
+        /<td className="num[^"]*">\s*\{[^}<]*(formatMoney|money)\(/,
+        "a figure is formatted straight into a money cell"
+      );
+      assert.doesNotMatch(
+        text,
+        /<td className="num[^"]*">\s*(—|–|<span className="dash">)/,
+        "a money cell writes its own dash; Amount's nil=\"dash\" is the one"
+      );
+      const plain = [...text.matchAll(/<Amount\b[^>]*>/g)]
+        .map((m) => m[0])
+        .filter((tag) => !/\bledger\b/.test(tag));
+      assert.deepEqual(plain, [], "an Amount here is not in its ledger mode");
+    });
+  }
+
+  test("a debit, kredit or saldo header names its currency", () => {
+    for (const rel of LEDGER_SCREENS) {
+      const bare = [
+        ...fileText(rel).matchAll(/<th className="num"[^>]*>\s*(Debit|Kredit|Saldo)\s*<\/th>/g),
+      ];
+      // The Journal form's edit mode is the one exception: there the columns
+      // hold each line's own currency, and its inputs label themselves.
+      const allowed = rel.endsWith("journal-form.tsx") ? 2 : 0;
+      assert.ok(bare.length <= allowed, `${rel} has a money header without its currency`);
+    }
+    assert.match(
+      fileText("src/components/accounting/journal-form.tsx"),
+      /Debit \(\{currencySymbol\(/,
+      "the Journal view names its currency in the header"
+    );
+  });
+});
+
 test("a breadcrumb's module segment is never a link", () => {
   // A module has no page of its own (§8), so the first segment is plain text.
   // Four Finance documents had linked it to their own register, which made

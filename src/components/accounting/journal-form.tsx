@@ -22,7 +22,13 @@ import {
   updateJournal,
   type JournalLineValues,
 } from "@/app/actions/journal";
-import { formatDate, formatForeignFace, formatMoney, todayIso } from "@/lib/format";
+import {
+  currencySymbol,
+  formatDate,
+  formatForeignFace,
+  formatMoney,
+  todayIso,
+} from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { Company } from "@/lib/siba/company-access";
 import { documentHref } from "@/lib/siba/document-links";
@@ -498,10 +504,10 @@ export function JournalForm({
                       <th style={{ width: 220 }}>Partner</th>
                       <th>Keterangan</th>
                       <th className="num" style={{ width: 150 }}>
-                        Debit
+                        Debit ({currencySymbol(BASE_CURRENCY_LABEL)})
                       </th>
                       <th className="num" style={{ width: 150 }}>
-                        Kredit
+                        Kredit ({currencySymbol(BASE_CURRENCY_LABEL)})
                       </th>
                     </tr>
                   )}
@@ -722,10 +728,10 @@ export function JournalForm({
                             )}
                           </td>
                           <td className="num">
-                            <Amount value={l.debit} nil="dash" />
+                            <Amount value={l.debit} nil="dash" ledger />
                           </td>
                           <td className="num">
-                            <Amount value={l.credit} nil="dash" />
+                            <Amount value={l.credit} nil="dash" ledger />
                           </td>
                         </tr>
                       ))}
@@ -734,15 +740,18 @@ export function JournalForm({
                   <tr className="totrow">
                     {/* Balance is stated only when it breaks (§12, report
                         rule 10): equal totals are visible in the two columns. */}
+                    {/* While editing, the columns hold each line's own currency,
+                        so the rupiah totals carry their symbol; on view the
+                        headers already state it. */}
                     <td colSpan={editing ? 6 : 4} style={{ textAlign: "right" }}>
                       Total
                       {imbalance && <span className="overtag">{imbalance}</span>}
                     </td>
                     <td className="num">
-                      <Amount value={totalDebit} big />
+                      <Amount value={totalDebit} big ledger symbol={editing} />
                     </td>
                     <td className="num">
-                      <Amount value={totalCredit} big />
+                      <Amount value={totalCredit} big ledger symbol={editing} />
                     </td>
                     {editing && <td />}
                   </tr>
