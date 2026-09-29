@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { Icon, type IconName } from "@/components/icon";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
@@ -19,12 +20,14 @@ import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
  */
 export function DocumentHeader({
   module,
-  list,
+  trail = [],
+  current,
   icon,
   title,
   number,
   placeholder,
   status,
+  statusLabel,
   tags,
   editing,
   dirty,
@@ -33,8 +36,13 @@ export function DocumentHeader({
 }: {
   /** The module's name — plain text, because a module has no page. */
   module: string;
-  /** The register this document belongs to; omitted on the register itself. */
-  list?: { label: string; href: string };
+  /**
+   * The pages between the module and this one, each a link — the register a
+   * document belongs to, or Budget Month and the month a Budget sits in.
+   */
+  trail?: { label: string; href: string }[];
+  /** The breadcrumb's last segment, where it is not the number or the title. */
+  current?: string;
   icon: IconName;
   /** A register's heading. */
   title?: string;
@@ -44,6 +52,11 @@ export function DocumentHeader({
   placeholder?: string;
   /** The raw status; the label and the badge come from the one status map. */
   status?: string | null;
+  /**
+   * Where this document's status means something the shared map does not say —
+   * a Funding Request that is `Open` is waiting on the induk. Rare by design.
+   */
+  statusLabel?: { text: string; tone: string };
   /** Further chips beside the status — what kind of document this is. */
   tags?: React.ReactNode;
   /** The edit page: states `Mode Ubah`. */
@@ -61,15 +74,13 @@ export function DocumentHeader({
       <div className="crumb">
         <span>{module}</span>
         <span>/</span>
-        {list ? (
-          <>
-            <Link href={list.href}>{list.label}</Link>
+        {trail.map((t) => (
+          <Fragment key={t.href + t.label}>
+            <Link href={t.href}>{t.label}</Link>
             <span>/</span>
-            <span className="cur">{number ?? "Baru"}</span>
-          </>
-        ) : (
-          <span className="cur">{heading}</span>
-        )}
+          </Fragment>
+        ))}
+        <span className="cur">{current ?? title ?? number ?? "Baru"}</span>
       </div>
       <div className="ph-row">
         <h1>
@@ -78,8 +89,8 @@ export function DocumentHeader({
           </span>
           {number ? <span className="docno">{number}</span> : heading}
           {number && status && (
-            <span className={`bdg ${STATUS_CLASS[status] ?? "s-mute"}`}>
-              {STATUS_TEXT[status] ?? status}
+            <span className={`bdg ${statusLabel?.tone ?? STATUS_CLASS[status] ?? "s-mute"}`}>
+              {statusLabel?.text ?? STATUS_TEXT[status] ?? status}
             </span>
           )}
           {tags}

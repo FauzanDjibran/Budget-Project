@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { Pager } from "@/components/ui/pager";
@@ -234,43 +235,28 @@ export function BudgetList({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <span>Budget</span>
-          <span>/</span>
-          <Link href="/budget/budget">Budget Month</Link>
-          <span>/</span>
-          <span className="cur">{month ? month.name : "Semua Bulan"}</span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="clip" size={16} />
+      <DocumentHeader
+        module="Budget"
+        trail={[{ label: "Budget Month", href: "/budget/budget" }]}
+        icon="clip"
+        title={month ? month.name : "Semua Bulan"}
+        tags={month && <span className="lab lg">{month.label}</span>}
+        sub="Layer planning. Budget menyediakan rencana nominal dan klasifikasi bisnis; realisasinya terjadi di modul Finance."
+      >
+        <button className="btn" onClick={() => setShowReport(true)}>
+          <Icon name="print" size={15} /> Laporan Pengajuan
+          {submitted.length > 0 && (
+            <span className="bdg s-info" style={{ marginLeft: 2 }}>
+              {submitted.length}
             </span>
-            {month ? month.name : "Semua Bulan"}
-            {month && <span className="lab lg">{month.label}</span>}
-          </h1>
-          <div className="ph-act">
-            <button className="btn" onClick={() => setShowReport(true)}>
-              <Icon name="print" size={15} /> Laporan Pengajuan
-              {submitted.length > 0 && (
-                <span className="bdg s-info" style={{ marginLeft: 2 }}>
-                  {submitted.length}
-                </span>
-              )}
-            </button>
-            {can.create && (
-              <Link className="btn primary" href={newHref}>
-                <Icon name="plus" size={15} /> Tambah Budget
-              </Link>
-            )}
-          </div>
-        </div>
-        <p className="ph-sub">
-          Layer planning. Budget menyediakan rencana nominal dan klasifikasi
-          bisnis; realisasinya terjadi di modul Finance.
-        </p>
-      </div>
+          )}
+        </button>
+        {can.create && (
+          <Link className="btn primary" href={newHref}>
+            <Icon name="plus" size={15} /> Tambah Budget
+          </Link>
+        )}
+      </DocumentHeader>
 
       <div className="kpis bud">
         <button

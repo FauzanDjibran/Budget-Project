@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { CancelButton } from "@/components/ui/cancel-button";
 import { DateInput } from "@/components/ui/date-input";
 import { Select } from "@/components/ui/select";
@@ -24,7 +25,6 @@ import {
   type BudgetValues,
 } from "@/app/actions/budget";
 import { formatDate, formatMoney, todayIso } from "@/lib/format";
-import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type {
   BudgetMapping,
   BudgetRefs,
@@ -48,6 +48,24 @@ import { ApproveDialog } from "./approve-dialog";
 import { RealizationCard } from "./realization-card";
 
 export type BudgetFormMode = "new" | "view" | "edit";
+
+/** Why a Budget's header offers nothing, by status. */
+const LOCK_TEXT: Record<string, string> = {
+  Open: "Terkunci setelah disetujui",
+  Closed: "Terealisasi penuh",
+  Cancelled: "Budget dibatalkan",
+  Submitted: "Menunggu persetujuan",
+};
+
+/** Where a Budget stands, said once at the foot of its card. */
+const STATE_NOTE: Record<string, string> = {
+  Draft: "Budget masih Draft dan dapat diubah sampai diajukan.",
+  Submitted: "Budget sedang diajukan dan tidak dapat diubah sampai disetujui atau ditolak.",
+  Rejected: "Budget ditolak; ubah lalu ajukan kembali.",
+  Open: "Budget sudah disetujui dan terkunci; realisasinya dicatat oleh dokumen Finance yang diposting.",
+  Closed: "Realisasi sudah mencapai nominal budget, sehingga budget tertutup otomatis.",
+  Cancelled: "Budget dibatalkan dan tidak dapat direalisasikan.",
+};
 
 /**
  * Budget create / detail / edit.
@@ -229,56 +247,39 @@ export function BudgetForm({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <span>Budget</span>
-          <span>/</span>
-          <Link href="/budget/budget">Budget Month</Link>
-          <span>/</span>
-          <Link href={listHref(month)}>{month ? month.name : "Semua Bulan"}</Link>
-          <span>/</span>
-          <span className="cur">{mode === "new" ? "Baru" : budget?.budget_no}</span>
-        </div>
-        <div className="ph-row">
-          {/* A document names itself by its number, so that is the heading and
-              the status sits beside it — the description is a field on the form
-              below, and stating it here as well would say it twice. Before the
-              first save there is no number and no status, so the heading is a
-              placeholder instead. */}
-          <h1>
-            <span className="ph-ico">
-              <Icon name="clip" size={16} />
-            </span>
-            {budget ? (
-              <>
-                <span className="docno">{budget.budget_no}</span>
-                <span className={`bdg ${STATUS_CLASS[budget.status] ?? "s-mute"}`}>
-                  {STATUS_TEXT[budget.status] ?? budget.status}
-                </span>
-              </>
-            ) : (
-              "Budget Baru"
-            )}
-            {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
-          </h1>
-          <div className="ph-act">
-            {editing && dirty && (
-              <span className="ph-dirty">
-                <span className="pulse" /> Belum disimpan
-              </span>
-            )}
-            {mode === "view" && budget && viewActions.map((i) => i.node)}
-            {editing && (
-              <>
-                <CancelButton href={backHref} dirty={dirty} disabled={saving} />
-                <button className="btn primary" onClick={onSave} disabled={saving}>
-                  <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+      {/* A document names itself by its number, so that is the heading and the
+          status sits beside it — the description is a field on the form
+          below. Before the first save the heading is a placeholder. */}
+      <DocumentHeader
+        module="Budget"
+        trail={[
+          { label: "Budget Month", href: "/budget/budget" },
+          { label: month ? month.name : "Semua Bulan", href: listHref(month) },
+        ]}
+        icon="clip"
+        number={budget?.budget_no ?? null}
+        placeholder="Budget Baru"
+        status={budget?.status ?? null}
+        editing={mode === "edit"}
+        dirty={editing && dirty}
+      >
+        {mode === "view" && budget && viewActions.map((i) => i.node)}
+        {/* A header with nothing to offer says why, as every final document's
+            does — an empty action bar reads as a page that failed to load. */}
+        {mode === "view" && budget && !viewActions.length && (
+          <span className="lockchip">
+            <Icon name="lock" size={13} /> {LOCK_TEXT[budget.status] ?? "Tidak ada aksi"}
+          </span>
+        )}
+        {editing && (
+          <>
+            <CancelButton href={backHref} dirty={dirty} disabled={saving} />
+            <button className="btn primary" onClick={onSave} disabled={saving}>
+              <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
+            </button>
+          </>
+        )}
+      </DocumentHeader>
 
       {errors._form && (
         <div className="card" style={{ marginBottom: 14 }}>
@@ -530,6 +531,9 @@ export function BudgetForm({
                 </>
               )}
             </FormBody>
+            {mode === "view" && budget && STATE_NOTE[budget.status] && (
+              <p className="fnote">{STATE_NOTE[budget.status]}</p>
+            )}
           </div>
 
           {mode === "view" && realizations && (

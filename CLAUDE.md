@@ -696,7 +696,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Form rows | Twelve columns. A field declares its share — `span={3\|4\|5\|6\|8\|12}`, half by default. Registry entities say it as `span` on the field config |
 | Field help | One clause, lower case, no full stop, **on the label row** — never a `.help` div under the control. An error replaces it |
 | Page heading | A document's number (`.docno`, mono) with its status badge beside it; a master record's name with its code as a `.docno sm` chip. Before the first save, a placeholder — `Budget Baru`, `User Baru` |
-| Document screens | `DocumentHeader` draws the header, `Amount` every figure in a table. View, new and edit are **one** component with the same cards; Riwayat on view and edit; the register has `No`, `Status:`, `.ract` and `Pager`. Held per document by `DOCUMENT_SCREENS` in `tests/design-system.test.ts` (§12) |
+| Document screens | `DocumentHeader` draws the header, `Amount` every figure in a table. View, new and edit are **one** component with the same cards; a closing `.fnote` says where the record stands and a `.lockchip` says why a final one offers no button; Riwayat on view and edit; the register has `No`, `Status:`, `.ract` (three icon columns, `.sp` where a row offers less) and `Pager`. Held per document by `DOCUMENT_SCREENS` in `tests/design-system.test.ts` (§12) |
 | Summary cards | **None.** Each fact sits where it is read; a closing note about the record's state is a `.fnote` at the foot of its card |
 | Read-only fields | `.ro` — presented as text, **never disabled inputs**. A field locked after creation is shown the same way on the edit page, with its `Terkunci` chip |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options. **The control itself is the search box**: opening turns it into a text input in place, and the popup carries no filter bar of its own |
@@ -1678,9 +1678,13 @@ Specified in the concept doc, **not yet implemented** (see §13):
   `Mode Ubah` chip, and `.ph-act` with the unsaved chip first. **`Amount`**
   (`components/ui/amount.tsx`) prints every figure in a table, in `.mny`. View,
   new and edit are **one** form component on the same cards, with a `.fnote` at
-  the foot of the header card and `RecordHistoryCard` on both the view and the
-  edit page. The register has a `No` column, a `Status:` filter, the row's
-  actions in fixed `.ract` columns, the count on the right, and `Pager`.
+  the foot of the header card saying where the record stands, a `.lockchip`
+  where a final record offers no button, and `RecordHistoryCard` on both the
+  view and the edit page. The register has a `No` column, a `Status:` filter,
+  the row's actions in fixed `.ract` columns, the count on the right, and
+  `Pager`. `statusLabel` on `DocumentHeader` is the one escape from the shared
+  status map, for a status that means something else on one document — a
+  Funding Request that is `Open` is *Menunggu Konfirmasi*.
 - **Reason:** the Journal. Its view and edit were two components, so the view
   lost its card headings; the edit page had no Riwayat; its figures were in the
   body font; its status printed the raw English enum through a second status
@@ -1690,14 +1694,21 @@ Specified in the concept doc, **not yet implemented** (see §13):
   was visible only side by side. A CLAUDE.md line cannot hold that; a component
   and an assertion can.
 - **Held per document.** `DOCUMENT_SCREENS` in `tests/design-system.test.ts`
-  lists the documents on the shape, and for each asserts: `DocumentHeader` on
-  the form and the register and no hand-drawn `.crumb` / `.ph-row`; the `[id]`
-  and `[id]/edit` routes render the same `*Form` and both carry
-  `RecordHistoryCard`; the register's `Pager`, `No`, `Status: semua` and
-  `.ract`; no `formatMoney` straight into a `num` cell; no raw `.status` in a
-  badge. Each assertion was checked to **fail on the old Journal code**.
-  **The list only grows**: a document joins once it has moved onto the shape,
-  and the remaining ones are recorded in §17.
+  lists every document — Journal, Budget, Cash Bank Transaction, Cash Bank
+  Transfer, Debit / Credit Note, Funding Request and Opening Balance — and for
+  each asserts: `DocumentHeader` on the form and the register and no
+  hand-drawn `.crumb` / `.ph-row`; the `[id]` and `[id]/edit` routes render the
+  component the form file exports, and both carry `RecordHistoryCard`; a
+  closing `.fnote` and a `.lockchip`; the register's `Pager`, `No`,
+  `Status: semua` and `.ract`; no `formatMoney` straight into a `num` cell; no
+  raw `.status` in a badge. A document that is never edited says
+  `editable: false` (Funding Request, Opening Balance) and the test then
+  asserts the edit route does **not** exist; one with no status at all says
+  `lifecycle: false` (Opening Balance) and has no Status filter to offer. Each
+  assertion was checked to **fail on the old code**. A new document joins the
+  list in the change that builds it. Separately, **no breadcrumb anywhere**
+  may open with a `<Link>` — the module segment is plain text (§8), and four
+  Finance documents had linked it.
 - **The review step.** The `ui-audit` skill (`.claude/skills/ui-audit/`)
   screenshots a changed screen beside the nearest finished one and prints the
   landmarks side by side — breadcrumb, heading, card headings, columns,
@@ -1708,8 +1719,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   header of a screen in `DOCUMENT_SCREENS`**, never split a document's view and
   edit into two components, never drop a document from `DOCUMENT_SCREENS`, and
   never relax one of its assertions to let a screen through.
-- **Status:** Frozen, current. The Journal is on it; the Finance documents and
-  Budget are not yet (§17).
+- **Status:** Frozen, current. Every document is on it.
 
 ### A repeated control is a component, and the test suite says so (FROZEN)
 - **Decision:** Anything that appears on more than one screen is drawn by one
@@ -4045,7 +4055,8 @@ process allowed to restate positions, and it is not built.
   `components/ui/` — the OS draws none of those (§12).
 - Do **not** hand-draw the header of a document screen, split its view and edit
   into two components, or print a table figure outside `Amount` — and do **not**
-  drop a document from `DOCUMENT_SCREENS` or relax its assertions (§12).
+  drop a document from `DOCUMENT_SCREENS`, relax its assertions, or build a new
+  document without adding it there (§12).
 - Do **not** report a UI change done without running the `ui-audit` skill
   against the nearest finished screen (§12).
 - Do **not** hand-write a control that already exists in `components/ui/` —
@@ -4375,7 +4386,6 @@ process allowed to restate positions, and it is not built.
 | A history says who and when, never what | `audit_log` stores no field-level snapshot, so the panel reports that a record was edited and by whom, and cannot say which field moved. Adding a diff means storing one, which is a much larger change than the `event` column was. |
 | Rows written before `event` existed read as a bare verb | Rows written before the migration carry `event = null` and report "Dibuat" or "Diubah". They are not backfilled, because nothing in the table records which transition they actually were — inferring one from a timestamp would be a guess presented as a fact. |
 | The suite leaves fixture currencies behind | `cleanupFixtures` removes accounts, partners, mappings and journals but never a `ref_currency` row, so `curr.TESTEUR`, `test.ZZTESTCUR` and the DN/CN suite's `curr.DNCA` persist in whatever database `npm test` last ran against. Harmless now that `otherCurrency` is always the suite's own row rather than `currencies[1]` — that opportunistic pick is what let the leftover become the fixture and silently disable the third-currency refusal test. Deleting them would mean hard-deleting master data, which the application itself never does. |
-| Only the Journal is on the shared document shape | `DOCUMENT_SCREENS` holds the Journal alone, on the user's decision to do it first. Budget, Cash Bank Transaction, Cash Bank Transfer, Debit / Credit Note and Funding Request still draw their own headers — four of them link the breadcrumb's module segment ("Finance"), which §8 says is plain text — and Funding Request's register has no `.ract` column. Moving each onto `DocumentHeader` / `Amount` and adding it to the list is the follow-up. |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |

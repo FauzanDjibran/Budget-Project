@@ -1221,15 +1221,64 @@ describe("tints, icons and the stylesheet stay lean", () => {
  * page had no history, its figures were not mono, its status was printed raw,
  * and its register had no `No` column, no Status filter and no row actions —
  * and nothing failed, because each screen was tidy on its own. These tests
- * hold the shape **per document**, so a document joins by being listed here
- * once it uses `DocumentHeader` and `Amount`; the list only ever grows.
+ * hold the shape **per document**; the list only ever grows. `editable: false`
+ * is a document that is never edited at all — a Funding Request is confirmed,
+ * not changed — and says so here rather than being skipped silently.
+ * `lifecycle: false` is a document with no status at all: an Opening Balance is
+ * final the moment it exists, so its register has no `Status:` filter to offer.
  */
-const DOCUMENT_SCREENS = [
+const DOCUMENT_SCREENS: {
+  name: string;
+  form: string;
+  list: string;
+  routes: string;
+  editable?: false;
+  lifecycle?: false;
+}[] = [
   {
     name: "Journal",
     form: "src/components/accounting/journal-form.tsx",
     list: "src/components/accounting/journal-list.tsx",
     routes: "src/app/(app)/accounting/journal",
+  },
+  {
+    name: "Budget",
+    form: "src/components/budget/budget-form.tsx",
+    list: "src/components/budget/budget-list.tsx",
+    routes: "src/app/(app)/budget/budget",
+  },
+  {
+    name: "Cash Bank Transaction",
+    form: "src/components/finance/transaction-form.tsx",
+    list: "src/components/finance/transaction-list.tsx",
+    routes: "src/app/(app)/finance/cash-bank-transaction",
+  },
+  {
+    name: "Cash Bank Transfer",
+    form: "src/components/finance/transfer-form.tsx",
+    list: "src/components/finance/transfer-list.tsx",
+    routes: "src/app/(app)/finance/cash-bank-transfer",
+  },
+  {
+    name: "Debit / Credit Note",
+    form: "src/components/finance/dncn-form.tsx",
+    list: "src/components/finance/dncn-list.tsx",
+    routes: "src/app/(app)/finance/debit-credit-note",
+  },
+  {
+    name: "Funding Request",
+    form: "src/components/finance/funding-detail.tsx",
+    list: "src/components/finance/funding-list.tsx",
+    routes: "src/app/(app)/finance/funding-request",
+    editable: false,
+  },
+  {
+    name: "Opening Balance",
+    form: "src/components/accounting/opening-balance-detail.tsx",
+    list: "src/components/accounting/opening-balance-list.tsx",
+    routes: "src/app/(app)/accounting/opening-balance",
+    editable: false,
+    lifecycle: false,
   },
 ];
 
@@ -1238,6 +1287,16 @@ const fileText = (rel: string) => {
   assert.ok(f, `${rel} is missing`);
   return code(f!.text);
 };
+
+test("a breadcrumb's module segment is never a link", () => {
+  // A module has no page of its own (§8), so the first segment is plain text.
+  // Four Finance documents had linked it to their own register, which made
+  // "Finance" and "Cash Bank Transaction" two links to the same page.
+  const bad = files.filter((f) =>
+    /className="crumb">\s*<Link\b/.test(code(f.text))
+  );
+  assert.deepEqual(bad.map((f) => f.rel), [], "Render the module as <span>, not <Link>.");
+});
 
 describe("a document screen has one shape", () => {
   for (const doc of DOCUMENT_SCREENS) {
@@ -1254,20 +1313,43 @@ describe("a document screen has one shape", () => {
 
     test(`${doc.name}: view and edit are the same component, and both carry the history`, () => {
       const view = fileText(`${doc.routes}/[id]/page.tsx`);
-      const edit = fileText(`${doc.routes}/[id]/edit/page.tsx`);
-      const component = (text: string) => text.match(/import \{ (\w+Form) \} from/)?.[1];
-      assert.ok(component(view), "the view page renders no *Form component");
-      assert.equal(component(view), component(edit), "view and edit render different components");
-      for (const [page, text] of [["view", view], ["edit", edit]]) {
-        assert.match(text, /<RecordHistoryCard\b/, `the ${page} page has no Riwayat`);
+      // The component the document's own file exports is what its pages render.
+      const exported = fileText(doc.form).match(/export function (\w+)/)?.[1];
+      assert.ok(exported, `${doc.form} exports no component`);
+      const renders = (text: string) => new RegExp(`<${exported}\\b`).test(text);
+      assert.ok(renders(view), `the view page does not render ${exported}`);
+      assert.match(view, /<RecordHistoryCard\b/, "the view page has no Riwayat");
+      const editPath = `${doc.routes}/[id]/edit/page.tsx`;
+      if (doc.editable === false) {
+        assert.ok(!existsSync(join(process.cwd(), editPath)), `${doc.name} is listed as never edited`);
+        return;
       }
+      const edit = fileText(editPath);
+      assert.ok(renders(edit), `the edit page does not render ${exported} — view and edit have split`);
+      assert.match(edit, /<RecordHistoryCard\b/, "the edit page has no Riwayat");
+    });
+
+    test(`${doc.name}: the record says where it stands`, () => {
+      // A closing note at the foot of its card, and a lock chip where a final
+      // record has no buttons — an empty action bar reads as a failed load.
+      // A sibling it imports (`./journal-actions`) counts as the form's own.
+      const dir = doc.form.slice(0, doc.form.lastIndexOf("/"));
+      const own = fileText(doc.form);
+      const siblings = [...own.matchAll(/from "\.\/([\w-]+)"/g)].map((m) =>
+        fileText(`${dir}/${m[1]}.tsx`)
+      );
+      const text = [own, ...siblings].join("\n");
+      assert.match(own, /className="fnote"/, `${doc.form} has no closing .fnote`);
+      assert.match(text, /className="lockchip"/, `${doc.form} shows no lock chip when final`);
     });
 
     test(`${doc.name}: the register is laid out like every other register`, () => {
       const text = fileText(doc.list);
       assert.match(text, /<Pager\b/, "no Pager at the foot of the list");
       assert.match(text, /<th[^>]*>No<\/th>/, "no `No` column");
-      assert.match(text, /"Status: semua"/, "no `Status:` filter in the toolbar");
+      if (doc.lifecycle !== false) {
+        assert.match(text, /"Status: semua"/, "no `Status:` filter in the toolbar");
+      }
       assert.match(text, /className="ract"/, "row actions are not in fixed `.ract` columns");
     });
 

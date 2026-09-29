@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { CancelButton } from "@/components/ui/cancel-button";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
@@ -30,7 +31,7 @@ import {
   todayIso,
 } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, rateSource } from "@/lib/siba/currency";
-import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
+import { STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetMapping } from "@/lib/siba/budget";
 import type {
   EligibleBudget,
@@ -555,69 +556,42 @@ export function TransactionForm({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <Link href={listHref}>Finance</Link>
-          <span>/</span>
-          <Link href={listHref}>Cash Bank Transaction</Link>
-          <span>/</span>
-          <span className="cur">
-            {mode === "new" ? "Baru" : transaction?.transaction_no}
-          </span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="wallet2" size={16} />
-            </span>
-            {/* The document names itself by its number. The Purpose chip that
-                used to sit here is the form's first field, two lines below. */}
-            {transaction ? (
-              <>
-                <span className="docno">{transaction.transaction_no}</span>
-                <span
-                  className={`bdg ${STATUS_CLASS[transaction.status] ?? "s-mute"}`}
-                >
-                  {STATUS_TEXT[transaction.status] ?? transaction.status}
-                </span>
-              </>
-            ) : (
-              "Dokumen Baru"
-            )}
-            {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
-          </h1>
-          <div className="ph-act">
-            {editing && dirty && (
-              <span className="ph-dirty">
-                <span className="pulse" /> Belum disimpan
+      {/* The document names itself by its number. The Purpose chip that used
+          to sit here is the form's first field, two lines below. */}
+      <DocumentHeader
+        module="Finance"
+        trail={[{ label: "Cash Bank Transaction", href: listHref }]}
+        icon="wallet2"
+        number={transaction?.transaction_no ?? null}
+        placeholder="Dokumen Baru"
+        status={transaction?.status ?? null}
+        editing={mode === "edit"}
+        dirty={editing && dirty}
+      >
+        {mode === "view" && transaction && (
+          <>
+            {viewActions.map((i) => i.node)}
+            {!actions.length && (
+              <span className="lockchip">
+                <Icon name="lock" size={13} />{" "}
+                {transaction.status === "Posted"
+                  ? "Terkunci setelah Post"
+                  : transaction.status === "Pending"
+                    ? "Menunggu konfirmasi induk"
+                    : "Dokumen dibatalkan"}
               </span>
             )}
-            {mode === "view" && transaction && (
-              <>
-                {viewActions.map((i) => i.node)}
-                {!actions.length && (
-                  <span className="lockchip">
-                    <Icon name="lock" size={13} />{" "}
-                    {transaction.status === "Posted"
-                      ? "Terkunci setelah Post"
-                      : transaction.status === "Pending"
-                        ? "Menunggu konfirmasi induk"
-                        : "Dokumen dibatalkan"}
-                  </span>
-                )}
-              </>
-            )}
-            {editing && (
-              <>
-                <CancelButton href={backHref} dirty={dirty} disabled={saving} />
-                <button className="btn primary" onClick={onSave} disabled={saving}>
-                  <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+          </>
+        )}
+        {editing && (
+          <>
+            <CancelButton href={backHref} dirty={dirty} disabled={saving} />
+            <button className="btn primary" onClick={onSave} disabled={saving}>
+              <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
+            </button>
+          </>
+        )}
+      </DocumentHeader>
 
       {errors._form && (
         <div className="card" style={{ marginBottom: 14 }}>

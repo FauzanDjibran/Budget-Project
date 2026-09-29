@@ -4,13 +4,14 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { Combobox } from "@/components/ui/combobox";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
 import { confirmFunding } from "@/app/actions/funding";
 import { formatDate, formatMoney, formatNumber, formatTimestamp } from "@/lib/format";
-import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
+import { STATUS_TEXT } from "@/lib/siba/entities";
 import type { TransactionLineRow } from "@/lib/siba/finance";
 import type { FundingRequestRow } from "@/lib/siba/funding";
 import { headerButtonClass } from "@/lib/siba/header-actions";
@@ -95,60 +96,41 @@ export function FundingDetail({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <Link href="/finance/funding-request">Finance</Link>
-          <span>/</span>
-          <Link href="/finance/funding-request">Funding Request</Link>
-          <span>/</span>
-          <span className="cur">{request.funding_request_no}</span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="link" size={16} />
-            </span>
-            <span className="docno">{request.funding_request_no}</span>
-            <span
-              className={`bdg ${
-                open ? "s-warn" : STATUS_CLASS[request.status] ?? "s-mute"
-              }`}
+      <DocumentHeader
+        module="Finance"
+        trail={[{ label: "Funding Request", href: "/finance/funding-request" }]}
+        icon="link"
+        number={request.funding_request_no}
+        status={request.status}
+        statusLabel={open ? { text: "Menunggu Konfirmasi", tone: "s-warn" } : undefined}
+      >
+        {open ? (
+          canConfirm ? (
+            <button
+              className={headerButtonClass("primary")}
+              disabled={!ready}
+              title={
+                bridgeMissing.length
+                  ? "Pengaturan bridge intercompany belum lengkap"
+                  : resources.length
+                    ? undefined
+                    : `Tidak ada Cash & Bank induk bercurrency ${currencyLabel}`
+              }
+              onClick={() => {
+                setError(null);
+                setAsking(true);
+              }}
             >
-              {open ? "Menunggu Konfirmasi" : STATUS_TEXT[request.status] ?? request.status}
-            </span>
-          </h1>
-          <div className="ph-act">
-            {open ? (
-              canConfirm ? (
-                <button
-                  className={headerButtonClass("primary")}
-                  disabled={!ready}
-                  title={
-                    bridgeMissing.length
-                      ? "Pengaturan bridge intercompany belum lengkap"
-                      : resources.length
-                        ? undefined
-                        : `Tidak ada Cash & Bank induk bercurrency ${currencyLabel}`
-                  }
-                  onClick={() => {
-                    setError(null);
-                    setAsking(true);
-                  }}
-                >
-                  <Icon name="check" size={15} /> Konfirmasi Funding
-                </button>
-              ) : null
-            ) : (
-              <span className="lockchip">
-                <Icon name="lock" size={13} />{" "}
-                {request.status === "Closed"
-                  ? "Sudah dikonfirmasi"
-                  : "Ditarik kembali pemohon"}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
+              <Icon name="check" size={15} /> Konfirmasi Funding
+            </button>
+          ) : null
+        ) : (
+          <span className="lockchip">
+            <Icon name="lock" size={13} />{" "}
+            {request.status === "Closed" ? "Sudah dikonfirmasi" : "Ditarik kembali pemohon"}
+          </span>
+        )}
+      </DocumentHeader>
 
       {Boolean(bridgeMissing.length) && open && (
         <div className="card" style={{ marginBottom: 14 }}>

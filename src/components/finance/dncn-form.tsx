@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { CancelButton } from "@/components/ui/cancel-button";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
@@ -22,7 +23,6 @@ import {
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { originate, relieve } from "@/lib/siba/fx";
-import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { DncnLineRow, DncnRefs, DncnRow } from "@/lib/siba/dncn";
 import {
   DNCN_TRANSITIONS,
@@ -271,59 +271,36 @@ export function DncnForm({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <Link href={listHref}>Finance</Link>
-          <span>/</span>
-          <Link href={listHref}>Debit / Credit Note</Link>
-          <span>/</span>
-          <span className="cur">{mode === "new" ? "Baru" : note?.note_no}</span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="pen" size={16} />
-            </span>
-            {note ? (
-              <>
-                <span className="docno">{note.note_no}</span>
-                <span className={`bdg ${STATUS_CLASS[note.status] ?? "s-mute"}`}>
-                  {STATUS_TEXT[note.status] ?? note.status}
-                </span>
-              </>
-            ) : (
-              "Nota Baru"
-            )}
-            {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
-          </h1>
-          <div className="ph-act">
-            {editing && dirty && (
-              <span className="ph-dirty">
-                <span className="pulse" /> Belum disimpan
+      <DocumentHeader
+        module="Finance"
+        trail={[{ label: "Debit / Credit Note", href: listHref }]}
+        icon="pen"
+        number={note?.note_no ?? null}
+        placeholder="Nota Baru"
+        status={note?.status ?? null}
+        editing={mode === "edit"}
+        dirty={editing && dirty}
+      >
+        {mode === "view" && note && (
+          <>
+            {viewActions.map((i) => i.node)}
+            {!actions.length && (
+              <span className="lockchip">
+                <Icon name="lock" size={13} />{" "}
+                {note.status === "Posted" ? "Terkunci setelah Post" : "Nota dibatalkan"}
               </span>
             )}
-            {mode === "view" && note && (
-              <>
-                {viewActions.map((i) => i.node)}
-                {!actions.length && (
-                  <span className="lockchip">
-                    <Icon name="lock" size={13} />{" "}
-                    {note.status === "Posted" ? "Terkunci setelah Post" : "Nota dibatalkan"}
-                  </span>
-                )}
-              </>
-            )}
-            {editing && (
-              <>
-                <CancelButton href={backHref} dirty={dirty} disabled={saving} />
-                <button className="btn primary" onClick={onSave} disabled={saving}>
-                  <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+          </>
+        )}
+        {editing && (
+          <>
+            <CancelButton href={backHref} dirty={dirty} disabled={saving} />
+            <button className="btn primary" onClick={onSave} disabled={saving}>
+              <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
+            </button>
+          </>
+        )}
+      </DocumentHeader>
 
       {errors._form && (
         <div className="card" style={{ marginBottom: 14 }}>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { CancelButton } from "@/components/ui/cancel-button";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
@@ -23,7 +24,6 @@ import {
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { relieve, type Balance } from "@/lib/siba/fx";
-import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type {
   TransferLineRow,
   TransferRefs,
@@ -456,63 +456,36 @@ export function TransferForm({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <Link href={listHref}>Finance</Link>
-          <span>/</span>
-          <Link href={listHref}>Cash Bank Transfer</Link>
-          <span>/</span>
-          <span className="cur">
-            {mode === "new" ? "Baru" : transfer?.transfer_no}
-          </span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="link" size={16} />
-            </span>
-            {transfer ? (
-              <>
-                <span className="docno">{transfer.transfer_no}</span>
-                <span className={`bdg ${STATUS_CLASS[transfer.status] ?? "s-mute"}`}>
-                  {STATUS_TEXT[transfer.status] ?? transfer.status}
-                </span>
-              </>
-            ) : (
-              "Transfer Baru"
-            )}
-            {mode === "edit" && <span className="bdg t-warn">Mode Ubah</span>}
-          </h1>
-          <div className="ph-act">
-            {editing && dirty && (
-              <span className="ph-dirty">
-                <span className="pulse" /> Belum disimpan
+      <DocumentHeader
+        module="Finance"
+        trail={[{ label: "Cash Bank Transfer", href: listHref }]}
+        icon="link"
+        number={transfer?.transfer_no ?? null}
+        placeholder="Transfer Baru"
+        status={transfer?.status ?? null}
+        editing={mode === "edit"}
+        dirty={editing && dirty}
+      >
+        {mode === "view" && transfer && (
+          <>
+            {viewActions.map((i) => i.node)}
+            {!actions.length && (
+              <span className="lockchip">
+                <Icon name="lock" size={13} />{" "}
+                {transfer.status === "Posted" ? "Terkunci setelah Post" : "Dokumen dibatalkan"}
               </span>
             )}
-            {mode === "view" && transfer && (
-              <>
-                {viewActions.map((i) => i.node)}
-                {!actions.length && (
-                  <span className="lockchip">
-                    <Icon name="lock" size={13} />{" "}
-                    {transfer.status === "Posted"
-                      ? "Terkunci setelah Post"
-                      : "Dokumen dibatalkan"}
-                  </span>
-                )}
-              </>
-            )}
-            {editing && (
-              <>
-                <CancelButton href={backHref} dirty={dirty} disabled={saving} />
-                <button className="btn primary" onClick={onSave} disabled={saving}>
-                  <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+          </>
+        )}
+        {editing && (
+          <>
+            <CancelButton href={backHref} dirty={dirty} disabled={saving} />
+            <button className="btn primary" onClick={onSave} disabled={saving}>
+              <Icon name="save" size={15} /> {saving ? "Menyimpan…" : "Simpan"}
+            </button>
+          </>
+        )}
+      </DocumentHeader>
 
       {errors._form && (
         <div className="card" style={{ marginBottom: 14 }}>

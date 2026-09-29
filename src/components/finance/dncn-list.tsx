@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { Pager } from "@/components/ui/pager";
@@ -99,31 +100,18 @@ export function DncnList({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <span>Finance</span>
-          <span>/</span>
-          <span className="cur">Debit / Credit Note</span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="pen" size={16} />
-            </span>
-            Debit / Credit Note
-          </h1>
-          <div className="ph-act">
-            {can.create && (
-              <Link className="btn primary" href="/finance/debit-credit-note/new">
-                <Icon name="plus" size={15} /> Buat Nota
-              </Link>
-            )}
-          </div>
-        </div>
-        <p className="ph-sub">
-          Penyesuaian nilai posisi Partner pada buku subjek, tanpa perpindahan uang.
-        </p>
-      </div>
+      <DocumentHeader
+        module="Finance"
+        icon="pen"
+        title="Debit / Credit Note"
+        sub="Penyesuaian nilai posisi Partner pada buku subjek, tanpa perpindahan uang."
+      >
+        {can.create && (
+          <Link className="btn primary" href="/finance/debit-credit-note/new">
+            <Icon name="plus" size={15} /> Buat Nota
+          </Link>
+        )}
+      </DocumentHeader>
 
       <div className="kpis bud">
         <button

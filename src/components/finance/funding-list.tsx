@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { Pager, usePaging } from "@/components/ui/pager";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
@@ -84,27 +85,12 @@ export function FundingList({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <span>Finance</span>
-          <span>/</span>
-          <span className="cur">Funding Request</span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="link" size={16} />
-            </span>
-            Funding Request
-          </h1>
-          <div className="ph-act" />
-        </div>
-        <p className="ph-sub">
-          Kebutuhan dana Company anak atas realisasi yang sudah diajukan. Induk
-          tidak menolak — konfirmasi adalah batas aktualnya: kas induk bergerak,
-          dan kedua Company memperoleh journal pada saat yang sama.
-        </p>
-      </div>
+      <DocumentHeader
+        module="Finance"
+        icon="link"
+        title="Funding Request"
+        sub="Kebutuhan dana Company anak atas realisasi yang diajukan; konfirmasi induk menggerakkan kas dan journal kedua Company sekaligus."
+      />
 
       <div className="kpis bud">
         <button
@@ -162,7 +148,7 @@ export function FundingList({
               { value: "", label: "Status: semua" },
               ...["Open", "Closed", "Cancelled"].map((s) => ({
                 value: s,
-                label: s === "Open" ? "Menunggu" : STATUS_TEXT[s] ?? s,
+                label: s === "Open" ? "Menunggu Konfirmasi" : STATUS_TEXT[s] ?? s,
               })),
             ]}
             onChange={setStatus}
@@ -200,7 +186,7 @@ export function FundingList({
                       Nominal
                     </th>
                     <th style={{ width: 116 }}>Status</th>
-                    <th style={{ width: 44 }} />
+                    <th style={{ width: 88 }} />
                   </tr>
                 </thead>
                 <tbody>
@@ -209,7 +195,7 @@ export function FundingList({
                     const inn = r.transaction?.transaction_type === "In";
                     return (
                       <tr key={r.id} onClick={() => router.push(href)}>
-                        <td className="no">{i + 1}</td>
+                        <td className="no">{paging.start + i + 1}</td>
                         <td>
                           <Link href={href}>
                             <span className="lab">{r.funding_request_no}</span>
@@ -245,23 +231,31 @@ export function FundingList({
                             }`}
                           >
                             {r.status === "Open"
-                              ? "Menunggu"
+                              ? "Menunggu Konfirmasi"
                               : STATUS_TEXT[r.status] ?? r.status}
                           </span>
                         </td>
+                        {/* The same three icon columns every register keeps. A
+                            request is never edited and its one act — confirm —
+                            asks a question a row menu cannot, so the other two
+                            columns hold their place empty. */}
                         <td className="acts">
-                          <Link
-                            className="iact"
-                            href={href}
-                            title={
-                              r.status === "Open" && canConfirm
-                                ? "Tinjau dan konfirmasi"
-                                : "Lihat detail"
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Icon name="eye" size={15} />
-                          </Link>
+                          <span className="ract">
+                            <Link
+                              className="iact"
+                              href={href}
+                              title={
+                                r.status === "Open" && canConfirm
+                                  ? "Tinjau dan konfirmasi"
+                                  : "Lihat detail"
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Icon name="eye" size={15} />
+                            </Link>
+                            <span className="sp" />
+                            <span className="sp" />
+                          </span>
                         </td>
                       </tr>
                     );

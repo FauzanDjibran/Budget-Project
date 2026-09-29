@@ -267,7 +267,7 @@ export function JournalForm({
     <>
       <DocumentHeader
         module="Accounting"
-        list={{ label: "Journal", href: "/accounting/journal" }}
+        trail={[{ label: "Journal", href: "/accounting/journal" }]}
         icon="book"
         number={journal?.journalNo ?? null}
         placeholder="Journal Manual Baru"

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { Pager } from "@/components/ui/pager";
@@ -136,32 +137,18 @@ export function TransferList({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <span>Finance</span>
-          <span>/</span>
-          <span className="cur">Cash Bank Transfer</span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="link" size={16} />
-            </span>
-            Cash Bank Transfer
-          </h1>
-          <div className="ph-act">
-            {can.create && (
-              <Link className="btn primary" href="/finance/cash-bank-transfer/new">
-                <Icon name="plus" size={15} /> Buat Transfer
-              </Link>
-            )}
-          </div>
-        </div>
-        <p className="ph-sub">
-          Pemindahan dana antar Cash &amp; Bank milik Company sendiri. Satu
-          sumber di header, beberapa tujuan di baris.
-        </p>
-      </div>
+      <DocumentHeader
+        module="Finance"
+        icon="link"
+        title="Cash Bank Transfer"
+        sub="Pemindahan dana antar Cash & Bank milik Company sendiri. Satu sumber di header, beberapa tujuan di baris."
+      >
+        {can.create && (
+          <Link className="btn primary" href="/finance/cash-bank-transfer/new">
+            <Icon name="plus" size={15} /> Buat Transfer
+          </Link>
+        )}
+      </DocumentHeader>
 
       <div className="kpis bud">
         <button

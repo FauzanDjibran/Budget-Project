@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { DocumentHeader } from "@/components/ui/document-header";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { Pager } from "@/components/ui/pager";
@@ -158,32 +159,18 @@ export function TransactionList({
 
   return (
     <>
-      <div className="ph">
-        <div className="crumb">
-          <span>Finance</span>
-          <span>/</span>
-          <span className="cur">Cash Bank Transaction</span>
-        </div>
-        <div className="ph-row">
-          <h1>
-            <span className="ph-ico">
-              <Icon name="wallet2" size={16} />
-            </span>
-            Cash Bank Transaction
-          </h1>
-          <div className="ph-act">
-            {can.create && (
-              <Link className="btn primary" href="/finance/cash-bank-transaction/new">
-                <Icon name="plus" size={15} /> Buat Dokumen
-              </Link>
-            )}
-          </div>
-        </div>
-        <p className="ph-sub">
-          Layer eksekusi. Satu dokumen kas/bank dapat merealisasikan beberapa
-          Budget yang sudah disetujui.
-        </p>
-      </div>
+      <DocumentHeader
+        module="Finance"
+        icon="wallet2"
+        title="Cash Bank Transaction"
+        sub="Layer eksekusi. Satu dokumen kas/bank dapat merealisasikan beberapa Budget yang sudah disetujui."
+      >
+        {can.create && (
+          <Link className="btn primary" href="/finance/cash-bank-transaction/new">
+            <Icon name="plus" size={15} /> Buat Dokumen
+          </Link>
+        )}
+      </DocumentHeader>
 
       <div className="kpis bud">
         <button
