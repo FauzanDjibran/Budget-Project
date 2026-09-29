@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { JournalForm } from "@/components/accounting/journal-form";
+import { RecordHistoryCard } from "@/components/ui/record-history-card";
 import { requirePermission } from "@/lib/siba/auth";
 import {
   accessibleCompanies,
@@ -44,12 +45,15 @@ export default async function Page({
   ]);
 
   return (
-    <JournalForm
-      mode="edit"
-      journal={journal}
-      companies={companies}
-      options={options}
-      defaultCurrencyId={null}
-    />
+    <>
+      <JournalForm
+        mode="edit"
+        journal={journal}
+        companies={companies}
+        options={options}
+        defaultCurrencyId={null}
+      />
+      <RecordHistoryCard entityKey="acc_journal" rowId={journal.id} />
+    </>
   );
 }

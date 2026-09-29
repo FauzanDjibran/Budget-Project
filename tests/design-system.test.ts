@@ -656,7 +656,7 @@ describe("a form is laid out by one component", () => {
   test("no form page carries a `.ph-sub`", () => {
     // A form's subtitle restated the card header 40px below it. Lists and the
     // dashboard keep theirs: there, the sentence says what the table is of.
-    const forms = files.filter((f) => /-form\.tsx$|profile-view\.tsx$|funding-detail\.tsx$|journal-detail\.tsx$|opening-balance-detail\.tsx$/.test(f.rel));
+    const forms = files.filter((f) => /-form\.tsx$|profile-view\.tsx$|funding-detail\.tsx$|opening-balance-detail\.tsx$/.test(f.rel));
     const bad = forms.filter((f) => /className="ph-sub"/.test(code(f.text)));
     assert.deepEqual(
       bad.map((f) => f.rel),
@@ -684,14 +684,15 @@ describe("a form is laid out by one component", () => {
       "src/components/finance/transaction-form.tsx",
       "src/components/finance/dncn-form.tsx",
       "src/components/finance/funding-detail.tsx",
-      "src/components/accounting/journal-detail.tsx",
+      "src/components/accounting/journal-form.tsx",
       "src/components/accounting/opening-balance-detail.tsx",
     ]) {
       const f = files.find((x) => x.rel === rel);
       assert.ok(f, `${rel} is missing`);
+      // `DocumentHeader` renders `.docno` from the number it is given.
       assert.match(
         code(f!.text),
-        /className="docno"/,
+        /className="docno"|<DocumentHeader\b/,
         `${rel} should title itself with its document number.`
       );
     }
@@ -1208,4 +1209,84 @@ describe("tints, icons and the stylesheet stay lean", () => {
     const back = dead.filter((re) => re.test(stripped)).map(String);
     assert.deepEqual(back, [], "These rules styled nothing the application renders.");
   });
+});
+
+// ---------------------------------------------------------------- documents
+
+/**
+ * The document screens that have moved onto the shared shape.
+ *
+ * The Journal showed what happens without one: its view and its edit page were
+ * two components with two layouts, the view lost its card headings, its edit
+ * page had no history, its figures were not mono, its status was printed raw,
+ * and its register had no `No` column, no Status filter and no row actions —
+ * and nothing failed, because each screen was tidy on its own. These tests
+ * hold the shape **per document**, so a document joins by being listed here
+ * once it uses `DocumentHeader` and `Amount`; the list only ever grows.
+ */
+const DOCUMENT_SCREENS = [
+  {
+    name: "Journal",
+    form: "src/components/accounting/journal-form.tsx",
+    list: "src/components/accounting/journal-list.tsx",
+    routes: "src/app/(app)/accounting/journal",
+  },
+];
+
+const fileText = (rel: string) => {
+  const f = files.find((x) => x.rel === rel);
+  assert.ok(f, `${rel} is missing`);
+  return code(f!.text);
+};
+
+describe("a document screen has one shape", () => {
+  for (const doc of DOCUMENT_SCREENS) {
+    test(`${doc.name}: the header is DocumentHeader, never hand-drawn`, () => {
+      // DocumentHeader keeps the breadcrumb's module segment plain text and
+      // reads the status label from the one status map.
+      for (const rel of [doc.form, doc.list]) {
+        const text = fileText(rel);
+        assert.match(text, /<DocumentHeader\b/, `${rel} does not use DocumentHeader`);
+        assert.doesNotMatch(text, /className="crumb"/, `${rel} draws its own breadcrumb`);
+        assert.doesNotMatch(text, /className="ph-row"/, `${rel} draws its own page header`);
+      }
+    });
+
+    test(`${doc.name}: view and edit are the same component, and both carry the history`, () => {
+      const view = fileText(`${doc.routes}/[id]/page.tsx`);
+      const edit = fileText(`${doc.routes}/[id]/edit/page.tsx`);
+      const component = (text: string) => text.match(/import \{ (\w+Form) \} from/)?.[1];
+      assert.ok(component(view), "the view page renders no *Form component");
+      assert.equal(component(view), component(edit), "view and edit render different components");
+      for (const [page, text] of [["view", view], ["edit", edit]]) {
+        assert.match(text, /<RecordHistoryCard\b/, `the ${page} page has no Riwayat`);
+      }
+    });
+
+    test(`${doc.name}: the register is laid out like every other register`, () => {
+      const text = fileText(doc.list);
+      assert.match(text, /<Pager\b/, "no Pager at the foot of the list");
+      assert.match(text, /<th[^>]*>No<\/th>/, "no `No` column");
+      assert.match(text, /"Status: semua"/, "no `Status:` filter in the toolbar");
+      assert.match(text, /className="ract"/, "row actions are not in fixed `.ract` columns");
+    });
+
+    test(`${doc.name}: an amount in a table is Amount, and a status is its label`, () => {
+      for (const rel of [doc.form, doc.list]) {
+        const text = fileText(rel);
+        // A figure dropped straight into a cell prints in the body font.
+        assert.doesNotMatch(
+          text,
+          /<td[^>]*className="num"[^>]*>\s*\{[^}]*formatMoney\(/,
+          `${rel} prints an amount into a cell without Amount`
+        );
+        // `{row.status}` in a badge is the raw English enum.
+        assert.doesNotMatch(
+          text,
+          /className=\{`bdg[^`]*`\}\s*>\s*\{[\w.]+\.status\}/,
+          `${rel} prints a raw status in a badge`
+        );
+      }
+    });
+  }
 });

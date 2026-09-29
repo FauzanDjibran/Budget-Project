@@ -217,7 +217,7 @@ of its own.
 | Funding writes | `src/app/actions/funding.ts` | Ajukan Dana, withdraw, and the induk's confirmation |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
 | Registry pages | `src/components/master/entity-pages.tsx` | The four registry pages, mounted under each owning module |
-| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast |
+| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast, and a document screen's `DocumentHeader` and `Amount` |
 
 ### The module contract
 
@@ -441,8 +441,8 @@ src/
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     accounting/          FiscalPeriods (shown inside a Fiscal Year),
-                         FiscalYearActions, JournalList, JournalDetail,
-                         JournalActions, JournalForm (the manual journal)
+                         FiscalYearActions, JournalList, JournalActions,
+                         JournalForm (every journal — view, new and edit)
     ui/                  form (FormBody/FormSection/FormRow/Field — every
                          form in the application is built from these),
                          Combobox, Select, DateInput, MoneyInput, RateInput,
@@ -452,6 +452,8 @@ src/
                          Semua),
                          RecordHistory + RecordHistoryCard (a record's own
                          audit trail, at the foot of every form),
+                         DocumentHeader (a document screen's page header) and
+                         Amount (a money figure in a table),
                          Dialog, ConfirmDialog, ToastProvider
   lib/
     prisma.ts            Client singleton with adapter; the cache is keyed on the
@@ -480,7 +482,9 @@ tests/                   Security, Accounting, Budget, Finance, Funding, Transfe
                          fx, layers, money-input, reports, fiscal, settings, schema
                          and design-system suites (node:test); helpers.ts builds
                          and cleans up its own business fixtures
-.claude/skills/          Project skills — `run-siba` brings the app up locally (§6)
+.claude/skills/          Project skills — `run-siba` brings the app up locally (§6);
+                         `ui-audit` screenshots a changed screen beside its
+                         reference and lists the differences (§12)
 .github/workflows/ci.yml PostgreSQL service -> migrate -> seed -> lint -> build -> test
 ```
 
@@ -617,7 +621,8 @@ it: every model in `prisma/schema.prisma` must have a delegate on the generated 
 and a table in the database, so a checkout where `prisma generate` or `prisma migrate`
 has not been run fails here rather than at the first page that reads the missing model.
 Everything else is untested, so "validate" still means
-`npm run build`, `npm run lint`, `npm test`, and exercising the feature in a browser.
+`npm run build`, `npm run lint`, `npm test`, and exercising the feature in a browser —
+for a UI change, through the `ui-audit` skill against the nearest finished screen.
 State plainly when something is unverified.
 
 The runner is `node:test` through `tsx`, with no extra dependency:
@@ -691,6 +696,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Form rows | Twelve columns. A field declares its share — `span={3\|4\|5\|6\|8\|12}`, half by default. Registry entities say it as `span` on the field config |
 | Field help | One clause, lower case, no full stop, **on the label row** — never a `.help` div under the control. An error replaces it |
 | Page heading | A document's number (`.docno`, mono) with its status badge beside it; a master record's name with its code as a `.docno sm` chip. Before the first save, a placeholder — `Budget Baru`, `User Baru` |
+| Document screens | `DocumentHeader` draws the header, `Amount` every figure in a table. View, new and edit are **one** component with the same cards; Riwayat on view and edit; the register has `No`, `Status:`, `.ract` and `Pager`. Held per document by `DOCUMENT_SCREENS` in `tests/design-system.test.ts` (§12) |
 | Summary cards | **None.** Each fact sits where it is read; a closing note about the record's state is a `.fnote` at the foot of its card |
 | Read-only fields | `.ro` — presented as text, **never disabled inputs**. A field locked after creation is shown the same way on the edit page, with its `Terkunci` chip |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options. **The control itself is the search box**: opening turns it into a text input in place, and the popup carries no filter bar of its own |
@@ -1663,14 +1669,58 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Status:** Frozen, current.
 
 
+### A document screen has one shape, held per document (FROZEN)
+- **Decision:** A document — a numbered record with a lifecycle, such as the
+  Journal — is drawn the same way wherever it appears. **`DocumentHeader`**
+  (`components/ui/document-header.tsx`) is its page header: breadcrumb with the
+  module as plain text, icon, the number in mono with the status badge read from
+  `STATUS_TEXT` / `STATUS_CLASS`, a placeholder before the first save, the
+  `Mode Ubah` chip, and `.ph-act` with the unsaved chip first. **`Amount`**
+  (`components/ui/amount.tsx`) prints every figure in a table, in `.mny`. View,
+  new and edit are **one** form component on the same cards, with a `.fnote` at
+  the foot of the header card and `RecordHistoryCard` on both the view and the
+  edit page. The register has a `No` column, a `Status:` filter, the row's
+  actions in fixed `.ract` columns, the count on the right, and `Pager`.
+- **Reason:** the Journal. Its view and edit were two components, so the view
+  lost its card headings; the edit page had no Riwayat; its figures were in the
+  body font; its status printed the raw English enum through a second status
+  map of its own; its account links passed the line id where the account id
+  belonged; and its register had no `No` column, no Status filter and no row
+  actions. Every screen was tidy on its own and every test passed — the drift
+  was visible only side by side. A CLAUDE.md line cannot hold that; a component
+  and an assertion can.
+- **Held per document.** `DOCUMENT_SCREENS` in `tests/design-system.test.ts`
+  lists the documents on the shape, and for each asserts: `DocumentHeader` on
+  the form and the register and no hand-drawn `.crumb` / `.ph-row`; the `[id]`
+  and `[id]/edit` routes render the same `*Form` and both carry
+  `RecordHistoryCard`; the register's `Pager`, `No`, `Status: semua` and
+  `.ract`; no `formatMoney` straight into a `num` cell; no raw `.status` in a
+  badge. Each assertion was checked to **fail on the old Journal code**.
+  **The list only grows**: a document joins once it has moved onto the shape,
+  and the remaining ones are recorded in §17.
+- **The review step.** The `ui-audit` skill (`.claude/skills/ui-audit/`)
+  screenshots a changed screen beside the nearest finished one and prints the
+  landmarks side by side — breadcrumb, heading, card headings, columns,
+  amounts not in mono, row actions, pager, filters, notes, Riwayat. It is what
+  found the Journal's drift, and it is run before a UI change is reported done;
+  a difference it shows is fixed, explained, or turned into an assertion.
+- **Do not change unless:** explicitly instructed. **Never hand-draw the page
+  header of a screen in `DOCUMENT_SCREENS`**, never split a document's view and
+  edit into two components, never drop a document from `DOCUMENT_SCREENS`, and
+  never relax one of its assertions to let a screen through.
+- **Status:** Frozen, current. The Journal is on it; the Finance documents and
+  Budget are not yet (§17).
+
 ### A repeated control is a component, and the test suite says so (FROZEN)
 - **Decision:** Anything that appears on more than one screen is drawn by one
   component in `src/components/ui/`, not by markup copied between pages. That is
   now: `Combobox`, `Select`, `DateInput`, **`MoneyInput`**, **`SearchField`**,
   **`AnchoredPopup`** (the popup all three pickers hang off their trigger),
   **`Dialog`** (the wide panel), `ConfirmDialog` (the small question),
-  **`Pager`** (the foot of a list), **`CancelButton`** (a form's Batal) and
-  **`ExpandAll`** (the Buka Semua / Tutup Semua pair).
+  **`Pager`** (the foot of a list), **`CancelButton`** (a form's Batal),
+  **`ExpandAll`** (the Buka Semua / Tutup Semua pair), and for a document
+  screen **`DocumentHeader`** and **`Amount`** (see "A document screen has one
+  shape").
   `tests/design-system.test.ts` enforces the ones that had already drifted —
   no native `<select>`, date or number input; no bare `.ph` rule; no `.srch`
   markup outside `SearchField`; no `.ovl` outside the two dialog components; no
@@ -3993,6 +4043,11 @@ process allowed to restate positions, and it is not built.
 - Do **not** use a native `<select>`, `<input type="date">` or `<input
   type="number">`. Use `Select`, `DateInput` and `MoneyInput` from
   `components/ui/` — the OS draws none of those (§12).
+- Do **not** hand-draw the header of a document screen, split its view and edit
+  into two components, or print a table figure outside `Amount` — and do **not**
+  drop a document from `DOCUMENT_SCREENS` or relax its assertions (§12).
+- Do **not** report a UI change done without running the `ui-audit` skill
+  against the nearest finished screen (§12).
 - Do **not** hand-write a control that already exists in `components/ui/` —
   a search box, a dialog, an amount field, a picker. One repeated control is one
   component, and `tests/design-system.test.ts` fails on a copy (§12).
@@ -4320,6 +4375,7 @@ process allowed to restate positions, and it is not built.
 | A history says who and when, never what | `audit_log` stores no field-level snapshot, so the panel reports that a record was edited and by whom, and cannot say which field moved. Adding a diff means storing one, which is a much larger change than the `event` column was. |
 | Rows written before `event` existed read as a bare verb | Rows written before the migration carry `event = null` and report "Dibuat" or "Diubah". They are not backfilled, because nothing in the table records which transition they actually were — inferring one from a timestamp would be a guess presented as a fact. |
 | The suite leaves fixture currencies behind | `cleanupFixtures` removes accounts, partners, mappings and journals but never a `ref_currency` row, so `curr.TESTEUR`, `test.ZZTESTCUR` and the DN/CN suite's `curr.DNCA` persist in whatever database `npm test` last ran against. Harmless now that `otherCurrency` is always the suite's own row rather than `currencies[1]` — that opportunistic pick is what let the leftover become the fixture and silently disable the third-currency refusal test. Deleting them would mean hard-deleting master data, which the application itself never does. |
+| Only the Journal is on the shared document shape | `DOCUMENT_SCREENS` holds the Journal alone, on the user's decision to do it first. Budget, Cash Bank Transaction, Cash Bank Transfer, Debit / Credit Note and Funding Request still draw their own headers — four of them link the breadcrumb's module segment ("Finance"), which §8 says is plain text — and Funding Request's register has no `.ract` column. Moving each onto `DocumentHeader` / `Amount` and adding it to the list is the follow-up. |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |

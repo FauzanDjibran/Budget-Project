@@ -663,6 +663,7 @@ export type JournalLineRow = {
   accountName: string;
   partnerId: number | null;
   partnerLabel: string | null;
+  partnerName: string | null;
   currencyId: number;
   /** The line's transaction currency, which need not be the base currency. */
   currencyLabel: string;
@@ -697,7 +698,11 @@ export type JournalRow = {
   lineCount: number;
 };
 
-export type JournalDetail = JournalRow & { lines: JournalLineRow[] };
+export type JournalDetail = JournalRow & {
+  /** Beside the label, as every read-only Company field states it. */
+  companyName: string;
+  lines: JournalLineRow[];
+};
 
 const totalOf = (lines: { debit_amount: { toNumber(): number }; kredit_amount: { toNumber(): number } }[]) => ({
   debit: lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0),
@@ -750,13 +755,13 @@ export async function getJournal(
   const j = await prisma.accJournal.findFirst({
     where: { id, company_id: { in: companyIds } },
     include: {
-      company: { select: { company_label: true } },
+      company: { select: { company_label: true, company_name: true } },
       source_doc_type: { select: { doc_label: true, doc_table: true } },
       lines: {
         orderBy: { sequence_no: "asc" },
         include: {
           account: { select: { account_label: true, account_name: true } },
-          partner: { select: { partner_label: true } },
+          partner: { select: { partner_label: true, partner_name: true } },
           currency: { select: { currency_label: true } },
         },
       },
@@ -769,6 +774,7 @@ export async function getJournal(
     journalNo: j.journal_no,
     postingDate: j.posting_date ? j.posting_date.toISOString() : null,
     companyLabel: j.company.company_label,
+    companyName: j.company.company_name,
     companyId: j.company_id,
     description: j.description,
     status: j.status,
@@ -786,6 +792,7 @@ export async function getJournal(
       accountName: l.account.account_name,
       partnerId: l.partner_id,
       partnerLabel: l.partner?.partner_label ?? null,
+      partnerName: l.partner?.partner_name ?? null,
       currencyId: l.currency_id,
       currencyLabel: l.currency.currency_label,
       debit: l.debit_amount.toNumber(),

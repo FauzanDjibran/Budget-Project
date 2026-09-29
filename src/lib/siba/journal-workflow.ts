@@ -133,10 +133,3 @@ export function availableJournalActions(
     (a) => journalTransitionAllowed(a, status) && can[a]
   );
 }
-
-/** How a status reads, and which badge it wears. */
-export const JOURNAL_STATUS_BADGE: Record<JournalStatus, string> = {
-  Draft: "s-warn",
-  Posted: "s-ok",
-  Cancelled: "s-mute",
-};
