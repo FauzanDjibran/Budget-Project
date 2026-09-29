@@ -452,8 +452,9 @@ src/
                          Semua),
                          RecordHistory + RecordHistoryCard (a record's own
                          audit trail, at the foot of every form),
-                         DocumentHeader (a document screen's page header) and
-                         Amount (a money figure in a table),
+                         DocumentHeader (a document screen's page header),
+                         Amount (a money figure in a table), PartnerCell (a
+                         journal line's Partner and its rule warning),
                          Dialog, ConfirmDialog, ToastProvider
   lib/
     prisma.ts            Client singleton with adapter; the cache is keyed on the
@@ -2346,6 +2347,21 @@ Specified in the concept doc, **not yet implemented** (see §13):
   **Company filter**, **several accounts** (`?accounts=3,17,42`) and a date
   range. Each account gets its own table, rolled up to opening / debit /
   credit / closing and expandable to its entries.
+- **An entry states its journal line's Partner, in a column of its own** —
+  Tanggal · Journal · Partner · Keterangan · Debit · Kredit · Saldo — as a code
+  chip and name, or a dash where the line recorded none. It is read off the
+  journal line, never inferred from the account. **Only an account that
+  requires a Partner may carry one, and every line on it must**; a line
+  breaking either half is a system fault, and `partnerMismatch` in `journal.ts`
+  is the one statement of it. The fault is shown, never repaired: under the
+  cell (`tanpa Partner` / `account tanpa Partner`), as a `.rwarn` chip on the
+  account's header because accounts open folded, and as a notice above the
+  report naming the accounts. The Journal view shows the same warning on the
+  same line — both draw the cell through `PartnerCell`. It is a warning and not
+  a refusal, on the user's instruction: the manual journal already refuses the
+  fault by the account's rule, but the document paths set a line's Partner from
+  the Purpose and `postJournal` does not check it against the account's flag,
+  so an account mapped without `require_partner` is exactly how one appears.
 - **The Trial Balance takes no account choice** (`company-period`): the
   Company, a free date range and one checkbox, *Tampilkan account tanpa saldo*
   (`?all=1`). On the user's instruction — its whole purpose is to check that
@@ -2392,8 +2408,10 @@ Specified in the concept doc, **not yet implemented** (see §13):
   names the foreign currencies that fed it.
 - **Do not change unless:** explicitly instructed. **Do not sum across accounts
   in the General Ledger** — that is the Trial Balance's job — do not group
-  either report by transaction currency again, and do not give the Trial
-  Balance an account filter back.
+  either report by transaction currency again, do not give the Trial
+  Balance an account filter back, do not fold the General Ledger's Partner
+  back under the description, and never infer a line's Partner from its account
+  or quietly hide one that breaks the rule.
 - **Status:** Frozen, current.
 
 ### An Opening Balance is a snapshot, and a report's opening stands on it (FROZEN)
@@ -3365,7 +3383,10 @@ below in outline because the half of it that still holds is easy to lose.**
       normal balance, a company, a row number — is folded into the cell it belongs to
       (`.rsub`, `.nb`) or dropped where the filter already states it. A report that has
       to be scrolled horizontally cannot be read across a row, which is the only way a
-      ledger is read.
+      ledger is read. **The General Ledger's Partner is the one exception**, on the
+      user's instruction: whose line it is, is the question a Partner-bearing
+      account is read for, so it is a column of its own (see "The ledger reports
+      run one Company at a time").
   12. **Export belongs in `.ph-act`, to the left of Tampilkan.** Print and XLSX are
       deferred, and adding them later changes no layout.
   13. **The footnote is one sentence.** It says the single thing a reader needs in

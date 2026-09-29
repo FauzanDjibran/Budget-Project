@@ -1288,6 +1288,27 @@ const fileText = (rel: string) => {
   return code(f!.text);
 };
 
+test("a journal line's Partner is drawn by one cell, on the Journal and the General Ledger", () => {
+  // The two screens that show journal lines must say the same thing about a
+  // line's Partner — including its warning when the line breaks its account's
+  // rule — so both draw it through PartnerCell, and the General Ledger keeps
+  // the Partner in a column of its own rather than folded under the text.
+  const gl = fileText("src/components/report/general-ledger-report.tsx");
+  assert.match(gl, /<th[^>]*>Partner<\/th>/, "the General Ledger has no Partner column");
+  for (const rel of [
+    "src/components/report/general-ledger-report.tsx",
+    "src/components/accounting/journal-form.tsx",
+  ]) {
+    assert.match(fileText(rel), /<PartnerCell\b/, `${rel} draws a Partner without PartnerCell`);
+  }
+  // Only the warning is PartnerCell's: "tanpa Partner" as a plain dash on a
+  // Budget whose category names no Partner is a different statement.
+  const own = files.filter(
+    (f) => !f.rel.endsWith("ui/partner-cell.tsx") && /account tanpa Partner|=== "missing"|=== "unexpected"/.test(code(f.text))
+  );
+  assert.deepEqual(own.map((f) => f.rel), [], "The Partner warning is PartnerCell's alone.");
+});
+
 test("a breadcrumb's module segment is never a link", () => {
   // A module has no page of its own (§8), so the first segment is plain text.
   // Four Finance documents had linked it to their own register, which made

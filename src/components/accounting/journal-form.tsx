@@ -11,6 +11,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { DocumentHeader } from "@/components/ui/document-header";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import { MoneyInput } from "@/components/ui/money-input";
+import { PartnerCell } from "@/components/ui/partner-cell";
 import { RateInput } from "@/components/ui/rate-input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
@@ -703,14 +704,11 @@ export function JournalForm({
                             </span>
                           </td>
                           <td>
-                            {l.partnerLabel ? (
-                              <span className="idc">
-                                <span className="lab">{l.partnerLabel}</span>
-                                <span className="nm">{l.partnerName}</span>
-                              </span>
-                            ) : (
-                              <span className="dash">—</span>
-                            )}
+                            <PartnerCell
+                              label={l.partnerLabel}
+                              name={l.partnerName}
+                              mismatch={l.partnerMismatch}
+                            />
                           </td>
                           <td className="mut">
                             {l.description || <span className="dash">—</span>}

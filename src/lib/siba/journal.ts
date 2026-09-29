@@ -654,6 +654,27 @@ async function nextJournalNo(
 
 // ------------------------------------------------------------------ reading
 
+export type PartnerMismatch = "missing" | "unexpected";
+
+/**
+ * Whether a journal line's Partner agrees with its account.
+ *
+ * Only an account that requires a Partner may carry one, and every line on it
+ * must: it keeps a subject history per Partner. `missing` is a line on such an
+ * account without a Partner, `unexpected` a line naming a Partner on an account
+ * that takes none. Either is a system fault, not a bookkeeping choice, so every
+ * screen that shows a journal line — the Journal and the General Ledger — says
+ * so on the line. Read off the line and the account as they are, never repaired.
+ */
+export function partnerMismatch(
+  requirePartner: boolean,
+  partnerId: number | null
+): PartnerMismatch | null {
+  if (requirePartner && partnerId == null) return "missing";
+  if (!requirePartner && partnerId != null) return "unexpected";
+  return null;
+}
+
 export type JournalLineRow = {
   id: number;
   sequenceNo: number;
@@ -664,6 +685,8 @@ export type JournalLineRow = {
   partnerId: number | null;
   partnerLabel: string | null;
   partnerName: string | null;
+  /** Where the line breaks its account's Partner rule — see `partnerMismatch`. */
+  partnerMismatch: PartnerMismatch | null;
   currencyId: number;
   /** The line's transaction currency, which need not be the base currency. */
   currencyLabel: string;
@@ -760,7 +783,9 @@ export async function getJournal(
       lines: {
         orderBy: { sequence_no: "asc" },
         include: {
-          account: { select: { account_label: true, account_name: true } },
+          account: {
+            select: { account_label: true, account_name: true, require_partner: true },
+          },
           partner: { select: { partner_label: true, partner_name: true } },
           currency: { select: { currency_label: true } },
         },
@@ -793,6 +818,7 @@ export async function getJournal(
       partnerId: l.partner_id,
       partnerLabel: l.partner?.partner_label ?? null,
       partnerName: l.partner?.partner_name ?? null,
+      partnerMismatch: partnerMismatch(l.account.require_partner, l.partner_id),
       currencyId: l.currency_id,
       currencyLabel: l.currency.currency_label,
       debit: l.debit_amount.toNumber(),

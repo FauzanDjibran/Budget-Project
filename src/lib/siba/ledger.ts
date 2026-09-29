@@ -5,6 +5,7 @@ import type { AccountSection, Prisma } from "@/generated/prisma/client";
 import { compareCodes } from "./account-code";
 import { isBaseCurrency } from "./currency";
 import { roundBase } from "./fx";
+import { partnerMismatch, type PartnerMismatch } from "./journal";
 import { openingBasisFor } from "./opening-balance";
 import type { PeriodRange } from "./period";
 
@@ -232,7 +233,16 @@ export type LedgerEntry = {
   journalNo: string;
   date: string;
   description: string;
+  /** The line's own Partner — what the journal recorded, never inferred. */
   partnerLabel: string | null;
+  partnerName: string | null;
+  /**
+   * Where the line breaks its account's Partner rule, which only a write that
+   * bypassed the engine's checks can produce: `missing` is an account that
+   * requires a Partner holding a line without one, `unexpected` a line naming a
+   * Partner on an account that takes none. Null when the two agree.
+   */
+  partnerMismatch: PartnerMismatch | null;
   /** Base currency, like every figure in these two reports. */
   debit: number;
   credit: number;
@@ -256,6 +266,8 @@ export type LedgerAccount = {
   name: string;
   companyLabel: string;
   normalBalance: string;
+  /** Whether every line on this account names a Partner. */
+  requirePartner: boolean;
   opening: number;
   debit: number;
   credit: number;
@@ -315,6 +327,7 @@ export async function generalLedgerReport(
       account_label: true,
       account_name: true,
       normal_balance: true,
+      require_partner: true,
       company_id: true,
       company: { select: { company_label: true } },
     },
@@ -342,7 +355,7 @@ export async function generalLedgerReport(
       orderBy: [{ journal: { posting_date: "asc" } }, { journal_id: "asc" }, { sequence_no: "asc" }],
       include: {
         journal: { select: { id: true, journal_no: true, posting_date: true } },
-        partner: { select: { partner_label: true } },
+        partner: { select: { partner_label: true, partner_name: true } },
         currency: { select: { currency_label: true } },
       },
     }),
@@ -375,6 +388,8 @@ export async function generalLedgerReport(
         date: postedOn(l.journal.posting_date).toISOString(),
         description: l.description,
         partnerLabel: l.partner?.partner_label ?? null,
+        partnerName: l.partner?.partner_name ?? null,
+        partnerMismatch: partnerMismatch(a.require_partner, l.partner_id),
         debit: d,
         credit: c,
         balance: running,
@@ -396,6 +411,7 @@ export async function generalLedgerReport(
       name: a.account_name,
       companyLabel: a.company.company_label,
       normalBalance: a.normal_balance,
+      requirePartner: a.require_partner,
       opening,
       debit,
       credit,
