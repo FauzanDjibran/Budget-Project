@@ -11,10 +11,9 @@ import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
  * pair (a debit line has no kredit), or the figure itself where a nil is an
  * answer somebody checks.
  *
- * `ledger` prints it the accountant's way — a negative in parentheses, and no
- * currency symbol, because the column header states it (`Debit (Rp)`). The
- * Journal and the General Ledger print every figure so; `symbol` puts the
- * prefix back where no header covers the figure.
+ * `ledger` prints it the accountant's way — a negative in parentheses rather
+ * than a minus, and still with its currency, like every other amount in the
+ * application. The Journal and the General Ledger print every figure so.
  */
 export function Amount({
   value,
@@ -22,24 +21,21 @@ export function Amount({
   nil = "figure",
   big,
   ledger,
-  symbol = !ledger,
 }: {
   value: number;
   currency?: string;
   nil?: "dash" | "figure";
   /** A total: larger, in the brand colour. */
   big?: boolean;
-  /** Negative in parentheses, currency stated by the column header. */
+  /** A negative in parentheses: `(Rp 1.500.000)`. */
   ledger?: boolean;
-  /** Prefix the currency symbol. Defaults to on, and off for a `ledger` figure. */
-  symbol?: boolean;
 }) {
   if (nil === "dash" && Math.round(value * 100) === 0) {
     return <span className="dash">—</span>;
   }
   return (
     <span className={`mny${big ? " big" : ""}`}>
-      {ledger ? formatAccounting(value, currency, { symbol }) : formatMoney(value, currency)}
+      {ledger ? formatAccounting(value, currency) : formatMoney(value, currency)}
     </span>
   );
 }

@@ -161,40 +161,29 @@ export function formatPercent(change: number, base: number): string | null {
   return `${formatNumber((change / Math.abs(base)) * 100, 1)}%`;
 }
 
-/** What a figure in this currency is prefixed with: `Rp`, `USD`. */
-export function currencySymbol(currencyLabel = "IDR"): string {
-  return currencyLabel === "IDR" ? "Rp" : currencyLabel;
-}
-
-const moneyDecimals = (currencyLabel: string) => (currencyLabel === "IDR" ? 0 : 2);
-
 /** IDR renders as `Rp 1.250.000` with no decimals; other currencies keep two. */
 export function formatMoney(
   value: number | string | { toString(): string } | null | undefined,
   currencyLabel = "IDR"
 ): string {
-  return `${currencySymbol(currencyLabel)} ` + formatNumber(value, moneyDecimals(currencyLabel));
+  const prefix = currencyLabel === "IDR" ? "Rp " : `${currencyLabel} `;
+  return prefix + formatNumber(value, currencyLabel === "IDR" ? 0 : 2);
 }
 
 /**
- * A figure the accountant's way: `(1.500.000)` below zero rather than
- * `-1.500.000`, and the currency symbol only where nothing else states it — a
- * column whose header says `Debit (Rp)` carries digits alone, which is what
- * keeps a column of them scannable.
+ * A figure the accountant's way: `(Rp 1.500.000)` below zero rather than
+ * `Rp -1.500.000`, otherwise exactly `formatMoney`.
  *
- * A figure that rounds to nil at the currency's precision is nil, never `(0)`.
+ * A figure that rounds to nil at the currency's precision is nil, never `(Rp 0)`.
  */
 export function formatAccounting(
   value: number | string | { toString(): string } | null | undefined,
-  currencyLabel = "IDR",
-  { symbol = true }: { symbol?: boolean } = {}
+  currencyLabel = "IDR"
 ): string {
   const n = Number(value ?? 0);
-  const decimals = moneyDecimals(currencyLabel);
-  const negative = Math.round(n * 10 ** decimals) < 0;
-  const body = formatNumber(negative ? -n : Math.abs(n), decimals);
-  const figure = symbol ? `${currencySymbol(currencyLabel)} ${body}` : body;
-  return negative ? `(${figure})` : figure;
+  const decimals = currencyLabel === "IDR" ? 0 : 2;
+  const figure = formatMoney(Math.abs(n), currencyLabel);
+  return Math.round(n * 10 ** decimals) < 0 ? `(${figure})` : figure;
 }
 
 /** One currency's share of a figure. Totals are kept per currency, never summed. */

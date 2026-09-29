@@ -7,7 +7,7 @@ import { ReportSummary } from "@/components/report/report-summary";
 import { Drill } from "@/components/report/drill";
 import { Amount } from "@/components/ui/amount";
 import { PartnerCell } from "@/components/ui/partner-cell";
-import { currencySymbol, formatAccounting, formatDate, formatForeignFace } from "@/lib/format";
+import { formatAccounting, formatDate, formatForeignFace } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { GeneralLedgerReport as Report } from "@/lib/siba/ledger";
 
@@ -70,7 +70,6 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
   const faultyLines = faulty.reduce((t, a) => t + mismatchesOf(a), 0);
 
   const allOpen = open.size === report.accounts.length;
-  const symbol = currencySymbol(BASE_CURRENCY_LABEL);
   const setAll = (o: boolean) =>
     setOpen(o ? new Set(report.accounts.map((a) => a.id)) : new Set());
 
@@ -108,9 +107,7 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
 
       {report.accounts.map((a) => {
         const isOpen = open.has(a.id);
-        // Every figure here is base currency, so the column headers state it
-        // once and the cells carry digits alone. The summary strip keeps the
-        // symbol: a figure standing on its own has no header to lean on. The
+        // Every figure here is base currency, a negative in parentheses. The
         // transaction-currency face lives beside the description.
         const money = (n: number) => formatAccounting(n, BASE_CURRENCY_LABEL);
         return (
@@ -160,13 +157,13 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                       <th style={{ width: 220 }}>Partner</th>
                       <th>Keterangan</th>
                       <th className="num" style={{ width: 126 }}>
-                        Debit ({symbol})
+                        Debit
                       </th>
                       <th className="num" style={{ width: 126 }}>
-                        Kredit ({symbol})
+                        Kredit
                       </th>
                       <th className="num" style={{ width: 134 }}>
-                        Saldo ({symbol})
+                        Saldo
                       </th>
                     </tr>
                   </thead>

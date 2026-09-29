@@ -22,13 +22,7 @@ import {
   updateJournal,
   type JournalLineValues,
 } from "@/app/actions/journal";
-import {
-  currencySymbol,
-  formatDate,
-  formatForeignFace,
-  formatMoney,
-  todayIso,
-} from "@/lib/format";
+import { formatDate, formatForeignFace, formatMoney, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import type { Company } from "@/lib/siba/company-access";
 import { documentHref } from "@/lib/siba/document-links";
@@ -504,10 +498,10 @@ export function JournalForm({
                       <th style={{ width: 220 }}>Partner</th>
                       <th>Keterangan</th>
                       <th className="num" style={{ width: 150 }}>
-                        Debit ({currencySymbol(BASE_CURRENCY_LABEL)})
+                        Debit
                       </th>
                       <th className="num" style={{ width: 150 }}>
-                        Kredit ({currencySymbol(BASE_CURRENCY_LABEL)})
+                        Kredit
                       </th>
                     </tr>
                   )}
@@ -740,18 +734,15 @@ export function JournalForm({
                   <tr className="totrow">
                     {/* Balance is stated only when it breaks (§12, report
                         rule 10): equal totals are visible in the two columns. */}
-                    {/* While editing, the columns hold each line's own currency,
-                        so the rupiah totals carry their symbol; on view the
-                        headers already state it. */}
                     <td colSpan={editing ? 6 : 4} style={{ textAlign: "right" }}>
                       Total
                       {imbalance && <span className="overtag">{imbalance}</span>}
                     </td>
                     <td className="num">
-                      <Amount value={totalDebit} big ledger symbol={editing} />
+                      <Amount value={totalDebit} big ledger />
                     </td>
                     <td className="num">
-                      <Amount value={totalCredit} big ledger symbol={editing} />
+                      <Amount value={totalCredit} big ledger />
                     </td>
                     {editing && <td />}
                   </tr>

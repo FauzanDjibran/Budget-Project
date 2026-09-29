@@ -1311,8 +1311,8 @@ test("a journal line's Partner is drawn by one cell, on the Journal and the Gene
 
 describe("a Journal and General Ledger figure reads the accountant's way", () => {
   // The screens where debit and kredit are read: every figure goes through
-  // Amount in its ledger mode — digits only under a header that names the
-  // currency, a negative in parentheses, an empty side as an em dash.
+  // Amount in its ledger mode — its currency on the figure like every other
+  // amount, a negative in parentheses, an empty side as an em dash.
   const LEDGER_SCREENS = [
     "src/components/report/general-ledger-report.tsx",
     "src/components/accounting/journal-form.tsx",
@@ -1344,21 +1344,16 @@ describe("a Journal and General Ledger figure reads the accountant's way", () =>
     });
   }
 
-  test("a debit, kredit or saldo header names its currency", () => {
+  test("the currency sits on each figure, not in the header", () => {
+    // The user's rule: every amount in the application carries its own
+    // currency, so these screens read like the rest of it.
     for (const rel of LEDGER_SCREENS) {
-      const bare = [
-        ...fileText(rel).matchAll(/<th className="num"[^>]*>\s*(Debit|Kredit|Saldo)\s*<\/th>/g),
-      ];
-      // The Journal form's edit mode is the one exception: there the columns
-      // hold each line's own currency, and its inputs label themselves.
-      const allowed = rel.endsWith("journal-form.tsx") ? 2 : 0;
-      assert.ok(bare.length <= allowed, `${rel} has a money header without its currency`);
+      assert.doesNotMatch(
+        fileText(rel),
+        /<th className="num"[^>]*>\s*(Debit|Kredit|Saldo) \(/,
+        `${rel} names the currency in a header rather than on the figures`
+      );
     }
-    assert.match(
-      fileText("src/components/accounting/journal-form.tsx"),
-      /Debit \(\{currencySymbol\(/,
-      "the Journal view names its currency in the header"
-    );
   });
 });
 
