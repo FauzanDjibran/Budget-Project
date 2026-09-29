@@ -2,12 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Icon } from "@/components/icon";
-import { DateInput } from "@/components/ui/date-input";
 import type { RefOption } from "@/lib/siba/records";
 import { reportHref } from "@/lib/siba/reports";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { useReportRun } from "./report-run";
+import { INVALID_RANGE_HINT, PeriodRow, invalidRange } from "./period-row";
 
 /**
  * The filter for every report whose subject is a **set**: several accounts for
@@ -83,12 +82,12 @@ export function SubjectParams({
   const [start, setStart] = useState(from);
   const [end, setEnd] = useState(to);
 
-  const invalidRange = Boolean(start && end && start > end);
+  const invalid = invalidRange(start, end);
   const missingSubject = subjectRequired && selected.length === 0;
 
   useReportRun(
     () => {
-      if (invalidRange || missingSubject) return;
+      if (invalid || missingSubject) return;
       startTransition(() => {
         router.push(
           reportHref(slug, {
@@ -102,9 +101,9 @@ export function SubjectParams({
       });
     },
     {
-      blocked: invalidRange || missingSubject,
-      hint: invalidRange
-        ? "Tanggal akhir tidak boleh lebih awal dari tanggal mulai."
+      blocked: invalid || missingSubject,
+      hint: invalid
+        ? INVALID_RANGE_HINT
         : missingHint,
       pending,
     }
@@ -127,22 +126,7 @@ export function SubjectParams({
         </div>
       </div>
 
-      <div className="rrow">
-        <span className="rl">Periode</span>
-        <div className="rf date">
-          <DateInput value={start} invalid={invalidRange} onChange={setStart} />
-        </div>
-        <span className="rl">s/d</span>
-        <div className="rf date">
-          <DateInput value={end} invalid={invalidRange} onChange={setEnd} />
-        </div>
-        {invalidRange && (
-          <span className="err">
-            <Icon name="warn" size={11} />
-            Tanggal akhir lebih awal dari tanggal mulai.
-          </span>
-        )}
-      </div>
+      <PeriodRow start={start} end={end} onStart={setStart} onEnd={setEnd} />
     </>
   );
 }

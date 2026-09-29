@@ -2,12 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Icon } from "@/components/icon";
 import { Combobox } from "@/components/ui/combobox";
-import { DateInput } from "@/components/ui/date-input";
 import type { RefOption } from "@/lib/siba/records";
 import { reportHref } from "@/lib/siba/reports";
 import { useReportRun } from "./report-run";
+import { INVALID_RANGE_HINT, PeriodRow, invalidRange } from "./period-row";
 
 /**
  * The filter for the `cash-bank-period` parameter set: a Cash & Bank subject
@@ -69,12 +68,12 @@ export function ReportParams({
   const [start, setStart] = useState(from);
   const [end, setEnd] = useState(to);
 
-  const invalidRange = !dateless && Boolean(start && end && start > end);
+  const invalid = !dateless && invalidRange(start, end);
   const missingSubject = subjectRequired && !subject;
 
   useReportRun(
     () => {
-      if (invalidRange || missingSubject) return;
+      if (invalid || missingSubject) return;
       startTransition(() => {
         router.push(
           reportHref(slug, {
@@ -86,9 +85,9 @@ export function ReportParams({
       });
     },
     {
-      blocked: invalidRange || missingSubject,
-      hint: invalidRange
-        ? "Tanggal akhir tidak boleh lebih awal dari tanggal mulai."
+      blocked: invalid || missingSubject,
+      hint: invalid
+        ? INVALID_RANGE_HINT
         : "Pilih Cash & Bank terlebih dahulu.",
       pending,
     }
@@ -109,24 +108,7 @@ export function ReportParams({
         </div>
       </div>
 
-      {!dateless && (
-        <div className="rrow">
-          <span className="rl">Periode</span>
-          <div className="rf date">
-            <DateInput value={start} invalid={invalidRange} onChange={setStart} />
-          </div>
-          <span className="rl">s/d</span>
-          <div className="rf date">
-            <DateInput value={end} invalid={invalidRange} onChange={setEnd} />
-          </div>
-          {invalidRange && (
-            <span className="err">
-              <Icon name="warn" size={11} />
-              Tanggal akhir lebih awal dari tanggal mulai.
-            </span>
-          )}
-        </div>
-      )}
+      {!dateless && <PeriodRow start={start} end={end} onStart={setStart} onEnd={setEnd} />}
     </>
   );
 }

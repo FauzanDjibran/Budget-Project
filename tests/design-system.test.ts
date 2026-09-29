@@ -1025,7 +1025,7 @@ describe("a report runs from the header, like a form saves from it", () => {
   test("a filter lays itself out in rows", () => {
     // The rows are what make the filter read in the order it is filled in; a
     // parameter set whose controls sat loose in `.rfil` would wrap as one line.
-    for (const name of ["report-params", "subject-params", "fiscal-period-params"]) {
+    for (const name of ["report-params", "subject-params", "fiscal-period-params", "trial-balance-params"]) {
       const f = files.find((x) => x.rel === `src/components/report/${name}.tsx`)!;
       assert.match(code(f.text), /className="rrow"/, `${name} renders no .rrow`);
       assert.match(code(f.text), /useReportRun\(/, `${name} does not register its run with the header`);

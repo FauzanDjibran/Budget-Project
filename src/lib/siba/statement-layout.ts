@@ -159,8 +159,20 @@ const isZero = (values: number[]) => values.every((v) => Math.round(v * 100) ===
 const add = (a: number[], b: number[]) => a.map((v, i) => roundBase(v + b[i]));
 const clean = (values: number[]) => values.map((v) => (v === 0 ? 0 : v));
 
+/** What a statement other than the two financial ones asks of the shared tree. */
+type TreeOptions = {
+  /**
+   * A side per column that overrides the account's own group — the Trial
+   * Balance's Mutasi Debit and Mutasi Kredit columns are sums of one side, and
+   * must add up the same whichever type the account sits in.
+   */
+  fixedSides?: (boolean | null)[];
+  /** Keep accounts whose every figure is nil — the Trial Balance's *semua account*. */
+  keepAll?: boolean;
+};
+
 /**
- * The part both statements share: signing each pair by the side of the group
+ * The part every statement shares: signing each pair by the side of the group
  * its account sits in, rolling sub-accounts into their parents, and emitting
  * Category → Kelompok → Account → sub-account → Partner for one group.
  *
@@ -175,9 +187,11 @@ function statementTree(
   partners: Map<number, StatementPartner>,
   sideOf: (a: StatementAccount) => boolean | null,
   placed: Map<number, number[]> = new Map(),
-  trailing: Map<number, TrailingLine[]> = new Map()
+  trailing: Map<number, TrailingLine[]> = new Map(),
+  options: TreeOptions = {}
 ) {
   const n = columns.length;
+  const { fixedSides = [], keepAll = false } = options;
   const zeros = () => new Array<number>(n).fill(0);
 
   const accountById = new Map(accounts.map((a) => [a.id, a]));
@@ -189,7 +203,7 @@ function statementTree(
     for (const p of pairs) {
       const account = accountById.get(p.accountId);
       if (!account) continue;
-      const credit = sideOf(account);
+      const credit = fixedSides[col] ?? sideOf(account);
       if (credit === null) {
         if (Math.round((p.debit - p.credit) * 100) !== 0) {
           unplaced.add(`${account.label} ${account.name}`);
@@ -254,7 +268,7 @@ function statementTree(
 
   const emitAccount = (rows: StatementRow[], a: StatementAccount, depth: number) => {
     const values = totalOf(a);
-    if (isZero(values) && !forced.has(a.id)) return;
+    if (isZero(values) && !forced.has(a.id) && !keepAll) return;
 
     const split = byPartner.get(a.id);
     const named = split ? [...split.entries()].filter(([pid, v]) => pid !== null && !isZero(v)) : [];
@@ -352,7 +366,7 @@ function statementTree(
           roots: s.roots.sort(byLabel),
           total: s.roots.reduce((sum, r) => add(sum, withTrailing(r)), zeros()),
         }))
-        .filter((s) => !isZero(s.total) || s.roots.some((r) => forced.has(r.id)));
+        .filter((s) => keepAll || !isZero(s.total) || s.roots.some((r) => forced.has(r.id)));
       if (!shown.length) continue;
 
       const catTotal = shown.reduce((sum, s) => add(sum, s.total), zeros());
@@ -479,4 +493,78 @@ export function buildBalanceSheet(
   }
 
   return { rows, debitTotal: clean(debitTotal), creditTotal: clean(creditTotal), unplaced: tree.unplaced() };
+}
+
+// -------------------------------------------------------------- trial balance
+
+/** One account's figures on a Trial Balance, raw: debit positive. */
+export type TrialBalanceFigure = {
+  accountId: number;
+  /** Opening net, debit minus credit. */
+  opening: number;
+  debit: number;
+  credit: number;
+};
+
+export type BuiltTrialBalance = {
+  /** Four values per row: Saldo Awal, Mutasi Debit, Mutasi Kredit, Saldo Akhir. */
+  rows: StatementRow[];
+  unplaced: string[];
+};
+
+/**
+ * The Trial Balance as the same tree the Neraca and the Laba Rugi are read in:
+ * Account Type → Category → Kelompok → Account → sub-account.
+ *
+ * Saldo Awal and Saldo Akhir are signed by the **type's** normal balance, the
+ * Neraca's rule, so a heading's total is a sum a reader can check and a contra
+ * account (Akumulasi Penyusutan) prints as the deduction it is. The two
+ * movement columns are one side each and never signed, so every heading's
+ * Mutasi Debit is the plain sum of the debits beneath it.
+ *
+ * There is no total per type: opening and closing of opposite sides add to
+ * nothing, and the movement totals the report checks sit at the foot, once.
+ */
+export function buildTrialBalance(
+  accounts: StatementAccount[],
+  figures: TrialBalanceFigure[],
+  keepAll: boolean
+): BuiltTrialBalance {
+  const opening: StatementPair[] = [];
+  const debit: StatementPair[] = [];
+  const credit: StatementPair[] = [];
+  const closing: StatementPair[] = [];
+  for (const f of figures) {
+    const base = { accountId: f.accountId, partnerId: null };
+    opening.push({ ...base, debit: f.opening, credit: 0 });
+    debit.push({ ...base, debit: f.debit, credit: 0 });
+    credit.push({ ...base, debit: 0, credit: f.credit });
+    closing.push({ ...base, debit: roundBase(f.opening + f.debit - f.credit), credit: 0 });
+  }
+
+  const tree = statementTree(
+    accounts,
+    [opening, debit, credit, closing],
+    new Map(),
+    (a) => a.type?.credit ?? null,
+    new Map(),
+    new Map(),
+    { fixedSides: [null, false, true, null], keepAll }
+  );
+
+  const types = new Map<number, NonNullable<StatementAccount["type"]>>();
+  for (const a of accounts) if (a.type) types.set(a.type.id, a.type);
+  const ordered = [...types.values()].sort((x, y) => compareCodes(x.label, y.label));
+
+  const rows: StatementRow[] = [];
+  for (const type of ordered) {
+    const heading: StatementRow = { key: `s${type.id}`, kind: "step", depth: 0, code: type.label, name: type.name, values: [] };
+    const at = rows.length;
+    rows.push(heading);
+    heading.values = clean(tree.emitGroup(rows, (a) => a.type?.id === type.id));
+    // A type with nothing beneath it says nothing; drop its heading too.
+    if (rows.length === at + 1) rows.pop();
+  }
+
+  return { rows, unplaced: tree.unplaced() };
 }

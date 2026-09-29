@@ -19,8 +19,7 @@ import type { PermissionCode } from "./permissions";
 /**
  * Which parameters a report takes.
  *
- * Three sets exist: a Cash & Bank subject plus a date range, several accounts
- * plus a date range, and several Partners plus a date range. A fourth arrives
+ * Each set below is one shape of filter. A new one arrives
  * when a report needs different parameters — as an added member here, so the
  * route keeps resolving parameters in one place rather than each report parsing
  * the query string its own way.
@@ -29,6 +28,11 @@ export type ReportParams =
   | "cash-bank-period"
   | "account-period"
   | "subledger-period"
+  /**
+   * The Company and a date range, nothing else — the Trial Balance, whose
+   * subject is every account by definition. `?all=1` lists the silent ones too.
+   */
+  | "company-period"
   /**
    * A Cash & Bank subject with **no** date range — for a report whose answer is
    * a standing position rather than a period's movement. Rate layers are that:
@@ -133,11 +137,11 @@ const FIXED_REPORTS = [
     module: "accounting",
     name: "Trial Balance",
     desc:
-      "Saldo awal, mutasi debit, mutasi kredit, dan saldo akhir seluruh account yang " +
-      "bergerak pada rentang tanggal — per currency, dengan uji keseimbangan.",
+      "Saldo awal, mutasi debit, mutasi kredit, dan saldo akhir seluruh account pada " +
+      "rentang tanggal, per tipe dan kelompok — dengan uji keseimbangan debit dan kredit.",
     icon: "calc",
     permission: "REPORT_TRIAL_BALANCE_VIEW",
-    params: "account-period",
+    params: "company-period",
     // Every account at once is the whole idea of a trial balance.
     subjectRequired: false,
   },

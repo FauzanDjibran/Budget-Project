@@ -47,52 +47,19 @@ export function StatementReport({
   rows: StatementRow[];
   companyId: number;
 }) {
-  // Every row with something indented beneath it can fold.
-  const foldable = useMemo(() => {
-    const keys = new Set<string>();
-    rows.forEach((r, i) => {
-      const next = rows[i + 1];
-      if (r.kind !== "subtotal" && next && next.depth > r.depth) keys.add(r.key);
-    });
-    return keys;
-  }, [rows]);
-
-  const partnerHeads = useMemo(
-    () => rows.filter((r) => r.hasPartners).map((r) => r.key),
-    [rows]
-  );
-
-  const [closed, setClosed] = useState<Set<string>>(() => new Set(partnerHeads));
-
-  const toggle = (key: string) =>
-    setClosed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
-  // A row shows unless some heading above it, at a shallower depth, is closed.
-  const visible: StatementRow[] = [];
-  let hiddenBelow: number | null = null;
-  for (const r of rows) {
-    if (hiddenBelow !== null && r.depth > hiddenBelow) continue;
-    hiddenBelow = null;
-    visible.push(r);
-    if (foldable.has(r.key) && closed.has(r.key)) hiddenBelow = r.depth;
-  }
+  const { visible, foldable, closed, toggle, expandAll, collapseAll, allOpen } =
+    useStatementFold(rows);
 
   const comparing = columns.length > 1;
   const main = columns[0];
-  const allOpen = closed.size === 0;
 
   return (
     <>
       <div className="rhead">
         <div className="tspace" />
         <ExpandAll
-          onExpand={() => setClosed(new Set())}
-          onCollapse={() => setClosed(new Set(foldable))}
+          onExpand={expandAll}
+          onCollapse={collapseAll}
           allOpen={allOpen}
         />
       </div>
@@ -125,58 +92,24 @@ export function StatementReport({
               const isOpen = !closed.has(r.key);
               return (
                 <tr key={r.key} className={ROW_CLASS[r.kind]}>
-                  <td className={`stn d${Math.min(r.depth, 6)}`}>
-                    <div className="stc">
-                      {canFold ? (
-                        <button
-                          className="tgl"
-                          onClick={() => toggle(r.key)}
-                          title={
-                            r.hasPartners
-                              ? isOpen
-                                ? "Tutup rincian Partner"
-                                : "Buka rincian Partner"
-                              : isOpen
-                                ? "Tutup"
-                                : "Buka"
-                          }
-                        >
-                          <span className={`chev${isOpen ? " o" : ""}`}>
-                            <Icon name="chev" size={11} />
-                          </span>
-                        </button>
-                      ) : (
-                        <span className="tgl" />
-                      )}
-                      {/* A computed line's account is never posted to, so its
-                          General Ledger is empty — a link there would mislead. */}
-                      {r.kind === "account" && r.accountId && !r.computed ? (
-                        <Link
-                          className="lab"
-                          href={reportHref("general-ledger", {
+                  <StatementNameCell
+                    row={r}
+                    canFold={canFold}
+                    isOpen={isOpen}
+                    onToggle={() => toggle(r.key)}
+                    // A computed line's account is never posted to, so its
+                    // General Ledger is empty — a link there would mislead.
+                    href={
+                      r.kind === "account" && r.accountId && !r.computed
+                        ? reportHref("general-ledger", {
                             company: companyId,
                             accounts: r.accountId,
                             from: main.range.from,
                             to: main.range.to,
-                          })}
-                          title="Buka General Ledger account ini"
-                        >
-                          {r.code}
-                        </Link>
-                      ) : (
-                        r.code && <span className="cd">{r.code}</span>
-                      )}
-                      <span className="nm">{r.name}</span>
-                      {r.computed && (
-                        <span
-                          className="bdg t-slate"
-                          title="Dihitung dari journal Laba Rugi, tidak pernah diposting ke account ini"
-                        >
-                          dihitung
-                        </span>
-                      )}
-                    </div>
-                  </td>
+                          })
+                        : null
+                    }
+                  />
                   {r.values.length === 0 || (canFold && isOpen) ? (
                     // An open heading's rows are on screen, so its total would
                     // only repeat them — it is stated once the heading is
@@ -211,6 +144,117 @@ export function StatementReport({
         </table>
       </div>
     </>
+  );
+}
+
+/**
+ * Which rows of a statement tree can fold, which are folded, and which show.
+ *
+ * Shared by every report laid out on the chart — the Laba Rugi, the Neraca and
+ * the Trial Balance — so Buka Semua and a heading's chevron behave the same on
+ * all of them. Partner breakdowns start closed; everything else starts open.
+ */
+export function useStatementFold(rows: StatementRow[]) {
+  // Every row with something indented beneath it can fold.
+  const foldable = useMemo(() => {
+    const keys = new Set<string>();
+    rows.forEach((r, i) => {
+      const next = rows[i + 1];
+      if (r.kind !== "subtotal" && next && next.depth > r.depth) keys.add(r.key);
+    });
+    return keys;
+  }, [rows]);
+
+  const [closed, setClosed] = useState<Set<string>>(
+    () => new Set(rows.filter((r) => r.hasPartners).map((r) => r.key))
+  );
+
+  const toggle = (key: string) =>
+    setClosed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  // A row shows unless some heading above it, at a shallower depth, is closed.
+  const visible: StatementRow[] = [];
+  let hiddenBelow: number | null = null;
+  for (const r of rows) {
+    if (hiddenBelow !== null && r.depth > hiddenBelow) continue;
+    hiddenBelow = null;
+    visible.push(r);
+    if (foldable.has(r.key) && closed.has(r.key)) hiddenBelow = r.depth;
+  }
+
+  return {
+    visible,
+    foldable,
+    closed,
+    toggle,
+    expandAll: () => setClosed(new Set()),
+    collapseAll: () => setClosed(new Set(foldable)),
+    allOpen: closed.size === 0,
+  };
+}
+
+/** A tree row's first cell: its chevron, its code — a link where it drills — and its name. */
+export function StatementNameCell({
+  row: r,
+  canFold,
+  isOpen,
+  onToggle,
+  href,
+}: {
+  row: StatementRow;
+  canFold: boolean;
+  isOpen: boolean;
+  onToggle: () => void;
+  /** The account's General Ledger, or null where the code is not a link. */
+  href: string | null;
+}) {
+  return (
+    <td className={`stn d${Math.min(r.depth, 6)}`}>
+      <div className="stc">
+        {canFold ? (
+          <button
+            className="tgl"
+            onClick={onToggle}
+            title={
+              r.hasPartners
+                ? isOpen
+                  ? "Tutup rincian Partner"
+                  : "Buka rincian Partner"
+                : isOpen
+                  ? "Tutup"
+                  : "Buka"
+            }
+          >
+            <span className={`chev${isOpen ? " o" : ""}`}>
+              <Icon name="chev" size={11} />
+            </span>
+          </button>
+        ) : (
+          <span className="tgl" />
+        )}
+        {href ? (
+          <Link className="lab" href={href} title="Buka General Ledger account ini">
+            {r.code}
+          </Link>
+        ) : (
+          r.code && <span className="cd">{r.code}</span>
+        )}
+        <span className="nm">{r.name}</span>
+        {r.computed && (
+          <span
+            className="bdg t-slate"
+            title="Dihitung dari journal Laba Rugi, tidak pernah diposting ke account ini"
+          >
+            dihitung
+          </span>
+        )}
+      </div>
+    </td>
   );
 }
 
@@ -259,7 +303,7 @@ function drillFor(
   };
 }
 
-const ROW_CLASS: Record<StatementRow["kind"], string> = {
+export const ROW_CLASS: Record<StatementRow["kind"], string> = {
   step: "st-step",
   category: "st-cat",
   subcategory: "st-sub",
@@ -268,7 +312,7 @@ const ROW_CLASS: Record<StatementRow["kind"], string> = {
   subtotal: "totrow st-res",
 };
 
-function Figure({ value, strong }: { value: number; strong?: boolean }) {
+export function Figure({ value, strong }: { value: number; strong?: boolean }) {
   if (Math.round(value * 100) === 0) return <span className="dash">–</span>;
   const text = money(value);
   return <span className={`mny${value < 0 ? " neg" : ""}`}>{strong ? <b>{text}</b> : text}</span>;

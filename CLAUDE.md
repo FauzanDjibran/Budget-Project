@@ -208,8 +208,8 @@ of its own.
 | DN/CN data | `src/lib/siba/dncn.ts` | Header, line and zero-rule enforcement, `applyDncn`, `DN-` / `CN-` numbering; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
 | Document links | `src/lib/siba/document-links.ts` | `documentHref` — a `(doc_table, doc_id)` pair to the page that shows it, so a journal can link its source without the book knowing any route; client-safe |
-| Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and the two builders — `buildProfitLoss` and `buildBalanceSheet` over one shared tree — chart + figures to rows, pure; client-safe |
-| Financial statements | `src/lib/siba/statements.ts` | Resolves a year and period to a column, reads the chart and the Partners, asks `ledger.ts` for the figures, computes the Neraca's two equity lines and places them; `server-only` |
+| Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and the three builders — `buildProfitLoss`, `buildBalanceSheet` and `buildTrialBalance` over one shared tree — chart + figures to rows, pure; client-safe |
+| Financial statements | `src/lib/siba/statements.ts` | Resolves a year and period to a column, reads the chart and the Partners, asks `ledger.ts` for the figures, computes the Neraca's two equity lines and places them, and lays the Trial Balance out on the chart (`trialBalanceStatement`); `server-only` |
 | Dashboard composition | `src/lib/siba/dashboard.ts` | The commitment funnel, the cash position and the setup gaps, asked of each owning module; names no table itself; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Budget writes | `src/app/actions/budget.ts` | Create, edit, and the lifecycle transitions |
@@ -430,11 +430,13 @@ src/
                          DncnList, DncnForm
     report/              ReportView chrome, ReportSummary, its three filter
                          bars (ReportParams for one subject, SubjectParams for
-                         several, FiscalPeriodParams for a statement), and the
+                         several, FiscalPeriodParams for a statement,
+                         TrialBalanceParams for the Trial Balance — the date
+                         range row shared as PeriodRow), and the
                          report bodies: Cash Bank Ledger, Cash Bank Balance,
-                         Cash Bank Layer, General Ledger, Trial Balance,
-                         Subledger, and the one statement body the Laba
-                         Rugi and the Neraca share
+                         Cash Bank Layer, General Ledger, Subledger, the one
+                         statement body the Laba Rugi and the Neraca share,
+                         and the Trial Balance, on that body's tree and fold
     dashboard/           Dashboard — the funnel, the cash table, the positions
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
@@ -2277,13 +2279,36 @@ Specified in the concept doc, **not yet implemented** (see §13):
   drills itself.
 - **Status:** Frozen, current.
 
-### The ledger reports take several accounts, one Company at a time (FROZEN)
+### The ledger reports run one Company at a time; the General Ledger takes several accounts (FROZEN)
 - **Decision:** General Ledger and Trial Balance are Report Views in the
   **Accounting** module (`accounting/report/[report]`), on the same convention
-  as Finance's. They take the `account-period` parameter set: a **Company
-  filter**, **several accounts** (`?accounts=3,17,42`) and a date range. Each
-  account gets its own table, rolled up to opening / debit / credit / closing
-  and expandable to its entries.
+  as Finance's. The General Ledger takes the `account-period` parameter set: a
+  **Company filter**, **several accounts** (`?accounts=3,17,42`) and a date
+  range. Each account gets its own table, rolled up to opening / debit /
+  credit / closing and expandable to its entries.
+- **The Trial Balance takes no account choice** (`company-period`): the
+  Company, a free date range and one checkbox, *Tampilkan account tanpa saldo*
+  (`?all=1`). On the user's instruction — its whole purpose is to check that
+  debit and kredit balance, so every account is in it by definition, and the
+  picker it used to show was never even read. The range stays free rather than
+  a fiscal period, because it is a working check read against the General
+  Ledger it drills into, not a statement. Off, it lists what has an opening or
+  moved; on, every active account too, silent ones at nil — an inactive account
+  only when it carries a figure. The totals are identical either way.
+- **It is laid out on the chart, like the statements.** Account Type →
+  Category → Kelompok → Account → sub-account, through the same
+  `statementTree` (`buildTrialBalance`) and the same fold, chevrons and
+  Buka / Tutup Semua (`useStatementFold`, `StatementNameCell`). Four columns —
+  Saldo Awal, Mutasi Debit, Mutasi Kredit, Saldo Akhir, the user's choice over a
+  six-column D/K layout. Saldo is signed by the **type's** normal balance, the
+  Neraca's rule, so a heading's figure is a sum and a contra account prints
+  negative; the two movement columns are one side each and never signed. Only
+  the movement is totalled, at the foot; there is no total per type. It carries
+  the statements' `StatementTitle`, whose mode states which accounts are listed,
+  and its faults — debit ≠ kredit, an unbalanced journal — are one slim notice
+  each above the table. `trialBalanceStatement` in `statements.ts` lays out
+  `trialBalanceReport`'s figures unchanged, so what a reader checks here is what
+  the closing checklist checks.
 - **Reason:** Reading a ledger means comparing an account against its
   counterpart, so one account per page load is what makes checking the books
   tedious. Rolled up by default because the figure is what a reader checks
@@ -2304,8 +2329,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   rupiah figure came from three hundred dollars, and `LedgerAccount`
   names the foreign currencies that fed it.
 - **Do not change unless:** explicitly instructed. **Do not sum across accounts
-  in the General Ledger** — that is the Trial Balance's job — and do not group
-  either report by transaction currency again.
+  in the General Ledger** — that is the Trial Balance's job — do not group
+  either report by transaction currency again, and do not give the Trial
+  Balance an account filter back.
 - **Status:** Frozen, current.
 
 ### An Opening Balance is a snapshot, and a report's opening stands on it (FROZEN)
@@ -3223,10 +3249,10 @@ below in outline because the half of it that still holds is easy to lose.**
      title** (`StatementTitle`) at the top of its card — report name, Company
      label, Tipe Laporan, each column's dates, when it was produced — so a
      screenshot or a printout cannot be mistaken for another run. It
-     **supersedes the "no restatement" clause for the Laba Rugi and the Neraca
-     only**, on the user's instruction; it stays two lines so the sticky header
-     keeps its room, and it carries the run time in place of the `.rstamp` at
-     the foot. Other reports may follow.
+     **supersedes the "no restatement" clause for the Laba Rugi, the Neraca
+     and the Trial Balance**, on the user's instruction; it stays two lines so
+     the sticky header keeps its room, and it carries the run time in place of
+     the `.rstamp` at the foot. Other reports may follow.
   3. **The subject is explicit** — a Cash & Bank resource, one or more accounts,
      or one or more Partners — and **every report runs for one Company**, named by
      a `CompanyFilter` first in the filter bar and carried in `?company=`. A cash
