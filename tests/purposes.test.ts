@@ -17,6 +17,11 @@ import {
 } from "../src/lib/siba/records";
 import { entityBySlug, fieldApplies } from "../src/lib/siba/entities";
 import { loadClassification } from "../src/lib/siba/classification-data";
+import {
+  budgetCategoryAllowsDirection,
+  freePurposePartnerCategories,
+  purposeCategoriesFor,
+} from "../src/lib/siba/classification";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import { MODULES } from "../src/lib/siba/nav";
 import { SEED_PURPOSES } from "../src/lib/siba/rules";
@@ -583,7 +588,7 @@ describe("the Purpose form never asks a reader to guess", () => {
     const prive = catalogue.find((r) => r.label === "Prive");
     assert.ok(hutang && prive);
 
-    assert.equal(field.refFilter, "admittedPartnerCategory");
+    assert.equal(field.refFilter, "purposePartnerCategory");
     // Prive admits one of the three; the picker must not show the other two.
     assert.deepEqual(prive.partnerCategories, ["Stakeholder"]);
     assert.ok(
@@ -594,5 +599,84 @@ describe("the Purpose form never asks a reader to guess", () => {
       hutang.partnerCategories.slice().sort(),
       ["Cabang", "Karyawan", "Stakeholder"]
     );
+  });
+});
+
+describe("a new Purpose is offered only what it could be saved as", () => {
+  const entity = requireEntity("purpose");
+  const direction = entity.fields.find((f) => f.name === "direction")!;
+  const category = entity.fields.find((f) => f.name === "budget_category_id")!;
+
+  test("Arah is asked first and clears what it no longer admits", () => {
+    assert.deepEqual(direction.resets, ["budget_category_id", "partner_category_id"]);
+    assert.equal(category.refFilter, "purposeCategory");
+  });
+
+  test("a Budget Category is offered only for the directions it allows", async () => {
+    const catalogue = await loadClassification();
+    for (const dir of ["In", "Out"]) {
+      const offered = purposeCategoriesFor(catalogue, dir, []);
+      for (const rule of catalogue) {
+        assert.equal(
+          offered.includes(rule.label),
+          budgetCategoryAllowsDirection(catalogue, rule.label, dir) &&
+            (!rule.requirePartner || rule.partnerCategories.length > 0),
+          `${rule.label} for ${dir}`
+        );
+      }
+    }
+    // The seed's single-direction categories are the case the user named.
+    const biaya = catalogue.find((r) => r.label === "Biaya");
+    if (biaya && !biaya.allowsIn) {
+      assert.ok(!purposeCategoriesFor(catalogue, "In", []).includes("Biaya"));
+    }
+  });
+
+  test("a combination a Purpose already holds is not offered again", async () => {
+    const catalogue = await loadClassification();
+    const hutang = catalogue.find((r) => r.label === "Hutang")!;
+    const [first, ...rest] = hutang.partnerCategories;
+    const one = [{ direction: "Out", budgetCategory: "Hutang", partnerCategory: first }];
+
+    assert.deepEqual(
+      freePurposePartnerCategories(catalogue, "Hutang", "Out", one).sort(),
+      rest.slice().sort()
+    );
+    // The other direction is a different Purpose, so nothing is taken there.
+    assert.deepEqual(
+      freePurposePartnerCategories(catalogue, "Hutang", "In", one).sort(),
+      hutang.partnerCategories.slice().sort()
+    );
+
+    const all = hutang.partnerCategories.map((p) => ({
+      direction: "Out",
+      budgetCategory: "Hutang",
+      partnerCategory: p,
+    }));
+    assert.ok(
+      !purposeCategoriesFor(catalogue, "Out", all).includes("Hutang"),
+      "a category with every combination taken is not offered onto an empty list"
+    );
+    assert.ok(purposeCategoriesFor(catalogue, "In", all).includes("Hutang"));
+
+    const noPartner = catalogue.find((r) => !r.requirePartner && r.allowsOut);
+    if (noPartner) {
+      const held = [{ direction: "Out", budgetCategory: noPartner.label, partnerCategory: null }];
+      assert.ok(!purposeCategoriesFor(catalogue, "Out", held).includes(noPartner.label));
+    }
+  });
+
+  test("what is held in the database is what the form hides", async () => {
+    const catalogue = await loadClassification();
+    const taken = await allPurposes();
+    for (const p of taken) {
+      if (!p.partnerCategory) continue;
+      assert.ok(
+        !freePurposePartnerCategories(catalogue, p.budgetCategory, p.direction, taken).includes(
+          p.partnerCategory
+        ),
+        `${p.key} is already held`
+      );
+    }
   });
 });

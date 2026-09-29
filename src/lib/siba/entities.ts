@@ -126,7 +126,11 @@ export type Field = {
     | "postableAccount"
     | "parentAccount"
     /** Only the Partner Categories the chosen Budget Category admits. */
-    | "admittedPartnerCategory";
+    | "admittedPartnerCategory"
+    /** A new Purpose: Budget Categories that allow the chosen Arah and still have a free combination. */
+    | "purposeCategory"
+    /** A new Purpose: admitted Partner Categories no Purpose holds yet for this Arah and category. */
+    | "purposePartnerCategory";
   /**
    * Named predicate deciding whether the field applies at all. A field that
    * does not apply is hidden and stored as null — the Server Action evaluates
@@ -803,6 +807,9 @@ export const ENTITIES: Entity[] = [
         optionLabels: { Out: "Pengeluaran", In: "Penerimaan" },
         required: true,
         locked: true,
+        // Arah decides which Budget Categories make sense, so it is asked
+        // first and clears what it no longer admits.
+        resets: ["budget_category_id", "partner_category_id"],
         span: 4,
         help: "arah kas dokumen",
       },
@@ -814,8 +821,9 @@ export const ENTITIES: Entity[] = [
         required: true,
         locked: true,
         resets: ["partner_category_id"],
+        refFilter: "purposeCategory",
         span: 4,
-        help: "menentukan Budget yang dapat direalisasikan",
+        help: "hanya yang berlaku untuk arah itu",
       },
       {
         name: "partner_category_id",
@@ -829,9 +837,9 @@ export const ENTITIES: Entity[] = [
         // never has to guess which ones a Budget Category takes, and cannot
         // pick one `validatePurpose` would then refuse.
         visibleWhen: "budgetCategoryRequiresPartner",
-        refFilter: "admittedPartnerCategory",
+        refFilter: "purposePartnerCategory",
         span: 4,
-        help: "hanya yang diakui Budget Category itu",
+        help: "yang diakui dan belum punya Purpose",
       },
       STATUS_FIELD,
       NOTE_FIELD,

@@ -31,6 +31,7 @@ export function Combobox({
   invalid,
   disabled,
   waitingFor,
+  emptyText,
   onChange,
 }: {
   value: number | null;
@@ -57,6 +58,12 @@ export function Combobox({
    * order. The same shape the segment input's "menunggu induk" prefix uses.
    */
   waitingFor?: string | null;
+  /**
+   * Why the list is empty when nothing has been typed — for a caller that
+   * narrowed it to nothing on purpose and can say so. A search that matches
+   * nothing still reads "Tidak ada pilihan yang cocok".
+   */
+  emptyText?: string | null;
   onChange: (value: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -212,7 +219,9 @@ export function Combobox({
               </div>
             ))
           ) : (
-            <div className="cbe">Tidak ada pilihan yang cocok.</div>
+            <div className="cbe">
+              {!query && emptyText ? emptyText : "Tidak ada pilihan yang cocok."}
+            </div>
           )}
         </div>
       </AnchoredPopup>

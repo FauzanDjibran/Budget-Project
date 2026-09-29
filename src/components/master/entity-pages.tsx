@@ -21,6 +21,7 @@ import {
   refOptions,
 } from "@/lib/siba/records";
 import { loadClassification } from "@/lib/siba/classification-data";
+import { allPurposes } from "@/lib/siba/purposes";
 import { cashBankBookSummary } from "@/lib/siba/cash-bank";
 import { fiscalYearPeriods } from "@/lib/siba/fiscal";
 import { defaultCurrencyId } from "@/lib/siba/system-settings";
@@ -135,9 +136,10 @@ export async function EntityNewPage({
   if (!create) notFound();
   const actor = await requirePermission(create, `/${entity.module}/${entity.slug}/new`);
 
-  const [refs, classification] = await Promise.all([
+  const [refs, classification, takenPurposes] = await Promise.all([
     refOptions(entity),
     loadClassification(),
+    entity.key === "sys_purpose" ? allPurposes() : Promise.resolve([]),
   ]);
 
   return (
@@ -147,6 +149,11 @@ export async function EntityNewPage({
       row={null}
       refs={refs}
       classification={classification}
+      takenPurposes={takenPurposes.map((p) => ({
+        direction: p.direction,
+        budgetCategory: p.budgetCategory,
+        partnerCategory: p.partnerCategory,
+      }))}
       can={abilitiesFor(entity.key, actor.permissions)}
       defaults={{ default_currency: await defaultCurrencyId() }}
     />

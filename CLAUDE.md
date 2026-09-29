@@ -2758,6 +2758,15 @@ they relate. Keep the table; keep it out of the UI's write path.
   retired *afterwards* writes nothing: `availablePurposes` simply stops offering
   the Purpose, because Budget approval would refuse that classification anyway.
   A read-side filter where a write-side generator is not wanted.
+- **The form offers only what the save would accept**, on the user's
+  instruction that a maintainer should not learn the rules by being refused.
+  Arah is asked first and resets the other two; Budget Category then lists only
+  categories allowing that direction **and** still holding a combination no
+  Purpose has (active or not), and Partner Category only the admitted ones not
+  yet taken. `purposeCategoriesFor` and `freePurposePartnerCategories` in
+  `classification.ts` are the rule, and an empty list says every combination
+  already has a Purpose rather than "Tidak ada pilihan yang cocok".
+  `validatePurpose` still refuses the same things on its own.
 - **Do not change unless:** explicitly instructed. **Never generate a Purpose**,
   never store its label, never add a "generate missing" action, never change a
   saved Purpose's direction, category or Partner Category, and do not filter

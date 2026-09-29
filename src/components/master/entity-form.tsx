@@ -43,7 +43,11 @@ import {
 } from "@/lib/siba/entities";
 import {
   type ClassificationCatalogue,
+  type PurposeCombination,
   allowedPartnerCategories,
+  freePurposePartnerCategories,
+  purposeCategoriesFor,
+  directionText,
 } from "@/lib/siba/classification";
 import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
@@ -67,6 +71,7 @@ export function EntityForm({
   lockedFields,
   lockNote,
   classification = [],
+  takenPurposes = [],
 }: {
   entity: Entity;
   mode: FormMode;
@@ -80,6 +85,12 @@ export function EntityForm({
    * `app/actions/master.ts` re-check the same rules against the same tables.
    */
   classification?: ClassificationCatalogue;
+  /**
+   * Every combination a Purpose already holds, so a new Purpose's pickers
+   * offer only what `validatePurpose` would accept. Passed on the create page
+   * only — the three fields are locked once a Purpose exists.
+   */
+  takenPurposes?: PurposeCombination[];
   /** Presentation only — the Server Actions check the same permissions. */
   can: EntityAbilities;
   /**
@@ -211,6 +222,20 @@ export function EntityForm({
       ? waitingClause(prerequisitesOf(entity, field, values, applies))
       : null;
 
+  /**
+   * A new Purpose's pickers are narrowed to what could still be saved, so an
+   * empty one means every combination already has a Purpose — said as such,
+   * rather than as a search that matched nothing.
+   */
+  const emptyTextFor = (field: Field): string | null => {
+    const direction = directionText(String(values.direction ?? ""));
+    if (field.refFilter === "purposeCategory")
+      return `Semua Budget Category untuk ${direction} sudah punya Purpose.`;
+    if (field.refFilter === "purposePartnerCategory")
+      return `Semua Partner Category untuk kombinasi ini sudah punya Purpose.`;
+    return null;
+  };
+
   const optionsFor = (field: Field): RefOption[] => {
     const all = refs[field.name] ?? [];
     const companyId = Number(values.company_id ?? 0);
@@ -236,6 +261,23 @@ export function EntityForm({
         if (!label) return [];
         const allowed = allowedPartnerCategories(classification, label);
         return all.filter((o) => allowed.includes(o.label));
+      }
+      case "purposeCategory": {
+        // Locked once saved, so only a new Purpose narrows; a saved one must
+        // keep showing the category it holds.
+        if (mode !== "new") return all;
+        const direction = String(values.direction ?? "");
+        if (!direction) return [];
+        const allowed = purposeCategoriesFor(classification, direction, takenPurposes);
+        return all.filter((o) => allowed.includes(o.label));
+      }
+      case "purposePartnerCategory": {
+        if (mode !== "new") return all;
+        const label = budgetCategoryLabel(values.budget_category_id);
+        const direction = String(values.direction ?? "");
+        if (!label || !direction) return [];
+        const free = freePurposePartnerCategories(classification, label, direction, takenPurposes);
+        return all.filter((o) => free.includes(o.label));
       }
       default:
         return all;
@@ -410,6 +452,7 @@ export function EntityForm({
                     options={optionsFor(f)}
                     prefix={f.type === "segment" ? inheritedCode(f) : null}
                     waitingFor={waitingFor(f)}
+                    emptyText={emptyTextFor(f)}
                     currencyLabel={currencyLabelOf(f)}
                     forceLocked={lockedFields?.includes(f.name)}
                     onChange={(v) => setField(f, v)}
@@ -540,6 +583,7 @@ function FieldControl({
   statusLike,
   forceLocked,
   waitingFor,
+  emptyText,
   onChange,
 }: {
   field: Field;
@@ -551,6 +595,8 @@ function FieldControl({
   forceLocked?: boolean;
   /** What must be answered before this field can be — see `Combobox`. */
   waitingFor?: string | null;
+  /** Why a deliberately narrowed ref has nothing to offer — see `Combobox`. */
+  emptyText?: string | null;
   error?: string;
   options: RefOption[];
   /** `segment` only: the code this field's number continues. */
@@ -582,6 +628,7 @@ function FieldControl({
           prefix,
           currencyLabel,
           waitingFor,
+          emptyText,
           onChange,
         })
       : readOnlyBody({ field, row, options, currencyLabel, statusLike });
@@ -736,6 +783,7 @@ function editableControl({
   prefix,
   currencyLabel,
   waitingFor,
+  emptyText,
   onChange,
 }: {
   field: Field;
@@ -745,6 +793,7 @@ function editableControl({
   prefix?: string | null;
   currencyLabel?: string;
   waitingFor?: string | null;
+  emptyText?: string | null;
   onChange: (value: string | boolean | null) => void;
 }): React.ReactNode {
   if (field.type === "multiref") {
@@ -814,6 +863,7 @@ function editableControl({
         placeholder={`Pilih ${field.label}…`}
         invalid={Boolean(error)}
         waitingFor={waitingFor}
+        emptyText={emptyText}
         onChange={(v) => onChange(v == null ? null : String(v))}
       />
     );
