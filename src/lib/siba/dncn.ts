@@ -36,8 +36,8 @@ import {
   type SubledgerDef,
 } from "./subledger-catalogue";
 import { loadSubledgers } from "./subledger-data";
-import { refValueOf, type SystemDefaultKey } from "./system-defaults";
-import { checkSystemDefaultValue, systemDefaults } from "./system-settings";
+import type { SystemAccountKey } from "./system-accounts";
+import { checkSystemAccountValue, systemAccountId } from "./system-account-data";
 
 /**
  * Debit / Credit Note: the adjustment document for a Partner's standing
@@ -607,9 +607,9 @@ class DncnRefused extends Error {
   }
 }
 
-const NOTE_ACCOUNT_KEY: Record<"induk" | "anak", Record<DncnType, SystemDefaultKey>> = {
-  induk: { Debit: "induk_debit_note_account", Credit: "induk_credit_note_account" },
-  anak: { Debit: "anak_debit_note_account", Credit: "anak_credit_note_account" },
+const NOTE_ACCOUNT_KEY: Record<DncnType, SystemAccountKey> = {
+  Debit: "debit_note",
+  Credit: "credit_note",
 };
 
 /**
@@ -722,10 +722,10 @@ export async function applyDncn(
 
   // The counter side: the Company's own Debit or Credit Note account. Never
   // guessed and never a fallback — a note without one is refused by name.
-  const settingKey = NOTE_ACCOUNT_KEY[doc.company.is_parent ? "induk" : "anak"][type];
-  const counterAccountId = refValueOf(await systemDefaults(), settingKey);
+  const settingKey = NOTE_ACCOUNT_KEY[type];
+  const counterAccountId = await systemAccountId(doc.company.is_parent, settingKey);
   const settingRefusal = counterAccountId
-    ? await checkSystemDefaultValue(settingKey, counterAccountId)
+    ? await checkSystemAccountValue(doc.company_id, settingKey, counterAccountId)
     : "belum diatur";
   if (!counterAccountId || settingRefusal) {
     return {
@@ -734,7 +734,7 @@ export async function applyDncn(
         _form:
           `Account ${DNCN_TYPES[type].label} untuk Company ini ${
             counterAccountId ? `tidak dapat dipakai: ${settingRefusal}` : "belum diatur"
-          }. Lengkapi di Settings › System Default sebelum nota diposting.`,
+          }. Lengkapi di Accounting › Mapping Account System sebelum nota diposting.`,
       },
     };
   }

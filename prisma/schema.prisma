@@ -251,6 +251,33 @@ model SysSetting {
   @@map("sys_setting")
 }
 
+/// Mapping Account System: the account one Company's posting engines post a
+/// given role to — the intercompany bridge, Selisih Kurs, the Laba/Rugi equity
+/// accounts, the Debit / Credit Note counter accounts. One row per Company and
+/// role; `account_key` is a key of the catalogue in `system-accounts.ts`, and a
+/// row whose key the catalogue no longer declares is ignored.
+///
+/// Its own table rather than keys in `sys_setting`: an application setting
+/// prefills a control, while these decide where money is posted, belong to one
+/// Company's chart, and are pointed at an account — so the foreign keys are
+/// real rather than text that happens to hold an id.
+model AccSystemAccount {
+  id          Int    @id @default(autoincrement())
+  company_id  Int
+  account_key String
+  account_id  Int?
+
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company SysCompany  @relation(fields: [company_id], references: [id])
+  account AccAccount? @relation(fields: [account_id], references: [id])
+
+  @@unique([company_id, account_key])
+  @@map("acc_system_account")
+}
+
 /// A grant, not master data: revoking removes the row and writes an audit entry.
 model SysUserRole {
   id      Int @id @default(autoincrement())
@@ -338,6 +365,7 @@ model SysCompany {
 
   fiscal_closings  AccFiscalClosing[]
   opening_balances AccOpeningBalance[]
+  system_accounts  AccSystemAccount[]
 
   @@map("sys_company")
 }
@@ -1049,6 +1077,7 @@ model AccAccount {
   journal_lines AccJournalLine[]
 
   opening_balance_lines AccOpeningBalanceLine[]
+  system_accounts       AccSystemAccount[]
 
   @@unique([company_id, account_label])
   @@index([company_id])

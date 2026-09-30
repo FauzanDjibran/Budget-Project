@@ -21,8 +21,7 @@ import {
   type JournalLineInput,
   type JournalPreviewLine,
 } from "./journal";
-import { refValueOf } from "./system-defaults";
-import { systemDefaults } from "./system-settings";
+import { systemAccountId } from "./system-account-data";
 import {
   transferCurrencyFollowsSource,
   transferDestinationRefusal,
@@ -831,19 +830,15 @@ async function planTransfer(
       where: { id: doc.company_id },
       select: { is_parent: true },
     });
-    const settings = await systemDefaults();
-    fxAccountId = refValueOf(
-      settings,
-      company?.is_parent ? "induk_fx_account" : "anak_fx_account"
-    );
+    fxAccountId = await systemAccountId(Boolean(company?.is_parent), "fx");
     if (!fxAccountId) {
       return {
         ok: false,
         errors: {
           _form:
             "Selisih kurs muncul pada transfer ini, tetapi Account Selisih Kurs " +
-            "belum diatur untuk Company ini. Lengkapi di Settings › System " +
-            "Default sebelum dokumen diposting.",
+            "belum diatur untuk Company ini. Lengkapi di Accounting › Mapping " +
+            "Account System sebelum dokumen diposting.",
         },
       };
     }

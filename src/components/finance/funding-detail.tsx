@@ -140,8 +140,8 @@ export function FundingDetail({
               <Icon name="warn" size={12} />
               Pengaturan bridge intercompany belum lengkap:{" "}
               {bridgeMissing.join(", ")}. Lengkapi di{" "}
-              <Link href="/settings/system-default">
-                Pengaturan › System Default
+              <Link href="/accounting/system-account">
+                Accounting › Mapping Account System
               </Link>{" "}
               sebelum funding dapat dikonfirmasi.
             </div>

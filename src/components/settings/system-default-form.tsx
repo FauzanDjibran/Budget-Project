@@ -16,8 +16,9 @@ import {
 } from "@/lib/siba/system-defaults";
 
 /**
- * System Default — one page for every value the application assumes when the
- * user has not said otherwise.
+ * System Default — one page for every value the application prefills when the
+ * user has not said otherwise. The accounts posting engines post to are not
+ * here; they are Mapping Account System, under Accounting.
  *
  * The page is built from the catalogue rather than written out setting by
  * setting, so a new default appears here as soon as it is declared. Each one
@@ -27,11 +28,14 @@ import {
 export function SystemDefaultForm({
   values: initial,
   options,
+  baseCurrency,
   canEdit,
 }: {
   values: SystemDefaultValues;
   /** Options per setting key, already narrowed on the server. */
   options: Record<SystemDefaultKey, RefOption[]>;
+  /** The base currency — shown, never edited (CLAUDE.md §10 rule 66). */
+  baseCurrency: { label: string; name: string };
   canEdit: boolean;
 }) {
   const toast = useToast();
@@ -139,6 +143,19 @@ export function SystemDefaultForm({
           <FormBody>
             <FormSection>
               <FormRow>
+                {group.key === "application" && (
+                  <Field
+                    label="Base Currency"
+                    span={4}
+                    locked
+                    help="tetap — setiap buku mencatat nilai dalam currency ini"
+                  >
+                    <div className="ro">
+                      <span className="lab">{baseCurrency.label}</span>
+                      <span>{baseCurrency.name}</span>
+                    </div>
+                  </Field>
+                )}
                 {systemDefaultsIn(group.key).map((def) => {
                   const value = values[def.key];
                   const list = options[def.key] ?? [];
@@ -176,10 +193,7 @@ export function SystemDefaultForm({
 
       <p className="foot-note">
         Mengubah default tidak mengubah data yang sudah tersimpan — hanya isian
-        awal pada form berikutnya. Kartu yang menyebut Account adalah
-        pengecualian: ia tidak mengisi form, melainkan menentukan ke mana
-        posting ditulis, dan proses yang membutuhkannya ditolak dengan menyebut
-        nama selama account-nya belum diisi.
+        awal pada form berikutnya, yang tetap dapat diganti pengguna.
       </p>
     </>
   );

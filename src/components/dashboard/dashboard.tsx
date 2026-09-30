@@ -288,8 +288,8 @@ export function Dashboard({ data }: { data: DashboardData }) {
                 diatur: {intercompany.missing.join(", ") || "—"}.
               </p>
               <div className="cta">
-                <Link className="btn sm" href="/settings/system-default">
-                  Atur System Default
+                <Link className="btn sm" href="/accounting/system-account">
+                  Atur Mapping Account System
                 </Link>
               </div>
             </div>

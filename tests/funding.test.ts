@@ -13,16 +13,11 @@ import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import { openCashBankBook } from "../src/lib/siba/cash-bank";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import { MODULES } from "../src/lib/siba/nav";
+import { SYSTEM_ACCOUNTS } from "../src/lib/siba/system-accounts";
 import {
-  SYSTEM_DEFAULTS,
-  type SystemDefaultDef,
-  type SystemDefaultKey,
-} from "../src/lib/siba/system-defaults";
-import {
+  checkSystemAccountValue,
   intercompanyBridge,
-  systemDefaults,
-  writeSystemDefaults,
-} from "../src/lib/siba/system-settings";
+} from "../src/lib/siba/system-account-data";
 import {
   FIXTURE_PREFIX,
   bookKey,
@@ -39,6 +34,8 @@ import {
   parentCompanyId,
   prisma,
   systemUserId,
+  setSystemAccount,
+  systemAccountFixture,
 } from "./helpers";
 
 /**
@@ -80,7 +77,7 @@ const budgets: number[] = [];
 const transactions: number[] = [];
 const requests: number[] = [];
 
-let savedDefaults: Record<string, string | null> = {};
+const systemAccounts = systemAccountFixture();
 
 async function makeCashBank(options: {
   companyId?: number;
@@ -285,28 +282,22 @@ before(async () => {
   indukArAccount = await makeAccount({ companyId: induk, subcategoryLabel: "1.1.3" });
   anakApAccount = await makeAccount({ companyId: anak, subcategoryLabel: "2.1.1" });
 
-  savedDefaults = { ...(await systemDefaults()) };
-
-  await writeSystemDefaults(
-    {
-      induk_bridge_ar_account: String(indukArAccount),
-      induk_bridge_ap_account: String(
-        await makeAccount({ companyId: induk, subcategoryLabel: "2.1.1" })
-      ),
-      anak_bridge_ar_account: String(
-        await makeAccount({ companyId: anak, subcategoryLabel: "1.1.3" })
-      ),
-      anak_bridge_ap_account: String(anakApAccount),
-    },
-    actor
+  await systemAccounts.set("induk", "bridge_ar", indukArAccount);
+  await systemAccounts.set(
+    "induk",
+    "bridge_ap",
+    await makeAccount({ companyId: induk, subcategoryLabel: "2.1.1" })
   );
+  await systemAccounts.set(
+    "anak",
+    "bridge_ar",
+    await makeAccount({ companyId: anak, subcategoryLabel: "1.1.3" })
+  );
+  await systemAccounts.set("anak", "bridge_ap", anakApAccount);
 });
 
 after(async () => {
-  await writeSystemDefaults(
-    savedDefaults as Partial<Record<SystemDefaultKey, string | null>>,
-    actor
-  );
+  await systemAccounts.restore();
 
   if (requests.length) {
     await prisma.auditLog.deleteMany({
@@ -383,35 +374,13 @@ describe("the funded route is decided by the Company, not by a setting", () => {
     assert.equal(leaf!.permission, "FUNDING_REQUEST_VIEW");
   });
 
-  test("the bridge is four settings, two per Company, all accounts", () => {
-    // Filtered by group, not merely by "has a Company": the FX difference
-    // accounts are Company-scoped too, and counting every Company-scoped
-    // setting would make this assertion drift every time one is added.
-    const bridge = (SYSTEM_DEFAULTS as readonly SystemDefaultDef[]).filter(
-      (d) => d.group === "bridge_induk" || d.group === "bridge_anak"
-    );
-    assert.equal(bridge.length, 4);
-    assert.equal(bridge.filter((d) => d.company === "induk").length, 2);
-    assert.equal(bridge.filter((d) => d.company === "anak").length, 2);
-    assert.ok(
-      bridge.every((d) => d.ref === "acc_account"),
-      "the intercompany position is journal, so the bridge names accounts only"
-    );
-  });
-
-  test("every Company-scoped setting names an account of that Company", () => {
-    const scoped = (SYSTEM_DEFAULTS as readonly SystemDefaultDef[]).filter(
-      (d) => d.company
-    );
-    assert.ok(
-      scoped.every((d) => d.ref === "acc_account"),
-      "a setting scoped to a Company points into that Company's chart"
-    );
+  test("the bridge is two accounts per Company — four in all", () => {
+    // Mapping Account System is one row per Company and key, so two bridge
+    // keys are the four accounts: whatever the induk names, the anak names too.
+    const bridge = SYSTEM_ACCOUNTS.filter((d) => d.group === "bridge");
     assert.deepEqual(
-      scoped.filter((d) => d.company === "induk").length,
-      scoped.filter((d) => d.company === "anak").length,
-      "whatever the induk names, the anak names too — the two Companies keep " +
-        "their own charts and neither posts into the other's"
+      bridge.map((d) => d.key),
+      ["bridge_ar", "bridge_ap"]
     );
   });
 });
@@ -971,8 +940,7 @@ describe("a refused confirmation leaves nothing behind", () => {
     const raised = await raise(doc);
     assert.ok(raised.ok);
 
-    const held = (await systemDefaults()).induk_bridge_ar_account;
-    await writeSystemDefaults({ induk_bridge_ar_account: null }, actor);
+    const held = await setSystemAccount("induk", "bridge_ar", null);
     try {
       const bridge = await intercompanyBridge();
       assert.equal(bridge.ok, false);
@@ -993,7 +961,7 @@ describe("a refused confirmation leaves nothing behind", () => {
       );
       assert.equal(await bookBalance(cashBank), 100_000);
     } finally {
-      await writeSystemDefaults({ induk_bridge_ar_account: held }, actor);
+      await setSystemAccount("induk", "bridge_ar", held);
     }
   });
 
@@ -1002,13 +970,7 @@ describe("a refused confirmation leaves nothing behind", () => {
       companyId: anak,
       subcategoryLabel: "1.1.3",
     });
-    const { checkSystemDefaultValue } = await import(
-      "../src/lib/siba/system-settings"
-    );
-    const refusal = await checkSystemDefaultValue(
-      "induk_bridge_ar_account",
-      anakAccount
-    );
+    const refusal = await checkSystemAccountValue(induk, "bridge_ar", anakAccount);
     assert.ok(refusal, "an induk setting must refuse an anak account");
   });
 });

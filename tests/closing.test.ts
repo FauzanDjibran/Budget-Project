@@ -6,7 +6,6 @@ import { carriedYearsBefore } from "../src/lib/siba/fiscal";
 import { closingBalances, generalLedgerReport } from "../src/lib/siba/ledger";
 import { getOpeningBalance } from "../src/lib/siba/opening-balance";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
-import type { SystemDefaultKey } from "../src/lib/siba/system-defaults";
 import {
   childCompanyId,
   cleanupFixtures,
@@ -16,6 +15,7 @@ import {
   parentCompanyId,
   prisma,
   systemUserId,
+  systemAccountFixture,
 } from "./helpers";
 
 /**
@@ -66,7 +66,7 @@ let anakChart: Chart;
 let branch = 0;
 
 /** What the settings held before this file touched them. */
-const savedSettings = new Map<SystemDefaultKey, string | null>();
+const accounts = systemAccountFixture();
 
 async function makeChart(companyId: number): Promise<Chart> {
   return {
@@ -163,21 +163,6 @@ async function postFixtureJournal(
   return row.id;
 }
 
-async function setSetting(key: SystemDefaultKey, value: string | null) {
-  if (!savedSettings.has(key)) {
-    const row = await prisma.sysSetting.findUnique({
-      where: { setting_key: key },
-      select: { setting_value: true },
-    });
-    savedSettings.set(key, row?.setting_value ?? null);
-  }
-  await prisma.sysSetting.upsert({
-    where: { setting_key: key },
-    update: { setting_value: value, updated_by: actor },
-    create: { setting_key: key, setting_value: value, updated_by: actor },
-  });
-}
-
 before(async () => {
   actor = await systemUserId();
   induk = await parentCompanyId();
@@ -200,8 +185,8 @@ before(async () => {
   anakChart = await makeChart(anak);
   branch = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
 
-  await setSetting("induk_accumulated_pl_account", String(indukChart.accumulated));
-  await setSetting("anak_accumulated_pl_account", String(anakChart.accumulated));
+  await accounts.set("induk", "accumulated_pl", indukChart.accumulated);
+  await accounts.set("anak", "accumulated_pl", anakChart.accumulated);
 
   const mid = new Date(Date.UTC(FY, 5, 30));
 
@@ -282,16 +267,7 @@ after(async () => {
   await wipeFixtureYears();
   // Settings go back before the accounts they point at are deleted, or the
   // System Default would be left naming a row that no longer exists.
-  for (const [key, value] of savedSettings) {
-    if (value === null) {
-      await prisma.sysSetting.deleteMany({ where: { setting_key: key } });
-    } else {
-      await prisma.sysSetting.update({
-        where: { setting_key: key },
-        data: { setting_value: value },
-      });
-    }
-  }
+  await accounts.restore();
   await cleanupFixtures();
   await disconnect();
 });
@@ -444,13 +420,13 @@ describe("every blocking condition refuses by name", () => {
   });
 
   test("an unset accumulated account, by the setting's own name", async () => {
-    await setSetting("induk_accumulated_pl_account", null);
+    await accounts.set("induk", "accumulated_pl", null);
     try {
       const c = await check(induk, "accumulated_account");
       assert.equal(c.ok, false);
       assert.match(c.detail, /Laba\/Rugi Tahun Sebelumnya — Induk/);
     } finally {
-      await setSetting("induk_accumulated_pl_account", String(indukChart.accumulated));
+      await accounts.set("induk", "accumulated_pl", indukChart.accumulated);
     }
   });
 
@@ -520,18 +496,18 @@ describe("every blocking condition refuses by name", () => {
   });
 
   test("a blocked plan offers no preview at all", async () => {
-    await setSetting("induk_accumulated_pl_account", null);
+    await accounts.set("induk", "accumulated_pl", null);
     try {
       const p = await plan(induk);
       assert.equal(p!.ready, false);
       assert.equal(p!.preview, null, "nothing to approve while something blocks it");
     } finally {
-      await setSetting("induk_accumulated_pl_account", String(indukChart.accumulated));
+      await accounts.set("induk", "accumulated_pl", indukChart.accumulated);
     }
   });
 
   test("a refused close writes nothing", async () => {
-    await setSetting("induk_accumulated_pl_account", null);
+    await accounts.set("induk", "accumulated_pl", null);
     const before = await counts(induk);
     try {
       const result = await executeClosing(induk, fiscalYear, actor);
@@ -539,7 +515,7 @@ describe("every blocking condition refuses by name", () => {
       assert.match((result as { error: string }).error, /Laba\/Rugi Tahun Sebelumnya/);
       assert.deepEqual(await counts(induk), before);
     } finally {
-      await setSetting("induk_accumulated_pl_account", String(indukChart.accumulated));
+      await accounts.set("induk", "accumulated_pl", indukChart.accumulated);
     }
   });
 });

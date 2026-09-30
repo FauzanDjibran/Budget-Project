@@ -15,7 +15,11 @@ import {
 } from "@/lib/siba/finance";
 import { openRequestFor } from "@/lib/siba/funding";
 import { realizationHref } from "@/lib/siba/realization";
-import { defaultCurrencyId } from "@/lib/siba/system-settings";
+import {
+  baseCurrencyId,
+  defaultCompanyId,
+  defaultRealizationCashBank,
+} from "@/lib/siba/system-settings";
 import {
   transactionAbilities,
   transactionIsEditable,
@@ -74,10 +78,15 @@ export async function RealizationNewPage({ direction }: { direction: Direction }
   // Which Companies this reader may write for, so the picker offers exactly
   // what the Server Action would accept.
   const companyIds = await accessibleCompanyIds(actor.permissions);
-  const [refs, mappings, currencyId] = await Promise.all([
+  // A new Realisasi starts in the base currency, on the default Company and
+  // its default Cash & Bank — every one a starting point, re-checked by the
+  // Server Action like any value the user picked.
+  const [refs, mappings, currencyId, companyId, cashBank] = await Promise.all([
     financeRefs(companyIds),
     budgetMappings(),
-    defaultCurrencyId(),
+    baseCurrencyId(),
+    defaultCompanyId(companyIds),
+    defaultRealizationCashBank(),
   ]);
 
   return (
@@ -89,6 +98,7 @@ export async function RealizationNewPage({ direction }: { direction: Direction }
       refs={refs}
       mappings={mappings}
       defaultCurrencyId={currencyId}
+      defaults={{ companyId, cashBank }}
       can={transactionAbilities(actor.permissions)}
     />
   );

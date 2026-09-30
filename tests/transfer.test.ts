@@ -28,6 +28,7 @@ import {
   makeAccount,
   parentCompanyId,
   prisma,
+  setSystemAccount,
   systemUserId,
 } from "./helpers";
 
@@ -64,6 +65,8 @@ let foreignLabel = "";
 let thirdCurrency = 0;
 let thirdLabel = "";
 let fxAccount = 0;
+/** What the induk's Selisih Kurs account was before this suite pointed it here. */
+let heldFxAccount: number | null = null;
 
 const resources: number[] = [];
 const transfers: number[] = [];
@@ -222,15 +225,11 @@ before(async () => {
   // refuses by name until one is set. Cleared again in `after`, because a
   // setting pointing at a deleted fixture account would outlive this run.
   fxAccount = await makeAccount({ companyId: induk, subcategoryLabel: "5.3.1" });
-  await prisma.sysSetting.upsert({
-    where: { setting_key: "induk_fx_account" },
-    update: { setting_value: String(fxAccount) },
-    create: { setting_key: "induk_fx_account", setting_value: String(fxAccount) },
-  });
+  heldFxAccount = await setSystemAccount("induk", "fx", fxAccount);
 });
 
 after(async () => {
-  await prisma.sysSetting.deleteMany({ where: { setting_key: "induk_fx_account" } });
+  await setSystemAccount("induk", "fx", heldFxAccount);
   if (transfers.length) {
     await prisma.finCashBankTransferLine.deleteMany({
       where: { transfer_id: { in: transfers } },
@@ -874,18 +873,10 @@ describe("a posting that refuses leaves nothing behind", () => {
     // The account is resolved only when a difference actually arises, and this
     // document produces one — so removing it is what makes the posting refuse
     // *after* the layer has already been drawn inside the transaction.
-    const saved = await prisma.sysSetting.findUniqueOrThrow({
-      where: { setting_key: "induk_fx_account" },
-    });
-    await prisma.sysSetting.delete({ where: { setting_key: "induk_fx_account" } });
+    const saved = await setSystemAccount("induk", "fx", null);
 
     const posted = await applyTransfer(id, actor);
-    await prisma.sysSetting.create({
-      data: {
-        setting_key: saved.setting_key,
-        setting_value: saved.setting_value,
-      },
-    });
+    await setSystemAccount("induk", "fx", saved);
 
     assert.equal(posted.ok, false);
     assert.match(String(posted.errors._form), /Selisih Kurs/i);

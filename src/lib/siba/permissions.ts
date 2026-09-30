@@ -118,6 +118,19 @@ export const PERMISSIONS = [
   { code: "MAPPING_VIEW", name: "Lihat Mapping Budget ke Account", module: "accounting" },
   { code: "MAPPING_CREATE", name: "Tambah Mapping", module: "accounting" },
   { code: "MAPPING_EDIT", name: "Ubah Mapping", module: "accounting" },
+  {
+    code: "SYSTEM_ACCOUNT_VIEW",
+    name: "Lihat Mapping Account System",
+    module: "accounting",
+    description:
+      "Account tujuan posting otomatis per Company: bridge intercompany, selisih kurs, laba/rugi ekuitas, Debit / Credit Note.",
+  },
+  {
+    code: "SYSTEM_ACCOUNT_EDIT",
+    name: "Ubah Mapping Account System",
+    module: "accounting",
+    description: "Menentukan ke account mana posting otomatis ditulis.",
+  },
 
   // Fiscal Period carries no permissions of its own: it has no menu and no
   // form. Periods are generated when a Fiscal Year is opened and are read from
@@ -306,7 +319,8 @@ export const PERMISSIONS = [
     code: "SYSTEM_DEFAULT_VIEW",
     name: "Lihat System Default",
     module: "settings",
-    description: "Nilai bawaan yang dipakai seluruh aplikasi, seperti Currency default.",
+    description:
+      "Nilai bawaan yang dipakai seluruh aplikasi, seperti Currency, Company dan Cash & Bank default.",
   },
   {
     code: "SYSTEM_DEFAULT_EDIT",

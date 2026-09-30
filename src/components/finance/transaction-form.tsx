@@ -115,6 +115,7 @@ export function TransactionForm({
   refs,
   mappings,
   defaultCurrencyId,
+  defaults,
   fundingRequestNo,
   can,
 }: {
@@ -125,8 +126,17 @@ export function TransactionForm({
   lines: TransactionLineRow[];
   refs: FinanceRefs;
   mappings: BudgetMapping[];
-  /** Prefills the Currency picker on the funded route — a default, never a rule. */
+  /** Prefills the Currency picker — the base currency, a start never a rule. */
   defaultCurrencyId?: number | null;
+  /**
+   * System Default's Company and Cash & Bank for a new document. The resource
+   * is prefilled only beside its own Company; the form and the Server Action
+   * treat both exactly as values the user picked.
+   */
+  defaults?: {
+    companyId: number | null;
+    cashBank: { id: number; companyId: number } | null;
+  };
   /** The open request this document is waiting on, where it has one. */
   fundingRequestNo?: string | null;
   can: TransactionAbilities;
@@ -137,7 +147,7 @@ export function TransactionForm({
 
   const kind = realizationOf(direction);
   const [values, setValues] = useState<TransactionValues>(() =>
-    initialValues(direction, transaction, refs, defaultCurrencyId ?? null)
+    initialValues(direction, transaction, refs, defaultCurrencyId ?? null, defaults)
   );
   const [draftLines, setDraftLines] = useState<DraftLine[]>(() =>
     lines.map((l) => ({
@@ -1313,21 +1323,35 @@ function initialValues(
   direction: "In" | "Out",
   transaction: TransactionRow | null,
   refs: FinanceRefs,
-  defaultCurrencyId: number | null
+  defaultCurrencyId: number | null,
+  defaults?: {
+    companyId: number | null;
+    cashBank: { id: number; companyId: number } | null;
+  }
 ): TransactionValues {
   if (!transaction) {
-    // The induk where this reader may write for it, since that is where most
-    // documents are written — but it is a starting point, not a lock: the anak
-    // reaches Finance through the same screen, by the funded route.
+    // System Default's Company where this reader may write for it, otherwise
+    // the induk, since that is where most documents are written — a starting
+    // point, not a lock: the anak reaches Finance through the same screen.
     const selectable = refs.companies.filter((c) => c.selectable);
     const start =
+      selectable.find((c) => c.id === defaults?.companyId) ??
       selectable.find((c) => c.id === refs.transactingCompanyId) ??
       (selectable.length === 1 ? selectable[0] : null);
+    // The default resource only where it belongs to that Company and is
+    // still offered — the anak names no resource at all.
+    const cashBank =
+      defaults?.cashBank &&
+      start &&
+      defaults.cashBank.companyId === start.id &&
+      refs.cashBanks.some((c) => c.id === defaults.cashBank!.id)
+        ? String(defaults.cashBank.id)
+        : "";
 
     return {
       transaction_type: direction,
       company_id: start ? String(start.id) : "",
-      cash_bank_id: "",
+      cash_bank_id: cashBank,
       currency_id: defaultCurrencyId ? String(defaultCurrencyId) : "",
       exchange_rate: "",
       cash_bank_layer_id: "",

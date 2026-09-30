@@ -22,7 +22,7 @@ import {
   intercompanyBridge,
   missingClosingAccounts,
   missingNeracaAccounts,
-} from "./system-settings";
+} from "./system-account-data";
 
 /**
  * The dashboard's data, composed from what each module says about its own
@@ -425,7 +425,7 @@ async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[
 
   if (accounts && bridgeMissing?.length) {
     items.push({
-      href: "/settings/system-default",
+      href: "/accounting/system-account",
       title: "Bridge intercompany belum lengkap",
       detail:
         "Belum diatur: " +
@@ -442,7 +442,7 @@ async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[
     const closingMissing = await missingClosingAccounts();
     if (closingMissing.length) {
       items.push({
-        href: "/settings/system-default",
+        href: "/accounting/system-account",
         title: "Account Laba/Rugi Tahun Sebelumnya belum diatur",
         detail:
           "Belum diatur: " +
@@ -463,7 +463,7 @@ async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[
     });
     if (neracaMissing.length) {
       items.push({
-        href: "/settings/system-default",
+        href: "/accounting/system-account",
         title: "Account Laba/Rugi pada Neraca belum diatur",
         detail:
           "Belum diatur: " +

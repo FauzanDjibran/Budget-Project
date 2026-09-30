@@ -13,7 +13,7 @@ import {
   type StatementMovement,
 } from "./ledger";
 import type { PeriodRange } from "./period";
-import { neracaAccountsFor } from "./system-settings";
+import { neracaAccountsFor } from "./system-account-data";
 import {
   buildBalanceSheet,
   buildProfitLoss,

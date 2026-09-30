@@ -1,6 +1,6 @@
 /**
- * The System Default catalogue — every value the application prefills or
- * assumes when the user has not said otherwise.
+ * The System Default catalogue — every value the application prefills when
+ * the user has not said otherwise.
  *
  * Declared in code for the same reason the permission catalogue is: a setting
  * is a branch somewhere in the application, so one that could be created at
@@ -11,14 +11,10 @@
  * in that the user can then change — it must not decide what is valid, which
  * stays with the Server Actions.
  *
- * **The intercompany bridge settings are the one group that behaves
- * differently**, and deliberately so: they do not prefill a control, they name
- * the account each Company records its position against the other in. Nothing
- * guesses them, and a Funding Request cannot be confirmed until they are set —
- * a refusal that names what is missing, never a silent fallback. They are still
- * settings rather than a table because there are exactly two permanent
- * Companies (CLAUDE.md §12) and a "company relationship" table is precisely
- * what §14 forbids.
+ * The accounts a posting engine posts to are **not** here. They decide where
+ * money lands rather than prefilling anything, and each belongs to one
+ * Company's chart, so they are Mapping Account System — `system-accounts.ts`
+ * and their own table, `acc_system_account`.
  *
  * Client-safe on purpose — no `server-only`, no database import: the settings
  * form reads the same catalogue the Server Action writes against.
@@ -27,31 +23,13 @@ import type { IconName } from "@/components/icon";
 
 export type SystemDefaultKey =
   | "default_currency"
-  | "induk_bridge_ar_account"
-  | "induk_bridge_ap_account"
-  | "anak_bridge_ar_account"
-  | "anak_bridge_ap_account"
-  | "induk_fx_account"
-  | "anak_fx_account"
-  | "induk_accumulated_pl_account"
-  | "anak_accumulated_pl_account"
-  | "induk_current_pl_account"
-  | "anak_current_pl_account"
-  | "induk_debit_note_account"
-  | "induk_credit_note_account"
-  | "anak_debit_note_account"
-  | "anak_credit_note_account";
+  | "default_company"
+  | "default_realization_cash_bank";
 
 /** Which master a `ref` setting points at — a registry entity key. */
-export type SystemDefaultRef = "ref_currency" | "acc_account";
+export type SystemDefaultRef = "ref_currency" | "sys_company" | "m_cash_bank";
 
-export type SystemDefaultGroupKey =
-  | "application"
-  | "bridge_induk"
-  | "bridge_anak"
-  | "fx"
-  | "equity_pl"
-  | "dncn";
+export type SystemDefaultGroupKey = "application" | "realization";
 
 export type SystemDefaultGroup = {
   key: SystemDefaultGroupKey;
@@ -60,14 +38,6 @@ export type SystemDefaultGroup = {
   icon: IconName;
 };
 
-/**
- * The cards the settings page is built from.
- *
- * The bridge settings are split by Company rather than listed together,
- * because each Company's pair is a decision taken inside that Company's own
- * chart of accounts — and the page has to say whose accounts a picker is
- * offering before the user picks one.
- */
 export const SYSTEM_DEFAULT_GROUPS = [
   {
     key: "application",
@@ -76,48 +46,12 @@ export const SYSTEM_DEFAULT_GROUPS = [
     icon: "gear",
   },
   {
-    key: "bridge_induk",
-    name: "Bridge Intercompany — Induk",
+    key: "realization",
+    name: "Default Realisasi Budget",
     desc:
-      "Account yang dipakai Company induk untuk mencatat posisinya terhadap " +
-      "Company anak saat Funding Request dikonfirmasi.",
-    icon: "link",
-  },
-  {
-    key: "bridge_anak",
-    name: "Bridge Intercompany — Anak",
-    desc:
-      "Account yang dipakai Company anak untuk mencatat posisinya terhadap " +
-      "Company induk atas dana yang sama.",
-    icon: "link",
-  },
-  {
-    key: "fx",
-    name: "Selisih Kurs",
-    desc:
-      "Account tempat selisih kurs dicatat: gap antara nilai kewajiban saat " +
-      "diakui dan harga currency yang dipakai melunasinya. Hanya terpakai " +
-      "ketika dokumen mata uang asing diposting.",
-    icon: "coin",
-  },
-  {
-    key: "equity_pl",
-    name: "Laba/Rugi pada Ekuitas",
-    desc:
-      "Dua account ekuitas milik tiap Company. Tahun Sebelumnya adalah tujuan " +
-      "posting saat Fiscal Year ditutup, dan di bawahnya Neraca menampilkan " +
-      "laba rugi tiap tahun yang belum ditutup; Tahun Berjalan adalah baris " +
-      "Neraca yang nilainya dihitung, tidak pernah diposting.",
-    icon: "calc",
-  },
-  {
-    key: "dncn",
-    name: "Debit / Credit Note",
-    desc:
-      "Lawan posting Debit Note dan Credit Note tiap Company. Debit Note selalu " +
-      "mengkredit account-nya, Credit Note selalu mendebit account-nya, apa pun " +
-      "buku subjek yang disesuaikan.",
-    icon: "pen",
+      "Isian awal dokumen Realisasi Penerimaan dan Pengeluaran. Currency dokumen " +
+      "baru selalu dimulai dari base currency.",
+    icon: "wallet2",
   },
 ] as const satisfies readonly SystemDefaultGroup[];
 
@@ -132,12 +66,6 @@ export type SystemDefaultDef = {
   /** Registry entity key the value points at. */
   ref: SystemDefaultRef;
   group: SystemDefaultGroupKey;
-  /**
-   * Whose records this may point at. A bridge account belongs to one Company's
-   * chart, so the picker offers that Company's records and the Server Action
-   * refuses anything else. Absent means the setting is not Company-scoped.
-   */
-  company?: "induk" | "anak";
 };
 
 export const SYSTEM_DEFAULTS = [
@@ -150,185 +78,27 @@ export const SYSTEM_DEFAULTS = [
     group: "application",
     help: "mengisi pilihan Currency lebih dulu",
   },
-
-  // --------------------------------------------------------------- induk
   {
-    key: "induk_bridge_ar_account",
-    name: "Account Piutang ke Anak",
-    icon: "clip",
+    key: "default_company",
+    name: "Company Default",
+    icon: "build",
     type: "ref",
-    ref: "acc_account",
-    group: "bridge_induk",
-    company: "induk",
-    help: "saat induk membiayai pengeluaran anak",
+    ref: "sys_company",
+    group: "application",
+    help: "mengisi Company pada Budget dan Realisasi baru",
   },
+  // Only a base-currency resource: a new Realisasi starts in the base
+  // currency, and a base-currency document is settled from a base-currency
+  // resource alone (CLAUDE.md §10 rule 67) — anything else would prefill a
+  // pair the form itself refuses.
   {
-    key: "induk_bridge_ap_account",
-    name: "Account Hutang kepada Anak",
-    icon: "coin",
+    key: "default_realization_cash_bank",
+    name: "Cash & Bank Default",
+    icon: "wallet2",
     type: "ref",
-    ref: "acc_account",
-    group: "bridge_induk",
-    company: "induk",
-    help: "saat induk menampung penerimaan anak",
-  },
-
-  // ---------------------------------------------------------------- anak
-  {
-    key: "anak_bridge_ar_account",
-    name: "Account Piutang ke Induk",
-    icon: "clip",
-    type: "ref",
-    ref: "acc_account",
-    group: "bridge_anak",
-    company: "anak",
-    help: "saat penerimaan anak ditampung induk",
-  },
-  {
-    key: "anak_bridge_ap_account",
-    name: "Account Hutang kepada Induk",
-    icon: "coin",
-    type: "ref",
-    ref: "acc_account",
-    group: "bridge_anak",
-    company: "anak",
-    help: "saat pengeluaran anak dibiayai induk",
-  },
-
-  // ------------------------------------------------------------------ fx
-  //
-  // One account per Company rather than a gain and a loss each. A gain and a
-  // loss are the same fact with opposite signs — the same payment produces one
-  // or the other depending on which kurs was used — so netting them in one
-  // account is what an accountant expects, and the Selisih Kurs analytic on the
-  // document lines is where the two are told apart.
-  {
-    key: "induk_fx_account",
-    name: "Account Selisih Kurs — Induk",
-    icon: "coin",
-    type: "ref",
-    ref: "acc_account",
-    group: "fx",
-    company: "induk",
-    help: "hanya terpakai saat dokumen mata uang asing diposting",
-  },
-  {
-    key: "anak_fx_account",
-    name: "Account Selisih Kurs — Anak",
-    icon: "coin",
-    type: "ref",
-    ref: "acc_account",
-    group: "fx",
-    company: "anak",
-    help: "hanya terpakai saat dokumen mata uang asing diposting",
-  },
-
-  // ---------------------------------------------------------- equity / P&L
-  //
-  // Two accounts per Company, listed Company by Company so each one's pair
-  // shares a row of the card, in the order the Neraca prints them.
-  //
-  // The **accumulated** account is a posting target: it is where a Fiscal
-  // Year's result lands when the year is closed. It is also where the Neraca
-  // anchors one computed line per year the Company has not closed yet, printed
-  // directly beneath it. The **current** account is never posted to at all: the
-  // Neraca places the reported year's result to date on it. Both are real
-  // accounts so that the user decides what the lines are called and where they
-  // sit, by editing the account; the report computes the figures.
-  //
-  // Both become control accounts through the ordinary mechanism every
-  // account-valued setting uses, so neither can be written into by hand.
-  {
-    key: "induk_accumulated_pl_account",
-    name: "Account Laba/Rugi Tahun Sebelumnya — Induk",
-    icon: "hist",
-    type: "ref",
-    ref: "acc_account",
-    group: "equity_pl",
-    company: "induk",
-    help: "tujuan posting saat Fiscal Year ditutup",
-  },
-  {
-    key: "induk_current_pl_account",
-    name: "Account Laba/Rugi Tahun Berjalan — Induk",
-    icon: "calc",
-    type: "ref",
-    ref: "acc_account",
-    group: "equity_pl",
-    company: "induk",
-    help: "baris penyajian Neraca, tidak pernah diposting",
-  },
-  {
-    key: "anak_accumulated_pl_account",
-    name: "Account Laba/Rugi Tahun Sebelumnya — Anak",
-    icon: "hist",
-    type: "ref",
-    ref: "acc_account",
-    group: "equity_pl",
-    company: "anak",
-    help: "tujuan posting saat Fiscal Year ditutup",
-  },
-  {
-    key: "anak_current_pl_account",
-    name: "Account Laba/Rugi Tahun Berjalan — Anak",
-    icon: "calc",
-    type: "ref",
-    ref: "acc_account",
-    group: "equity_pl",
-    company: "anak",
-    help: "baris penyajian Neraca, tidak pernah diposting",
-  },
-
-  // ------------------------------------------------------------ dn / cn
-  //
-  // Each note type has its own counter account, per Company. A Debit Note
-  // debits the Partner's account, so its own account is always **credited** —
-  // a gain-like entry whichever book it adjusts; a Credit Note is the mirror
-  // and always **debits** its account. That is what lets one account per side
-  // serve every book that allows a note (`allows_dncn`).
-  //
-  // Like every account-valued setting, both become control accounts, so
-  // nothing but a note's posting writes into them. They may not be an account
-  // a book already reconciles against — see `checkSystemDefaultValue`.
-  {
-    key: "induk_debit_note_account",
-    name: "Account Debit Note — Induk",
-    icon: "pen",
-    type: "ref",
-    ref: "acc_account",
-    group: "dncn",
-    company: "induk",
-    help: "dikredit setiap Debit Note diposting",
-  },
-  {
-    key: "induk_credit_note_account",
-    name: "Account Credit Note — Induk",
-    icon: "pen",
-    type: "ref",
-    ref: "acc_account",
-    group: "dncn",
-    company: "induk",
-    help: "didebit setiap Credit Note diposting",
-  },
-  {
-    key: "anak_debit_note_account",
-    name: "Account Debit Note — Anak",
-    icon: "pen",
-    type: "ref",
-    ref: "acc_account",
-    group: "dncn",
-    company: "anak",
-    help: "dikredit setiap Debit Note diposting",
-  },
-  {
-    key: "anak_credit_note_account",
-    name: "Account Credit Note — Anak",
-    icon: "pen",
-    type: "ref",
-    ref: "acc_account",
-    group: "dncn",
-    company: "anak",
-    help: "didebit setiap Credit Note diposting",
+    ref: "m_cash_bank",
+    group: "realization",
+    help: "hanya resource base currency yang aktif",
   },
 ] as const satisfies readonly SystemDefaultDef[];
 
@@ -337,20 +107,8 @@ export type SystemDefaultValues = Record<SystemDefaultKey, string | null>;
 
 export const EMPTY_SYSTEM_DEFAULTS: SystemDefaultValues = {
   default_currency: null,
-  induk_bridge_ar_account: null,
-  induk_bridge_ap_account: null,
-  anak_bridge_ar_account: null,
-  anak_bridge_ap_account: null,
-  induk_fx_account: null,
-  anak_fx_account: null,
-  induk_accumulated_pl_account: null,
-  anak_accumulated_pl_account: null,
-  induk_current_pl_account: null,
-  anak_current_pl_account: null,
-  induk_debit_note_account: null,
-  induk_credit_note_account: null,
-  anak_debit_note_account: null,
-  anak_credit_note_account: null,
+  default_company: null,
+  default_realization_cash_bank: null,
 };
 
 export function isSystemDefaultKey(key: string): key is SystemDefaultKey {
@@ -373,7 +131,11 @@ export function refValueOf(
   values: SystemDefaultValues,
   key: SystemDefaultKey
 ): number | null {
-  const raw = values[key];
+  return idOf(values[key]);
+}
+
+/** A stored id as a row id, or null when unset or unparseable. */
+export function idOf(raw: string | number | null | undefined): number | null {
   if (raw == null || raw === "") return null;
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : null;

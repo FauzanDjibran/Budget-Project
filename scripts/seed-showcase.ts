@@ -27,7 +27,8 @@ import "dotenv/config";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
 import { ensureFiscalPeriods, fiscalYearShape } from "@/lib/siba/fiscal";
 import { syncControlAccounts } from "@/lib/siba/records";
-import { systemDefaultAccountIds, writeSystemDefaults } from "@/lib/siba/system-settings";
+import { writeSystemDefaults } from "@/lib/siba/system-settings";
+import { systemAccountIds, writeSystemAccounts } from "@/lib/siba/system-account-data";
 import { nextBudgetNo } from "@/lib/siba/budget";
 import { applyPosting } from "@/lib/siba/finance";
 import { realizationOf } from "@/lib/siba/realization";
@@ -520,30 +521,35 @@ async function setDefaults(actor: number) {
   });
 
   const changed = await writeSystemDefaults(
-    {
-      default_currency: String(idr.id),
-      induk_bridge_ar_account: String(await accountId(induk.id, "Piutang Perusahaan Afiliasi")),
-      induk_bridge_ap_account: String(await accountId(induk.id, "Hutang kepada Perusahaan Afiliasi")),
-      anak_bridge_ar_account: String(await accountId(anak.id, "Piutang Perusahaan Afiliasi")),
-      anak_bridge_ap_account: String(await accountId(anak.id, "Hutang kepada Perusahaan Afiliasi")),
-      induk_fx_account: String(await accountId(induk.id, "Selisih Kurs")),
-      anak_fx_account: String(await accountId(anak.id, "Selisih Kurs")),
-      induk_accumulated_pl_account: String(await accountId(induk.id, "Laba Ditahan")),
-      anak_accumulated_pl_account: String(await accountId(anak.id, "Laba Ditahan")),
-      induk_current_pl_account: String(await accountId(induk.id, "Laba Rugi Tahun Berjalan")),
-      anak_current_pl_account: String(await accountId(anak.id, "Laba Rugi Tahun Berjalan")),
-      induk_debit_note_account: String(await accountId(induk.id, "Pendapatan Penyesuaian Nota Debit")),
-      induk_credit_note_account: String(await accountId(induk.id, "Beban Penyesuaian Nota Kredit")),
-      anak_debit_note_account: String(await accountId(anak.id, "Pendapatan Penyesuaian Nota Debit")),
-      anak_credit_note_account: String(await accountId(anak.id, "Beban Penyesuaian Nota Kredit")),
-    },
+    { default_currency: String(idr.id), default_company: String(induk.id) },
     actor
   );
   tally("system defaults", changed.length);
 
-  // What the Server Action does after every settings write: an account a
+  // Mapping Account System: the same chart names for both Companies, since
+  // each keeps its own chart numbered the same way.
+  let mapped = 0;
+  for (const company of [induk, anak]) {
+    const written = await writeSystemAccounts(
+      company.id,
+      {
+        bridge_ar: await accountId(company.id, "Piutang Perusahaan Afiliasi"),
+        bridge_ap: await accountId(company.id, "Hutang kepada Perusahaan Afiliasi"),
+        fx: await accountId(company.id, "Selisih Kurs"),
+        accumulated_pl: await accountId(company.id, "Laba Ditahan"),
+        current_pl: await accountId(company.id, "Laba Rugi Tahun Berjalan"),
+        debit_note: await accountId(company.id, "Pendapatan Penyesuaian Nota Debit"),
+        credit_note: await accountId(company.id, "Beban Penyesuaian Nota Kredit"),
+      },
+      actor
+    );
+    mapped += written.length;
+  }
+  tally("system accounts", mapped);
+
+  // What the Server Action does after every mapping write: an account a
   // posting engine or a statement owns is closed to hand entry.
-  const named = await systemDefaultAccountIds();
+  const named = await systemAccountIds();
   await syncControlAccounts([...named], named, actor);
 }
 
@@ -608,9 +614,19 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
   const accounts = await prisma.mCashBank.findMany({ select: { account_id: true } });
   await syncControlAccounts(
     accounts.map((a) => a.account_id),
-    await systemDefaultAccountIds(),
+    await systemAccountIds(),
     actor
   );
+
+  // The resource a new Realisasi starts on: the operating current account,
+  // which is in the base currency a new Realisasi starts in.
+  const operating = await prisma.mCashBank.findFirst({
+    where: { company_id: companyId, cash_bank_label: "BCA-OPS" },
+    select: { id: true },
+  });
+  if (operating) {
+    await writeSystemDefaults({ default_realization_cash_bank: String(operating.id) }, actor);
+  }
 }
 
 /**

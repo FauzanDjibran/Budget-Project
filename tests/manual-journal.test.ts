@@ -23,10 +23,10 @@ import {
   syncControlAccounts,
 } from "../src/lib/siba/records";
 import {
-  systemDefaultAccountIds,
-  systemDefaults,
-  writeSystemDefaults,
-} from "../src/lib/siba/system-settings";
+  systemAccountIds,
+  systemAccountsOf,
+  writeSystemAccounts,
+} from "../src/lib/siba/system-account-data";
 import { knownAuditEvents } from "../src/lib/siba/audit-events";
 import {
   childCompanyId,
@@ -291,7 +291,7 @@ describe("a manual journal may not touch a control account", () => {
     });
     const resource = await makeCashBank(first, "ZZMJ2");
 
-    const defaults = await systemDefaultAccountIds();
+    const defaults = await systemAccountIds();
     await syncControlAccounts([first, second], defaults, actor);
     assert.equal(await isControl(first), true, "the Cash Bank Book claims it");
     assert.equal(await isControl(second), false, "nothing claims this one yet");
@@ -334,7 +334,7 @@ describe("a manual journal may not touch a control account", () => {
     const moving = await makeCashBank(shared, "ZZMJ3");
     const staying = await makeCashBank(shared, "ZZMJ4");
 
-    const defaults = await systemDefaultAccountIds();
+    const defaults = await systemAccountIds();
     await syncControlAccounts([shared], defaults, actor);
     assert.equal(await isControl(shared), true);
 
@@ -389,15 +389,13 @@ describe("a manual journal may not touch a control account", () => {
       normalBalance: "Kredit",
     });
 
-    const before = await systemDefaults();
-    await writeSystemDefaults(
-      {
-        induk_accumulated_pl_account: String(accumulated),
-        induk_current_pl_account: String(current),
-      },
+    const before = await systemAccountsOf(company);
+    await writeSystemAccounts(
+      company,
+      { accumulated_pl: accumulated, current_pl: current },
       actor
     );
-    await syncControlAccounts([accumulated, current], await systemDefaultAccountIds(), actor);
+    await syncControlAccounts([accumulated, current], await systemAccountIds(), actor);
 
     assert.equal(await isControl(accumulated), true);
     assert.equal(await isControl(current), true);
@@ -420,14 +418,12 @@ describe("a manual journal may not touch a control account", () => {
 
     // Put the settings back, and release the accounts before they are torn
     // down — an account left flagged would outlive the row explaining it.
-    await writeSystemDefaults(
-      {
-        induk_accumulated_pl_account: before.induk_accumulated_pl_account,
-        induk_current_pl_account: before.induk_current_pl_account,
-      },
+    await writeSystemAccounts(
+      company,
+      { accumulated_pl: before.accumulated_pl, current_pl: before.current_pl },
       actor
     );
-    await syncControlAccounts([accumulated, current], await systemDefaultAccountIds(), actor);
+    await syncControlAccounts([accumulated, current], await systemAccountIds(), actor);
   });
 
   test("the picker offers exactly what the check accepts", async () => {

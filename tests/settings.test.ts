@@ -9,17 +9,28 @@ import {
   isSystemDefaultKey,
   refValueOf,
 } from "../src/lib/siba/system-defaults";
+import {
+  EMPTY_SYSTEM_ACCOUNTS,
+  SYSTEM_ACCOUNTS,
+  isSystemAccountKey,
+} from "../src/lib/siba/system-accounts";
 import { syncControlAccounts } from "../src/lib/siba/records";
 import {
   checkSystemDefaultValue,
+  defaultCompanyId,
   defaultCurrencyId,
-  missingClosingAccounts,
-  missingNeracaAccounts,
-  systemDefaultAccountIds,
+  defaultRealizationCashBank,
   systemDefaults,
-  systemDefaultsUsingAccount,
   writeSystemDefaults,
 } from "../src/lib/siba/system-settings";
+import {
+  checkSystemAccountValue,
+  missingClosingAccounts,
+  missingNeracaAccounts,
+  systemAccountIds,
+  systemAccountsUsingAccount,
+  writeSystemAccounts,
+} from "../src/lib/siba/system-account-data";
 import {
   FIXTURE_PREFIX,
   childCompanyId,
@@ -28,16 +39,18 @@ import {
   makeAccount,
   parentCompanyId,
   prisma,
+  systemAccountFixture,
   systemUserId,
 } from "./helpers";
 
 /**
- * System Default.
+ * System Default and Mapping Account System.
  *
  * A default fills a control in and decides nothing, so the cases below are
  * about exactly that boundary: the catalogue is code, a value that would not be
  * offered to the user is not prefilled either, and a key nobody declared is
- * never written.
+ * never written. The accounts posting engines post to are the other half, in
+ * their own table — and neither half may write the other's keys.
  *
  * The suite writes to a real settings table, so whatever was configured before
  * it ran is captured and put back afterwards.
@@ -46,22 +59,12 @@ import {
 let actor = 0;
 let activeCurrency = 0;
 let inactiveCurrency = 0;
-let previous: string | null = null;
-
-/** The equity settings this suite writes over, so they can be put back. */
-const EQUITY_KEYS = [
-  "induk_accumulated_pl_account",
-  "anak_accumulated_pl_account",
-  "induk_current_pl_account",
-  "anak_current_pl_account",
-] as const;
-const previousEquity: Record<string, string | null> = {};
+let previous: Record<string, string | null> = {};
+const systemAccounts = systemAccountFixture();
 
 before(async () => {
   actor = await systemUserId();
-  const stored = await systemDefaults();
-  previous = stored.default_currency;
-  for (const key of EQUITY_KEYS) previousEquity[key] = stored[key];
+  previous = { ...(await systemDefaults()) };
 
   const base = await prisma.refCurrency.findFirstOrThrow({
     where: { status: "Active" },
@@ -84,14 +87,11 @@ before(async () => {
 });
 
 after(async () => {
-  await writeSystemDefaults({ default_currency: previous, ...previousEquity }, actor);
+  await writeSystemDefaults(previous, actor);
+  await systemAccounts.restore();
   // Release every fixture account these settings claimed, before the accounts
   // themselves go: an account left flagged would outlive the row explaining it.
-  await syncControlAccounts(
-    claimed,
-    await systemDefaultAccountIds(),
-    actor
-  );
+  await syncControlAccounts(claimed, await systemAccountIds(), actor);
   await cleanupFixtures();
   await prisma.refCurrency.deleteMany({
     where: { currency_label: { startsWith: FIXTURE_PREFIX } },
@@ -122,8 +122,46 @@ describe("the System Default catalogue lives in code", () => {
 
   test("a key nobody declared is not a setting", () => {
     assert.equal(isSystemDefaultKey("default_currency"), true);
-    assert.equal(isSystemDefaultKey("default_company"), false);
+    assert.equal(isSystemDefaultKey("default_branch"), false);
     assert.equal(isSystemDefaultKey(""), false);
+  });
+
+  test("an application setting and a posting account are never the same key", () => {
+    // The two pages write through two actions under two permissions, and each
+    // drops the other's keys — which only holds while no key is both.
+    for (const def of SYSTEM_DEFAULTS) assert.equal(isSystemAccountKey(def.key), false);
+    for (const def of SYSTEM_ACCOUNTS) assert.equal(isSystemDefaultKey(def.key), false);
+    for (const old of ["induk_fx_account", "induk_bridge_ar_account", "fx"]) {
+      assert.equal(isSystemDefaultKey(old), false, `${old} is not a System Default`);
+    }
+    for (const def of SYSTEM_ACCOUNTS) {
+      assert.equal(EMPTY_SYSTEM_ACCOUNTS[def.key], null);
+    }
+  });
+
+  test("sys_setting holds no account", async () => {
+    const rows = await prisma.sysSetting.findMany({ select: { setting_key: true } });
+    assert.deepEqual(
+      rows.map((r) => r.setting_key).filter((k) => k.endsWith("_account")),
+      [],
+      "posting accounts live in acc_system_account"
+    );
+  });
+
+  test("Mapping Account System is its own Accounting menu and permission pair", () => {
+    for (const code of ["SYSTEM_ACCOUNT_VIEW", "SYSTEM_ACCOUNT_EDIT"]) {
+      assert.ok(PERMISSION_CODES.includes(code as never), `${code} is missing`);
+    }
+    const group = MODULES.find((m) => m.key === "accounting")?.groups?.find(
+      (g) => g.key === "mapping"
+    );
+    const leaf = group?.entities.find((e) => e.slug === "system-account");
+    assert.ok(leaf, "beside Mapping Budget ke Account");
+    assert.equal(leaf!.permission, "SYSTEM_ACCOUNT_VIEW");
+    const settings = MODULES.find((m) => m.key === "settings")
+      ?.groups?.flatMap((g) => g.entities)
+      .find((e) => e.slug === "system-default");
+    assert.ok(settings, "System Default stays under Pengaturan");
   });
 
   test("the page is behind its own menu and action permissions", () => {
@@ -199,15 +237,85 @@ describe("a saved default is what the forms read", () => {
     assert.equal(await defaultCurrencyId(), null);
   });
 
-  test("a key outside the catalogue is never written", async () => {
+  test("a key outside the catalogue — a posting account's included — is never written", async () => {
     await writeSystemDefaults(
-      { default_currency: null, default_company: "1" } as never,
+      { default_currency: null, induk_fx_account: "1", fx: "1" } as never,
       actor
     );
-    const row = await prisma.sysSetting.findUnique({
-      where: { setting_key: "default_company" },
+    const rows = await prisma.sysSetting.findMany({
+      where: { setting_key: { in: ["induk_fx_account", "fx"] } },
     });
-    assert.equal(row, null, "sys_setting holds only keys the catalogue declares");
+    assert.deepEqual(rows, [], "sys_setting holds only keys the catalogue declares");
+  });
+
+  test("and a posting account write drops a System Default key", async () => {
+    const induk = await parentCompanyId();
+    const changed = await writeSystemAccounts(
+      induk,
+      { default_currency: 1 } as never,
+      actor
+    );
+    assert.deepEqual(changed, []);
+  });
+});
+
+describe("the defaults a new Budget and a new Realisasi start from", () => {
+  test("the Company is prefilled only where the reader may write for it", async () => {
+    const induk = await parentCompanyId();
+    const anak = await childCompanyId();
+    await writeSystemDefaults({ default_company: String(induk) }, actor);
+    assert.equal(await defaultCompanyId([induk, anak]), induk);
+    assert.equal(await defaultCompanyId([anak]), null, "not a Company the form would refuse");
+    await writeSystemDefaults({ default_company: null }, actor);
+    assert.equal(await defaultCompanyId([induk, anak]), null);
+  });
+
+  test("the Realisasi Cash & Bank must be an active base-currency resource", async () => {
+    const induk = await parentCompanyId();
+    const idr = await prisma.refCurrency.findFirstOrThrow({
+      where: { currency_label: "IDR" },
+      select: { id: true },
+    });
+    const account = await makeAccount({ companyId: induk, subcategoryLabel: "1.1.1" });
+    const make = async (currencyId: number, status: "Active" | "Inactive") =>
+      (
+        await prisma.mCashBank.create({
+          data: {
+            cash_bank_code: `test.${FIXTURE_PREFIX}CB${Math.random().toString(36).slice(2, 8)}`,
+            cash_bank_label: `${FIXTURE_PREFIX}CB`,
+            cash_bank_name: "Fixture Cash & Bank",
+            cash_bank_type: "Bank",
+            company_id: induk,
+            currency_id: currencyId,
+            account_id: account,
+            status,
+            created_by: actor,
+          },
+          select: { id: true },
+        })
+      ).id;
+    const rupiah = await make(idr.id, "Active");
+    const foreign = await make(inactiveCurrency, "Active");
+    const retired = await make(idr.id, "Inactive");
+    try {
+      assert.equal(await checkSystemDefaultValue("default_realization_cash_bank", rupiah), null);
+      assert.match(
+        String(await checkSystemDefaultValue("default_realization_cash_bank", foreign)),
+        /IDR/
+      );
+      assert.ok(await checkSystemDefaultValue("default_realization_cash_bank", retired));
+
+      await writeSystemDefaults({ default_realization_cash_bank: String(rupiah) }, actor);
+      assert.deepEqual(await defaultRealizationCashBank(), { id: rupiah, companyId: induk });
+
+      // Stored and later retired: prefills nothing rather than a value the
+      // form would refuse.
+      await writeSystemDefaults({ default_realization_cash_bank: String(retired) }, actor);
+      assert.equal(await defaultRealizationCashBank(), null);
+    } finally {
+      await writeSystemDefaults({ default_realization_cash_bank: previous.default_realization_cash_bank ?? null }, actor);
+      await prisma.mCashBank.deleteMany({ where: { id: { in: [rupiah, foreign, retired] } } });
+    }
   });
 });
 
@@ -223,13 +331,13 @@ describe("a saved default is what the forms read", () => {
  * a person types into — and the property that matters is that the claim is
  * released again when the setting is repointed.
  *
- * The sync is invoked here the way `saveSystemDefaults` invokes it: a test
+ * The sync is invoked here the way `saveSystemAccounts` invokes it: a test
  * process has no session, so it calls what the Server Action delegates to.
  */
 describe("the equity accounts closing posts into", () => {
   const sync = async (touched: number[]) => {
     for (const id of touched) claimed.add(id);
-    await syncControlAccounts(touched, await systemDefaultAccountIds(), actor);
+    await syncControlAccounts(touched, await systemAccountIds(), actor);
   };
   const isControl = async (id: number) =>
     (
@@ -245,8 +353,9 @@ describe("the equity accounts closing posts into", () => {
       subcategoryLabel: "3.3.1",
       normalBalance: "Kredit",
     });
-    const refused = await checkSystemDefaultValue(
-      "induk_accumulated_pl_account",
+    const refused = await checkSystemAccountValue(
+      await parentCompanyId(),
+      "accumulated_pl",
       anakAccount
     );
     assert.ok(refused, "the induk's setting may not name the anak's chart");
@@ -267,7 +376,7 @@ describe("the equity accounts closing posts into", () => {
       parentId: parent,
     });
     assert.ok(
-      await checkSystemDefaultValue("induk_accumulated_pl_account", parent),
+      await checkSystemAccountValue(company, "accumulated_pl", parent),
       "an account with a sub-account is a heading, not a destination"
     );
   });
@@ -284,13 +393,8 @@ describe("the equity accounts closing posts into", () => {
       subcategoryLabel: "3.4.1",
       normalBalance: "Kredit",
     });
-    await writeSystemDefaults(
-      {
-        induk_accumulated_pl_account: String(first),
-        induk_current_pl_account: String(current),
-      },
-      actor
-    );
+    await systemAccounts.set("induk", "accumulated_pl", first);
+    await systemAccounts.set("induk", "current_pl", current);
     await sync([first, current]);
 
     assert.equal(await isControl(first), true, "closing posts here");
@@ -299,7 +403,7 @@ describe("the equity accounts closing posts into", () => {
       true,
       "and nothing posts here at all, which is a stronger reason still"
     );
-    assert.deepEqual(await systemDefaultsUsingAccount(first), [
+    assert.deepEqual(await systemAccountsUsingAccount(first), [
       "Account Laba/Rugi Tahun Sebelumnya — Induk",
     ]);
 
@@ -310,10 +414,7 @@ describe("the equity accounts closing posts into", () => {
       subcategoryLabel: "3.3.1",
       normalBalance: "Kredit",
     });
-    await writeSystemDefaults(
-      { induk_accumulated_pl_account: String(second) },
-      actor
-    );
+    await systemAccounts.set("induk", "accumulated_pl", second);
     await sync([first, second]);
 
     assert.equal(await isControl(first), false, "nothing names it any more");
@@ -322,10 +423,8 @@ describe("the equity accounts closing posts into", () => {
   });
 
   test("an unset accumulated account is reported by name, and the current one is not", async () => {
-    await writeSystemDefaults(
-      { induk_accumulated_pl_account: null, anak_accumulated_pl_account: null },
-      actor
-    );
+    await systemAccounts.set("induk", "accumulated_pl", null);
+    await systemAccounts.set("anak", "accumulated_pl", null);
     const missing = await missingClosingAccounts();
     assert.deepEqual(missing, [
       "Account Laba/Rugi Tahun Sebelumnya — Induk",
@@ -345,10 +444,7 @@ describe("the equity accounts closing posts into", () => {
       subcategoryLabel: "3.3.1",
       normalBalance: "Kredit",
     });
-    await writeSystemDefaults(
-      { induk_accumulated_pl_account: String(account) },
-      actor
-    );
+    await systemAccounts.set("induk", "accumulated_pl", account);
     await sync([account]);
     assert.deepEqual(await missingClosingAccounts(), [
       "Account Laba/Rugi Tahun Sebelumnya — Anak",
@@ -371,15 +467,10 @@ describe("the equity accounts closing posts into", () => {
   });
 
   test("the Neraca's accounts: Tahun Berjalan always, Tahun Sebelumnya only while a year is carried", async () => {
-    await writeSystemDefaults(
-      {
-        induk_current_pl_account: null,
-        anak_current_pl_account: null,
-        induk_accumulated_pl_account: null,
-        anak_accumulated_pl_account: null,
-      },
-      actor
-    );
+    for (const side of ["induk", "anak"] as const) {
+      await systemAccounts.set(side, "current_pl", null);
+      await systemAccounts.set(side, "accumulated_pl", null);
+    }
 
     // Every Neraca places Tahun Berjalan, so both Companies need it whatever
     // the calendar holds.
@@ -408,13 +499,8 @@ describe("the equity accounts closing posts into", () => {
       subcategoryLabel: "3.3.1",
       normalBalance: "Kredit",
     });
-    await writeSystemDefaults(
-      {
-        induk_current_pl_account: String(current),
-        induk_accumulated_pl_account: String(accumulated),
-      },
-      actor
-    );
+    await systemAccounts.set("induk", "current_pl", current);
+    await systemAccounts.set("induk", "accumulated_pl", accumulated);
     await sync([current, accumulated]);
 
     assert.deepEqual(await missingNeracaAccounts({ induk: true, anak: false }), [

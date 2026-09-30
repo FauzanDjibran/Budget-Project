@@ -37,9 +37,9 @@ import {
   syncControlAccounts,
 } from "@/lib/siba/records";
 import {
-  systemDefaultAccountIds,
-  systemDefaultsUsingAccount,
-} from "@/lib/siba/system-settings";
+  systemAccountIds,
+  systemAccountsUsingAccount,
+} from "@/lib/siba/system-account-data";
 
 /**
  * Every action here is permission-gated before it touches anything, and every
@@ -441,7 +441,7 @@ async function validateAccount(
         // A miscoded account is deactivated, never restructured (rule 45).
         const used = [
           ...(await accountUsage(parentId)),
-          ...(await systemDefaultsUsingAccount(parentId)),
+          ...(await systemAccountsUsingAccount(parentId)),
         ];
         if (used.length) {
           errors.parent_account =
@@ -730,7 +730,7 @@ async function syncControlAccountsFor(
   if (previousAccountId) touched.add(previousAccountId);
   if (!touched.size) return;
 
-  await syncControlAccounts(touched, await systemDefaultAccountIds(), actorId);
+  await syncControlAccounts(touched, await systemAccountIds(), actorId);
 }
 
 /** The account a Cash & Bank or a mapping names today, before it is rewritten. */

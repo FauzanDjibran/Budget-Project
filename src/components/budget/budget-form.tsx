@@ -92,6 +92,7 @@ export function BudgetForm({
   month,
   can,
   defaultCurrencyId,
+  defaultCompanyId,
   realizations,
   copyFrom,
   hint,
@@ -109,6 +110,8 @@ export function BudgetForm({
    * it like any other field, and the Server Action validates what is saved.
    */
   defaultCurrencyId?: number | null;
+  /** The Company a new budget starts on, from System Default — a start only. */
+  defaultCompanyId?: number | null;
   /** The documents behind `realized_amount` — view mode only. */
   realizations?: Awaited<ReturnType<typeof budgetRealizations>>;
   /** The Budget a new one is copied from — `new` mode only. */
@@ -122,7 +125,7 @@ export function BudgetForm({
   const exists = Boolean(budget);
 
   const [values, setValues] = useState<BudgetValues>(() =>
-    initialValues(budget ?? null, defaultCurrencyId, copyFrom)
+    initialValues(budget ?? null, defaultCurrencyId, copyFrom, defaultCompanyId)
   );
   // A copy is already a change worth confirming before it is thrown away.
   const startsDirty = mode === "new" && Boolean(copyFrom);
@@ -634,7 +637,8 @@ function listHref(month: { id: number } | null): string {
 function initialValues(
   budget: BudgetRow | null,
   defaultCurrencyId?: number | null,
-  copyFrom?: BudgetRow | null
+  copyFrom?: BudgetRow | null,
+  defaultCompanyId?: number | null
 ): BudgetValues {
   if (!budget && copyFrom) {
     return {
@@ -651,7 +655,9 @@ function initialValues(
       // A plan is nearly always made for today, so the field starts there and
       // is changed only when it is not.
       budget_date: todayIso(),
-      company_id: "",
+      // Everything but the amount and the description starts filled in, from
+      // System Default — each still a starting point the planner may change.
+      company_id: defaultCompanyId ? String(defaultCompanyId) : "",
       currency_id: defaultCurrencyId ? String(defaultCurrencyId) : "",
       budget_type: "Out",
       budget_amount: "",

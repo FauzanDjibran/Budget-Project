@@ -8,7 +8,7 @@ import {
   providerCashBanks,
 } from "@/lib/siba/funding";
 import { realizationOf } from "@/lib/siba/realization";
-import { intercompanyBridge } from "@/lib/siba/system-settings";
+import { intercompanyBridge } from "@/lib/siba/system-account-data";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
 export const dynamic = "force-dynamic";

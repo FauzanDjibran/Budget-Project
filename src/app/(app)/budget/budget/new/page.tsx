@@ -8,7 +8,7 @@ import {
 } from "@/lib/siba/budget";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
-import { defaultCurrencyId } from "@/lib/siba/system-settings";
+import { defaultCompanyId, defaultCurrencyId } from "@/lib/siba/system-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -32,14 +32,15 @@ export default async function Page({
   const fromId = Number(from);
   const source =
     Number.isInteger(fromId) && fromId > 0 ? await getBudget(fromId) : null;
-  const companyIds = source ? await accessibleCompanyIds(actor.permissions) : [];
+  const companyIds = await accessibleCompanyIds(actor.permissions);
   const copyFrom =
     source && companyIds.includes(source.company_id) ? source : null;
 
-  const [refs, mappings, currencyDefault] = await Promise.all([
+  const [refs, mappings, currencyDefault, companyDefault] = await Promise.all([
     budgetRefs(),
     budgetMappings(),
     defaultCurrencyId(),
+    defaultCompanyId(companyIds),
   ]);
 
   return (
@@ -51,6 +52,7 @@ export default async function Page({
       month={period ? { id: period.id, label: period.label, name: period.name } : null}
       can={budgetAbilities(actor.permissions)}
       defaultCurrencyId={currencyDefault}
+      defaultCompanyId={companyDefault}
       copyFrom={copyFrom}
     />
   );

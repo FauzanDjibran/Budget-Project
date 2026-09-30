@@ -3,6 +3,7 @@ import { actorFor, type Actor } from "../src/lib/siba/access";
 import { ensureFiscalPeriods } from "../src/lib/siba/fiscal";
 import { hashPassword } from "../src/lib/siba/login";
 import { ADMIN_ROLE, STAFF_ROLE } from "../src/lib/siba/roles";
+import type { SystemAccountKey } from "../src/lib/siba/system-accounts";
 
 /**
  * Shared fixtures for the security suite.
@@ -582,4 +583,71 @@ export async function cleanupFiscalYear(): Promise<void> {
   await prisma.accFiscalClosing.deleteMany({ where: { fiscal_year_id: id } });
   await prisma.accFiscalPeriod.deleteMany({ where: { fiscal_year_id: id } });
   await prisma.accFiscalYear.deleteMany({ where: { id } });
+}
+
+// ------------------------------------------------------ system accounts
+
+/**
+ * Points one Company's Mapping Account System key at an account, or clears it
+ * with null — straight through Prisma, because the Server Action resolves its
+ * caller from a session a test process does not have. Returns what it held,
+ * so a suite can put it back.
+ */
+export async function setSystemAccount(
+  side: "induk" | "anak",
+  key: SystemAccountKey,
+  accountId: number | null
+): Promise<number | null> {
+  const company = await prisma.sysCompany.findFirstOrThrow({
+    where: { is_parent: side === "induk" },
+    select: { id: true },
+  });
+  const where = { company_id_account_key: { company_id: company.id, account_key: key } };
+  const before = await prisma.accSystemAccount.findUnique({ where, select: { account_id: true } });
+  if (accountId === null) {
+    await prisma.accSystemAccount.deleteMany({ where: { company_id: company.id, account_key: key } });
+  } else {
+    await prisma.accSystemAccount.upsert({
+      where,
+      update: { account_id: accountId },
+      create: { company_id: company.id, account_key: key, account_id: accountId },
+    });
+  }
+  return before?.account_id ?? null;
+}
+
+/** What one Company's key names, or null. */
+export async function getSystemAccount(
+  side: "induk" | "anak",
+  key: SystemAccountKey
+): Promise<number | null> {
+  const company = await prisma.sysCompany.findFirstOrThrow({
+    where: { is_parent: side === "induk" },
+    select: { id: true },
+  });
+  const row = await prisma.accSystemAccount.findUnique({
+    where: { company_id_account_key: { company_id: company.id, account_key: key } },
+    select: { account_id: true },
+  });
+  return row?.account_id ?? null;
+}
+
+/**
+ * A suite's handle on Mapping Account System: `set` remembers what each key
+ * held the first time it is touched, and `restore` puts every one back —
+ * called before the fixture accounts are deleted.
+ */
+export function systemAccountFixture() {
+  const saved = new Map<string, [side: "induk" | "anak", key: SystemAccountKey, id: number | null]>();
+  return {
+    async set(side: "induk" | "anak", key: SystemAccountKey, accountId: number | null) {
+      const held = await setSystemAccount(side, key, accountId);
+      const k = `${side}:${key}`;
+      if (!saved.has(k)) saved.set(k, [side, key, held]);
+    },
+    async restore() {
+      for (const [side, key, id] of saved.values()) await setSystemAccount(side, key, id);
+      saved.clear();
+    },
+  };
 }

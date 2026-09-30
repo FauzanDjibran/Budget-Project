@@ -19,7 +19,7 @@ import {
   todayDay,
 } from "./fiscal";
 import { controlAccountReasons } from "./records";
-import { systemDefaultsUsingAccount } from "./system-settings";
+import { systemAccountsUsingAccount } from "./system-account-data";
 
 /**
  * The manual journal — what a person may write into the books by hand.
@@ -248,7 +248,7 @@ async function refuseAccount(
   }
   if (account.is_control_account) {
     const reasons = await controlAccountReasons(account.id);
-    const defaults = await systemDefaultsUsingAccount(account.id);
+    const defaults = await systemAccountsUsingAccount(account.id);
     const named = [...reasons, ...defaults];
     return named.length
       ? `Account ${account.account_label} adalah control account yang direkonsiliasi dengan ${named.join(

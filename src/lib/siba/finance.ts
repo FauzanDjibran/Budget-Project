@@ -55,8 +55,7 @@ import {
   subledgerItemsByIds,
   type SubledgerItem,
 } from "./subledger";
-import { systemDefaults } from "./system-settings";
-import { refValueOf } from "./system-defaults";
+import { systemAccountId } from "./system-account-data";
 import type { TransactionStatus } from "./transaction-workflow";
 
 /**
@@ -1729,19 +1728,15 @@ async function planPosting(
       (l) => l.fxDifference !== 0 || l.items.some((it) => it.fxDifference !== 0)
     )
   ) {
-    const settings = await systemDefaults();
-    fxAccountId = refValueOf(
-      settings,
-      options.induk ? "induk_fx_account" : "anak_fx_account"
-    );
+    fxAccountId = await systemAccountId(options.induk, "fx");
     if (!fxAccountId) {
       return {
         ok: false,
         errors: {
           _form:
             "Selisih kurs muncul pada dokumen ini, tetapi Account Selisih Kurs " +
-            "belum diatur untuk Company ini. Lengkapi di Settings › System " +
-            "Default sebelum dokumen diposting.",
+            "belum diatur untuk Company ini. Lengkapi di Accounting › Mapping " +
+            "Account System sebelum dokumen diposting.",
         },
       };
     }

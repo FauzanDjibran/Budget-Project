@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { executeClosing } from "../src/lib/siba/closing";
 import { generalLedgerReport, trialBalanceReport } from "../src/lib/siba/ledger";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
-import type { SystemDefaultKey } from "../src/lib/siba/system-defaults";
 import {
   cleanupFixtures,
   disconnect,
@@ -12,6 +11,7 @@ import {
   parentCompanyId,
   prisma,
   systemUserId,
+  systemAccountFixture,
 } from "./helpers";
 
 /**
@@ -51,7 +51,7 @@ let equity = 0;
 /** Carries an opening into 1981 and never moves again. */
 let dormant = 0;
 
-const savedSettings = new Map<SystemDefaultKey, string | null>();
+const systemAccounts = systemAccountFixture();
 
 async function makeYear(
   year: number,
@@ -106,21 +106,6 @@ async function postFixtureJournal(
         })),
       },
     },
-  });
-}
-
-async function setSetting(key: SystemDefaultKey, value: string | null) {
-  if (!savedSettings.has(key)) {
-    const row = await prisma.sysSetting.findUnique({
-      where: { setting_key: key },
-      select: { setting_value: true },
-    });
-    savedSettings.set(key, row?.setting_value ?? null);
-  }
-  await prisma.sysSetting.upsert({
-    where: { setting_key: key },
-    update: { setting_value: value, updated_by: actor },
-    create: { setting_key: key, setting_value: value, updated_by: actor },
   });
 }
 
@@ -251,7 +236,7 @@ before(async () => {
     normalBalance: "Debit",
   });
 
-  await setSetting("induk_accumulated_pl_account", String(equity));
+  await systemAccounts.set("induk", "accumulated_pl", equity);
 
   // 1980: the history the snapshot will fold away.
   await postFixtureJournal(`${FY}-03-15`, [
@@ -286,16 +271,7 @@ before(async () => {
 
 after(async () => {
   await wipeFixtureYears();
-  for (const [key, value] of savedSettings) {
-    if (value === null) {
-      await prisma.sysSetting.deleteMany({ where: { setting_key: key } });
-    } else {
-      await prisma.sysSetting.update({
-        where: { setting_key: key },
-        data: { setting_value: value },
-      });
-    }
-  }
+  await systemAccounts.restore();
   await cleanupFixtures();
   await disconnect();
 });

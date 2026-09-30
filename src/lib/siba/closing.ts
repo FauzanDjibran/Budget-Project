@@ -22,7 +22,7 @@ import {
 } from "./journal";
 import { closingBalances, trialBalanceReport, type ClosingBalance } from "./ledger";
 import { writeOpeningBalance } from "./opening-balance";
-import { closingAccountFor } from "./system-settings";
+import { closingAccountFor } from "./system-account-data";
 
 /**
  * Closing a fiscal year.
@@ -240,7 +240,7 @@ async function runChecks(
     ok: account.ok,
     detail: account.ok
       ? "Sudah diatur, postable, dan aktif."
-      : `${account.missing} belum diatur atau tidak dapat dipakai. Lengkapi di Settings › System Default.`,
+      : `${account.missing} belum diatur atau tidak dapat dipakai. Lengkapi di Accounting › Mapping Account System.`,
   });
 
   // 6. No unfinished journal inside the year. Closing would strand it: the

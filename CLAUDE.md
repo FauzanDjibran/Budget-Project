@@ -96,7 +96,8 @@ or invariants that assume a particular row exists.
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
-| System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Default Currency, the four intercompany bridge accounts, each Company's FX difference account, and each Company's three Laba/Rugi equity accounts |
+| System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Currency, Company and Realisasi Cash & Bank defaults, with the base currency shown read-only. A new Budget needs only its amount and description; a new Realisasi starts on the default Company, its Cash & Bank and the base currency |
+| Mapping Account System | Done — `/accounting/system-account`, one Company at a time; `acc_system_account`, one row per Company and key. The intercompany bridge, Selisih Kurs, the two Laba/Rugi equity accounts, and the Debit / Credit Note counter accounts |
 | Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
@@ -186,7 +187,9 @@ of its own.
 | Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open → Closed, each transition's permission, the no-opening-behind-a-close rule, and the `runAt` that sends closing to its own screen; client-safe |
 | Startup check | `src/lib/siba/startup-check.ts` | Is the database the one this build expects; read at boot by `instrumentation-node.ts`; `server-only` |
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
-| System Default store | `src/lib/siba/system-settings.ts` | Reads and writes `sys_setting`, resolves a default against its master; `server-only` |
+| System Default store | `src/lib/siba/system-settings.ts` | Reads and writes `sys_setting`, resolves a default against its master (`defaultCurrencyId`, `defaultCompanyId`, `defaultRealizationCashBank`, `baseCurrencyId`); `server-only` |
+| Mapping Account System catalogue | `src/lib/siba/system-accounts.ts` | The posting-account keys, their groups and their per-Company names; client-safe |
+| Mapping Account System store | `src/lib/siba/system-account-data.ts` | Reads and writes `acc_system_account`, checks a value when stored, and resolves by name what closing, the Neraca, Funding, FX and DN/CN need; `server-only` |
 | Header button order | `src/lib/siba/header-actions.ts` | Where a button sits in `.ph-act` and how it is drawn — one tone, read by every lifecycle table; client-safe |
 | Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
 | Budget data | `src/lib/siba/budget.ts` | Month rollups, budget reads, classification enforcement, `BGT-` numbering; `server-only` |
@@ -391,6 +394,7 @@ src/
       accounting/closing/  Bespoke: the closing workspace — checklist,
                          journal preview, one confirm
       accounting/opening-balance/  Read-only: the register and /[id]
+      accounting/system-account/  Mapping Account System, `?company=` picks
       budget/budget/     Bespoke, not registry — Pengajuan Budget: month
                          list, /month/[period], /new (?from= copies), /[id],
                          /[id]/edit
@@ -419,6 +423,7 @@ src/
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
       journal.ts         Manual journal writes: create, edit, Post / Batalkan
       settings.ts        System Default writes
+      system-account.ts  Mapping Account System writes, one Company at a time
       auth.ts            login / logout
       users.ts           User and role administration
       profile.ts         Own profile and password
@@ -454,7 +459,8 @@ src/
     auth/                LoginForm, AccessDenied
     accounting/          FiscalPeriods (shown inside a Fiscal Year),
                          FiscalYearActions, JournalList, JournalActions,
-                         JournalForm (every journal — view, new and edit)
+                         JournalForm (every journal — view, new and edit),
+                         SystemAccountForm (Mapping Account System)
     ui/                  form (FormBody/FormSection/FormRow/Field — every
                          form in the application is built from these),
                          Combobox, Select, DateInput, MoneyInput, RateInput,
@@ -1222,7 +1228,8 @@ Implemented and enforced:
 31. **A System Default prefills; it never decides.** A default fills a control in when
     a record is created, is resolved against its master first, and is validated by the
     Server Action exactly as a typed value would be. It is never applied to an existing
-    record and never narrows what is valid — §12.
+    record and never narrows what is valid. The accounts posting engines post to are
+    not defaults — they are Mapping Account System, which decides — §12.
 32. **A Fiscal Year is activated, not edited into Open.** It is created Draft; only
     `transitionFiscalYear` moves it, under its own `FISCAL_YEAR_OPEN` permission.
     `status` is `derived` and `locked`, so no form offers it and no submitted value
@@ -1295,9 +1302,9 @@ Implemented and enforced:
     where it is read and reconciled. The anak's *own* subject book is untouched by
     this — the partner it actually paid or was paid by still gets its entry, because
     that is the business event and the funding is only how the cash arrived.
-62. **The bridge is four System Defaults, and nothing guesses them.** Each Company
-    names the account for what it is owed and the account for what it owes. A
-    confirmation is refused, by name, until every one is set — see §12.
+62. **The bridge is four Mapping Account System entries, and nothing guesses them.**
+    Each Company names the account for what it is owed and the account for what it
+    owes. A confirmation is refused, by name, until every one is set — see §12.
 84. **A transfer moves the Company's own money, and settles nothing.** It
     realizes no Budget, names no Partner and writes no subject book — there is
     no counterparty, so there is no subject whose position moved. It is
@@ -3172,46 +3179,65 @@ they relate. Keep the table; keep it out of the UI's write path.
 - **Status:** Frozen, current. Supersedes the earlier statement that closing was not
   built and that no transition might produce `Closed`.
 
-### System Default is a catalogue in code, and a default decides nothing (FROZEN)
-- **Decision:** `/settings/system-default` holds every value the application prefills
-  with. The keys are declared in `src/lib/siba/system-defaults.ts`; `sys_setting` is a
-  key/value table holding only what each key is currently set to, read and written
-  through `src/lib/siba/system-settings.ts`. The first entry is `default_currency`.
-- **Reason:** A setting is a branch in the code, exactly as a permission is, so one
-  created at runtime would be a row nothing reads. Keying the table rather than adding
-  a column per setting is what lets the next default arrive as a catalogue entry and a
-  form field, with no migration.
-- **Impact:** A default **fills a control in and nothing more**. It applies on create
-  only, never on edit, never overrides an entered value, and is resolved against its
-  master first — a Currency that has since been deactivated prefills nothing, because
-  the picker would not offer it either. The Server Action validates the saved record
-  exactly as it would a value the user picked. A registry field opts in with
-  `systemDefault: "default_currency"`; Budget takes it as a prop.
-- **Two groups do more than prefill, and they are the exception.** The
-  **intercompany bridge** is four settings — for each Company, the account for what
-  it is owed and the account for what it owes — and they are where a confirmed
-  Funding Request journals. The **FX difference accounts** are two more, one per
-  Company, and they are where a settlement's gain or loss lands. Neither group fills
-  a control in; both decide where a posting goes. They are still settings rather
-  than a table because there are exactly two permanent Companies and a
-  company-relationship table is what §14 forbids. Because they decide rather than
-  suggest, they are checked **when they are stored** as well as when they are read
-  (`checkSystemDefaultValue`: the right Company, postable, active). A funded
-  confirmation is **refused by name** until all four bridge accounts are set; a
-  posting that produces an FX difference is refused by name until that Company's
-  difference account is — and only then, so ordinary rupiah work is never blocked by
-  a setting it does not use. Neither falls back to anything. The dashboard's "Perlu
-  Perhatian" card lists what is missing.
-- **The Debit / Credit Note accounts are a third such group** — one Debit Note and
-  one Credit Note account per Company, where a note's counter side posts. A note
-  is refused by name while its account is unset, and the account may not be one a
-  book already reconciles against (`controlAccountReasons`); the picker narrows by
-  the same rule.
+### System Default prefills; Mapping Account System decides where money posts (FROZEN)
+- **Decision:** Two menus over **two tables**. **System Default**
+  (`/settings/system-default`, `SYSTEM_DEFAULT_*`) holds the application
+  settings that prefill a form — Currency Default, **Company Default** and the
+  **Realisasi Cash & Bank Default** — declared in `src/lib/siba/system-defaults.ts`
+  and stored in `sys_setting` through `src/lib/siba/system-settings.ts`, with the
+  base currency shown read-only beside them. **Mapping Account System**
+  (`/accounting/system-account`, Accounting › Mapping beside Mapping Budget ke
+  Account, `SYSTEM_ACCOUNT_VIEW` / `_EDIT`) holds the accounts posting engines post
+  to, **one Company at a time** behind a Company picker: `bridge_ar` / `bridge_ap`,
+  `fx`, `accumulated_pl` / `current_pl`, `debit_note` / `credit_note` — declared in
+  `src/lib/siba/system-accounts.ts` and stored in `acc_system_account` (one row
+  per Company and key, a real foreign key to the account) through
+  `src/lib/siba/system-account-data.ts`.
+- **Reason:** the user's. A setting that fills a control in and an account that
+  decides where a journal posts are different things, read by different people,
+  and 14 of the 15 old System Defaults were chart-of-accounts decisions sitting on
+  a settings page. The table split is the user's requirement too: an account now
+  points at `acc_account` by foreign key instead of by text holding an id, and a
+  key no longer spells its Company. Migration
+  `20260930224648_system_account_mapping` moved the 14 values across and deleted
+  them from `sys_setting`.
+- **Impact — System Default.** A default **fills a control in and nothing
+  more**: on create only, never over an entered value, resolved against its master
+  first (an inactive Currency, a Company the reader may not write for, or a
+  retired or non-base-currency Cash & Bank prefills nothing), and validated by the
+  Server Action exactly as a picked value. A **new Budget** starts on today, the
+  Company Default, the Currency Default and Pengeluaran, so the planner types only
+  the amount and the description. A **new Realisasi** starts on the Company
+  Default, the **base currency** (never the Currency Default — CLAUDE.md §10 rule
+  67 makes a base-currency document the only one any base resource settles), and
+  the Cash & Bank Default **only beside its own Company** — the anak names no
+  resource. The Cash & Bank Default must be an active base-currency resource,
+  checked when stored.
+- **Impact — Mapping Account System.** These **decide** rather than suggest, so
+  they are checked **when stored** as well as when read (`checkSystemAccountValue`:
+  the Company's own account, postable, active, a leaf, and for a note not one a
+  book reconciles against), refused **by name** where a process needs one
+  (a funded confirmation needs all four bridge accounts; an FX posting its
+  Company's `fx`; a close its `accumulated_pl`; the Neraca `current_pl`, and
+  `accumulated_pl` while a year is carried; a note its counter account), and
+  never fall back to anything. Every account named is a control account through
+  `syncControlAccounts`, released again when repointed. The dashboard's "Perlu
+  Perhatian" card and every refusal point at Accounting › Mapping Account System.
+  Older wording in this file that calls these accounts "System Defaults" means
+  Mapping Account System.
+- **The two never write each other's keys.** `saveSystemDefaults` and
+  `saveSystemAccounts` are separate Server Actions under separate permissions,
+  and each drops a key its own catalogue does not declare, so a user who may edit
+  Currency Default cannot move a posting account by calling the action directly.
+  `tests/settings.test.ts` holds that no key is in both catalogues and that
+  `sys_setting` holds no account.
 - **Do not change unless:** explicitly instructed. **Never let an ordinary default
-  decide what is valid, never apply one to an existing record, and do not add a UI for
-  creating setting keys** — the catalogue is code. Do not give the bridge, FX or
-  DN/CN settings a silent fallback.
-- **Status:** Frozen, current.
+  decide what is valid, never apply one to an existing record, never put a posting
+  account back into `sys_setting`, never let one save action write the other's
+  keys, and do not add a UI for creating setting keys** — both catalogues are code.
+  Do not give a Mapping Account System entry a silent fallback.
+- **Status:** Frozen, current. Supersedes "System Default is a catalogue in code,
+  and a default decides nothing".
 
 ### Every date reads `dd/mm/yyyy`, and the app draws its own controls (FROZEN)
 - **Decision:** Dates are displayed `dd/mm/yyyy` everywhere — lists, details, forms,
@@ -4390,6 +4416,10 @@ process allowed to restate positions, and it is not built.
 - Do **not** let a System Default decide what is valid, apply one to an existing
   record, or add a UI for creating setting keys. The catalogue is code and a default
   only prefills (§12).
+- Do **not** put a posting account back into `sys_setting`, or let
+  `saveSystemDefaults` and `saveSystemAccounts` write each other's keys. Posting
+  accounts are Mapping Account System, one Company at a time, in
+  `acc_system_account` (§12).
 - Do **not** add a `sys_user_permission` table or any second path to a permission —
   roles are the only one.
 - Do **not** add permission inheritance, ABAC, per-record ACLs, a policy engine, or a

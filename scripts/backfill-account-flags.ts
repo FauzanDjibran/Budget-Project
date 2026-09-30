@@ -36,7 +36,7 @@
 import "dotenv/config";
 import { prisma } from "@/lib/prisma";
 import { structuralControlAccountIds } from "@/lib/siba/records";
-import { systemDefaultAccountIds } from "@/lib/siba/system-settings";
+import { systemAccountIds } from "@/lib/siba/system-account-data";
 
 type Change = { label: string; from: boolean; to: boolean };
 
@@ -45,7 +45,7 @@ async function main() {
   // `structuralControlAccountIds`, which is the same split `accountUsage`
   // already uses: `records.ts` does not read `sys_setting`.
   const controlIds = await structuralControlAccountIds();
-  for (const id of await systemDefaultAccountIds()) controlIds.add(id);
+  for (const id of await systemAccountIds()) controlIds.add(id);
 
   const accounts = await prisma.accAccount.findMany({
     select: {

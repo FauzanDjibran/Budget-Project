@@ -17,7 +17,7 @@ import {
 import { PeriodShut } from "./fiscal";
 import { InsufficientFunds } from "./cash-bank";
 import { realizationOf } from "./realization";
-import { intercompanyBridge } from "./system-settings";
+import { intercompanyBridge } from "./system-account-data";
 
 /**
  * Funding Request — the intercompany bridge between the two Companies.
@@ -423,7 +423,7 @@ export async function confirmFundingRequest(
       errors: {
         _form:
           "Pengaturan bridge intercompany belum lengkap: " +
-          `${bridge.missing.join(", ")}. Lengkapi di Pengaturan › System Default ` +
+          `${bridge.missing.join(", ")}. Lengkapi di Accounting › Mapping Account System ` +
           "sebelum mengonfirmasi funding.",
       },
     };

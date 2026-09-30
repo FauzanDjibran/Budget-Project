@@ -12,7 +12,6 @@ import {
   profitLossReport,
   type StatementColumn,
 } from "../src/lib/siba/statements";
-import type { SystemDefaultKey } from "../src/lib/siba/system-defaults";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
   cleanupFixtures,
@@ -22,6 +21,7 @@ import {
   parentCompanyId,
   prisma,
   systemUserId,
+  systemAccountFixture,
 } from "./helpers";
 
 /**
@@ -165,19 +165,7 @@ const a = {
 };
 let branch = 0;
 
-const saved = new Map<SystemDefaultKey, string | null>();
-async function setSetting(key: SystemDefaultKey, value: string | null) {
-  if (!saved.has(key)) {
-    const row = await prisma.sysSetting.findUnique({ where: { setting_key: key }, select: { setting_value: true } });
-    saved.set(key, row?.setting_value ?? null);
-  }
-  await prisma.sysSetting.upsert({
-    where: { setting_key: key },
-    update: { setting_value: value, updated_by: actor },
-    create: { setting_key: key, setting_value: value, updated_by: actor },
-  });
-}
-
+const accounts = systemAccountFixture();
 async function makeYear(year: number): Promise<number> {
   return (
     await prisma.accFiscalYear.create({
@@ -304,8 +292,8 @@ before(async () => {
   a.expense = await mk("5.3.1");
   branch = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
 
-  await setSetting("induk_accumulated_pl_account", String(a.accumulated));
-  await setSetting("induk_current_pl_account", String(a.current));
+  await accounts.set("induk", "accumulated_pl", a.accumulated);
+  await accounts.set("induk", "current_pl", a.current);
 
   // 1980: capital in, a loan, equipment bought and depreciated, one sale and
   // one expense naming a branch. Result: 400.000 − 100.000 − 50.000 = 250.000.
@@ -353,13 +341,7 @@ before(async () => {
 
 after(async () => {
   await wipeFixtureYears();
-  for (const [key, value] of saved) {
-    await prisma.sysSetting.upsert({
-      where: { setting_key: key },
-      update: { setting_value: value },
-      create: { setting_key: key, setting_value: value, updated_by: actor },
-    });
-  }
+  await accounts.restore();
   await cleanupFixtures();
   await disconnect();
 });
@@ -426,23 +408,23 @@ describe("the Neraca while earlier years are still open", () => {
   });
 
   test("no Tahun Berjalan account: the Neraca is not produced, and says which setting", async () => {
-    await setSetting("induk_current_pl_account", null);
+    await accounts.set("induk", "current_pl", null);
     try {
       const refused = await run([march1981()]);
       assert.equal(refused.ok, false);
       assert.deepEqual(!refused.ok && refused.missing, ["Account Laba/Rugi Tahun Berjalan — Induk"]);
     } finally {
-      await setSetting("induk_current_pl_account", String(a.current));
+      await accounts.set("induk", "current_pl", a.current);
     }
   });
 
   test("no Tahun Sebelumnya account while a year is carried: refused by name", async () => {
-    await setSetting("induk_accumulated_pl_account", null);
+    await accounts.set("induk", "accumulated_pl", null);
     try {
       const refused = await run([march1981()]);
       assert.deepEqual(!refused.ok && refused.missing, ["Account Laba/Rugi Tahun Sebelumnya — Induk"]);
     } finally {
-      await setSetting("induk_accumulated_pl_account", String(a.accumulated));
+      await accounts.set("induk", "accumulated_pl", a.accumulated);
     }
   });
 });
@@ -479,11 +461,11 @@ describe("the Neraca across the close", () => {
   });
 
   test("Tahun Sebelumnya is still needed while a later year is carried", async () => {
-    await setSetting("induk_accumulated_pl_account", null);
+    await accounts.set("induk", "accumulated_pl", null);
     try {
       assert.equal((await run([march1982()])).ok, false, "1981 is still carried");
     } finally {
-      await setSetting("induk_accumulated_pl_account", String(a.accumulated));
+      await accounts.set("induk", "accumulated_pl", a.accumulated);
     }
   });
 

@@ -45,6 +45,7 @@ import {
   makePartner,
   parentCompanyId,
   prisma,
+  setSystemAccount,
   systemUserId,
 } from "./helpers";
 
@@ -71,6 +72,8 @@ let fiscalYear = 0;
 let currency = 0;
 let otherCurrency = 0;
 let fxAccount = 0;
+/** What the induk's Selisih Kurs account was before this suite pointed it here. */
+let heldFxAccount: number | null = null;
 
 const cashBanks: number[] = [];
 const budgets: number[] = [];
@@ -306,15 +309,11 @@ before(async () => {
   // all; cleared again in `after`, because a setting pointing at a deleted
   // fixture account would outlive this run.
   fxAccount = await makeAccount({ companyId: induk, subcategoryLabel: "5.3.1" });
-  await prisma.sysSetting.upsert({
-    where: { setting_key: "induk_fx_account" },
-    update: { setting_value: String(fxAccount) },
-    create: { setting_key: "induk_fx_account", setting_value: String(fxAccount) },
-  });
+  heldFxAccount = await setSystemAccount("induk", "fx", fxAccount);
 });
 
 after(async () => {
-  await prisma.sysSetting.deleteMany({ where: { setting_key: "induk_fx_account" } });
+  await setSystemAccount("induk", "fx", heldFxAccount);
   if (transactions.length) {
     await prisma.finCashBankTransactionLine.deleteMany({
       where: { transaction_id: { in: transactions } },

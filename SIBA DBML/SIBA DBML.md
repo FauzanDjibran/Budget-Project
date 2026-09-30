@@ -120,6 +120,10 @@ table sys_session {
   }
 }
 
+// System Default: application settings that prefill a form — Currency,
+// Company and the Realisasi Cash & Bank default. Keys are declared in
+// `system-defaults.ts`; a row with an unknown key is ignored. The accounts
+// posting engines post to are not here — see acc_system_account.
 table sys_setting {
   id                          int [pk, increment, not null]
 
@@ -687,6 +691,29 @@ table acc_account {
     (company_id, account_label) [unique]
     company_id
     account_subcategory_id
+  }
+}
+
+// Mapping Account System: per Company, the account a posting engine posts a
+// role to — bridge_ar / bridge_ap (Funding Request), fx (Selisih Kurs),
+// accumulated_pl / current_pl (closing and the Neraca), debit_note /
+// credit_note (DN/CN counter side). Keys are declared in `system-accounts.ts`;
+// a row with an unknown key is ignored. Moved out of sys_setting, where each
+// was a text key naming its Company, so the account is now a real foreign key.
+table acc_system_account {
+  id                          int [pk, increment, not null]
+
+  company_id                  int [not null, ref: > sys_company.id]
+  account_key                 text [not null]
+  account_id                  int [ref: > acc_account.id]
+
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (company_id, account_key) [unique]
   }
 }
 

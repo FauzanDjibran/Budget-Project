@@ -21,7 +21,7 @@ import {
   type SubledgerDef,
 } from "../src/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "../src/lib/siba/subledger-data";
-import { checkSystemDefaultValue } from "../src/lib/siba/system-settings";
+import { checkSystemAccountValue } from "../src/lib/siba/system-account-data";
 import {
   FIXTURE_PREFIX,
   budgetCategoryId,
@@ -36,7 +36,9 @@ import {
   mappingAccountId,
   openFiscalYear,
   parentCompanyId,
+  getSystemAccount,
   prisma,
+  setSystemAccount,
   systemUserId,
 } from "./helpers";
 
@@ -82,16 +84,15 @@ const savedSettings = new Map<string, string | null>();
 
 const notes: number[] = [];
 
+/** `induk_debit_note_account` -> the induk's `debit_note` in Mapping Account System. */
+function parseSetting(key: string): ["induk" | "anak", "debit_note" | "credit_note"] {
+  const [side, kind] = key.split("_") as ["induk" | "anak", "debit" | "credit"];
+  return [side, kind === "debit" ? "debit_note" : "credit_note"];
+}
+
 async function setSetting(key: string, value: number | null) {
-  if (value === null) {
-    await prisma.sysSetting.deleteMany({ where: { setting_key: key } });
-    return;
-  }
-  await prisma.sysSetting.upsert({
-    where: { setting_key: key },
-    update: { setting_value: String(value) },
-    create: { setting_key: key, setting_value: String(value) },
-  });
+  const [side, k] = parseSetting(key);
+  await setSystemAccount(side, k, value);
 }
 
 /** A position that already stands — written straight into the book. */
@@ -234,8 +235,8 @@ before(async () => {
   dnAccount = await makeAccount({ companyId: induk, subcategoryLabel: "5.3.1" });
   cnAccount = await makeAccount({ companyId: induk, subcategoryLabel: "5.3.1" });
   for (const key of SETTINGS) {
-    const row = await prisma.sysSetting.findUnique({ where: { setting_key: key } });
-    savedSettings.set(key, row?.setting_value ?? null);
+    const held = await getSystemAccount(...parseSetting(key));
+    savedSettings.set(key, held == null ? null : String(held));
   }
   await setSetting("induk_debit_note_account", dnAccount);
   await setSetting("induk_credit_note_account", cnAccount);
@@ -243,8 +244,7 @@ before(async () => {
 
 after(async () => {
   for (const [key, value] of savedSettings) {
-    if (value === null) await prisma.sysSetting.deleteMany({ where: { setting_key: key } });
-    else await setSetting(key, Number(value));
+    await setSetting(key, value === null ? null : Number(value));
   }
   if (notes.length) {
     await prisma.finDncnLine.deleteMany({ where: { note_id: { in: notes } } });
@@ -657,8 +657,8 @@ describe("posting", () => {
 
 describe("the note accounts", () => {
   test("an account a book already reconciles against is refused as a note account", async () => {
-    const refusal = await checkSystemDefaultValue("induk_debit_note_account", piutangAccount);
+    const refusal = await checkSystemAccountValue(induk, "debit_note", piutangAccount);
     assert.ok(refusal && /direkonsiliasi/.test(refusal), String(refusal));
-    assert.equal(await checkSystemDefaultValue("induk_debit_note_account", dnAccount), null);
+    assert.equal(await checkSystemAccountValue(induk, "debit_note", dnAccount), null);
   });
 });

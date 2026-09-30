@@ -110,6 +110,11 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
     label: "System Default",
     resolve: null,
   },
+  // Likewise one row per Company and role, named by the catalogue.
+  acc_system_account: {
+    label: "Mapping Account System",
+    resolve: null,
+  },
 };
 
 function subjectFor(key: string): Subject | null {
