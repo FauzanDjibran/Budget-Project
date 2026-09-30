@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import { FundingDetail } from "@/components/finance/funding-detail";
-import { prisma } from "@/lib/prisma";
 import { actorCan } from "@/lib/siba/access";
 import { requirePermission } from "@/lib/siba/auth";
 import { financeRefs, transactionLines } from "@/lib/siba/finance";
@@ -8,7 +7,7 @@ import {
   getFundingRequest,
   providerCashBanks,
 } from "@/lib/siba/funding";
-import { purposeByKey } from "@/lib/siba/purposes";
+import { realizationOf } from "@/lib/siba/realization";
 import { intercompanyBridge } from "@/lib/siba/system-settings";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
@@ -46,13 +45,6 @@ export default async function Page({
     intercompanyBridge(),
   ]);
 
-  const partner = doc?.partner_id
-    ? await prisma.mPartner.findUnique({
-        where: { id: doc.partner_id },
-        select: { partner_label: true, partner_name: true },
-      })
-    : null;
-
   const provider = request.provider_cash_bank_id
     ? refs.cashBanks.find((c) => c.id === request.provider_cash_bank_id) ?? null
     : null;
@@ -69,10 +61,8 @@ export default async function Page({
         currencyLabel={
           refs.currencies.find((c) => c.id === request.currency_id)?.label ?? "IDR"
         }
-        purposeLabel={doc ? (await purposeByKey(doc.purpose))?.label ?? doc.purpose : "—"}
-        partnerLabel={
-          partner ? `${partner.partner_label} - ${partner.partner_name}` : null
-        }
+        purposeLabel={doc ? realizationOf(doc.transaction_type).title : "—"}
+        partnerLabel={null}
         providerLabel={provider ? `${provider.label} - ${provider.name}` : null}
         bridgeMissing={bridge.ok ? [] : bridge.missing}
         canConfirm={actorCan(actor, "FUNDING_REQUEST_CONFIRM")}

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { type Actor } from "@/lib/siba/access";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
+import { realizationHref } from "@/lib/siba/realization";
 import {
   confirmFundingRequest,
   raiseFundingRequest,
@@ -58,7 +59,7 @@ async function authorize(code: string): Promise<Guard> {
 export async function requestFunding(
   transactionId: number
 ): Promise<FundingActionResult> {
-  const g = await authorize("CASH_BANK_TRANSACTION_SUBMIT");
+  const g = await authorize("REALIZATION_SUBMIT");
   if (!g.ok) return g.denial;
 
   const result = await raiseFundingRequest(transactionId, g.actor.user.id);
@@ -76,7 +77,7 @@ export async function withdrawFunding(
 ): Promise<FundingActionResult> {
   // The same permission that cancels any document: withdrawing is cancelling
   // one's own realization, not overruling the Company that would have funded it.
-  const g = await authorize("CASH_BANK_TRANSACTION_CANCEL");
+  const g = await authorize("REALIZATION_CANCEL");
   if (!g.ok) return g.denial;
 
   const result = await withdrawFundingRequest(transactionId, g.actor.user.id);
@@ -121,9 +122,10 @@ export async function confirmFunding(
  */
 function revalidateFunding(transactionId: number | null) {
   revalidatePath("/finance/funding-request");
-  revalidatePath("/finance/cash-bank-transaction");
-  if (transactionId) {
-    revalidatePath(`/finance/cash-bank-transaction/${transactionId}`);
+  // Either menu may hold the document; both lists are stale.
+  for (const direction of ["In", "Out"] as const) {
+    revalidatePath(realizationHref(direction));
+    if (transactionId) revalidatePath(realizationHref(direction, transactionId));
   }
   revalidatePath("/budget/budget");
   revalidatePath("/budget/budget/month/[period]", "page");

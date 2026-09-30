@@ -4,8 +4,7 @@
  * These rules used to be a constant in `rules.ts`. They are now rows in
  * `sys_budget_category` and `sys_budget_partner_category_mapping`, because the
  * model is still being discovered and reshaping it must not mean editing code
- * and redeploying. What stayed in code is the part that carries behaviour: the
- * 22 Purposes in `rules.ts`, each of which resolves to exactly one account.
+ * and redeploying.
  *
  * This module is **client-safe** — no `server-only`, no database import — for
  * the same reason `currency.ts` is: the form narrowing a picker and the Server
@@ -87,55 +86,6 @@ export function budgetCategoryAllowsDirection(
   const rule = ruleFor(catalogue, categoryLabel);
   if (!rule) return false;
   return direction === "In" ? rule.allowsIn : direction === "Out" ? rule.allowsOut : false;
-}
-
-/** The combination a Purpose names, by label — what the Purpose form checks against. */
-export type PurposeCombination = {
-  direction: string;
-  budgetCategory: string;
-  partnerCategory: string | null;
-};
-
-/**
- * The Partner Categories a new Purpose may still name for this direction and
- * Budget Category: admitted by the category, and not already held by another
- * Purpose, active or not. Exactly what `validatePurpose` accepts, so the picker
- * never offers a combination the save would refuse.
- */
-export function freePurposePartnerCategories(
-  catalogue: ClassificationCatalogue,
-  categoryLabel: string,
-  direction: string,
-  taken: PurposeCombination[]
-): string[] {
-  if (!budgetCategoryAllowsDirection(catalogue, categoryLabel, direction)) return [];
-  const used = new Set(
-    taken
-      .filter((t) => t.direction === direction && t.budgetCategory === categoryLabel)
-      .map((t) => t.partnerCategory)
-  );
-  return allowedPartnerCategories(catalogue, categoryLabel).filter((p) => !used.has(p));
-}
-
-/**
- * The Budget Categories a new Purpose may name for this direction: those that
- * allow it and still have a combination no Purpose holds. A category with
- * nothing left is left out rather than offered onto an empty Partner Category
- * list.
- */
-export function purposeCategoriesFor(
-  catalogue: ClassificationCatalogue,
-  direction: string,
-  taken: PurposeCombination[]
-): string[] {
-  return catalogue
-    .filter((r) => budgetCategoryAllowsDirection(catalogue, r.label, direction))
-    .filter((r) =>
-      r.requirePartner
-        ? freePurposePartnerCategories(catalogue, r.label, direction, taken).length > 0
-        : !taken.some((t) => t.direction === direction && t.budgetCategory === r.label)
-    )
-    .map((r) => r.label);
 }
 
 export function directionsOf(rule: {

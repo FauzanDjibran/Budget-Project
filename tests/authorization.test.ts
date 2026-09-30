@@ -62,7 +62,7 @@ describe("the permission catalogue", () => {
       "BUDGET_EDIT",
       "BUDGET_APPROVE",
       "BUDGET_REJECT",
-      "CASH_BANK_TRANSACTION_POST",
+      "REALIZATION_POST",
     ]) {
       assert.ok(PERMISSION_CODES.includes(code as never), `${code} must exist`);
     }

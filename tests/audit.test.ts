@@ -363,7 +363,6 @@ describe("withdrawing a funding request leaves a trace", () => {
         transaction_no: `ZZTEST-AUD${Date.now() % 1_000_000}`,
         transaction_type: "Out",
         company_id: anak,
-        purpose: "HUTANG_BAYAR",
         cash_bank_id: null,
         currency_id: currency.id,
         transaction_amount: 1000,

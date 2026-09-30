@@ -16,6 +16,7 @@ import { companyStructure } from "./records";
 import { subledgerPositions, type SubledgerPosition } from "./subledger";
 import { loadSubledgers } from "./subledger-data";
 import { isCarryingUnclosedYear } from "./fiscal";
+import { realizationHref, realizationOf } from "./realization";
 import {
   intercompanyBridge,
   missingClosingAccounts,
@@ -200,9 +201,9 @@ export async function dashboardData(
       stage: "funding" as const,
       href: request
         ? `/finance/funding-request/${request.id}`
-        : `/finance/cash-bank-transaction/${d.id}`,
+        : realizationHref(d.transactionType, d.id),
       title: request?.funding_request_no ?? d.transactionNo,
-      subtitle: `${d.purposeLabel} · ${d.transactionNo}`,
+      subtitle: `${realizationOf(d.transactionType).title} · ${d.transactionNo}`,
       companyLabel: d.companyLabel,
       direction: d.transactionType,
       amount: d.amount,

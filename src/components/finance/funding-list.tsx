@@ -10,7 +10,8 @@ import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { formatDate, formatMoney, formatTotals } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type { FinanceRefs, PurposeOption } from "@/lib/siba/finance";
+import type { FinanceRefs } from "@/lib/siba/finance";
+import { realizationOf } from "@/lib/siba/realization";
 import type { FundingRequestRow, FundingSummary } from "@/lib/siba/funding";
 
 /**
@@ -28,14 +29,12 @@ import type { FundingRequestRow, FundingSummary } from "@/lib/siba/funding";
 export function FundingList({
   requests,
   refs,
-  purposes,
   summary,
   canConfirm,
   initialStatus,
 }: {
   requests: FundingRequestRow[];
   refs: FinanceRefs;
-  purposes: PurposeOption[];
   summary: FundingSummary;
   canConfirm: boolean;
   /** Status the page was opened filtered to, from `?status=` — see the route. */
@@ -46,10 +45,8 @@ export function FundingList({
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState(initialStatus ?? "");
 
-  const purposeLabelOf = useMemo(() => {
-    const byKey = new Map(purposes.map((p) => [p.key, p.label]));
-    return (key: string | undefined) => (key ? byKey.get(key) ?? key : "—");
-  }, [purposes]);
+  const titleOf = (direction: string | undefined) =>
+    direction ? realizationOf(direction).title : "—";
 
   const currencyOf = useMemo(() => {
     const byId = new Map(refs.currencies.map((c) => [c.id, c.label]));
@@ -71,7 +68,7 @@ export function FundingList({
         [
           r.funding_request_no,
           r.transaction?.transaction_no ?? "",
-          purposeLabelOf(r.transaction?.purpose),
+          titleOf(r.transaction?.transaction_type),
         ]
           .join(" ")
           .toLowerCase()
@@ -79,7 +76,7 @@ export function FundingList({
       );
     }
     return out;
-  }, [requests, status, query, purposeLabelOf]);
+  }, [requests, status, query]);
 
   const paging = usePaging(filtered, `${query}|${status}`);
 
@@ -207,7 +204,7 @@ export function FundingList({
                             <span className="dstack">
                               <span className="d1">
                                 {companyOf(r.transaction?.company_id)} ·{" "}
-                                {purposeLabelOf(r.transaction?.purpose)}
+                                {titleOf(r.transaction?.transaction_type)}
                               </span>
                               <span className="d2">
                                 {r.transaction?.transaction_no ?? "—"} ·{" "}

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/icon";
 import { Dialog } from "@/components/ui/dialog";
 import { MoneyInput } from "@/components/ui/money-input";
+import { SearchField } from "@/components/ui/search-field";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { EligibleBudget } from "@/lib/siba/finance";
 
@@ -12,8 +13,10 @@ import type { EligibleBudget } from "@/lib/siba/finance";
  *
  * The pool is whatever `listEligibleBudgets` returned for the current header —
  * the same set the Server Action will accept — so the criteria bar at the top
- * is not decoration: it is the reason each row is here. Concept doc §9 lists
- * those criteria, and Budget Date is deliberately not among them.
+ * is not decoration: it is the reason each row is here. Budget Category and
+ * Partner are not criteria, so every row states its own, and the search reads
+ * them too: a realization is often assembled one Partner or one category at a
+ * time out of a pool that holds all of them.
  *
  * Each row's realization defaults to its full outstanding, because settling a
  * plan in one go is the ordinary case; typing a smaller figure is what makes it
@@ -23,16 +26,32 @@ export function BudgetPicker({
   pool,
   criteria,
   currencyLabel,
+  classify,
   onAdd,
   onClose,
 }: {
   pool: EligibleBudget[];
   criteria: { label: string; value: string; hint?: string }[];
   currencyLabel: string;
+  /** What a Budget is classified as — its category, and its Partner where it names one. */
+  classify: (b: EligibleBudget) => { category: string; partner: string | null };
   onAdd: (picked: { budget_id: number; amount: number }[]) => void;
   onClose: () => void;
 }) {
   const [picked, setPicked] = useState<Record<number, number>>({});
+  const [query, setQuery] = useState("");
+
+  // Every word has to match somewhere in the row, like every other search in
+  // the application — "piutang medan" finds a Piutang Budget for Cabang Medan.
+  const words = query.toLowerCase().split(/s+/).filter(Boolean);
+  const shown = pool.filter((b) => {
+    if (!words.length) return true;
+    const c = classify(b);
+    const text = [b.budget_no, b.description, c.category, c.partner ?? ""]
+      .join(" ")
+      .toLowerCase();
+    return words.every((w) => text.includes(w));
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -100,15 +119,26 @@ export function BudgetPicker({
             </span>
           </div>
 
-          {pool.length ? (
+          {pool.length > 0 && (
+            <div className="toolbar">
+              <SearchField
+                grow
+                value={query}
+                onChange={setQuery}
+                placeholder="Cari nomor, deskripsi, category, atau partner…"
+              />
+            </div>
+          )}
+
+          {shown.length ? (
             <div className="tw">
               <table className="grid pkt2">
                 <thead>
                   <tr>
                     <th style={{ width: 34 }} />
                     <th style={{ width: 88 }}>Nomor</th>
-                    <th style={{ width: 84 }}>Tanggal</th>
                     <th>Deskripsi</th>
+                    <th style={{ width: 190 }}>Klasifikasi</th>
                     <th className="num" style={{ width: 118 }}>
                       Nominal Budget
                     </th>
@@ -124,7 +154,8 @@ export function BudgetPicker({
                   </tr>
                 </thead>
                 <tbody>
-                  {pool.map((b) => {
+                  {shown.map((b) => {
+                    const c = classify(b);
                     const on = picked[b.id] !== undefined;
                     const value = on ? picked[b.id] : b.outstanding;
                     const over = value > b.outstanding;
@@ -140,10 +171,18 @@ export function BudgetPicker({
                         <td>
                           <span className="lab">{b.budget_no}</span>
                         </td>
-                        <td className="mono" style={{ fontSize: 11 }}>
-                          {formatDate(b.budget_date)}
+                        <td className="pri">
+                          <span className="dstack">
+                            <span className="d1">{b.description}</span>
+                            <span className="d2">{formatDate(b.budget_date)}</span>
+                          </span>
                         </td>
-                        <td className="pri">{b.description}</td>
+                        <td>
+                          <span className="dstack">
+                            <span className="d1">{c.category}</span>
+                            <span className="d2">{c.partner ?? "tanpa Partner"}</span>
+                          </span>
+                        </td>
                         <td className="num">
                           <span className="mny">
                             {formatMoney(b.budget_amount, currencyLabel)}
@@ -198,12 +237,15 @@ export function BudgetPicker({
               <div className="ic">
                 <Icon name="srch" size={18} />
               </div>
-              <h4>Tidak ada Budget yang memenuhi kriteria</h4>
+              <h4>
+                {pool.length
+                  ? "Tidak ada Budget yang cocok dengan pencarian"
+                  : "Tidak ada Budget yang memenuhi kriteria"}
+              </h4>
               <p>
-                Budget harus berstatus <b>Disetujui (Open)</b>, cocok dengan
-                seluruh kriteria di atas, dan masih menyisakan outstanding.
-                Budget yang sudah dipilih pada dokumen ini juga tidak muncul
-                lagi.
+                {pool.length
+                  ? "Ubah kata pencarian untuk melihat Budget lainnya."
+                  : "Budget harus berstatus Disetujui (Open), cocok dengan seluruh kriteria di atas, dan masih menyisakan outstanding. Budget yang sudah dipilih pada dokumen ini juga tidak muncul lagi."}
               </p>
             </div>
           )}

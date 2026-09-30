@@ -133,17 +133,31 @@ export const MODULES: NavModule[] = [
     permission: "MENU_FINANCE_ACCESS",
     groups: [
       {
+        key: "realization",
+        name: "Realisasi Budget",
+        entities: [
+          {
+            key: "fin_realization_in",
+            slug: "realisasi-penerimaan",
+            name: "Realisasi Penerimaan",
+            icon: "wallet2",
+            desc: "Uang masuk ke Cash & Bank yang merealisasikan Budget Penerimaan yang sudah disetujui — satu dokumen, Budget dari kategori dan Partner mana pun.",
+            permission: "REALIZATION_VIEW",
+          },
+          {
+            key: "fin_realization_out",
+            slug: "realisasi-pengeluaran",
+            name: "Realisasi Pengeluaran",
+            icon: "wallet2",
+            desc: "Uang keluar dari Cash & Bank yang merealisasikan Budget Pengeluaran yang sudah disetujui — satu dokumen, Budget dari kategori dan Partner mana pun.",
+            permission: "REALIZATION_VIEW",
+          },
+        ],
+      },
+      {
         key: "exec",
         name: "Eksekusi",
         entities: [
-          {
-            key: "fin_cash_bank_transaction",
-            slug: "cash-bank-transaction",
-            name: "Cash Bank Transaction",
-            icon: "wallet2",
-            desc: "Layer eksekusi. Satu dokumen kas/bank dapat merealisasikan beberapa Budget yang sudah disetujui.",
-            permission: "CASH_BANK_TRANSACTION_VIEW",
-          },
           {
             key: "fin_cash_bank_transfer",
             slug: "cash-bank-transfer",
@@ -391,14 +405,6 @@ export const MODULES: NavModule[] = [
             icon: "users",
             desc: "Jenis Partner. Menentukan Partner mana yang boleh dipilih untuk sebuah Budget Category.",
             permission: "PARTNER_CATEGORY_VIEW",
-          },
-          {
-            key: "sys_purpose",
-            slug: "purpose",
-            name: "Transaction Purpose",
-            icon: "tags",
-            desc: "Arah × Budget Category × Partner Category. Dibuat otomatis dari Klasifikasi, sehingga Budget Category baru langsung dapat ditransaksikan.",
-            permission: "PURPOSE_VIEW",
           },
         ],
       },

@@ -16,7 +16,6 @@ import {
   subledgerReport,
   subledgerSubjects,
 } from "../src/lib/siba/subledger";
-import { allPurposes } from "../src/lib/siba/purposes";
 import { loadClassification } from "../src/lib/siba/classification-data";
 import { directionsOf, ruleFor } from "../src/lib/siba/classification";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
@@ -133,18 +132,16 @@ describe("a category keeps a book exactly when it names a Partner", () => {
     }
   });
 
-  test("every Purpose that names a Partner posts into a book", async () => {
-    // The Purpose names a Budget Category; the **category** owns the book, so
-    // this resolves through the category's id rather than through the label the
-    // Purpose carries a copy of.
+  test("every seeded category that names a Partner posts into a book", async () => {
+    // A realization line posts into the book its own Budget's category keeps,
+    // resolved through the category's id. A seeded category naming a Partner
+    // with no book would realize Budgets whose subject moved nowhere.
     const catalogue = await loadClassification();
-    for (const purpose of await allPurposes()) {
-      if (!purpose.partnerCategory) continue;
-      const rule = ruleFor(catalogue, purpose.budgetCategory);
-      assert.ok(rule, `${purpose.label} names an unknown Budget Category`);
+    for (const rule of catalogue) {
+      if (!rule.requirePartner) continue;
       assert.ok(
         subledgerForCategory(books, rule.id),
-        `${purpose.label} moves a Partner but lands in no subject book`
+        `${rule.label} names a Partner but keeps no subject book`
       );
     }
   });

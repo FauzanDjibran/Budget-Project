@@ -196,15 +196,15 @@ describe("workflow permissions", () => {
     const clerk = await makeUser({
       permissions: [
         "MENU_FINANCE_ACCESS",
-        "CASH_BANK_TRANSACTION_VIEW",
-        "CASH_BANK_TRANSACTION_CREATE",
+        "REALIZATION_VIEW",
+        "REALIZATION_CREATE",
       ],
     });
     const actor = await actorOf(clerk.id);
 
-    assert.ok(actorCan(actor, "CASH_BANK_TRANSACTION_CREATE"));
-    assert.equal(actorCan(actor, "CASH_BANK_TRANSACTION_POST"), false);
-    assert.equal(actorCan(actor, "CASH_BANK_TRANSACTION_CANCEL"), false);
+    assert.ok(actorCan(actor, "REALIZATION_CREATE"));
+    assert.equal(actorCan(actor, "REALIZATION_POST"), false);
+    assert.equal(actorCan(actor, "REALIZATION_CANCEL"), false);
   });
 
   test("menu access alone grants nothing inside the module", async () => {
@@ -212,7 +212,7 @@ describe("workflow permissions", () => {
     const actor = await actorOf(wanderer.id);
 
     assert.ok(actorCan(actor, "MENU_FINANCE_ACCESS"));
-    assert.equal(actorCan(actor, "CASH_BANK_TRANSACTION_VIEW"), false);
+    assert.equal(actorCan(actor, "REALIZATION_VIEW"), false);
   });
 
   test("a deactivated role withdraws its permissions without touching assignments", async () => {

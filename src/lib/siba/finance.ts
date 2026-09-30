@@ -10,6 +10,7 @@ import {
 } from "./budget";
 import { recordCashBankEntry } from "./cash-bank";
 import {
+  LayerNotAvailable,
   drawFromLayer,
   openLayer,
   openLayersFor,
@@ -24,6 +25,7 @@ import {
   settlementRefusal,
 } from "./currency";
 import { drawLayer, fxDifference, roundBase, settle } from "./fx";
+import { realizationOf } from "./realization";
 import { nextDocumentNumber } from "./document-number";
 import {
   PeriodShut,
@@ -33,13 +35,6 @@ import {
   type TransactionDateCheck,
 } from "./fiscal";
 import { postJournal, type JournalLineInput } from "./journal";
-import type { Purpose } from "./rules";
-import {
-  type PurposeRow,
-  allPurposes,
-  availablePurposes,
-  purposeByKey,
-} from "./purposes";
 import {
   type SubledgerDef,
   subledgerForCategory,
@@ -52,13 +47,16 @@ import { refValueOf } from "./system-defaults";
 import type { TransactionStatus } from "./transaction-workflow";
 
 /**
- * Finance reads and the rules a Cash Bank Transaction is held to.
+ * Finance reads and the rules a Realisasi Budget is held to.
  *
  * Finance is the execution layer (concept doc §2.2, §9): Budget plans, Finance
- * executes. A document's **header** — Purpose, Company, Partner, Cash & Bank —
- * is the context that decides which approved Budgets it may realize, and its
- * **lines** are the realization itself. One document can realize several
- * Budgets, and one Budget can be realized by several documents (§10).
+ * executes. A document's **header** — direction, Company, Cash & Bank,
+ * Currency — is the context that decides which approved Budgets it may
+ * realize, and its **lines** are the realization itself. The direction is the
+ * menu the document was opened from (Realisasi Penerimaan / Pengeluaran), and
+ * nothing else in the header narrows by classification: one document may
+ * settle Budgets of every Budget Category and every Partner at once. Each line
+ * then carries its own Budget's classification into every book it writes.
  *
  * Nothing here moves money. Draft is inert by design (§2.3): the balance and
  * `realized_amount` move only at Post, which is `app/actions/finance.ts`.
@@ -79,10 +77,8 @@ export type TransactionRow = {
   posting_date: string | null;
   transaction_type: "In" | "Out";
   company_id: number;
-  purpose: string;
   cash_bank_id: number | null;
   currency_id: number;
-  partner_id: number | null;
   transaction_amount: number;
   /** The kurs the document was valued at. */
   exchange_rate: number;
@@ -120,10 +116,8 @@ type TxRecord = {
   posting_date: Date | null;
   transaction_type: string;
   company_id: number;
-  purpose: string;
   cash_bank_id: number | null;
   currency_id: number;
-  partner_id: number | null;
   transaction_amount: { toNumber(): number };
   exchange_rate: { toNumber(): number };
   cash_bank_layer_id: number | null;
@@ -144,10 +138,8 @@ function toRow(t: TxRecord): TransactionRow {
     posting_date: t.posting_date ? t.posting_date.toISOString() : null,
     transaction_type: t.transaction_type as "In" | "Out",
     company_id: t.company_id,
-    purpose: t.purpose,
     cash_bank_id: t.cash_bank_id,
     currency_id: t.currency_id,
-    partner_id: t.partner_id,
     transaction_amount: t.transaction_amount.toNumber(),
     exchange_rate: t.exchange_rate.toNumber(),
     cash_bank_layer_id: t.cash_bank_layer_id,
@@ -162,14 +154,18 @@ function toRow(t: TxRecord): TransactionRow {
 }
 
 export async function listTransactions(
-  companyIds: number[]
+  companyIds: number[],
+  direction?: "In" | "Out"
 ): Promise<TransactionRow[]> {
   // Every document belongs to the induk today (§12), so a user holding induk
   // access sees exactly what they did before. What this adds is the other
   // half: a user without it sees none, and the list is already right when
   // Funding Request brings the anak into Finance.
   const rows = await prisma.finCashBankTransaction.findMany({
-    where: { company_id: { in: companyIds } },
+    where: {
+      company_id: { in: companyIds },
+      ...(direction ? { transaction_type: direction } : {}),
+    },
     orderBy: [{ id: "desc" }],
     include: { _count: { select: { lines: true } } },
   });
@@ -243,14 +239,11 @@ export async function budgetRealizations(budgetId: number): Promise<
     transactionNo: string;
     date: string | null;
     status: TransactionStatus;
-    purpose: string;
-    /** Resolved here, because a Purpose is a row a client component cannot read. */
-    purposeLabel: string;
+    direction: "In" | "Out";
     amount: number;
   }[]
 > {
   const docType = await budgetDocTypeId();
-  const labels = new Map((await allPurposes()).map((p) => [p.key, p.label]));
   const lines = await prisma.finCashBankTransactionLine.findMany({
     where: { source_doc_type_id: docType, source_doc_id: budgetId },
     include: { transaction: true },
@@ -261,8 +254,7 @@ export async function budgetRealizations(budgetId: number): Promise<
     transactionNo: l.transaction.transaction_no,
     date: l.transaction.document_date ? day(l.transaction.document_date) : null,
     status: l.transaction.status as TransactionStatus,
-    purpose: l.transaction.purpose,
-    purposeLabel: labels.get(l.transaction.purpose) ?? l.transaction.purpose,
+    direction: l.transaction.transaction_type as "In" | "Out",
     amount: l.settlement_amount.toNumber(),
   }));
 }
@@ -478,9 +470,9 @@ export type EligibleBudget = {
 };
 
 export type TransactionHeader = {
-  purpose: string;
+  /** Fixed by the menu the document was opened from, never typed. */
+  transaction_type: "In" | "Out";
   company_id: number | null;
-  partner_id: number | null;
   cash_bank_id: number | null;
   /**
    * The document's own currency, on **both** routes. It used to be read off the
@@ -608,48 +600,38 @@ async function headerContext(header: TransactionHeader): Promise<
   return { ok: true, route, currencyId, cashBankId: header.cash_bank_id };
 }
 
-/** The Budget Category id a purpose realizes, or null if the label is unknown. */
-// `categoryIdOf` is gone: a Purpose is a row now and carries
-// `budgetCategoryId` itself, so nothing looks a category up by the label the
-// Purpose used to hold a copy of.
-
 /**
- * The Budgets one header may realize — concept doc §9, in full.
+ * The Budgets one header may realize.
  *
  * A Budget is eligible when it is **Open** (approved, so it carries a
- * classification), belongs to the same Company, points the same way as the
- * Purpose, carries the Budget Category the Purpose resolves to, names the
- * header's Partner where the Purpose takes one, is denominated in the Cash &
- * Bank's own currency, and still has something outstanding.
+ * classification), belongs to the same Company, points the way the menu does,
+ * is denominated in the document's own currency, and still has something
+ * outstanding. Budget Category and Partner are **not** criteria: a realization
+ * may settle plans of every category and every Partner in one document, and
+ * each line carries its own Budget's classification into the books.
  *
  * Budget Date is deliberately *not* a filter: §9 says the month is a reporting
- * dimension (early or late realization), never a gate. A document in September
- * may settle an August plan.
+ * dimension (early or late realization), never a gate.
  *
  * Currency is the **document's**, not the resource's. A USD document settles
- * USD plans, whether it is paid from a USD account or from a rupiah one —
- * which is exactly the distinction that did not exist while a document took
- * its currency from the resource paying it.
+ * USD plans, whether it is paid from a USD account or from a rupiah one.
  */
 export async function eligibleBudgets(
   header: TransactionHeader,
   options: { excludeTransactionId?: number } = {}
 ): Promise<EligibleBudget[]> {
-  const purpose = await purposeByKey(header.purpose);
-  if (!purpose || !header.company_id) return [];
-  if (purpose.partnerCategory && !header.partner_id) return [];
+  if (!header.company_id) return [];
+  if (header.transaction_type !== "In" && header.transaction_type !== "Out") {
+    return [];
+  }
 
   const context = await headerContext(header);
   if (!context.ok) return [];
 
-  const categoryId = purpose.budgetCategoryId;
-
   const budgets = await openBudgetsMatching({
     companyId: header.company_id,
-    budgetType: purpose.direction,
-    categoryId,
+    budgetType: header.transaction_type,
     currencyId: context.currencyId,
-    partnerId: purpose.partnerCategory ? header.partner_id : null,
   });
 
   const outstanding = budgets
@@ -717,7 +699,7 @@ async function draftAllocations(
 export type HeaderCheck =
   | {
       ok: true;
-      purpose: Purpose;
+      direction: "In" | "Out";
       companyId: number;
       /** Null on the funded route: the anak has no resource of its own. */
       cashBankId: number | null;
@@ -730,7 +712,6 @@ export type HeaderCheck =
       rate: number;
       /** The layer the payment draws on, where one is involved. */
       layerId: number | null;
-      partnerId: number | null;
       route: FundingRoute;
     }
   | { ok: false; errors: Record<string, string> };
@@ -740,7 +721,7 @@ export type HeaderCheck =
  *
  * The form narrows each picker as the user goes, but a Server Action is
  * reachable directly with any combination of ids — this is what actually
- * enforces the chain Purpose -> Company -> Partner -> Cash & Bank.
+ * enforces the chain Company -> Cash & Bank -> Currency -> kurs.
  *
  * **Which Company decides the shape of the rest.** The induk holds the cash, so
  * its documents name a Cash & Bank and take their currency from it. The anak
@@ -755,11 +736,11 @@ export async function checkHeader(
 ): Promise<HeaderCheck> {
   const errors: Record<string, string> = {};
 
-  const purpose = await purposeByKey(header.purpose);
-  if (!purpose) {
+  const direction = header.transaction_type;
+  if (direction !== "In" && direction !== "Out") {
     return {
       ok: false,
-      errors: { purpose: "Transaction Purpose wajib dipilih." },
+      errors: { _form: "Arah realisasi tidak dikenali." },
     };
   }
 
@@ -781,36 +762,6 @@ export async function checkHeader(
   } else {
     route = await fundingRoute(header.company_id);
     if (!route) errors.company_id = "Company tidak ditemukan.";
-  }
-
-  let partnerId: number | null = null;
-  if (purpose.partnerCategory) {
-    if (!header.partner_id) {
-      errors.partner_id = "Purpose ini mensyaratkan Partner.";
-    } else {
-      const partner = await prisma.mPartner.findUnique({
-        where: { id: header.partner_id },
-        select: {
-          company_id: true,
-          status: true,
-          category: { select: { category_label: true } },
-        },
-      });
-      if (!partner) errors.partner_id = "Partner tidak ditemukan.";
-      else if (partner.company_id !== header.company_id) {
-        errors.partner_id = "Partner harus milik Company yang sama.";
-      } else if (partner.status !== "Active") {
-        errors.partner_id = "Partner tersebut non-aktif dan tidak dapat dipilih.";
-      } else if (partner.category.category_label !== purpose.partnerCategory) {
-        errors.partner_id = `Purpose ini hanya menerima Partner berkategori ${purpose.partnerCategory}.`;
-      } else {
-        partnerId = header.partner_id;
-      }
-    }
-  } else if (header.partner_id) {
-    // A purpose that takes no subject must not carry one, or a later subledger
-    // would be opened against a partner the classification never meant.
-    errors.partner_id = "Purpose yang dipilih tidak memakai Partner.";
   }
 
   // The document's own currency, on both routes. It used to be read off the
@@ -885,7 +836,7 @@ export async function checkHeader(
   let layerId: number | null = null;
   if (route === "self" && currencyLabel && resourceCurrencyLabel) {
     const source = rateSource(
-      purpose.direction,
+      direction,
       currencyLabel,
       resourceCurrencyLabel
     );
@@ -935,7 +886,7 @@ export async function checkHeader(
 
   return {
     ok: true,
-    purpose,
+    direction,
     companyId: header.company_id!,
     cashBankId,
     currencyId,
@@ -943,7 +894,6 @@ export async function checkHeader(
     resourceCurrencyLabel,
     rate,
     layerId,
-    partnerId,
     route: route!,
   };
 }
@@ -1057,7 +1007,7 @@ export type PostingResult =
   | { ok: false; errors: Record<string, string> };
 
 /**
- * How a document's movement is valued, and what leaves the bank.
+ * What one Budget line is worth on the cash side.
  *
  * A document has a currency; a resource has a currency; they need not be the
  * same, but under the crossing rule one of them is always the base currency
@@ -1065,26 +1015,32 @@ export type PostingResult =
  * the one place they are told apart:
  *
  *   * **foreign out of a foreign resource** — the kurs is the chosen layer's,
- *     read rather than typed, and the base released is what that layer gives up.
+ *     read rather than typed, and each line's base is what the layer gives up
+ *     for that line, drawn one line after the other;
  *   * **foreign through a base-currency resource** — the kurs is the one the
- *     bank actually converted at, typed on the document.
- *   * **base on base** — the kurs is `1`, which here means what it always
- *     should: the money is already the measure.
+ *     bank actually converted at, typed on the document, applied per line;
+ *   * **base on base** — the kurs is `1`.
  *
- * `accountAmount` is what moves through the resource in **its own** currency,
- * which is the document amount unless the bank did the converting.
+ * Valued **per line** rather than once and apportioned, because every line
+ * writes a Cash Bank Book entry of its own: an entry's base has to be what that
+ * line actually cost, not a share of a figure nobody booked.
  */
+export type CashLine = {
+  /** What moves through the resource, in the resource's own currency. */
+  accountAmount: number;
+  /** What the movement was worth in base. */
+  base: number;
+};
+
 export type Valuation = {
   /** Document currency to base. Never 1 unless the document is base currency. */
   rate: number;
-  /** What the movement was worth in base. */
-  base: number;
-  /** What moves through the resource, in the resource's own currency. */
-  accountAmount: number;
   /** The rate the *resource's* own currency was valued at — 1 when it is base. */
   accountRate: number;
   /** The layer drawn on, where one was. */
   layerId: number | null;
+  /** One per document line, in line order. */
+  lines: CashLine[];
 };
 
 export type ValuationCheck =
@@ -1101,13 +1057,14 @@ export type ValuationCheck =
  */
 async function resolveValuation(doc: {
   transaction_type: string;
-  transaction_amount: { toNumber(): number };
   exchange_rate: { toNumber(): number };
   cash_bank_layer_id: number | null;
   currency: { currency_label: string };
   cash_bank: { currency: { currency_label: string } } | null;
+  amounts: number[];
 }): Promise<ValuationCheck> {
-  const amount = doc.transaction_amount.toNumber();
+  const amounts = doc.amounts;
+  const total = amounts.reduce((t, a) => t + a, 0);
   const direction = doc.transaction_type as "In" | "Out";
   const documentCurrency = doc.currency.currency_label;
   const resourceCurrency = doc.cash_bank?.currency.currency_label ?? "";
@@ -1125,16 +1082,16 @@ async function resolveValuation(doc: {
   }
 
   const resourceIsBase = isBaseCurrency(resourceCurrency);
-  // The bank converts only when the document and the resource differ, which
-  // under the crossing rule means the resource holds rupiah.
-  const accountAmount = resourceIsBase && documentCurrency !== resourceCurrency
-    ? roundBase(amount * doc.exchange_rate.toNumber())
-    : amount;
 
   if (source === "identity") {
     return {
       ok: true,
-      valuation: { rate: 1, base: amount, accountAmount: amount, accountRate: 1, layerId: null },
+      valuation: {
+        rate: 1,
+        accountRate: 1,
+        layerId: null,
+        lines: amounts.map((a) => ({ accountAmount: a, base: a })),
+      },
     };
   }
 
@@ -1146,23 +1103,27 @@ async function resolveValuation(doc: {
         errors: { exchange_rate: "Kurs wajib diisi untuk dokumen mata uang asing." },
       };
     }
+    // The bank converts only when the document and the resource differ, which
+    // under the crossing rule means the resource holds rupiah.
+    const converts = resourceIsBase && documentCurrency !== resourceCurrency;
     return {
       ok: true,
       valuation: {
         rate,
-        base: roundBase(amount * rate),
-        accountAmount,
         // A base-currency resource is unlayered and worth its own face value.
         accountRate: resourceIsBase ? 1 : rate,
         layerId: null,
+        lines: amounts.map((a) => {
+          const base = roundBase(a * rate);
+          return { accountAmount: converts ? base : a, base };
+        }),
       },
     };
   }
 
   // `layer` — money leaving a foreign resource. The kurs is the layer's, and
-  // the base released is what the layer gives up rather than a product
-  // recomputed from it: drawing a layer to nothing releases its remainder
-  // exactly.
+  // each line's base is what the layer gives up for it, drawn in line order:
+  // drawing a layer to nothing releases its remainder exactly, on the last line.
   if (!doc.cash_bank_layer_id) {
     return {
       ok: false,
@@ -1185,68 +1146,101 @@ async function resolveValuation(doc: {
       },
     };
   }
-  if (amount > layer.foreign_remaining.toNumber()) {
+  if (total > layer.foreign_remaining.toNumber()) {
     return {
       ok: false,
       errors: {
         cash_bank_layer_id:
           `Layer ${layer.layer_no} hanya menyisakan ` +
           `${layer.foreign_remaining.toNumber()}, sedangkan dokumen ini bernilai ` +
-          `${amount}. Satu transaksi memakai tepat satu layer — pecah dokumen ` +
+          `${total}. Satu transaksi memakai tepat satu layer — pecah dokumen ` +
           "atau pilih layer lain.",
       },
     };
   }
 
   const rate = layer.rate.toNumber();
-  const exact = drawLayer(
-    {
-      foreign: layer.foreign_remaining.toNumber(),
-      base: layer.base_remaining.toNumber(),
-      rate,
-    },
-    amount
-  );
+  let remaining = {
+    foreign: layer.foreign_remaining.toNumber(),
+    base: layer.base_remaining.toNumber(),
+    rate,
+  };
+  const lines: CashLine[] = [];
+  for (const a of amounts) {
+    const drawn = drawLayer(remaining, a);
+    lines.push({ accountAmount: a, base: drawn.base });
+    remaining = drawn.remaining;
+  }
 
   return {
     ok: true,
-    valuation: {
-      rate,
-      base: exact.base,
-      accountAmount: amount,
-      accountRate: rate,
-      layerId: doc.cash_bank_layer_id,
-    },
+    valuation: { rate, accountRate: rate, layerId: doc.cash_bank_layer_id, lines },
   };
 }
 
 /**
- * The account a Purpose resolves to for one Company — Company × Budget Category
- * × Partner Category, which is the whole reason a Purpose is exactly one of
- * each (§19).
+ * The account one Budget line journals against — Company × its Budget Category
+ * × its Partner's Partner Category, or no Partner Category where the Budget
+ * names no Partner.
  *
- * Resolved **per Company**, not once per document: on the funded route the
- * induk and the anak journal the same business event against their own charts,
- * and only the anak's side is classified by the Purpose at all.
+ * Resolved **per line**: a realization may settle Budgets of several categories
+ * and several Partners, and each lands on its own account.
  */
-async function purposeAccountId(
+async function lineAccountIds(
   companyId: number,
-  purpose: PurposeRow
+  budgets: { id: number; budget_no: string; category_id: number | null; partner_id: number | null }[]
 ): Promise<
-  { ok: true; accountId: number } | { ok: false; errors: Record<string, string> }
+  | { ok: true; accounts: Map<number, number> }
+  | { ok: false; errors: Record<string, string> }
 > {
-  const categoryId = purpose.budgetCategoryId;
-  const partnerCategoryId = purpose.partnerCategoryId;
+  const partnerIds = [
+    ...new Set(budgets.map((b) => b.partner_id).filter((p): p is number => p != null)),
+  ];
+  const categoryIds = [
+    ...new Set(budgets.map((b) => b.category_id).filter((c): c is number => c != null)),
+  ];
+  const [partners, mappings, categories] = await Promise.all([
+    prisma.mPartner.findMany({
+      where: { id: { in: partnerIds } },
+      select: { id: true, category_id: true, category: { select: { category_label: true } } },
+    }),
+    prisma.accBudgetCategoryAccount.findMany({
+      where: { company_id: companyId, budget_category_id: { in: categoryIds } },
+      select: { budget_category_id: true, partner_category_id: true, account_id: true },
+    }),
+    prisma.sysBudgetCategory.findMany({
+      where: { id: { in: categoryIds } },
+      select: { id: true, category_label: true },
+    }),
+  ]);
+  const partnerOf = new Map(partners.map((p) => [p.id, p]));
+  const categoryLabel = new Map(categories.map((c) => [c.id, c.category_label]));
 
-  const mapping = await prisma.accBudgetCategoryAccount.findFirst({
-    where: {
-      company_id: companyId,
-      budget_category_id: categoryId,
-      partner_category_id: partnerCategoryId,
-    },
-    select: { account_id: true },
-  });
-  if (!mapping) {
+  const accounts = new Map<number, number>();
+  const missing: string[] = [];
+  for (const b of budgets) {
+    if (b.category_id == null) {
+      missing.push(`${b.budget_no} (belum berkategori)`);
+      continue;
+    }
+    const partner = b.partner_id != null ? partnerOf.get(b.partner_id) : null;
+    const partnerCategoryId = partner ? partner.category_id : null;
+    const mapping = mappings.find(
+      (m) =>
+        m.budget_category_id === b.category_id &&
+        m.partner_category_id === partnerCategoryId
+    );
+    if (!mapping) {
+      const combination = partner
+        ? `${categoryLabel.get(b.category_id)} × ${partner.category.category_label}`
+        : `${categoryLabel.get(b.category_id)}`;
+      missing.push(`${b.budget_no} (${combination})`);
+      continue;
+    }
+    accounts.set(b.id, mapping.account_id);
+  }
+
+  if (missing.length) {
     // Approval tolerates a missing mapping (§10 rule 28) because that gap
     // belongs to Accounting. Posting cannot: without a mapping there is no
     // account to journal against, and money must not move unaccounted for.
@@ -1254,138 +1248,151 @@ async function purposeAccountId(
       ok: false,
       errors: {
         _form:
-          `Belum ada Mapping Budget ke Account untuk kombinasi ini (${purpose.label}). ` +
+          `Belum ada Mapping Budget ke Account untuk: ${missing.join(", ")}. ` +
           "Lengkapi mapping di Accounting sebelum dokumen diposting.",
       },
     };
   }
-
-  return { ok: true, accountId: mapping.account_id };
-}
-
-/**
- * Splits one base figure across lines, keeping the total exact.
- *
- * Every line but the last takes its proportional share, rounded once; the last
- * takes whatever is left. That is what makes the parts add back to the figure
- * that actually moved rather than to a re-rounded approximation of it — the
- * same reason a full relief releases a balance's remainder exactly.
- */
-function allocate(total: number, weights: number[]): number[] {
-  if (!weights.length) return [];
-  const sum = weights.reduce((t, w) => t + w, 0);
-  if (!sum) return weights.map(() => 0);
-
-  const out: number[] = [];
-  let used = 0;
-  for (let i = 0; i < weights.length; i += 1) {
-    if (i === weights.length - 1) {
-      out.push(roundBase(total - used));
-      break;
-    }
-    const share = roundBase((total * weights[i]) / sum);
-    out.push(share);
-    used = roundBase(used + share);
-  }
-  return out;
+  return { ok: true, accounts };
 }
 
 export type PostingLine = {
+  lineId: number;
   budgetId: number;
+  budgetNo: string;
+  /** The Budget's own description — what every book entry of this line reads. */
+  description: string;
+  partnerId: number | null;
+  /** In the document's currency. */
   amount: number;
+  /** What moved through the resource, in the resource's own currency. */
+  accountAmount: number;
+  /** What the cash cost for this line, in base. */
   transactionBase: number;
-  settlementBase: number;
-  fxDifference: number;
-};
-
-export type PostingPlan = {
-  valuation: Valuation;
-  /** The subject book this document writes into, where its Budget Category keeps one. */
-  book: { def: SubledgerDef; partnerId: number } | null;
-  /** The rate the subject book records — its own, not the cash side's. */
-  settlementRate: number;
+  /** What the obligation released for this line, in base. */
   settlementBase: number;
   /** `settlementBase − transactionBase`, signed. Zero writes no journal line. */
   fxDifference: number;
+  counterAccountId: number;
+  /** The subject book this line writes into, where its category keeps one. */
+  book: SubledgerDef | null;
+};
+
+export type PostingPlan = {
+  rate: number;
+  accountRate: number;
+  layerId: number | null;
+  /** Σ of every line's base — what the cash side of the journal carries. */
+  base: number;
   fxAccountId: number | null;
   lines: PostingLine[];
 };
 
 /**
- * Everything a posting needs to know before it writes anything.
+ * Everything a posting needs to know before it writes anything — per line.
  *
- * The two sides of a settlement are determined independently: the cash gives up
- * what it cost (the layer's rate, or the rate the bank converted at), and the
- * obligation releases what it was carried at. Where they disagree the residual
- * is the FX difference, and it is the balancing figure of the journal rather
- * than a magnitude with a side chosen for it.
+ * Each line is a settlement of its own. The cash gives up what that line cost
+ * (the layer's rate, or the rate the bank converted at), and the line's own
+ * obligation releases what it was carried at in its own subject book. Where
+ * they disagree the residual is **that line's** FX difference, journaled on its
+ * own line — never summed across the document.
  *
  * Where there is nothing on the books to relieve — an expense, a Piutang raised
  * by paying out, a first-ever Hutang — the movement *is* the origin of the
- * value, so the two sides come from the same place and no difference can arise.
- * The discriminator is whether base value already exists, never the Purpose.
+ * value, so the two sides come from the same place and no difference arises.
+ *
+ * Two lines against the same position are settled one after the other: the
+ * second relieves what the first left, which is what the book will hold when
+ * its entry is written.
  */
 async function planPosting(
   doc: {
     id: number;
     transaction_type: string;
-    transaction_amount: { toNumber(): number };
     exchange_rate: { toNumber(): number };
     cash_bank_layer_id: number | null;
     company_id: number;
     currency_id: number;
-    partner_id: number | null;
-    purpose: string;
     currency: { currency_label: string };
     cash_bank: { currency: { currency_label: string } } | null;
-    lines: { source_doc_id: number; settlement_amount: { toNumber(): number } }[];
+    lines: { id: number; source_doc_id: number; settlement_amount: { toNumber(): number } }[];
   },
+  budgets: Map<
+    number,
+    { id: number; budget_no: string; description: string; category_id: number | null; partner_id: number | null }
+  >,
   options: { induk: boolean }
 ): Promise<
   { ok: true; plan: PostingPlan } | { ok: false; errors: Record<string, string> }
 > {
-  const resolved = await resolveValuation(doc);
+  const amounts = doc.lines.map((l) => l.settlement_amount.toNumber());
+  const resolved = await resolveValuation({ ...doc, amounts });
   if (!resolved.ok) return resolved;
   const valuation = resolved.valuation;
 
-  const amount = doc.transaction_amount.toNumber();
+  const lineBudgets = doc.lines.map((l) => budgets.get(l.source_doc_id)!);
+  const mapped = await lineAccountIds(doc.company_id, lineBudgets);
+  if (!mapped.ok) return mapped;
+
   const direction = doc.transaction_type as "In" | "Out";
-  const purpose = await purposeByKey(doc.purpose);
-  const catalogue = subledgerForCategory(
-    await loadSubledgers(),
-    purpose?.budgetCategoryId ?? null
-  );
-  const book =
-    catalogue && doc.partner_id ? { def: catalogue, partnerId: doc.partner_id } : null;
+  const books = await loadSubledgers();
 
-  // What the obligation releases. Only a movement that *lowers* an existing
-  // position relieves anything — one that raises it is creating value, and a
-  // book holding nothing has no rate to release at (core §9.3).
-  let settlementBase = valuation.base;
-  if (book && catalogue) {
-    const raises = subledgerMovement(catalogue, direction, amount) > 0;
-    if (!raises) {
-      const position = await subledgerPosition(
-        book.def.key,
-        book.partnerId,
-        doc.currency_id
-      );
-      const settled = settle({
-        position,
-        foreign: amount,
-        transactionBase: valuation.base,
-      });
-      settlementBase = settled.settlementBase;
+  // The positions this document touches, as they stand now, moved line by line.
+  const positions = new Map<string, { foreign: number; base: number }>();
+  const lines: PostingLine[] = [];
+  for (const [i, line] of doc.lines.entries()) {
+    const budget = lineBudgets[i];
+    const amount = amounts[i];
+    const cash = valuation.lines[i];
+    const catalogue = subledgerForCategory(books, budget.category_id);
+    const book = catalogue && budget.partner_id != null ? catalogue : null;
+
+    let settlementBase = cash.base;
+    if (book) {
+      const key = `${book.key}|${budget.partner_id}`;
+      const position =
+        positions.get(key) ??
+        (await subledgerPosition(book.key, budget.partner_id!, doc.currency_id));
+      const raises = subledgerMovement(book, direction, amount) > 0;
+      if (raises) {
+        positions.set(key, {
+          foreign: position.foreign + amount,
+          base: roundBase(position.base + cash.base),
+        });
+      } else {
+        settlementBase = settle({
+          position,
+          foreign: amount,
+          transactionBase: cash.base,
+        }).settlementBase;
+        positions.set(key, {
+          foreign: position.foreign - amount,
+          base: roundBase(position.base - settlementBase),
+        });
+      }
     }
-  }
 
-  const difference = fxDifference(settlementBase, valuation.base);
+    lines.push({
+      lineId: line.id,
+      budgetId: budget.id,
+      budgetNo: budget.budget_no,
+      description: budget.description,
+      partnerId: budget.partner_id,
+      amount,
+      accountAmount: cash.accountAmount,
+      transactionBase: cash.base,
+      settlementBase,
+      fxDifference: fxDifference(settlementBase, cash.base).amount,
+      counterAccountId: mapped.accounts.get(budget.id)!,
+      book,
+    });
+  }
 
   // An FX difference has to land somewhere named. The account is only looked
   // up when a difference actually arises, so ordinary rupiah work is never
   // blocked by a setting it does not use.
   let fxAccountId: number | null = null;
-  if (difference.side) {
+  if (lines.some((l) => l.fxDifference !== 0)) {
     const settings = await systemDefaults();
     fxAccountId = refValueOf(
       settings,
@@ -1404,66 +1411,45 @@ async function planPosting(
     }
   }
 
-  const weights = doc.lines.map((l) => l.settlement_amount.toNumber());
-  const transactionShares = allocate(valuation.base, weights);
-  const settlementShares = allocate(settlementBase, weights);
-
   return {
     ok: true,
     plan: {
-      valuation,
-      book,
-      settlementRate: amount ? settlementBase / amount : valuation.rate,
-      settlementBase,
-      fxDifference: difference.amount,
+      rate: valuation.rate,
+      accountRate: valuation.accountRate,
+      layerId: valuation.layerId,
+      base: roundBase(lines.reduce((t, l) => t + l.transactionBase, 0)),
       fxAccountId,
-      lines: doc.lines.map((l, i) => ({
-        budgetId: l.source_doc_id,
-        amount: l.settlement_amount.toNumber(),
-        transactionBase: transactionShares[i],
-        settlementBase: settlementShares[i],
-        fxDifference: roundBase(settlementShares[i] - transactionShares[i]),
-      })),
+      lines,
     },
   };
 }
 
 /**
- * The accounting entries a Cash Bank Transaction produces.
+ * The accounting entries a realization produces.
  *
- * Two sides plus a residual: the Cash & Bank resource's own account, the
- * account its Purpose resolves to, and — only where the two disagree — the
- * Company's FX difference account.
+ * One cash line for the whole document — the money left or reached the
+ * resource once — then, for **every Budget line**, its own counter line on the
+ * account its classification maps to, carrying its own Partner, and its own FX
+ * difference line where that line's two base values disagree. A document
+ * realizing six Budgets across three categories is one journal of up to
+ * thirteen lines, and each one reads back to the plan it settled.
  *
- * Each line carries its own currency and its own rate, because they need not
- * be the same one. A foreign document paid from a rupiah account produces a
- * rupiah cash line and a foreign counter line in the same journal, and the
- * entry balances in base alone.
- *
- * One counter line per document line rather than one aggregated line: every
- * line realizes a named Budget, and keeping them apart is what lets a ledger
- * entry be read back to the plan it settled.
+ * Each line carries its own currency and its own rate: a foreign document paid
+ * from a rupiah account produces a rupiah cash line and foreign counter lines
+ * in the same journal, and the entry balances in base alone.
  */
 async function journalEntries(
   doc: {
     transaction_no: string;
-    purpose: string;
-    company_id: number;
-    partner_id: number | null;
     cash_bank_id: number | null;
     currency_id: number;
     transaction_type: string;
   },
   plan: PostingPlan
 ): Promise<
-  | { ok: true; lines: JournalLineInput[]; purposeLabel: string }
+  | { ok: true; lines: JournalLineInput[] }
   | { ok: false; errors: Record<string, string> }
 > {
-  const purpose = await purposeByKey(doc.purpose);
-  if (!purpose) {
-    return { ok: false, errors: { _form: "Purpose dokumen tidak dikenali." } };
-  }
-
   const cashBank = await prisma.mCashBank.findUnique({
     where: { id: doc.cash_bank_id! },
     select: { account_id: true, currency_id: true, cash_bank_label: true },
@@ -1472,55 +1458,56 @@ async function journalEntries(
     return { ok: false, errors: { _form: "Cash & Bank dokumen tidak ditemukan." } };
   }
 
-  const mapped = await purposeAccountId(doc.company_id, purpose);
-  if (!mapped.ok) return mapped;
-
   const incoming = doc.transaction_type === "In";
-  const { valuation } = plan;
+  const accountAmount = plan.lines.reduce((t, l) => t + l.accountAmount, 0);
+  const baseCurrency = await baseCurrencyId();
 
   const lines: JournalLineInput[] = [
     {
       // The cash side, in the resource's own currency and at its own rate.
       accountId: cashBank.account_id,
       currencyId: cashBank.currency_id,
-      rate: valuation.accountRate,
-      debit: incoming ? valuation.accountAmount : 0,
-      credit: incoming ? 0 : valuation.accountAmount,
-      baseAmount: valuation.base,
+      rate: plan.accountRate,
+      debit: incoming ? accountAmount : 0,
+      credit: incoming ? 0 : accountAmount,
+      baseAmount: plan.base,
       description: `${doc.transaction_no} — ${cashBank.cash_bank_label}`,
     },
-    ...plan.lines.map((l) => ({
-      // The counter side, in the document's currency and at the rate the
-      // obligation was carried at — which is what makes the two differ.
-      accountId: mapped.accountId,
-      partnerId: doc.partner_id,
+  ];
+
+  for (const l of plan.lines) {
+    // The counter side, in the document's currency and at the rate this
+    // line's obligation was carried at — which is what makes the two differ.
+    lines.push({
+      accountId: l.counterAccountId,
+      partnerId: l.partnerId,
       currencyId: doc.currency_id,
-      rate: l.amount ? l.settlementBase / l.amount : valuation.rate,
+      rate: l.amount ? l.settlementBase / l.amount : plan.rate,
       debit: incoming ? 0 : l.amount,
       credit: incoming ? l.amount : 0,
       baseAmount: l.settlementBase,
-      description: `${purpose.label} — Budget #${l.budgetId}`,
-    })),
-  ];
-
-  // The residual, and only when there is one. Its side is the balancing side,
-  // never chosen: a gain sits on the credit side because the obligation gave up
-  // more than the currency cost, and a loss on the debit side for the mirror
-  // reason. It is a base-currency line with no foreign face of its own.
-  if (plan.fxDifference !== 0 && plan.fxAccountId) {
-    const magnitude = Math.abs(plan.fxDifference);
-    const gain = plan.fxDifference > 0;
-    lines.push({
-      accountId: plan.fxAccountId,
-      currencyId: await baseCurrencyId(),
-      rate: 1,
-      debit: gain ? 0 : magnitude,
-      credit: gain ? magnitude : 0,
-      description: `Selisih kurs — ${doc.transaction_no}`,
+      description: l.description,
     });
+
+    // This line's residual, and only when it has one. Its side is the
+    // balancing side, never chosen: a gain sits on the credit side because the
+    // obligation gave up more than the currency cost, and a loss on the debit
+    // side for the mirror reason.
+    if (l.fxDifference !== 0 && plan.fxAccountId) {
+      const magnitude = Math.abs(l.fxDifference);
+      const gain = l.fxDifference > 0;
+      lines.push({
+        accountId: plan.fxAccountId,
+        currencyId: baseCurrency,
+        rate: 1,
+        debit: gain ? 0 : magnitude,
+        credit: gain ? magnitude : 0,
+        description: `Selisih kurs — ${l.description}`,
+      });
+    }
   }
 
-  return { ok: true, lines, purposeLabel: purpose.label };
+  return { ok: true, lines };
 }
 
 /** The base currency's row id, for the lines that have no foreign face. */
@@ -1543,9 +1530,11 @@ async function baseCurrencyId(): Promise<number> {
  * One database transaction — either the money moved and every book that must
  * know about it does, or nothing happened at all:
  *
- *   1. the **Cash Bank Book** gets an entry, and its materialised balance moves
- *      with it, in the same transaction (`recordCashBankEntry`);
- *   2. the **subject book** its Purpose keeps, where it keeps one;
+ *   1. the **Cash Bank Book** gets one entry **per Budget line**, each reading
+ *      its Budget's own description, and its materialised balance moves with
+ *      every one (`recordCashBankEntry`);
+ *   2. the **subject book** each line's Budget Category keeps, where it keeps
+ *      one — again one entry per line, never summed per Partner;
  *   3. the **Journal**, balanced in base currency (`postJournal`);
  *   4. the rate **layer** it draws on, or the one it opens;
  *   5. every Budget on the document has its `realized_amount` raised, and a
@@ -1652,7 +1641,7 @@ export async function applyPosting(
   // another document has since emptied refuses rather than aborting halfway: a
   // posting that moves the book without writing accounting is exactly the split
   // §12 forbids.
-  const planned = await planPosting(doc, { induk: true });
+  const planned = await planPosting(doc, byId, { induk: true });
   if (!planned.ok) return { ok: false, errors: planned.errors };
   const plan = planned.plan;
 
@@ -1665,87 +1654,93 @@ export async function applyPosting(
     // transaction and re-asked under the hold: the check above was before it.
     await holdPostingPeriod(tx, [doc.company_id], date);
 
-    // The layer the payment drew on, taken down by exactly what left it. Done
-    // first so an exhausted layer refuses before anything else is written —
-    // `drawFromLayer` throws, and a throw in here takes the posting down.
-    if (plan.valuation.layerId) {
-      await drawFromLayer(tx, {
-        layerId: plan.valuation.layerId,
+    const direction = doc.transaction_type as "In" | "Out";
+    const opensLayer = createsLayer(
+      direction,
+      doc.currency.currency_label,
+      doc.cash_bank?.currency.currency_label ?? ""
+    );
+
+    for (const line of plan.lines) {
+      // The layer the payment drew on, taken down by exactly what this line
+      // took from it. Drawn before the line's book entry so an exhausted layer
+      // refuses before anything else is written — `drawFromLayer` throws, and
+      // a throw in here takes the posting down. A layer another document has
+      // moved since the plan was made would value the line differently from
+      // the journal already composed, so that refuses too.
+      if (plan.layerId) {
+        const drawn = await drawFromLayer(tx, {
+          layerId: plan.layerId,
+          cashBankId: doc.cash_bank_id!,
+          foreign: line.accountAmount,
+          actorId,
+        });
+        if (drawn.base !== line.transactionBase) {
+          throw new LayerNotAvailable(
+            "Layer kurs berubah sejak dokumen divaluasi. Ulangi Post."
+          );
+        }
+      }
+
+      // One Cash Bank Book entry per Budget, reading that Budget's own words,
+      // so the book traces back to each plan it paid rather than to a total.
+      await recordCashBankEntry(tx, {
         cashBankId: doc.cash_bank_id!,
-        foreign: plan.valuation.accountAmount,
-        actorId,
-      });
-    }
-
-    await recordCashBankEntry(tx, {
-      cashBankId: doc.cash_bank_id!,
-      date,
-      type: "Transaction",
-      direction: doc.transaction_type as "In" | "Out",
-      // In the **resource's** own currency, which is the document's amount
-      // unless the bank did the converting.
-      amount: plan.valuation.accountAmount,
-      rate: plan.valuation.accountRate,
-      // What the layer actually released, which can differ from the product by
-      // a rounding unit when a layer is drawn to nothing.
-      baseAmount: plan.valuation.base,
-      sourceDocTypeId: docTypeId,
-      sourceDocId: doc.id,
-      note: doc.transaction_no,
-      actorId,
-    });
-
-    // Money arriving into a foreign resource is currency acquired, and it
-    // acquires a layer of its own at the rate it was bought in at. Never merged
-    // with an existing one, whatever its rate.
-    if (
-      createsLayer(
-        doc.transaction_type as "In" | "Out",
-        doc.currency.currency_label,
-        doc.cash_bank?.currency.currency_label ?? ""
-      )
-    ) {
-      await openLayer(tx, {
-        cashBankId: doc.cash_bank_id!,
-        date,
-        rate: plan.valuation.accountRate,
-        foreign: plan.valuation.accountAmount,
-        sourceDocTypeId: docTypeId,
-        sourceDocId: doc.id,
-        note: doc.transaction_no,
-        actorId,
-      });
-    }
-
-    // The subject book, where the document's Budget Category keeps one. A
-    // Partner's position is its own historical store (concept doc §11, §13),
-    // written straight from this document like the Cash Bank Book above and
-    // never derived from the journal below. One entry per document rather than
-    // per line: the subject moved once, and which Budgets that settled is what
-    // the document itself and the journal's counter lines record.
-    //
-    // Asset and Biaya name no Partner and keep no book, so they simply produce
-    // no entry — the Cash Bank Book and the Journal still record the movement.
-    if (plan.book) {
-      await recordSubledgerEntry(tx, {
-        book: plan.book.def,
-        partnerId: plan.book.partnerId,
-        currencyId: doc.currency_id,
         date,
         type: "Transaction",
-        direction: doc.transaction_type as "In" | "Out",
-        amount: doc.transaction_amount.toNumber(),
-        // **This book's own rate**, not the cash side's. A relief releases what
-        // the position was carried at; only a movement that creates value takes
-        // the rate the money moved at. The gap between the two is the FX
-        // difference, and it lives in the journal rather than in either book.
-        rate: plan.settlementRate,
-        baseAmount: plan.settlementBase,
+        direction,
+        // In the **resource's** own currency, which is the line's amount
+        // unless the bank did the converting.
+        amount: line.accountAmount,
+        rate: plan.accountRate,
+        baseAmount: line.transactionBase,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
-        note: `${doc.transaction_no} — ${entries.purposeLabel}`,
+        note: line.description,
         actorId,
       });
+
+      // Money arriving into a foreign resource is currency acquired, and each
+      // line acquires a layer of its own at the rate it was bought in at —
+      // one per book entry, never merged with an existing one.
+      if (opensLayer) {
+        await openLayer(tx, {
+          cashBankId: doc.cash_bank_id!,
+          date,
+          rate: plan.accountRate,
+          foreign: line.accountAmount,
+          baseAmount: line.transactionBase,
+          sourceDocTypeId: docTypeId,
+          sourceDocId: doc.id,
+          note: line.description,
+          actorId,
+        });
+      }
+
+      // The subject book this line's Budget Category keeps, where it keeps
+      // one — one entry per Budget, never summed per Partner, so a Partner
+      // settling six plans shows six movements. Written straight from the
+      // document like the Cash Bank Book, never derived from the journal.
+      if (line.book) {
+        await recordSubledgerEntry(tx, {
+          book: line.book,
+          partnerId: line.partnerId!,
+          currencyId: doc.currency_id,
+          date,
+          type: "Transaction",
+          direction,
+          amount: line.amount,
+          // **This book's own rate**, not the cash side's. A relief releases
+          // what the position was carried at; the gap between the two is the
+          // line's FX difference, and it lives in the journal.
+          rate: line.amount ? line.settlementBase / line.amount : plan.rate,
+          baseAmount: line.settlementBase,
+          sourceDocTypeId: docTypeId,
+          sourceDocId: doc.id,
+          note: line.description,
+          actorId,
+        });
+      }
     }
 
     // Realization is Budget's to write, not Finance's — same transaction, but
@@ -1768,7 +1763,7 @@ export async function applyPosting(
     await postJournal(tx, {
       companyId: doc.company_id,
       postingDate: new Date(`${date}T00:00:00Z`),
-      description: `${doc.transaction_no} — ${entries.purposeLabel}`,
+      description: `${doc.transaction_no} — ${realizationOf(doc.transaction_type).title}`,
       sourceDocTypeId: docTypeId,
       sourceDocId: doc.id,
       lines: entries.lines,
@@ -1778,15 +1773,14 @@ export async function applyPosting(
     // What the document was worth, and what each line's share of that was —
     // written at Post rather than at Draft, because a Draft has no kurs it can
     // rely on and nothing to be worth anything against.
-    for (const [i, line] of doc.lines.entries()) {
-      const share = plan.lines[i];
+    for (const share of plan.lines) {
       await tx.finCashBankTransactionLine.update({
-        where: { id: line.id },
+        where: { id: share.lineId },
         data: {
           settlement_base_amount: share.settlementBase,
           settlement_exchange_rate: share.amount
             ? share.settlementBase / share.amount
-            : plan.valuation.rate,
+            : plan.rate,
           transaction_base_amount: share.transactionBase,
           fx_difference: share.fxDifference,
           updated_by: actorId,
@@ -1800,14 +1794,14 @@ export async function applyPosting(
         status: "Posted",
         document_date: new Date(`${date}T00:00:00Z`),
         posting_date: new Date(),
-        exchange_rate: plan.valuation.rate,
-        transaction_base_amount: plan.valuation.base,
+        exchange_rate: plan.rate,
+        transaction_base_amount: plan.base,
         updated_by: actorId,
       },
     });
   });
   } catch (error) {
-    if (error instanceof PeriodShut) {
+    if (error instanceof PeriodShut || error instanceof LayerNotAvailable) {
       return { ok: false, errors: { _form: error.message } };
     }
     throw error;
@@ -1942,11 +1936,6 @@ export async function prepareFundedPosting(
     };
   }
 
-  const purpose = await purposeByKey(doc.purpose);
-  if (!purpose) {
-    return { ok: false, errors: { _form: "Purpose dokumen tidak dikenali." } };
-  }
-
   const induk = await transactingCompany();
   if (!induk) {
     return {
@@ -2062,14 +2051,16 @@ export async function prepareFundedPosting(
   }
 
   // The anak journals its own side against its own chart of accounts.
-  const mapped = await purposeAccountId(doc.company_id, purpose);
+  //
+  // The funded route is frozen while it is redesigned: it still posts one
+  // counter line and one subject-book entry, resolved from the document's
+  // first Budget, as it did when a document named one Purpose.
+  const first = byId.get(doc.lines[0].source_doc_id)!;
+  const mapped = await lineAccountIds(doc.company_id, [first]);
   if (!mapped.ok) return mapped;
 
   const outgoing = doc.transaction_type === "Out";
-  const subledger = subledgerForCategory(
-    await loadSubledgers(),
-    purpose.budgetCategoryId
-  );
+  const subledger = subledgerForCategory(await loadSubledgers(), first.category_id);
 
   return {
     ok: true,
@@ -2087,9 +2078,9 @@ export async function prepareFundedPosting(
       },
       anak: {
         companyId: doc.company_id,
-        purposeAccountId: mapped.accountId,
+        purposeAccountId: mapped.accounts.get(first.id)!,
         purposeBook: subledger ?? null,
-        purposePartnerId: doc.partner_id,
+        purposePartnerId: first.partner_id,
         bridgeAccountId: outgoing
           ? input.bridge.anak.apAccountId
           : input.bridge.anak.arAccountId,
@@ -2100,7 +2091,7 @@ export async function prepareFundedPosting(
       amount: doc.transaction_amount.toNumber(),
       rate: valuation.rate,
       transactionNo: doc.transaction_no,
-      purposeLabel: purpose.label,
+      purposeLabel: realizationOf(doc.transaction_type).title,
       requestNo: input.requestNo,
       providerSource: input.providerSource,
       requesterSource: {
@@ -2370,10 +2361,16 @@ export async function transactionNumbersByIds(
   return new Map(rows.map((r) => [r.id, r.transaction_no]));
 }
 
-/** Next document number, `CBT-0001`. The format lives in `document-number.ts`. */
-export async function nextTransactionNo(): Promise<string> {
-  return nextDocumentNumber("CBT", async () => {
+/**
+ * Next document number in the direction's own series — `RBM-0001` for a
+ * Realisasi Penerimaan, `RBK-0001` for a Realisasi Pengeluaran. The format
+ * lives in `document-number.ts`, the prefixes in `realization.ts`.
+ */
+export async function nextTransactionNo(direction: "In" | "Out"): Promise<string> {
+  const prefix = realizationOf(direction).prefix;
+  return nextDocumentNumber(prefix, async () => {
     const row = await prisma.finCashBankTransaction.findFirst({
+      where: { transaction_no: { startsWith: `${prefix}-` } },
       orderBy: { id: "desc" },
       select: { transaction_no: true },
     });
@@ -2421,56 +2418,6 @@ export async function summariseTransactions(
   };
 }
 
-// ------------------------------------------------------------ purpose view
-
-export type PurposeOption = {
-  key: string;
-  label: string;
-  direction: "In" | "Out";
-  budgetCategory: string;
-  partnerCategory: string | null;
-};
-
-/**
- * Every Purpose, including retired ones.
- *
- * Unfiltered on purpose: this is what a list or a detail page reads a posted
- * document's `purpose` key back through, and a document must go on naming its
- * own Purpose after that Purpose has been withdrawn. Use
- * `availablePurposeOptions` for anything a user picks from.
- */
-export async function purposeOptions(): Promise<PurposeOption[]> {
-  return (await allPurposes()).map(toOption);
-}
-
-/**
- * The Purposes a **new** document may be raised for.
- *
- * Active, and belonging to a Budget Category that is itself active — so
- * retiring a classification withdraws its Purposes with it and the form cannot
- * offer one the approval chain would then refuse.
- *
- * `keep` is the Purpose a document already carries. It survives the filter for
- * the same reason a deactivated record stays visible in the picker that already
- * selected it (CLAUDE.md §12): editing a draft must not silently drop a value
- * the user never touched.
- */
-export async function availablePurposeOptions(
-  keep?: string | null
-): Promise<PurposeOption[]> {
-  return (await availablePurposes(keep)).map(toOption);
-}
-
-function toOption(p: PurposeRow): PurposeOption {
-  return {
-    key: p.key,
-    label: p.label,
-    direction: p.direction,
-    budgetCategory: p.budgetCategory,
-    partnerCategory: p.partnerCategory,
-  };
-}
-
 // ---------------------------------------------------- pending commitments
 
 /**
@@ -2487,7 +2434,6 @@ export type PendingDocumentRow = {
   currencyId: number;
   currencyLabel: string;
   transactionType: "In" | "Out";
-  purposeLabel: string;
   amount: number;
   lineCount: number;
   /** When the document was submitted — `Pending` is written once and frozen. */
@@ -2552,8 +2498,6 @@ export async function pendingCommitments(
     );
   }
 
-  const purposeLabels = new Map((await allPurposes()).map((p) => [p.key, p.label]));
-
   const rows: PendingDocumentRow[] = docs.map((t) => ({
     id: t.id,
     transactionNo: t.transaction_no,
@@ -2562,7 +2506,6 @@ export async function pendingCommitments(
     currencyId: t.currency_id,
     currencyLabel: t.currency.currency_label,
     transactionType: t.transaction_type as "In" | "Out",
-    purposeLabel: purposeLabels.get(t.purpose) ?? t.purpose,
     amount: t.transaction_amount.toNumber(),
     lineCount: t._count.lines,
     since: t.updated_at.toISOString(),

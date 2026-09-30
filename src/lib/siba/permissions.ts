@@ -105,14 +105,6 @@ export const PERMISSIONS = [
   { code: "PARTNER_CATEGORY_ACTIVATE", name: "Aktifkan Partner Category", module: "settings" },
   { code: "PARTNER_CATEGORY_DEACTIVATE", name: "Nonaktifkan Partner Category", module: "settings" },
 
-  // A Purpose is entered, not generated: `sys_purpose` stands in for what a
-  // maintainer would type into the database, so adding one is an ordinary
-  // capability like any other master record's.
-  { code: "PURPOSE_VIEW", name: "Lihat Transaction Purpose", module: "settings" },
-  { code: "PURPOSE_CREATE", name: "Tambah Transaction Purpose", module: "settings" },
-  { code: "PURPOSE_EDIT", name: "Ubah sebutan Transaction Purpose", module: "settings" },
-  { code: "PURPOSE_ACTIVATE", name: "Aktifkan Transaction Purpose", module: "settings" },
-  { code: "PURPOSE_DEACTIVATE", name: "Nonaktifkan Transaction Purpose", module: "settings" },
 
   // ---------------------------------------------------------------- accounting
   { code: "MENU_ACCOUNTING_ACCESS", name: "Akses menu Accounting", module: "accounting" },
@@ -191,14 +183,14 @@ export const PERMISSIONS = [
   // ---------------------------------------------------------------- finance
   { code: "MENU_FINANCE_ACCESS", name: "Akses menu Finance", module: "finance" },
 
-  { code: "CASH_BANK_TRANSACTION_VIEW", name: "Lihat Cash Bank Transaction", module: "finance" },
-  { code: "CASH_BANK_TRANSACTION_CREATE", name: "Tambah Cash Bank Transaction", module: "finance" },
-  { code: "CASH_BANK_TRANSACTION_EDIT", name: "Ubah Cash Bank Transaction", module: "finance" },
-  { code: "CASH_BANK_TRANSACTION_POST", name: "Post Cash Bank Transaction", module: "finance" },
-  { code: "CASH_BANK_TRANSACTION_CANCEL", name: "Batalkan Cash Bank Transaction", module: "finance" },
+  { code: "REALIZATION_VIEW", name: "Lihat Realisasi Budget", module: "finance" },
+  { code: "REALIZATION_CREATE", name: "Tambah Realisasi Budget", module: "finance" },
+  { code: "REALIZATION_EDIT", name: "Ubah Realisasi Budget", module: "finance" },
+  { code: "REALIZATION_POST", name: "Post Realisasi Budget", module: "finance" },
+  { code: "REALIZATION_CANCEL", name: "Batalkan Realisasi Budget", module: "finance" },
   {
-    code: "CASH_BANK_TRANSACTION_SUBMIT",
-    name: "Ajukan Dana Cash Bank Transaction",
+    code: "REALIZATION_SUBMIT",
+    name: "Ajukan Dana Realisasi Budget",
     module: "finance",
     description:
       "Mengajukan dokumen Company anak kepada induk sebagai Funding Request. " +

@@ -99,7 +99,6 @@ async function makePendingDocument(budgetId: number, amount: number) {
       transaction_no: `TST-CBT${key}`,
       transaction_type: "Out",
       company_id: anak,
-      purpose: "BYA_OUT",
       cash_bank_id: null,
       currency_id: currency,
       transaction_amount: amount,

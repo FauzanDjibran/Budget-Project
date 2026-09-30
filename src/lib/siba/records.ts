@@ -9,13 +9,11 @@ import { journalLineCountForAccount } from "./journal";
 import { subledgerForCategory } from "./subledger-catalogue";
 import { loadSubledgers } from "./subledger-data";
 import { loadClassification } from "./classification-data";
-import { purposeCountByCategory, purposeLabel } from "./purposes";
 import { budgetCountByCategory } from "./budget";
 import { type Entity, type Field, entityBySlug } from "./entities";
 import {
   allowedPartnerCategories,
   budgetCategoryNeedsPartner,
-  directionText,
   directionsText,
 } from "./classification";
 
@@ -37,7 +35,6 @@ const DELEGATES = {
   sys_budget_category: (db: Client) => db.sysBudgetCategory,
   sys_budget_partner_category_mapping: (db: Client) =>
     db.sysBudgetPartnerCategoryMapping,
-  sys_purpose: (db: Client) => db.sysPurpose,
   acc_account: (db: Client) => db.accAccount,
   acc_account_subcategory: (db: Client) => db.accAccountSubcategory,
   acc_budget_category_account: (db: Client) => db.accBudgetCategoryAccount,
@@ -681,8 +678,8 @@ export async function partnerCategoriesForBudgetCategory(
  * Active Budget Categories that name a Partner but have no Partner Category
  * paired to them.
  *
- * Such a category is **inert**: no Purpose is generated for it, so no document
- * can ever be raised against it, and the subject book it keeps can never
+ * Such a category is **inert**: no Budget can be approved into it, so no
+ * document can ever realize one, and the subject book it keeps can never
  * receive an entry. It reads as configured and does nothing — which is exactly
  * the kind of state a user reaches by accident and then trusts.
  *
@@ -735,8 +732,8 @@ export async function strandedCategories(
  * Runs **inside the caller's transaction**, so a record and the set it admits
  * are written together or not at all. That is the whole reason the pairing
  * stopped being a menu of its own: a Budget Category saved without its Partner
- * Categories is inert — no Purpose names it and its subject book can receive
- * nothing — and two saves means that state is reachable whenever the second one
+ * Categories is inert — no Budget can be classified by it and its subject
+ * book can receive nothing — and two saves means that state is reachable whenever the second one
  * fails. One transaction makes it unreachable.
  *
  * **Nothing is deleted.** An id that was there and is not now has its row set
@@ -933,40 +930,6 @@ export async function computedValues(
         partner_count:
           partners.find((g) => g.category_id === r.id)?._count._all ?? 0,
       };
-    }
-  }
-
-  // A Purpose's label is composed from the three fields it names — never
-  // stored, so it cannot drift from them — and its direction is shown as
-  // Penerimaan / Pengeluaran rather than as the stored enum (§8).
-  if (entity.key === "sys_purpose") {
-    const [categories, partnerCategories] = await Promise.all([
-      prisma.sysBudgetCategory.findMany({ select: { id: true, category_label: true } }),
-      prisma.sysPartnerCategory.findMany({ select: { id: true, category_label: true } }),
-    ]);
-    const categoryLabel = new Map(categories.map((c) => [c.id, c.category_label]));
-    const partnerLabel = new Map(partnerCategories.map((c) => [c.id, c.category_label]));
-    for (const r of rows) {
-      const direction = String(r.direction) as "In" | "Out";
-      out[r.id] = {
-        direction: directionText(direction),
-        label: purposeLabel(
-          direction,
-          categoryLabel.get(r.budget_category_id as number) ?? "?",
-          partnerLabel.get(r.partner_category_id as number) ?? null
-        ),
-      };
-    }
-  }
-
-  // How many Purposes a Budget Category holds. Nothing creates one, so a
-  // category showing none is a maintenance gap somebody has to close before it
-  // can be transacted — stated here rather than left to be discovered on a
-  // document that cannot be raised.
-  if (entity.key === "sys_budget_category") {
-    const counts = await purposeCountByCategory();
-    for (const r of rows) {
-      out[r.id] = { ...out[r.id], purpose_count: counts.get(r.id) ?? 0 };
     }
   }
 

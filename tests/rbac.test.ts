@@ -231,7 +231,7 @@ describe("RBAC: User -> Role -> Permission", () => {
       "BUDGET_EDIT",
       "BUDGET_APPROVE",
       "BUDGET_REJECT",
-      "CASH_BANK_TRANSACTION_POST",
+      "REALIZATION_POST",
     ]) {
       assert.equal(actorCan(actor, code), false, `must not be implied: ${code}`);
     }

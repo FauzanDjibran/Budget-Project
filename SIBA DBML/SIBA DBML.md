@@ -274,49 +274,10 @@ table sys_partner_category {
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 }
 
-// A Transaction Purpose: exactly one Budget Category x one Partner Category x
-// one direction, which is what lets it resolve to a single account.
-//
-// These were 22 constants in src/lib/siba/rules.ts. They are rows because the
-// Budget Categories they classify are rows: a category created through the GUI
-// that no Purpose named could be planned and booked but never transacted.
-//
-// Generated, not authored. The original 22 were exactly the cross product of
-// the categories, their admitted Partner Categories and their directions, so
-// syncPurposes derives the rows and nothing creates one by hand. What a person
-// edits is the label, and the generator never overwrites it.
-table sys_purpose {
-  id                          int [pk, increment, not null]
-
-  // What a document stores in fin_cash_bank_transaction.purpose. Opaque and
-  // immutable: the original 22 keep their historical mnemonics (TTP_CAB_IN) and
-  // generated ones carry a system code. Nothing parses it.
-  purpose_key                 varchar(255) [not null, unique]
-
-  budget_category_id          int [not null, ref : > sys_budget_category.id]
-  // Null where the Purpose takes no Partner — Asset and Biaya.
-  partner_category_id         int [ref : > sys_partner_category.id]
-  direction                   enum('In', 'Out') [not null]
-
-  // The Indonesian sentence naming the business event, not the classification.
-  // Editable, and the only field that is.
-  label                       varchar(255) [not null]
-
-  note                        text
-
-  status                      enum('Active', 'Inactive') [not null, default: 'Active']
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-
-  indexes {
-    (budget_category_id, partner_category_id, direction) [unique]
-    partner_category_id
-  }
-}
+// sys_purpose was dropped with Realisasi Budget (migration
+// 20260930090000_realisasi_budget). A realization's header no longer names a
+// Purpose: its direction is the menu it is raised from, and each line carries
+// its own Budget's category and Partner.
 
 // Which Partner Categories a Budget Category admits — the chain
 // Budget Category -> Partner Category -> Partner. Held as data rather than in
@@ -1026,6 +987,10 @@ table bud_budget {
 // Finance Table
 //----------------------------------
 
+// A Realisasi Budget — Realisasi Penerimaan (In, RBM-0001) or Realisasi
+// Pengeluaran (Out, RBK-0001). The header names no Purpose and no Partner:
+// one document settles Budgets of any Budget Category and any Partner, and
+// every book it writes (Cash Bank Book, subject book) takes one entry per line.
 table fin_cash_bank_transaction {
   id                          int [pk, increment, not null]
 
@@ -1040,16 +1005,12 @@ table fin_cash_bank_transaction {
 
   company_id                  int [not null, ref : > sys_company.id]
 
-  purpose                     varchar(255) [not null]
-
   cash_bank_id                int [ref : >? m_cash_bank.id]
 
   currency_id                 int [not null, ref : > ref_currency.id]
   exchange_rate               decimal(18,6) [not null, default: 1]
 
   cash_bank_layer_id          int
-
-  partner_id                  int [ref : >? m_partner.id]
 
   transaction_amount          decimal(18,2) [not null]
   transaction_base_amount     decimal(18,2) [not null]
@@ -1088,6 +1049,9 @@ table fin_cash_bank_transaction_line {
   transaction_amount          decimal(18,2) [not null]
   transaction_base_amount     decimal(18,2) [not null]
 
+  // This line's own settlement_base_amount − transaction_base_amount. Each
+  // line settles its own Budget's position at that position's own carrying
+  // rate, so each carries its own difference and its own journal line.
   fx_difference               decimal(18,2) [not null, default: 0]
 
   created_by                  int [not null]

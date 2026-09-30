@@ -15,7 +15,7 @@ import {
   type TransactionRow,
 } from "./finance";
 import { PeriodShut } from "./fiscal";
-import { purposeByKey } from "./purposes";
+import { realizationOf } from "./realization";
 import { intercompanyBridge } from "./system-settings";
 
 /**
@@ -297,7 +297,7 @@ export async function raiseFundingRequest(
         currency_id: doc.currency_id,
         request_amount: doc.transaction_amount,
         status: "Open",
-        note: `${doc.transaction_no} — ${(await purposeByKey(doc.purpose))?.label ?? doc.purpose}`,
+        note: `${doc.transaction_no} — ${realizationOf(doc.transaction_type).title}`,
         created_by: actorId,
       },
       select: { id: true, funding_request_no: true },

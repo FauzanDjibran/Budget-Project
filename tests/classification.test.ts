@@ -10,8 +10,6 @@ import {
   directionsOf,
   ruleFor,
 } from "../src/lib/siba/classification";
-import { availablePurposeOptions, purposeOptions } from "../src/lib/siba/finance";
-import { allPurposes } from "../src/lib/siba/purposes";
 import { disconnect, prisma } from "./helpers";
 
 /**
@@ -166,86 +164,5 @@ describe("retiring a pair withdraws what rests on it", () => {
     assert.deepEqual(allowedPartnerCategories(restored, "Prive"), ["Stakeholder"]);
   });
 
-  test("the Purposes resting on a retired pair stop being offered", async () => {
-    const before = await availablePurposeOptions();
-    assert.ok(before.some((p) => p.key === "PRV_SH_OUT"));
-    assert.ok(before.some((p) => p.key === "PRV_SH_IN"));
-
-    await withPriveStakeholderRetired(async () => {
-      const available = await availablePurposeOptions();
-      for (const key of ["PRV_SH_OUT", "PRV_SH_IN"]) {
-        assert.ok(
-          !available.some((p) => p.key === key),
-          `${key} rests on Prive x Stakeholder and should have gone with it`
-        );
-      }
-      // Only that classification is affected — everything else still stands.
-      assert.ok(available.some((p) => p.key === "HTG_CAB_IN"));
-      assert.equal(available.length, before.length - 2);
-    });
-  });
-
-  test("a document already carrying a retired Purpose keeps it", async () => {
-    await withPriveStakeholderRetired(async () => {
-      const available = await availablePurposeOptions("PRV_SH_OUT");
-      assert.ok(
-        available.some((p) => p.key === "PRV_SH_OUT"),
-        "editing a draft must not silently drop a value the user never touched"
-      );
-      assert.ok(
-        !available.some((p) => p.key === "PRV_SH_IN"),
-        "only the one being kept survives the filter"
-      );
-    });
-  });
-
-  test("history stays readable: every Purpose is still nameable", async () => {
-    await withPriveStakeholderRetired(async () => {
-      // `purposeOptions` is deliberately unfiltered — it is what a list reads a
-      // posted document's key back through, and a posted document must not
-      // start printing a raw key because its classification was retired.
-      const all = await purposeOptions();
-      assert.equal(all.length, (await allPurposes()).length);
-      assert.ok(all.some((p) => p.key === "PRV_SH_OUT"));
-    });
-  });
 });
 
-describe("every Purpose rests on a pair that exists", () => {
-  test("no Purpose names a classification the database does not admit", async () => {
-    const catalogue = await loadClassification();
-    for (const purpose of await allPurposes()) {
-      const rule = ruleFor(catalogue, purpose.budgetCategory);
-      assert.ok(
-        rule,
-        `${purpose.label} names Budget Category "${purpose.budgetCategory}", which no row declares`
-      );
-      assert.ok(
-        budgetCategoryAllowsDirection(catalogue, purpose.budgetCategory, purpose.direction),
-        `${purpose.label} goes ${directionText(purpose.direction)}, which ${purpose.budgetCategory} does not allow`
-      );
-      if (purpose.partnerCategory === null) {
-        assert.equal(
-          rule.requirePartner,
-          false,
-          `${purpose.label} names no Partner but ${purpose.budgetCategory} requires one`
-        );
-      } else {
-        assert.ok(
-          rule.partnerCategories.includes(purpose.partnerCategory),
-          `${purpose.label} needs ${purpose.budgetCategory} x ${purpose.partnerCategory}, which is not admitted`
-        );
-      }
-    }
-  });
-
-  test("a seeded database withdraws no Purpose", async () => {
-    const available = await availablePurposeOptions();
-    const all = await allPurposes();
-    assert.equal(
-      available.length,
-      all.filter((p) => p.active).length,
-      "every active Purpose should be offered"
-    );
-  });
-});

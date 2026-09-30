@@ -36,10 +36,10 @@ import type { BudgetMapping } from "@/lib/siba/budget";
 import type {
   EligibleBudget,
   FinanceRefs,
-  PurposeOption,
   TransactionLineRow,
   TransactionRow,
 } from "@/lib/siba/finance";
+import { realizationHref, realizationOf } from "@/lib/siba/realization";
 import {
   TRANSACTION_TRANSITIONS,
   TRANSACTION_TYPE_TEXT,
@@ -63,6 +63,8 @@ type DraftLine = {
   budget_no: string;
   budget_date: string;
   description: string;
+  category_id: number | null;
+  partner_id: number | null;
   outstanding: number;
   amount: number;
 };
@@ -74,41 +76,43 @@ type DraftLine = {
  * previous answer cannot be allowed to survive it.
  */
 const RATE_CONTEXT: (keyof TransactionValues)[] = [
-  "purpose",
   "company_id",
   "cash_bank_id",
   "currency_id",
 ];
 
 /**
- * Cash Bank Transaction create / detail / edit.
+ * Realisasi Penerimaan / Pengeluaran create / detail / edit — one component,
+ * the menu's direction passed in.
  *
- * The header is the context (concept doc §9): Purpose, Company, Partner and
- * Cash & Bank together decide which approved Budgets this document may
- * realize. Change any of them and the eligible set changes with it, so lines
- * that no longer qualify are dropped and the user is told how many — leaving
- * them would let a document settle a Budget its own header rejects.
+ * The header is the context (concept doc §9): Company, Cash & Bank and
+ * Currency together decide which approved Budgets this document may realize,
+ * and the direction is the menu's. Category and Partner are not in the header:
+ * each line states its own Budget's, and the account each one posts to. Change
+ * the header and the eligible set changes with it, so lines that no longer
+ * qualify are dropped and the user is told how many.
  *
  * Nothing on this screen moves money. Post does, and it is deliberately a
  * separate, confirmed act: §2.3 makes Post the actual boundary, and §15 makes
  * everything past it permanent.
  */
 export function TransactionForm({
+  direction,
   mode,
   transaction,
   lines,
   refs,
-  purposes,
   mappings,
   defaultCurrencyId,
   fundingRequestNo,
   can,
 }: {
+  /** The menu this document belongs to. */
+  direction: "In" | "Out";
   mode: TransactionFormMode;
   transaction: TransactionRow | null;
   lines: TransactionLineRow[];
   refs: FinanceRefs;
-  purposes: PurposeOption[];
   mappings: BudgetMapping[];
   /** Prefills the Currency picker on the funded route — a default, never a rule. */
   defaultCurrencyId?: number | null;
@@ -120,8 +124,9 @@ export function TransactionForm({
   const toast = useToast();
   const editing = mode === "new" || mode === "edit";
 
+  const kind = realizationOf(direction);
   const [values, setValues] = useState<TransactionValues>(() =>
-    initialValues(transaction, refs, defaultCurrencyId ?? null)
+    initialValues(direction, transaction, refs, defaultCurrencyId ?? null)
   );
   const [draftLines, setDraftLines] = useState<DraftLine[]>(() =>
     lines.map((l) => ({
@@ -129,6 +134,8 @@ export function TransactionForm({
       budget_no: l.budget_no,
       budget_date: l.budget_date,
       description: l.description,
+      category_id: l.category_id,
+      partner_id: l.partner_id,
       outstanding: l.outstanding_amount,
       amount: l.settlement_amount,
     }))
@@ -142,9 +149,6 @@ export function TransactionForm({
 
   const [confirm, setConfirm] = useState<TransactionAction | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const purpose = purposes.find((p) => p.key === values.purpose) ?? null;
-  const needsPartner = Boolean(purpose?.partnerCategory);
 
   const companyId = values.company_id ? Number(values.company_id) : null;
   const cashBank =
@@ -178,17 +182,16 @@ export function TransactionForm({
   const kursSource =
     !funded && currencyLabel !== "—" && cashBank
       ? rateSource(
-          (purpose?.direction ?? "Out") as "In" | "Out",
+          direction,
           currencyLabel,
           cashBank.currencyLabel
         )
       : null;
 
   const headerReady = Boolean(
-    purpose &&
-      companyId &&
-      (funded ? values.currency_id : values.cash_bank_id) &&
-      (!needsPartner || values.partner_id)
+    companyId &&
+      values.currency_id &&
+      (funded || values.cash_bank_id)
   );
 
   /**
@@ -197,38 +200,25 @@ export function TransactionForm({
    * Which Budgets this document may realize is the whole header at once
    * (concept doc §9), so the picker cannot open before it is complete. It used
    * to say "Lengkapi header dokumen terlebih dahulu", which names none of the
-   * five fields it could mean — and the header is read left to right, so the
-   * first gap is the one to name.
+   * fields it could mean — and the header is read left to right, so the first
+   * gap is the one to name.
    */
-  const budgetWaitingFor = !purpose
-    ? "Pilih Purpose dulu…"
-    : !companyId
-      ? "Pilih Company dulu…"
-      : needsPartner && !values.partner_id
-        ? "Pilih Partner dulu…"
-        : funded
-          ? values.currency_id
-            ? null
-            : "Pilih Currency dulu…"
-          : values.cash_bank_id
-            ? null
-            : "Pilih Cash & Bank dulu…";
+  const budgetWaitingFor = !companyId
+    ? "Pilih Company dulu…"
+    : !funded && !values.cash_bank_id
+      ? "Pilih Cash & Bank dulu…"
+      : !values.currency_id
+        ? "Pilih Currency dulu…"
+        : null;
 
   const set = (key: keyof TransactionValues, value: string) => {
     setValues((v) => {
       const next = { ...v, [key]: value };
-      // A purpose that takes no subject must not keep one from the purpose
-      // before it, or the document would carry a partner its rules reject.
-      if (key === "purpose") {
-        const p = purposes.find((x) => x.key === value);
-        if (!p?.partnerCategory) next.partner_id = "";
-      }
       // Company decides the route, and each route names a different field. A
       // resource left over from the other Company would be a header the Server
-      // Action refuses — and a Partner belongs to one Company only.
+      // Action refuses.
       if (key === "company_id") {
         next.cash_bank_id = "";
-        next.partner_id = "";
       }
       // Both kurs fields belong to a header context, not to the document: which
       // of the three provenances applies is decided by direction, document
@@ -265,13 +255,7 @@ export function TransactionForm({
     linesRef.current = draftLines;
   }, [draftLines]);
 
-  const {
-    purpose: purposeKey,
-    company_id,
-    partner_id,
-    cash_bank_id,
-    currency_id,
-  } = values;
+  const { company_id, cash_bank_id, currency_id } = values;
   const transactionId = transaction?.id;
 
   useEffect(() => {
@@ -282,9 +266,8 @@ export function TransactionForm({
       const result = headerReady
         ? await listEligibleBudgets(
             {
-              purpose: purposeKey,
+              transaction_type: direction,
               company_id,
-              partner_id,
               cash_bank_id,
               currency_id,
               // Eligibility turns on the document's currency, not on the kurs
@@ -321,9 +304,8 @@ export function TransactionForm({
   }, [
     editing,
     headerReady,
-    purposeKey,
+    direction,
     company_id,
-    partner_id,
     cash_bank_id,
     currency_id,
     transactionId,
@@ -340,34 +322,31 @@ export function TransactionForm({
   // makes it skip the whole file — so the manual version bought nothing and
   // cost the optimization it was imitating. The derivations beside these never
   // had it either.
-  const account = (() => {
-    if (!purpose || !companyId) return null;
-    const category = refs.categories.find(
-      (c) => c.label === purpose.budgetCategory
-    );
-    if (!category) return null;
-    const partnerCategoryId = purpose.partnerCategory
-      ? refs.partnerCategories.find((c) => c.label === purpose.partnerCategory)
-          ?.id ?? null
-      : null;
-    return (
-      mappings.find(
-        (m) =>
-          m.companyId === companyId &&
-          m.budgetCategoryId === category.id &&
-          m.partnerCategoryId === partnerCategoryId
-      ) ?? null
-    );
-  })();
-
-  const partnerOptions = (() => {
-    if (!purpose?.partnerCategory || !companyId) return [];
-    return refs.partners.filter(
-      (p) =>
-        p.companyId === companyId &&
-        p.categoryLabel === purpose.partnerCategory
-    );
-  })();
+  /**
+   * How one line is classified, and the account it will post to — Company ×
+   * its Budget Category × its Partner's Partner Category. Posting is refused
+   * for a line with no mapping, so a gap is stated on the line it belongs to.
+   */
+  const partnerById = new Map(refs.partners.map((p) => [p.id, p]));
+  const categoryById = new Map(refs.categories.map((c) => [c.id, c]));
+  const classify = (b: { category_id: number | null; partner_id: number | null }) => {
+    const partner = b.partner_id != null ? partnerById.get(b.partner_id) ?? null : null;
+    const category = b.category_id != null ? categoryById.get(b.category_id) ?? null : null;
+    const account =
+      companyId && category
+        ? mappings.find(
+            (m) =>
+              m.companyId === companyId &&
+              m.budgetCategoryId === category.id &&
+              m.partnerCategoryId === (partner ? partner.categoryId : null)
+          ) ?? null
+        : null;
+    return {
+      category: category?.label ?? "—",
+      partner: partner ? `${partner.label} – ${partner.name}` : null,
+      account,
+    };
+  };
 
   const cashBankOptions = refs.cashBanks
     .filter((c) => c.companyId === companyId)
@@ -380,12 +359,8 @@ export function TransactionForm({
 
   const company = refs.companies.find((c) => c.id === companyId) ?? null;
   const selectableCompanies = refs.companies.filter((c) => c.selectable);
-  const partner =
-    refs.partners.find((p) => String(p.id) === values.partner_id) ?? null;
 
-  const inn = editing
-    ? purpose?.direction === "In"
-    : transaction?.transaction_type === "In";
+  const inn = direction === "In";
 
   const balanceBefore = cashBank?.balance ?? 0;
   const balanceAfter =
@@ -410,6 +385,8 @@ export function TransactionForm({
             budget_no: b.budget_no,
             budget_date: b.budget_date,
             description: b.description,
+            category_id: b.category_id,
+            partner_id: b.partner_id,
             outstanding: b.outstanding,
             amount: p.amount,
           },
@@ -459,7 +436,7 @@ export function TransactionForm({
         : transaction?.transaction_no,
       "ok"
     );
-    router.push(`/finance/cash-bank-transaction/${result.id}`);
+    router.push(realizationHref(direction, result.id));
     router.refresh();
   };
 
@@ -494,7 +471,7 @@ export function TransactionForm({
 
   // ----------------------------------------------------------------- render
 
-  const listHref = "/finance/cash-bank-transaction";
+  const listHref = realizationHref(direction);
   const backHref = transaction ? `${listHref}/${transaction.id}` : listHref;
   const actions = transaction
     ? availableTransactionActions(transaction.status, can, {
@@ -556,11 +533,10 @@ export function TransactionForm({
 
   return (
     <>
-      {/* The document names itself by its number. The Purpose chip that used
-          to sit here is the form's first field, two lines below. */}
+      {/* The document names itself by its number. */}
       <DocumentHeader
         module="Finance"
-        trail={[{ label: "Cash Bank Transaction", href: listHref }]}
+        trail={[{ label: kind.title, href: listHref }]}
         icon="wallet2"
         number={transaction?.transaction_no ?? null}
         placeholder="Dokumen Baru"
@@ -614,66 +590,15 @@ export function TransactionForm({
               <div className="ct">
                 <h3>Header Dokumen</h3>
                 <p>
-                  Kombinasi Purpose · Company · Partner · Cash &amp; Bank
-                  menentukan Budget yang dapat direalisasikan.
+                  Company · Cash &amp; Bank · Currency menentukan Budget{" "}
+                  {inn ? "Penerimaan" : "Pengeluaran"} yang dapat
+                  direalisasikan.
                 </p>
               </div>
             </div>
             <FormBody>
               <FormSection>
                 <FormRow>
-                  <Field
-                    label="Transaction Purpose"
-                    span={4}
-                    required={editing}
-                    help={
-                      purpose
-                        ? // The partner half is left out: the Partner field
-                          // beside this one already says whether this Purpose
-                          // takes one, and repeating it here overflowed.
-                          `${TRANSACTION_TYPE_TEXT[purpose.direction]} · ${purpose.budgetCategory}`
-                        : editing
-                          ? "arah kas + Category"
-                          : undefined
-                    }
-                    error={errors.purpose}
-                  >
-                    {editing ? (
-                      <Select
-                        value={values.purpose}
-                        searchable
-                        listWidth="wide"
-                        invalid={Boolean(errors.purpose)}
-                        placeholder="Pilih Purpose…"
-                        // A Purpose *is* direction x Category x Partner
-                        // Category, and its label is now that triple written
-                        // out in one fixed order — so the group states the
-                        // Category once instead of 22 times, and there is no
-                        // chip at all.
-                        //
-                        // There used to be one carrying the direction, because
-                        // "Pembayaran", "Pemberian" and "Pembelian" all implied
-                        // it without spelling it. Every label opens with
-                        // Penerimaan or Pengeluaran now, so that chip would
-                        // repeat a word the label already says — which is the
-                        // thing the rule forbids (§12).
-                        options={purposes.map((p) => ({
-                          value: p.key,
-                          label: p.label,
-                          group: p.budgetCategory,
-                        }))}
-                        onChange={(v) => set("purpose", v)}
-                      />
-                    ) : (
-                      <div className="ro">
-                        <span>
-                          {purposes.find((p) => p.key === transaction!.purpose)
-                            ?.label ?? transaction!.purpose}
-                        </span>
-                      </div>
-                    )}
-                  </Field>
-
                   <Field
                     label="Company"
                     span={4}
@@ -710,59 +635,6 @@ export function TransactionForm({
                     )}
                   </Field>
 
-                  <Field
-                    label="Partner"
-                    span={4}
-                    required={editing && needsPartner}
-                    help={
-                      editing && needsPartner
-                        ? `hanya kategori ${purpose?.partnerCategory}`
-                        : undefined
-                    }
-                    error={errors.partner_id}
-                  >
-                    {editing ? (
-                      needsPartner ? (
-                        <Combobox
-                          value={values.partner_id ? Number(values.partner_id) : null}
-                          options={partnerOptions}
-                          placeholder="Pilih Partner…"
-                          // A Partner belongs to one Company, so until the
-                          // Company is named there is nothing to choose
-                          // between — and an empty list reads as "this Purpose
-                          // has no partners" rather than "say whose document
-                          // this is first".
-                          waitingFor={companyId ? null : "Pilih Company dulu…"}
-                          invalid={Boolean(errors.partner_id)}
-                          onChange={(v) => set("partner_id", v ? String(v) : "")}
-                        />
-                      ) : (
-                        <div className="ro">
-                          <span className="dash">
-                            {purpose
-                              ? "Purpose ini tidak memakai Partner"
-                              : "Menunggu Purpose"}
-                          </span>
-                        </div>
-                      )
-                    ) : (
-                      <div className="ro">
-                        {partner ? (
-                          <>
-                            <span className="lab">{partner.label}</span>
-                            <span>
-                              {partner.name} ({partner.categoryLabel})
-                            </span>
-                          </>
-                        ) : (
-                          <span className="dash">Tidak diperlukan</span>
-                        )}
-                      </div>
-                    )}
-                  </Field>
-                </FormRow>
-
-                <FormRow>
                   <Field
                     label="Cash & Bank"
                     span={4}
@@ -831,7 +703,9 @@ export function TransactionForm({
                       </div>
                     )}
                   </Field>
+                </FormRow>
 
+                <FormRow>
                   <Field
                     label="Tanggal Dokumen"
                     span={4}
@@ -855,13 +729,12 @@ export function TransactionForm({
                       </div>
                     )}
                   </Field>
-                </FormRow>
 
                 {/* The kurs, in whichever of its two modes this document is in.
-                    The row is absent entirely for rupiah on rupiah, where a
-                    rate would be a rate between the base currency and itself. */}
+                    Absent entirely for rupiah on rupiah, where a rate would be
+                    a rate between the base currency and itself. */}
                 {kursSource && kursSource !== "identity" && (
-                  <FormRow>
+                  <>
                     {kursSource === "layer" ? (
                       <Field
                         label="Kurs"
@@ -921,34 +794,13 @@ export function TransactionForm({
                         )}
                       </Field>
                     )}
-                  </FormRow>
+                  </>
                 )}
 
-                <FormRow>
-                  {/* The account the Purpose resolves to. It used to sit in the
-                      summary card; it belongs beside the Purpose that decides
-                      it, and posting is refused without it (CLAUDE.md §10
-                      rule 50), so it is not an aside. */}
                   <Field
-                    label="Account"
-                    span={4}
-                    help={purpose ? "dari mapping Company × Category" : undefined}
+                    label="Catatan"
+                    span={kursSource === "layer" ? 12 : kursSource === "entered" ? 4 : 8}
                   >
-                    <div className="ro">
-                      {account ? (
-                        <>
-                          <span className="lab">{account.accountLabel}</span>
-                          <span>{account.accountName}</span>
-                        </>
-                      ) : (
-                        <span className="dash">
-                          {purpose ? "belum dipetakan" : "menunggu Purpose"}
-                        </span>
-                      )}
-                    </div>
-                  </Field>
-
-                  <Field label="Catatan" span={8}>
                     {editing ? (
                       <textarea
                         className="ta"
@@ -973,13 +825,13 @@ export function TransactionForm({
             {mode === "view" && (
               <p className="fnote">
                 {transaction!.status === "Posted"
-                  ? "Dokumen sudah menjadi transaksi aktual: realisasi Budget dan saldo Cash & Bank sudah bergerak, dan entri Cash Bank Book sudah tercatat. Historical record bersifat append-only — koreksi dilakukan sebagai dokumen baru."
+                  ? "Dokumen sudah menjadi transaksi aktual: realisasi setiap Budget, saldo Cash & Bank, dan buku subjek sudah bergerak — satu entri per Budget. Historical record bersifat append-only — koreksi dilakukan sebagai dokumen baru."
                   : transaction!.status === "Pending"
                     ? `Dokumen menunggu konfirmasi Company induk${
                         fundingRequestNo ? ` (${fundingRequestNo})` : ""
                       }. Belum ada yang bergerak: kas, realisasi Budget, buku pembantu, dan journal kedua Company baru tercatat saat funding dikonfirmasi.`
                     : transaction!.status === "Draft"
-                      ? "Dokumen masih Draft. Budget dan saldo Cash & Bank belum bergerak, dan Tanggal Dokumen belum dicatat."
+                      ? "Dokumen masih Draft. Budget, saldo Cash & Bank, dan buku subjek belum bergerak."
                       : "Dokumen dibatalkan sebelum Post, sehingga tidak pernah menyentuh Budget maupun saldo."}
               </p>
             )}
@@ -993,8 +845,9 @@ export function TransactionForm({
               <div className="ct">
                 <h3>Budget yang Direalisasikan</h3>
                 <p>
-                  Satu dokumen dapat merealisasikan beberapa Budget sekaligus
-                  selama memenuhi kriteria header.
+                  Budget dari Category dan Partner mana pun, selama memenuhi
+                  kriteria header. Setiap Budget menjadi entri buku dan baris
+                  journal tersendiri.
                 </p>
               </div>
               {editing ? (
@@ -1045,6 +898,7 @@ export function TransactionForm({
                       <th style={{ width: 34 }}>No</th>
                       <th style={{ width: 92 }}>Budget</th>
                       <th>Deskripsi</th>
+                      <th style={{ width: 210 }}>Klasifikasi</th>
                       <th className="num" style={{ width: 124 }}>
                         Nominal Budget
                       </th>
@@ -1065,6 +919,7 @@ export function TransactionForm({
                           const planned =
                             pool.find((b) => b.id === l.budget_id)?.budget_amount ??
                             null;
+                          const c = classify(l);
                           return (
                             <tr key={l.budget_id} className={over ? "overrow" : undefined}>
                               <td className="no">{i + 1}</td>
@@ -1079,6 +934,7 @@ export function TransactionForm({
                                   </span>
                                 </span>
                               </td>
+                              <LineClass c={c} />
                               <td className="num">
                                 <span className="mny">
                                   {planned == null
@@ -1142,6 +998,7 @@ export function TransactionForm({
                         })
                       : lines.map((l, i) => {
                           const over = l.settlement_amount > l.outstanding_amount;
+                          const c = classify(l);
                           return (
                             <tr key={l.id} className={over ? "overrow" : undefined}>
                               <td className="no">{i + 1}</td>
@@ -1157,6 +1014,7 @@ export function TransactionForm({
                                   </span>
                                 </span>
                               </td>
+                              <LineClass c={c} />
                               <td className="num">
                                 <span className="mny">
                                   {formatMoney(l.budget_amount, currencyLabel)}
@@ -1189,7 +1047,7 @@ export function TransactionForm({
                   </tbody>
                   <tfoot>
                     <tr className="totrow">
-                      <td colSpan={5} style={{ textAlign: "right" }}>
+                      <td colSpan={6} style={{ textAlign: "right" }}>
                         Total Realisasi Dokumen
                       </td>
                       <td className="num">
@@ -1219,8 +1077,8 @@ export function TransactionForm({
                     ? headerReady
                       ? "Tekan Tambah Budget untuk melihat Budget yang memenuhi kriteria header dokumen ini."
                       : funded
-                        ? "Pilih Transaction Purpose, Partner (bila diperlukan), dan Currency terlebih dahulu."
-                        : "Pilih Transaction Purpose, Partner (bila diperlukan), dan Cash & Bank terlebih dahulu."
+                        ? "Pilih Company dan Currency terlebih dahulu."
+                        : "Pilih Company, Cash & Bank, dan Currency terlebih dahulu."
                     : "Tidak ada line pada dokumen ini."}
                 </p>
               </div>
@@ -1237,10 +1095,6 @@ export function TransactionForm({
                   <div className="ir">
                     <span>Sumber dana</span>
                     <b>Kas induk melalui Funding Request</b>
-                  </div>
-                  <div className="ir">
-                    <span>Account tujuan</span>
-                    <b>{account ? account.accountLabel : "belum dipetakan"}</b>
                   </div>
                   <div className="ir">
                     <span>
@@ -1270,8 +1124,8 @@ export function TransactionForm({
                     <b>{cashBank.label}</b>
                   </div>
                   <div className="ir">
-                    <span>Account tujuan</span>
-                    <b>{account ? account.accountLabel : "belum dipetakan"}</b>
+                    <span>Entri Cash Bank Book</span>
+                    <b>{editing ? draftLines.length : lines.length} entri, satu per Budget</b>
                   </div>
                   <div className="ir">
                     <span>
@@ -1294,23 +1148,10 @@ export function TransactionForm({
         <BudgetPicker
           pool={pickable}
           currencyLabel={currencyLabel}
+          classify={classify}
           criteria={[
-            { label: "Purpose", value: purpose?.label ?? "—" },
             { label: "Company", value: company?.label ?? "—" },
-            {
-              label: "Tipe Budget",
-              value: purpose ? TRANSACTION_TYPE_TEXT[purpose.direction] : "—",
-            },
-            { label: "Category", value: purpose?.budgetCategory ?? "—" },
-            ...(purpose?.partnerCategory
-              ? [
-                  {
-                    label: "Partner",
-                    value: partner?.label ?? "—",
-                    hint: purpose.partnerCategory,
-                  },
-                ]
-              : []),
+            { label: "Tipe Budget", value: TRANSACTION_TYPE_TEXT[direction] },
             { label: "Currency", value: currencyLabel },
           ]}
           onAdd={addLines}
@@ -1358,7 +1199,38 @@ export function TransactionForm({
   );
 }
 
+/**
+ * One line's classification cell: its Budget Category and Partner, then the
+ * account that combination posts to — or the gap, stated where it is.
+ */
+function LineClass({
+  c,
+}: {
+  c: {
+    category: string;
+    partner: string | null;
+    account: BudgetMapping | null;
+  };
+}) {
+  return (
+    <td>
+      <span className="dstack">
+        <span className="d1">
+          {c.category}
+          {c.partner ? ` · ${c.partner}` : ""}
+        </span>
+        <span className="d2">
+          {c.account
+            ? `${c.account.accountLabel} ${c.account.accountName}`
+            : "account belum dipetakan"}
+        </span>
+      </span>
+    </td>
+  );
+}
+
 function initialValues(
+  direction: "In" | "Out",
   transaction: TransactionRow | null,
   refs: FinanceRefs,
   defaultCurrencyId: number | null
@@ -1373,9 +1245,8 @@ function initialValues(
       (selectable.length === 1 ? selectable[0] : null);
 
     return {
-      purpose: "",
+      transaction_type: direction,
       company_id: start ? String(start.id) : "",
-      partner_id: "",
       cash_bank_id: "",
       currency_id: defaultCurrencyId ? String(defaultCurrencyId) : "",
       exchange_rate: "",
@@ -1387,9 +1258,8 @@ function initialValues(
     };
   }
   return {
-    purpose: transaction.purpose,
+    transaction_type: transaction.transaction_type,
     company_id: String(transaction.company_id),
-    partner_id: transaction.partner_id ? String(transaction.partner_id) : "",
     cash_bank_id: transaction.cash_bank_id
       ? String(transaction.cash_bank_id)
       : "",

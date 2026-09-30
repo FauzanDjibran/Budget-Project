@@ -58,13 +58,6 @@ const ENTITY_PERMISSIONS: Record<string, EntityPermissions> = {
     activate: "PARTNER_CATEGORY_ACTIVATE",
     deactivate: "PARTNER_CATEGORY_DEACTIVATE",
   },
-  sys_purpose: {
-    view: "PURPOSE_VIEW",
-    create: "PURPOSE_CREATE",
-    edit: "PURPOSE_EDIT",
-    activate: "PURPOSE_ACTIVATE",
-    deactivate: "PURPOSE_DEACTIVATE",
-  },
   acc_account: {
     view: "ACCOUNT_VIEW",
     create: "ACCOUNT_CREATE",

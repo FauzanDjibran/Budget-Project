@@ -19,7 +19,6 @@ import {
   type TransactionStatus,
 } from "../src/lib/siba/transaction-workflow";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
-import { allPurposes, purposeByKey } from "../src/lib/siba/purposes";
 import { loadClassification } from "../src/lib/siba/classification-data";
 import {
   openCashBankBook,
@@ -153,9 +152,9 @@ async function makeBudget(options: {
  * uses, so what is asserted is the behaviour and not a mock.
  */
 async function makeDraft(options: {
-  purpose: string;
+  /** The menu the document is raised from. */
+  transaction_type: "In" | "Out";
   cashBankId: number;
-  partnerId?: number | null;
   /** The document's own currency; defaults to the resource's. */
   currencyId?: number;
   /** The kurs, where the user types one. */
@@ -166,7 +165,6 @@ async function makeDraft(options: {
   documentDate?: string;
   lines: { budgetId: number; amount: number; outstanding: number }[];
 }): Promise<number> {
-  const purpose = (await purposeByKey(options.purpose))!;
   const cashBank = await prisma.mCashBank.findUniqueOrThrow({
     where: { id: options.cashBankId },
     select: { currency_id: true, company_id: true },
@@ -178,14 +176,12 @@ async function makeDraft(options: {
   const row = await prisma.finCashBankTransaction.create({
     data: {
       transaction_no: `TST-CBT${transactions.length + 1}${Date.now() % 100000}`,
-      transaction_type: purpose.direction,
+      transaction_type: options.transaction_type,
       company_id: cashBank.company_id,
-      purpose: purpose.key,
       cash_bank_id: options.cashBankId,
       currency_id: options.currencyId ?? cashBank.currency_id,
       exchange_rate: rate,
       cash_bank_layer_id: options.layerId ?? null,
-      partner_id: options.partnerId ?? null,
       document_date: options.documentDate
         ? new Date(`${options.documentDate}T00:00:00Z`)
         : null,
@@ -386,69 +382,23 @@ describe("the transaction lifecycle is a closed transition table", () => {
     const none = transactionAbilities([]);
     assert.deepEqual(availableTransactionActions("Draft", none), []);
 
-    const poster = transactionAbilities(["CASH_BANK_TRANSACTION_POST"]);
+    const poster = transactionAbilities(["REALIZATION_POST"]);
     assert.deepEqual(availableTransactionActions("Draft", poster), ["post"]);
     assert.deepEqual(availableTransactionActions("Posted", poster), []);
-  });
-});
-
-// ------------------------------------------------------------------ purpose
-
-describe("a purpose resolves to exactly one classification", () => {
-  test("every purpose names a budget category that exists", async () => {
-    const labels = new Set(
-      (
-        await prisma.sysBudgetCategory.findMany({
-          select: { category_label: true },
-        })
-      ).map((c) => c.category_label)
-    );
-    for (const p of await allPurposes()) {
-      assert.ok(
-        labels.has(p.budgetCategory),
-        `${p.key} names budget category ${p.budgetCategory}, which is not seeded`
-      );
-    }
-  });
-
-  test("every purpose that takes a partner names a real partner category", async () => {
-    const labels = new Set(
-      (
-        await prisma.sysPartnerCategory.findMany({
-          select: { category_label: true },
-        })
-      ).map((c) => c.category_label)
-    );
-    for (const p of await allPurposes()) {
-      if (!p.partnerCategory) continue;
-      assert.ok(
-        labels.has(p.partnerCategory),
-        `${p.key} names partner category ${p.partnerCategory}, which is not seeded`
-      );
-    }
-  });
-
-  test("purposes stay application logic — there is no fin_purpose table", async () => {
-    const rows = await prisma.$queryRaw<{ table_name: string }[]>`
-      SELECT table_name FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'fin_purpose'
-    `;
-    assert.equal(rows.length, 0, "fin_purpose must not exist — CLAUDE.md §12");
   });
 });
 
 // ------------------------------------------------------------------- header
 
 describe("the document header is enforced, not merely narrowed", () => {
-  test("an unknown purpose is refused", async () => {
+  test("a direction that is neither menu's is refused", async () => {
     const result = await checkHeader({
-      purpose: "NOT_A_PURPOSE",
+      transaction_type: "Sideways" as "In",
       company_id: induk,
-      partner_id: null,
       cash_bank_id: await makeCashBank({}),
     });
     assert.equal(result.ok, false);
-    assert.ok(result.ok === false && result.errors.purpose);
+    assert.ok(result.ok === false && result.errors._form);
   });
 
   test("an anak document naming a Cash & Bank is refused", async () => {
@@ -457,9 +407,8 @@ describe("the document header is enforced, not merely narrowed", () => {
     // a stray row of its own — would be a way to spend money directly.
     const cashBank = await makeCashBank({ companyId: anak });
     const result = await checkHeader({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: anak,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -472,9 +421,8 @@ describe("the document header is enforced, not merely narrowed", () => {
 
   test("an anak document takes a Currency instead, and routes to treasury", async () => {
     const result = await checkHeader({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: anak,
-      partner_id: null,
       cash_bank_id: null,
       currency_id: currency,
     });
@@ -486,9 +434,8 @@ describe("the document header is enforced, not merely narrowed", () => {
 
   test("an anak document without a Currency is refused", async () => {
     const result = await checkHeader({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: anak,
-      partner_id: null,
       cash_bank_id: null,
       currency_id: null,
     });
@@ -503,9 +450,8 @@ describe("the document header is enforced, not merely narrowed", () => {
     // them, so the document says what it is denominated in and the resource
     // says what it holds.
     const result = await checkHeader({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: await makeCashBank({}),
       currency_id: currency,
     });
@@ -534,9 +480,8 @@ describe("the document header is enforced, not merely narrowed", () => {
     });
     const foreignResource = await makeCashBank({ currencyId: otherCurrency });
     const result = await checkHeader({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: foreignResource,
       currency_id: eur.id,
     });
@@ -553,43 +498,11 @@ describe("the document header is enforced, not merely narrowed", () => {
     assert.equal(company.id, induk);
   });
 
-  test("a purpose that takes no partner must not carry one", async () => {
-    const partner = await makePartner({
-      companyId: induk,
-      categoryLabel: "Stakeholder",
-    });
-    const result = await checkHeader({
-      purpose: "BYA_OUT",
-      company_id: induk,
-      partner_id: partner,
-      cash_bank_id: await makeCashBank({}),
-    });
-    assert.equal(result.ok, false);
-    assert.ok(result.ok === false && result.errors.partner_id);
-  });
-
-  test("a purpose that takes a partner refuses the wrong partner category", async () => {
-    // PRV_SH_OUT admits Stakeholder only.
-    const wrong = await makePartner({
-      companyId: induk,
-      categoryLabel: "Karyawan",
-    });
-    const result = await checkHeader({
-      purpose: "PRV_SH_OUT",
-      company_id: induk,
-      partner_id: wrong,
-      cash_bank_id: await makeCashBank({}),
-    });
-    assert.equal(result.ok, false);
-    assert.ok(result.ok === false && /Stakeholder/.test(result.errors.partner_id));
-  });
-
   test("an inactive cash & bank cannot be transacted on", async () => {
     const cashBank = await makeCashBank({ status: "Inactive" });
     const result = await checkHeader({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -600,9 +513,8 @@ describe("the document header is enforced, not merely narrowed", () => {
   test("a base-currency document may be paid from a base-currency resource", async () => {
     const cashBank = await makeCashBank({ currencyId: currency });
     const result = await checkHeader({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -615,9 +527,8 @@ describe("the document header is enforced, not merely narrowed", () => {
   test("a foreign document paid from base currency needs a kurs typed", async () => {
     const rupiahResource = await makeCashBank({ currencyId: currency });
     const header = {
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: rupiahResource,
       currency_id: otherCurrency,
     };
@@ -638,9 +549,8 @@ describe("the document header is enforced, not merely narrowed", () => {
   test("a payment out of a foreign resource must name a layer", async () => {
     const foreignResource = await makeCashBank({ currencyId: otherCurrency });
     const header = {
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: foreignResource,
       currency_id: otherCurrency,
     };
@@ -684,9 +594,8 @@ describe("the document header is enforced, not merely narrowed", () => {
       })
     );
     const result = await checkHeader({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: mine,
       currency_id: otherCurrency,
       cash_bank_layer_id: layer.id,
@@ -704,9 +613,8 @@ describe("only a budget the header admits is eligible", () => {
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
 
     const pool = await eligibleBudgets({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -724,9 +632,8 @@ describe("only a budget the header admits is eligible", () => {
     });
 
     const pool = await eligibleBudgets({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -744,9 +651,8 @@ describe("only a budget the header admits is eligible", () => {
     });
 
     const pool = await eligibleBudgets({
-      purpose: "HIN_CAB_IN",
+      transaction_type: "In" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -762,9 +668,8 @@ describe("only a budget the header admits is eligible", () => {
     });
 
     const pool = await eligibleBudgets({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -783,45 +688,33 @@ describe("only a budget the header admits is eligible", () => {
     });
 
     const pool = await eligibleBudgets({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
     assert.ok(!pool.some((b) => b.id === spent));
   });
 
-  test("a purpose with a partner only offers that partner's budgets", async () => {
+  test("every category and every partner is offered in one pool", async () => {
+    // A realization is not narrowed by classification: the header names no
+    // Budget Category and no Partner, so one document may settle all of them.
     const cashBank = await makeCashBank({});
-    const mine = await makePartner({
-      companyId: induk,
-      categoryLabel: "Stakeholder",
-    });
-    const theirs = await makePartner({
-      companyId: induk,
-      categoryLabel: "Stakeholder",
-    });
-    const ours = await makeBudget({
-      categoryLabel: "Prive",
-      amount: 2_000_000,
-      partnerId: mine,
-    });
-    const other = await makeBudget({
-      categoryLabel: "Prive",
-      amount: 2_000_000,
-      partnerId: theirs,
-    });
+    const mine = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
+    const theirs = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const prive = await makeBudget({ categoryLabel: "Prive", amount: 2_000_000, partnerId: mine });
+    const advance = await makeBudget({ categoryLabel: "Piutang", amount: 500_000, partnerId: theirs });
+    const expense = await makeBudget({ categoryLabel: "Biaya", amount: 300_000 });
 
     const pool = await eligibleBudgets({
-      purpose: "PRV_SH_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: mine,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
-    assert.ok(pool.some((b) => b.id === ours));
-    assert.ok(!pool.some((b) => b.id === other));
+    for (const id of [prive, advance, expense]) {
+      assert.ok(pool.some((b) => b.id === id), `budget ${id} should be offered`);
+    }
   });
 
   test("budget date is not a filter — an older plan stays realizable", async () => {
@@ -844,9 +737,8 @@ describe("only a budget the header admits is eligible", () => {
     budgets.push(old.id);
 
     const pool = await eligibleBudgets({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -864,9 +756,8 @@ describe("lines are re-derived, never trusted", () => {
     const cashBank = await makeCashBank({});
     const result = await checkLines(
       {
-        purpose: "BYA_OUT",
+        transaction_type: "Out" as const,
         company_id: induk,
-        partner_id: null,
         cash_bank_id: cashBank,
         currency_id: currency,
       },
@@ -886,9 +777,8 @@ describe("lines are re-derived, never trusted", () => {
 
     const result = await checkLines(
       {
-        purpose: "BYA_OUT",
+        transaction_type: "Out" as const,
         company_id: induk,
-        partner_id: null,
         cash_bank_id: cashBank,
         currency_id: currency,
       },
@@ -903,9 +793,8 @@ describe("lines are re-derived, never trusted", () => {
 
     const result = await checkLines(
       {
-        purpose: "BYA_OUT",
+        transaction_type: "Out" as const,
         company_id: induk,
-        partner_id: null,
         cash_bank_id: cashBank,
         currency_id: currency,
       },
@@ -923,9 +812,8 @@ describe("lines are re-derived, never trusted", () => {
 
     const result = await checkLines(
       {
-        purpose: "BYA_OUT",
+        transaction_type: "Out" as const,
         company_id: induk,
-        partner_id: null,
         cash_bank_id: cashBank,
         currency_id: currency,
       },
@@ -942,9 +830,8 @@ describe("lines are re-derived, never trusted", () => {
 
     const result = await checkLines(
       {
-        purpose: "BYA_OUT",
+        transaction_type: "Out" as const,
         company_id: induk,
-        partner_id: null,
         cash_bank_id: cashBank,
         currency_id: currency,
       },
@@ -965,7 +852,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const cashBank = await makeCashBank({ opening: 5_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
     await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 1_000_000, outstanding: 1_000_000 }],
     });
@@ -984,15 +871,14 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const cashBank = await makeCashBank({ opening: 1_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
     await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 400_000, outstanding: 1_000_000 }],
     });
 
     const pool = await eligibleBudgets({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       company_id: induk,
-      partner_id: null,
       cash_bank_id: cashBank,
       currency_id: currency,
     });
@@ -1010,7 +896,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const cashBank = await makeCashBank({ opening: 5_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 400_000, outstanding: 1_000_000 }],
     });
@@ -1047,7 +933,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const cashBank = await makeCashBank({ opening: 2_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 600_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 600_000, outstanding: 600_000 }],
     });
@@ -1072,9 +958,8 @@ describe("a draft moves nothing; posting moves everything at once", () => {
       amount: 750_000,
     });
     const doc = await makeDraft({
-      purpose: "HIN_CAB_IN",
+      transaction_type: "In" as const,
       cashBankId: cashBank,
-      partnerId: partner,
       lines: [{ budgetId: budget, amount: 750_000, outstanding: 750_000 }],
     });
     await post(doc);
@@ -1089,7 +974,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const cashBank = await makeCashBank({ opening: 3_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 900_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 900_000, outstanding: 900_000 }],
     });
@@ -1104,14 +989,14 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
 
     const first = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 400_000, outstanding: 1_000_000 }],
     });
     await post(first);
 
     const second = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 600_000, outstanding: 600_000 }],
     });
@@ -1133,12 +1018,12 @@ describe("a draft moves nothing; posting moves everything at once", () => {
 
     // Two documents drafted against the same plan; the first closes it.
     const first = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 500_000, outstanding: 500_000 }],
     });
     const second = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 500_000, outstanding: 500_000 }],
     });
@@ -1165,7 +1050,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const cashBank = await makeCashBank({ opening: 1_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 200_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 200_000, outstanding: 200_000 }],
     });
@@ -1184,7 +1069,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const cashBank = await makeCashBank({ opening: 1_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 250_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 250_000, outstanding: 250_000 }],
     });
@@ -1204,7 +1089,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const b = await makeBudget({ categoryLabel: "Biaya", amount: 200_000 });
 
     const first = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: a, amount: 100_000, outstanding: 100_000 }],
     });
@@ -1216,7 +1101,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     });
 
     const second = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: b, amount: 200_000, outstanding: 200_000 }],
     });
@@ -1272,7 +1157,7 @@ describe("posting writes a balanced journal alongside the book", () => {
       amount: 750_000,
     });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 750_000, outstanding: 750_000 }],
     });
@@ -1304,7 +1189,7 @@ describe("posting writes a balanced journal alongside the book", () => {
       amount: 400_000,
     });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 400_000, outstanding: 400_000 }],
     });
@@ -1338,7 +1223,7 @@ describe("posting writes a balanced journal alongside the book", () => {
       amount: 100_000,
     });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
     });
@@ -1371,7 +1256,7 @@ describe("posting writes a balanced journal alongside the book", () => {
         amount: 300_000,
       });
       const doc = await makeDraft({
-        purpose: "AST_OUT",
+        transaction_type: "Out" as const,
         cashBankId: cashBank,
         lines: [{ budgetId: budget, amount: 300_000, outstanding: 300_000 }],
       });
@@ -1425,9 +1310,8 @@ describe("posting writes the subject book alongside the cash book", () => {
       amount: 3_000_000,
     });
     const doc = await makeDraft({
-      purpose: "HTG_CAB_IN",
+      transaction_type: "In" as const,
       cashBankId: cashBank,
-      partnerId: partner,
       lines: [{ budgetId: budget, amount: 3_000_000, outstanding: 3_000_000 }],
     });
     await post(doc);
@@ -1467,9 +1351,8 @@ describe("posting writes the subject book alongside the cash book", () => {
       amount: 2_000_000,
     });
     const doc = await makeDraft({
-      purpose: "PTG_KRY_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
-      partnerId: partner,
       lines: [{ budgetId: budget, amount: 2_000_000, outstanding: 2_000_000 }],
     });
     await post(doc);
@@ -1501,9 +1384,8 @@ describe("posting writes the subject book alongside the cash book", () => {
       amount: 500_000,
     });
     const doc = await makeDraft({
-      purpose: "PRV_SH_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
-      partnerId: partner,
       lines: [{ budgetId: budget, amount: 500_000, outstanding: 500_000 }],
     });
 
@@ -1522,7 +1404,7 @@ describe("posting writes the subject book alongside the cash book", () => {
       amount: 250_000,
     });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 250_000, outstanding: 250_000 }],
     });
@@ -1579,7 +1461,7 @@ describe("a foreign document is valued rather than refused", () => {
       currencyId: otherCurrency,
     });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       layerId: layer.id,
       lines: [{ budgetId: budget, amount: 400, outstanding: 900 }],
@@ -1620,7 +1502,7 @@ describe("a foreign document is valued rather than refused", () => {
       currencyId: otherCurrency,
     });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: rupiah,
       currencyId: otherCurrency,
       rate: 16_000,
@@ -1667,9 +1549,8 @@ describe("a foreign document is valued rather than refused", () => {
       currencyId: otherCurrency,
     });
     const doc = await makeDraft({
-      purpose: "HTG_SH_IN",
+      transaction_type: "In" as const,
       cashBankId: cashBank,
-      partnerId: partner,
       rate: 15_800,
       lines: [{ budgetId: budget, amount: 2_000, outstanding: 2_000 }],
     });
@@ -1701,9 +1582,8 @@ describe("a foreign document is valued rather than refused", () => {
     });
     await post(
       await makeDraft({
-        purpose: "HTG_SH_IN",
+        transaction_type: "In" as const,
         cashBankId: borrowInto,
-        partnerId: partner,
         rate: 15_000,
         lines: [{ budgetId: borrowed, amount: 1_000, outstanding: 1_000 }],
       })
@@ -1741,9 +1621,8 @@ describe("a foreign document is valued rather than refused", () => {
       currencyId: otherCurrency,
     });
     const doc = await makeDraft({
-      purpose: "HTG_SH_OUT",
+      transaction_type: "Out" as const,
       cashBankId: payFrom,
-      partnerId: partner,
       layerId: dear.id,
       lines: [{ budgetId: repayment, amount: 1_000, outstanding: 1_000 }],
     });
@@ -1810,9 +1689,8 @@ describe("a foreign document is valued rather than refused", () => {
 
     const result = await checkLines(
       {
-        purpose: "BYA_OUT",
+        transaction_type: "Out" as const,
         company_id: induk,
-        partner_id: null,
         cash_bank_id: cashBank,
         currency_id: otherCurrency,
         cash_bank_layer_id: layer.id,
@@ -1831,7 +1709,7 @@ describe("a foreign document is valued rather than refused", () => {
     const cashBank = await makeCashBank({ opening: 5_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 250_000, outstanding: 1_000_000 }],
     });
@@ -1853,12 +1731,292 @@ describe("a foreign document is valued rather than refused", () => {
 
 // ------------------------------------------------------------- the period lock
 
+// ------------------------------------------------------ several Budgets
+
+/**
+ * One realization, many Budgets, many books.
+ *
+ * What the split into Realisasi Penerimaan / Pengeluaran bought: a document
+ * settles Budgets of every category and every Partner at once, and **every
+ * book writes one entry per Budget** — six Budgets are six Cash Bank Book
+ * entries and six subject-book entries, never one summed entry — each reading
+ * its Budget's own description. The journal is one cash line, then a counter
+ * line per Budget on the account its own classification maps to, then an FX
+ * line per Budget whose two base values disagree.
+ */
+describe("one document realizes Budgets of several categories and partners", () => {
+  test("each Budget writes its own entry in every book, under its own words", async () => {
+    const karyawan = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const cashBank = await makeCashBank({ opening: 10_000_000 });
+    const expense = await makeBudget({ categoryLabel: "Biaya", amount: 400_000 });
+    const firstAdvance = await makeBudget({
+      categoryLabel: "Piutang",
+      partnerId: karyawan,
+      amount: 250_000,
+    });
+    const secondAdvance = await makeBudget({
+      categoryLabel: "Piutang",
+      partnerId: karyawan,
+      amount: 150_000,
+    });
+
+    const doc = await makeDraft({
+      transaction_type: "Out" as const,
+      cashBankId: cashBank,
+      lines: [
+        { budgetId: expense, amount: 400_000, outstanding: 400_000 },
+        { budgetId: firstAdvance, amount: 250_000, outstanding: 250_000 },
+        { budgetId: secondAdvance, amount: 150_000, outstanding: 150_000 },
+      ],
+    });
+    await post(doc);
+
+    const descriptions = new Map(
+      (
+        await prisma.budBudget.findMany({
+          where: { id: { in: [expense, firstAdvance, secondAdvance] } },
+          select: { id: true, description: true },
+        })
+      ).map((b) => [b.id, b.description])
+    );
+
+    // The Cash Bank Book: three entries, one per Budget, each its own amount
+    // and its own description — not one entry of 800.000.
+    const cash = await prisma.cashBankLedger.findMany({
+      where: { cash_bank_id: cashBank, source_doc_id: doc },
+      orderBy: { id: "asc" },
+    });
+    assert.equal(cash.length, 3, "one Cash Bank Book entry per Budget");
+    assert.deepEqual(
+      cash.map((e) => [e.amount.toNumber(), e.note]),
+      [
+        [400_000, descriptions.get(expense)],
+        [250_000, descriptions.get(firstAdvance)],
+        [150_000, descriptions.get(secondAdvance)],
+      ]
+    );
+    const balance = await prisma.cashBankBalance.findUniqueOrThrow({
+      where: { cash_bank_id: cashBank },
+    });
+    assert.equal(balance.balance.toNumber(), 9_200_000);
+
+    // The subject book: two Piutang entries for the same Partner, never one
+    // summed entry, each under its own Budget's description.
+    const book = await prisma.subLedger.findMany({
+      where: { source_doc_id: doc, book: await bookKey("Piutang") },
+      orderBy: { id: "asc" },
+    });
+    assert.equal(book.length, 2, "two Budgets against one Partner are two entries");
+    assert.deepEqual(
+      book.map((e) => [e.partner_id, e.movement.toNumber(), e.note]),
+      [
+        [karyawan, 250_000, descriptions.get(firstAdvance)],
+        [karyawan, 150_000, descriptions.get(secondAdvance)],
+      ]
+    );
+    assert.deepEqual(
+      await subledgerPosition(await bookKey("Piutang"), karyawan, currency),
+      { foreign: 400_000, base: 400_000 }
+    );
+
+    // The journal: one cash line and one counter line per Budget, each
+    // carrying its own Partner and its own description.
+    const journal = await prisma.accJournal.findFirstOrThrow({
+      where: { source_doc_id: doc },
+      include: { lines: { orderBy: { id: "asc" } } },
+    });
+    assert.equal(journal.lines.length, 4, "cash, then one line per Budget");
+    const counters = journal.lines.slice(1);
+    assert.deepEqual(
+      counters.map((l) => [l.partner_id, l.debit_amount.toNumber(), l.description]),
+      [
+        [null, 400_000, descriptions.get(expense)],
+        [karyawan, 250_000, descriptions.get(firstAdvance)],
+        [karyawan, 150_000, descriptions.get(secondAdvance)],
+      ]
+    );
+    assert.equal(journal.lines[0].kredit_amount.toNumber(), 800_000, "the cash left once");
+
+    // Every Budget is realized by its own line.
+    const realized = await prisma.budBudget.findMany({
+      where: { id: { in: [expense, firstAdvance, secondAdvance] } },
+      select: { status: true },
+    });
+    assert.ok(realized.every((b) => b.status === "Closed"));
+  });
+
+  test("an FX difference is recognised per Budget, never summed", async () => {
+    // Two debts in foreign currency, carried at two different rates, settled
+    // in one payment drawn from one layer. Each line releases its own debt at
+    // its own carrying rate, so each has its own loss — and each loss is its
+    // own journal line.
+    const lender = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
+    const other = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
+
+    for (const [partner, rate] of [
+      [lender, 15_000],
+      [other, 15_500],
+    ] as const) {
+      const into = await makeCashBank({ currencyId: otherCurrency });
+      const borrowed = await makeBudget({
+        categoryLabel: "Hutang",
+        type: "In",
+        partnerId: partner,
+        amount: 1_000,
+        currencyId: otherCurrency,
+      });
+      await post(
+        await makeDraft({
+          transaction_type: "In" as const,
+          cashBankId: into,
+          rate,
+          lines: [{ budgetId: borrowed, amount: 1_000, outstanding: 1_000 }],
+        })
+      );
+    }
+
+    const payFrom = await makeCashBank({ currencyId: otherCurrency });
+    const layer = await prisma.$transaction((tx) =>
+      openLayer(tx, { cashBankId: payFrom, date: today, rate: 16_000, foreign: 2_000, actorId: actor })
+    );
+    await recordCashBankEntry(prisma, {
+      cashBankId: payFrom,
+      date: today,
+      type: "Opening",
+      direction: "In",
+      amount: 2_000,
+      rate: 16_000,
+      actorId: actor,
+    });
+
+    const repayLender = await makeBudget({
+      categoryLabel: "Hutang",
+      type: "Out",
+      partnerId: lender,
+      amount: 1_000,
+      currencyId: otherCurrency,
+    });
+    const repayOther = await makeBudget({
+      categoryLabel: "Hutang",
+      type: "Out",
+      partnerId: other,
+      amount: 1_000,
+      currencyId: otherCurrency,
+    });
+    const doc = await makeDraft({
+      transaction_type: "Out" as const,
+      cashBankId: payFrom,
+      layerId: layer.id,
+      lines: [
+        { budgetId: repayLender, amount: 1_000, outstanding: 1_000 },
+        { budgetId: repayOther, amount: 1_000, outstanding: 1_000 },
+      ],
+    });
+    await post(doc);
+
+    const lines = await prisma.finCashBankTransactionLine.findMany({
+      where: { transaction_id: doc },
+      orderBy: { sequence_no: "asc" },
+    });
+    assert.deepEqual(
+      lines.map((l) => [
+        l.transaction_base_amount.toNumber(),
+        l.settlement_base_amount.toNumber(),
+        l.fx_difference.toNumber(),
+      ]),
+      [
+        [16_000_000, 15_000_000, -1_000_000],
+        [16_000_000, 15_500_000, -500_000],
+      ],
+      "each line settles its own debt at its own carrying rate"
+    );
+
+    const journal = await prisma.accJournal.findFirstOrThrow({
+      where: { source_doc_id: doc },
+      include: { lines: { orderBy: { id: "asc" } } },
+    });
+    const fxLines = journal.lines.filter((l) => l.account_id === fxAccount);
+    assert.deepEqual(
+      fxLines.map((l) => l.debit_amount.toNumber()),
+      [1_000_000, 500_000],
+      "one loss line per Budget, not one line of 1.500.000"
+    );
+    assert.equal(journal.lines.length, 5, "cash, two counters, two differences");
+    assert.equal(
+      journal.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0),
+      journal.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0),
+      "and it balances, in base"
+    );
+
+    // One Cash Bank Book entry per Budget, both drawn from the one layer.
+    const cash = await prisma.cashBankLedger.findMany({
+      where: { cash_bank_id: payFrom, source_doc_id: doc },
+    });
+    assert.equal(cash.length, 2);
+    assert.deepEqual(
+      cash.map((e) => e.base_amount.toNumber()),
+      [16_000_000, 16_000_000]
+    );
+    const spent = await prisma.cashBankLayer.findUniqueOrThrow({ where: { id: layer.id } });
+    assert.equal(spent.status, "Exhausted");
+  });
+
+  test("a line whose classification has no mapping refuses the post, by Budget", async () => {
+    const mapping = await prisma.accBudgetCategoryAccount.findFirstOrThrow({
+      where: { company_id: induk, budget_category: { category_label: "Asset" } },
+    });
+    await prisma.accBudgetCategoryAccount.delete({ where: { id: mapping.id } });
+
+    try {
+      const cashBank = await makeCashBank({ opening: 2_000_000 });
+      const mapped = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
+      const unmapped = await makeBudget({ categoryLabel: "Asset", amount: 200_000 });
+      const doc = await makeDraft({
+        transaction_type: "Out" as const,
+        cashBankId: cashBank,
+        lines: [
+          { budgetId: mapped, amount: 100_000, outstanding: 100_000 },
+          { budgetId: unmapped, amount: 200_000, outstanding: 200_000 },
+        ],
+      });
+
+      const result = await applyPosting(doc, actor);
+      assert.equal(result.ok, false);
+      const { budget_no } = await prisma.budBudget.findUniqueOrThrow({
+        where: { id: unmapped },
+        select: { budget_no: true },
+      });
+      assert.ok(
+        String(result.errors?._form).includes(budget_no),
+        "the refusal names the Budget whose classification has no account"
+      );
+      assert.equal(
+        await prisma.cashBankLedger.count({ where: { source_doc_id: doc, cash_bank_id: cashBank } }),
+        0,
+        "and the mapped line did not move money on its own"
+      );
+    } finally {
+      await prisma.accBudgetCategoryAccount.create({
+        data: {
+          bca_code: mapping.bca_code,
+          company_id: mapping.company_id,
+          budget_category_id: mapping.budget_category_id,
+          partner_category_id: mapping.partner_category_id,
+          account_id: mapping.account_id,
+          created_by: mapping.created_by,
+          updated_by: mapping.updated_by,
+        },
+      });
+    }
+  });
+});
+
 describe("posting is refused outside an open period", () => {
   test("a Company that has closed the year cannot post into it", async () => {
     const cashBank = await makeCashBank({ opening: 5_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 1_000_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       lines: [{ budgetId: budget, amount: 400_000, outstanding: 1_000_000 }],
     });
@@ -1912,7 +2070,7 @@ describe("a document may be backdated inside an open year", () => {
     const cashBank = await makeCashBank({ opening: 2_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 300_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       documentDate: backdate,
       lines: [{ budgetId: budget, amount: 300_000, outstanding: 300_000 }],
@@ -1949,7 +2107,7 @@ describe("a document may be backdated inside an open year", () => {
     const cashBank = await makeCashBank({ opening: 1_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       documentDate: tomorrow,
       lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
@@ -1981,7 +2139,7 @@ describe("a document may be backdated inside an open year", () => {
     const cashBank = await makeCashBank({ opening: 1_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       documentDate: backdate,
       lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
@@ -2001,7 +2159,7 @@ describe("a document may be backdated inside an open year", () => {
     const cashBank = await makeCashBank({ opening: 1_000_000 });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
     const doc = await makeDraft({
-      purpose: "BYA_OUT",
+      transaction_type: "Out" as const,
       cashBankId: cashBank,
       documentDate: backdate,
       lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],

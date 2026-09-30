@@ -3,6 +3,7 @@ import { Icon } from "@/components/icon";
 import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { LedgerReport } from "@/lib/siba/cash-bank";
+import { documentHref } from "@/lib/siba/document-links";
 
 /**
  * Buku Kas & Bank — every movement of one resource across a period.
@@ -116,7 +117,7 @@ export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
                       {linked && (
                         <Link
                           className="rsub"
-                          href={`/finance/cash-bank-transaction/${e.sourceDocId}`}
+                          href={documentHref(e.sourceDocTable, e.sourceDocId) ?? "#"}
                           title="Buka dokumen sumber"
                         >
                           {e.sourceDocNo}

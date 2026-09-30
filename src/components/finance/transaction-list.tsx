@@ -17,7 +17,6 @@ import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import type {
   FinanceRefs,
-  PurposeOption,
   TransactionRow,
   TransactionSummary,
 } from "@/lib/siba/finance";
@@ -29,11 +28,12 @@ import {
   type TransactionAbilities,
   type TransactionAction,
 } from "@/lib/siba/transaction-workflow";
+import { realizationHref, realizationOf } from "@/lib/siba/realization";
 import { menuButtonClass } from "@/lib/siba/header-actions";
 import { CashBalanceDialog } from "@/components/budget/cash-balance-dialog";
 
 /**
- * The Cash Bank Transaction register.
+ * The register of one Realisasi Budget menu — Penerimaan or Pengeluaran.
  *
  * `can` mirrors the caller's permissions so the row menu offers only what they
  * may use. It is presentation: `transitionTransaction` re-checks both the
@@ -45,17 +45,18 @@ import { CashBalanceDialog } from "@/components/budget/cash-balance-dialog";
  * moved money that cannot be moved back.
  */
 export function TransactionList({
+  direction,
   transactions,
   refs,
-  purposes,
   summary,
   cash,
   can,
   initialStatus,
 }: {
+  /** Which menu this is. The rows are already this direction's alone. */
+  direction: "In" | "Out";
   transactions: TransactionRow[];
   refs: FinanceRefs;
-  purposes: PurposeOption[];
   summary: TransactionSummary;
   cash: CashBookSummary;
   can: TransactionAbilities;
@@ -66,8 +67,9 @@ export function TransactionList({
   const toast = useToast();
 
   const [query, setQuery] = useState("");
+  const kind = realizationOf(direction);
+  const listHref = realizationHref(direction);
   const [status, setStatus] = useState(initialStatus ?? "");
-  const [type, setType] = useState("");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [menuFor, setMenuFor] = useState<
@@ -78,11 +80,6 @@ export function TransactionList({
   >(null);
   const [busy, setBusy] = useState(false);
   const [showCash, setShowCash] = useState(false);
-
-  const purposeLabelOf = useMemo(() => {
-    const byKey = new Map(purposes.map((p) => [p.key, p.label]));
-    return (key: string) => byKey.get(key) ?? key;
-  }, [purposes]);
 
   const currencyOf = useMemo(() => {
     const byId = new Map(refs.currencies.map((c) => [c.id, c.label]));
@@ -106,29 +103,27 @@ export function TransactionList({
   const filtered = useMemo(() => {
     let out = transactions.slice();
     if (status) out = out.filter((t) => t.status === status);
-    if (type) out = out.filter((t) => t.transaction_type === type);
 
     const q = query.trim().toLowerCase();
     if (q) {
       out = out.filter((t) =>
-        [t.transaction_no, purposeLabelOf(t.purpose), t.note ?? ""]
+        [t.transaction_no, cashBankOf(t.cash_bank_id), t.note ?? ""]
           .join(" ")
           .toLowerCase()
           .includes(q)
       );
     }
     return out;
-  }, [transactions, status, type, query, purposeLabelOf]);
+  }, [transactions, status, query, cashBankOf]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / perPage));
   const current = Math.min(page, pages);
   const from = (current - 1) * perPage;
   const pageRows = filtered.slice(from, from + perPage);
 
-  const activeFilters = (status ? 1 : 0) + (type ? 1 : 0) + (query ? 1 : 0);
+  const activeFilters = (status ? 1 : 0) + (query ? 1 : 0);
   const clearAll = () => {
     setStatus("");
-    setType("");
     setQuery("");
     setPage(1);
   };
@@ -162,11 +157,15 @@ export function TransactionList({
       <DocumentHeader
         module="Finance"
         icon="wallet2"
-        title="Cash Bank Transaction"
-        sub="Layer eksekusi. Satu dokumen kas/bank dapat merealisasikan beberapa Budget yang sudah disetujui."
+        title={kind.title}
+        sub={
+          direction === "In"
+            ? "Uang masuk ke Cash & Bank yang merealisasikan Budget Penerimaan — satu dokumen, Budget dari Category dan Partner mana pun."
+            : "Uang keluar dari Cash & Bank yang merealisasikan Budget Pengeluaran — satu dokumen, Budget dari Category dan Partner mana pun."
+        }
       >
         {can.create && (
-          <Link className="btn primary" href="/finance/cash-bank-transaction/new">
+          <Link className="btn primary" href={`${listHref}/new`}>
             <Icon name="plus" size={15} /> Buat Dokumen
           </Link>
         )}
@@ -252,8 +251,9 @@ export function TransactionList({
           </div>
           <div className="v">{summary.posted}</div>
           <div className="d">
-            + {formatTotals(summary.inTotals)} masuk · −{" "}
-            {formatTotals(summary.outTotals)} keluar
+            {direction === "In"
+              ? `+ ${formatTotals(summary.inTotals)} masuk`
+              : `− ${formatTotals(summary.outTotals)} keluar`}
           </div>
         </button>
       </div>
@@ -262,7 +262,7 @@ export function TransactionList({
         <div className="toolbar">
           <SearchField
             value={query}
-            placeholder="Cari nomor dokumen, purpose, atau catatan…"
+            placeholder="Cari nomor dokumen, Cash & Bank, atau catatan…"
             onChange={(v) => {
               setQuery(v);
               setPage(1);
@@ -283,22 +283,6 @@ export function TransactionList({
             ]}
             onChange={(v) => {
               setStatus(v);
-              setPage(1);
-            }}
-          />
-
-          <Select
-            variant="toolbar"
-            value={type}
-            set={Boolean(type)}
-            ariaLabel="Filter arah"
-            options={[
-              { value: "", label: "Arah: semua" },
-              { value: "In", label: "Penerimaan" },
-              { value: "Out", label: "Pengeluaran" },
-            ]}
-            onChange={(v) => {
-              setType(v);
               setPage(1);
             }}
           />
@@ -324,7 +308,7 @@ export function TransactionList({
                     <th style={{ width: 38 }}>No</th>
                     <th style={{ width: 100 }}>Nomor</th>
                     <th style={{ width: 104 }}>Tanggal</th>
-                    <th>Purpose / Cash &amp; Bank</th>
+                    <th>Cash &amp; Bank / Catatan</th>
                     <th style={{ width: 90 }}>Budget</th>
                     <th className="num" style={{ width: 160 }}>
                       Nominal
@@ -340,7 +324,7 @@ export function TransactionList({
                     const actions = availableTransactionActions(t.status, can, {
                       funded: fundedOf(t.company_id),
                     });
-                    const href = `/finance/cash-bank-transaction/${t.id}`;
+                    const href = realizationHref(direction, t.id);
                     return (
                       <tr key={t.id} onClick={() => router.push(href)}>
                         <td className="no">{from + i + 1}</td>
@@ -360,13 +344,11 @@ export function TransactionList({
                           <Link href={href}>
                             <span className="dstack">
                               <span className="d1">
-                                {purposeLabelOf(t.purpose)}
-                              </span>
-                              <span className="d2">
                                 {t.cash_bank_id
                                   ? cashBankOf(t.cash_bank_id)
                                   : "Melalui Funding Request"}
                               </span>
+                              <span className="d2">{t.note || "—"}</span>
                             </span>
                           </Link>
                         </td>
@@ -459,12 +441,12 @@ export function TransactionList({
             <h4>
               {transactions.length
                 ? "Tidak ada dokumen yang cocok"
-                : "Belum ada dokumen kas/bank"}
+                : `Belum ada ${kind.title}`}
             </h4>
             <p>
               {transactions.length
                 ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
-                : "Dokumen kas/bank merealisasikan Budget yang sudah disetujui. Mulai dengan memilih Transaction Purpose."}
+                : `Satu dokumen merealisasikan Budget ${direction === "In" ? "Penerimaan" : "Pengeluaran"} yang sudah disetujui, dari Category dan Partner mana pun.`}
             </p>
             <div className="cta">
               {transactions.length ? (
@@ -473,10 +455,7 @@ export function TransactionList({
                 </button>
               ) : (
                 can.create && (
-                  <Link
-                    className="btn primary"
-                    href="/finance/cash-bank-transaction/new"
-                  >
+                  <Link className="btn primary" href={`${listHref}/new`}>
                     <Icon name="plus" size={15} /> Buat Dokumen
                   </Link>
                 )
@@ -487,10 +466,9 @@ export function TransactionList({
       </div>
 
       <p className="foot-note">
-        Tanggal Dokumen dicatat saat dokumen diposting — dokumen Draft belum
-        punya tanggal karena belum berdampak ke kas/bank. Realisasi juga tidak
-        melihat Tanggal Budget: selisih keduanya adalah bahan laporan realisasi
-        lebih awal atau terlambat, bukan penghalang eligibility.
+        Realisasi tidak melihat Tanggal Budget: selisih Tanggal Dokumen dan
+        Tanggal Budget adalah bahan laporan realisasi lebih awal atau
+        terlambat, bukan penghalang eligibility.
       </p>
 
       {menuFor && (

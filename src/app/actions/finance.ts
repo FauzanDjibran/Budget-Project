@@ -25,15 +25,17 @@ import {
   type TransactionAction,
   type TransactionStatus,
 } from "@/lib/siba/transaction-workflow";
+import { realizationHref } from "@/lib/siba/realization";
 
 /**
- * Cash Bank Transaction writes — the execution layer's one write path.
+ * Realisasi Budget writes — the execution layer's one write path, behind both
+ * menus (Realisasi Penerimaan and Realisasi Pengeluaran).
  *
  * Three things are enforced here and nowhere else that matters:
  *
- *  1. **The header.** Purpose, Company, Partner and Cash & Bank must be a
- *     combination the rules admit, and the Company must be the induk — the
- *     anak's realization is a Funding Request, which is a separate flow.
+ *  1. **The header.** The direction is the menu's and is fixed once saved;
+ *     Company, Cash & Bank, Currency and kurs must be a combination the rules
+ *     admit — the anak's realization is a Funding Request, a separate flow.
  *  2. **The lines.** Every line is re-derived from `eligibleBudgets`, so a
  *     document can never settle a Budget its header does not admit, whatever
  *     the caller submits.
@@ -52,9 +54,9 @@ import {
  */
 
 export type TransactionValues = {
-  purpose: string;
+  /** The menu the document was opened from. Ignored on edit: it is locked. */
+  transaction_type: "In" | "Out";
   company_id: string;
-  partner_id: string;
   cash_bank_id: string;
   /** The document's own currency, on both routes. */
   currency_id: string;
@@ -98,9 +100,8 @@ const num = (raw: string | null | undefined): number | null => {
 
 /** The submitted header, in the shape the rules read it. */
 const headerOf = (values: TransactionValues) => ({
-  purpose: String(values.purpose ?? "").trim(),
+  transaction_type: (values.transaction_type === "In" ? "In" : "Out") as "In" | "Out",
   company_id: num(values.company_id),
-  partner_id: num(values.partner_id),
   cash_bank_id: num(values.cash_bank_id),
   currency_id: num(values.currency_id),
   exchange_rate: rateNum(values.exchange_rate),
@@ -147,8 +148,8 @@ const asLines = (lines: TransactionLineValues[]): LineInput[] =>
 /**
  * The Budgets a header may realize, for the form.
  *
- * An action rather than a page prop: the pool depends on Purpose, Partner and
- * Cash & Bank, which the user is still choosing, and a Finance clerk holding no
+ * An action rather than a page prop: the pool depends on Company, Cash & Bank
+ * and Currency, which the user is still choosing, and a Finance clerk holding no
  * `BUDGET_VIEW` has no business receiving every Budget in the system just so
  * the browser can filter them. It asks for the same permission the write does,
  * and returns exactly the set `checkLines` will accept — so the picker and the
@@ -163,8 +164,8 @@ export async function listEligibleBudgets(
 > {
   const g = await authorize(
     options.excludeTransactionId
-      ? "CASH_BANK_TRANSACTION_EDIT"
-      : "CASH_BANK_TRANSACTION_CREATE"
+      ? "REALIZATION_EDIT"
+      : "REALIZATION_CREATE"
   );
   if (!g.ok) return g.denial;
 
@@ -176,7 +177,7 @@ export async function createTransaction(
   values: TransactionValues,
   lines: TransactionLineValues[]
 ): Promise<TransactionResult> {
-  const g = await authorize("CASH_BANK_TRANSACTION_CREATE");
+  const g = await authorize("REALIZATION_CREATE");
   if (!g.ok) return g.denial;
 
   const header = headerOf(values);
@@ -200,7 +201,7 @@ export async function createTransaction(
   const settled = await checkLines(header, asLines(lines));
   if (!settled.ok) return { ok: false, errors: settled.errors };
 
-  const transaction_no = await nextTransactionNo();
+  const transaction_no = await nextTransactionNo(checked.direction);
   const docType = await budgetDocTypeId();
 
   const created = await prisma.finCashBankTransaction.create({
@@ -211,14 +212,12 @@ export async function createTransaction(
       // moment it actually happened.
       document_date: new Date(`${dated.date}T00:00:00Z`),
       posting_date: null,
-      transaction_type: checked.purpose.direction,
+      transaction_type: checked.direction,
       company_id: checked.companyId,
-      purpose: checked.purpose.key,
       cash_bank_id: checked.cashBankId,
       currency_id: checked.currencyId,
       exchange_rate: checked.rate,
       cash_bank_layer_id: checked.layerId,
-      partner_id: checked.partnerId,
       transaction_amount: settled.total,
       // Both figures are provisional while the document is a Draft: a Draft has
       // moved nothing, and Post re-reads the layer before it values anything.
@@ -244,7 +243,7 @@ export async function createTransaction(
   });
 
   await audit(created.id, "TAMBAH", "create", g.actor.user.id);
-  revalidateFinance(created.id);
+  revalidateFinance(created.id, checked.direction);
   return { ok: true, id: created.id, transaction_no };
 }
 
@@ -253,12 +252,12 @@ export async function updateTransaction(
   values: TransactionValues,
   lines: TransactionLineValues[]
 ): Promise<TransactionResult> {
-  const g = await authorize("CASH_BANK_TRANSACTION_EDIT");
+  const g = await authorize("REALIZATION_EDIT");
   if (!g.ok) return g.denial;
 
   const existing = await prisma.finCashBankTransaction.findUnique({
     where: { id },
-    select: { status: true },
+    select: { status: true, transaction_type: true },
   });
   if (!existing) {
     return { ok: false, errors: { _form: "Dokumen tidak ditemukan." } };
@@ -274,7 +273,12 @@ export async function updateTransaction(
     };
   }
 
-  const header = headerOf(values);
+  // The direction is the menu the document was raised from, and its number
+  // series says so — it is never changed by an edit, whatever is submitted.
+  const header = {
+    ...headerOf(values),
+    transaction_type: existing.transaction_type as "In" | "Out",
+  };
 
   const refused = await refuseCompany(g.actor, header.company_id);
   if (refused) return refused;
@@ -310,14 +314,11 @@ export async function updateTransaction(
     await tx.finCashBankTransaction.update({
       where: { id },
       data: {
-        transaction_type: checked.purpose.direction,
         company_id: checked.companyId,
-        purpose: checked.purpose.key,
         cash_bank_id: checked.cashBankId,
         currency_id: checked.currencyId,
         exchange_rate: checked.rate,
         cash_bank_layer_id: checked.layerId,
-        partner_id: checked.partnerId,
         document_date: new Date(`${dated.date}T00:00:00Z`),
         transaction_amount: settled.total,
         transaction_base_amount: roundBase(settled.total * checked.rate),
@@ -342,7 +343,7 @@ export async function updateTransaction(
   });
 
   await audit(id, "UPDATE", "update", g.actor.user.id);
-  revalidateFinance(id);
+  revalidateFinance(id, checked.direction);
   return { ok: true, id };
 }
 
@@ -369,9 +370,10 @@ export async function transitionTransaction(
 
   const doc = await prisma.finCashBankTransaction.findUnique({
     where: { id },
-    select: { status: true },
+    select: { status: true, transaction_type: true },
   });
   if (!doc) return { ok: false, errors: { _form: "Dokumen tidak ditemukan." } };
+  const direction = doc.transaction_type as "In" | "Out";
 
   const status = doc.status as TransactionStatus;
   if (!transactionTransitionAllowed(action, status)) {
@@ -404,7 +406,7 @@ export async function transitionTransaction(
       data: { status: "Cancelled", updated_by: g.actor.user.id },
     });
     await audit(id, "UPDATE", "cancel", g.actor.user.id);
-    revalidateFinance(id);
+    revalidateFinance(id, direction);
     return { ok: true, status: "Cancelled", message: transition.done };
   }
 
@@ -415,7 +417,7 @@ export async function transitionTransaction(
   if (!posted.ok) return { ok: false, errors: posted.errors };
 
   await audit(id, "UPDATE", "post", g.actor.user.id);
-  revalidateFinance(id);
+  revalidateFinance(id, direction);
 
   return {
     ok: true,
@@ -450,9 +452,9 @@ async function audit(
   });
 }
 
-function revalidateFinance(id: number) {
-  revalidatePath("/finance/cash-bank-transaction");
-  revalidatePath(`/finance/cash-bank-transaction/${id}`);
+function revalidateFinance(id: number, direction: "In" | "Out") {
+  revalidatePath(realizationHref(direction));
+  revalidatePath(realizationHref(direction, id));
   // Posting moves both a Budget's realization and a Cash & Bank balance, so the
   // pages that read either are stale the moment this returns.
   revalidatePath("/budget/budget");

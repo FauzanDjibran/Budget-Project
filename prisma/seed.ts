@@ -31,7 +31,6 @@ import { PERMISSIONS } from "../src/lib/siba/permissions";
 import { SEEDED_ROLES, ADMIN_ROLE, adminPermissionCodes } from "../src/lib/siba/roles";
 import { parentCode } from "../src/lib/siba/account-code";
 import { BASE_CURRENCY_LABEL } from "../src/lib/siba/currency";
-import { SEED_PURPOSES } from "../src/lib/siba/rules";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -123,11 +122,9 @@ const tally = (what: string, n = 1) => {
 
 // ------------------------------------------------------------- system data
 //
-// Labels are load-bearing: `src/lib/siba/rules.ts` keys its classification
-// rules off budget and partner category labels, and `CASH_BANK_SUBCATEGORY` in
-// `records.ts` names the chart-of-accounts group a cash or bank resource posts
-// into. Renaming a label here without renaming it there silently breaks a
-// business rule.
+// Labels are load-bearing: `CASH_BANK_SUBCATEGORY` in `records.ts` names the
+// chart-of-accounts group a cash or bank resource posts into. Renaming a label
+// here without renaming it there silently breaks a business rule.
 
 /**
  * **Append only.** Each row's `doc_code` is `dtyp.<index + 1>`, so inserting a
@@ -720,7 +717,6 @@ async function ensureReferenceData(
   }
 
   await ensureBudgetCategoryRules(audit);
-  await ensurePurposes(audit.created_by);
 
   const typeId = new Map(
     (await prisma.sysAccountType.findMany({ select: { id: true, type_label: true } })).map((t) => [
@@ -902,64 +898,6 @@ async function ensureBudgetCategoryRules(audit: {
       tally("budget-partner category mappings");
     }
   }
-}
-
-/**
- * Plants the 22 historical Purposes, then lets the generator fill in anything
- * else the classification implies.
- *
- * Only the original 22, and only because their **keys** are already referenced
- * by posted documents — a seeded database has to be able to read those back.
- * Nothing else is planted: a Purpose for a Budget Category somebody adds later
- * is entered through the GUI, on purpose, because this table is a maintainer's
- * to own.
- *
- * Additive and idempotent: a key that already exists is left alone.
- */
-async function ensurePurposes(system: number): Promise<void> {
-  const categoryId = new Map(
-    (
-      await prisma.sysBudgetCategory.findMany({
-        select: { id: true, category_label: true },
-      })
-    ).map((c) => [c.category_label, c.id])
-  );
-  const partnerId = new Map(
-    (
-      await prisma.sysPartnerCategory.findMany({
-        select: { id: true, category_label: true },
-      })
-    ).map((c) => [c.category_label, c.id])
-  );
-
-  for (const purpose of SEED_PURPOSES) {
-    const budgetCategoryId = categoryId.get(purpose.budgetCategory);
-    // A label renamed since the first seed. The Purpose it named is already in
-    // the table under its own key, so skipping is right — planting a second row
-    // against a category that no longer answers to this name would be worse.
-    if (!budgetCategoryId) continue;
-    const partnerCategoryId = purpose.partnerCategory
-      ? partnerId.get(purpose.partnerCategory) ?? null
-      : null;
-    if (purpose.partnerCategory && !partnerCategoryId) continue;
-
-    const made = await create(
-      () => prisma.sysPurpose.findFirst({ where: { purpose_key: purpose.key } }),
-      () =>
-        prisma.sysPurpose.create({
-          data: {
-            purpose_key: purpose.key,
-            budget_category_id: budgetCategoryId,
-            partner_category_id: partnerCategoryId,
-            direction: purpose.direction,
-            created_by: system,
-            updated_by: null,
-          },
-        })
-    );
-    tally("purposes", made);
-  }
-
 }
 
 async function create<T>(find: () => Promise<T | null>, make: () => Promise<T>): Promise<number> {

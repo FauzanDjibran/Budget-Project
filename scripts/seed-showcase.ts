@@ -30,7 +30,7 @@ import { syncControlAccounts } from "@/lib/siba/records";
 import { systemDefaultAccountIds, writeSystemDefaults } from "@/lib/siba/system-settings";
 import { nextBudgetNo } from "@/lib/siba/budget";
 import { applyPosting } from "@/lib/siba/finance";
-import { purposeByKey } from "@/lib/siba/purposes";
+import { realizationOf } from "@/lib/siba/realization";
 import { nextDocumentNumber } from "@/lib/siba/document-number";
 import { applyTransfer, nextTransferNo } from "@/lib/siba/transfer";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
@@ -775,7 +775,15 @@ async function insertBudgets(
 // subject book, the journal, the rate layer and the Budget's realization are
 // written together. Nothing here inserts a book row directly.
 
-/** A Draft Cash Bank Transaction, shaped the way the Server Action shapes one. */
+/**
+ * A Draft Realisasi Budget, shaped the way the Server Action shapes one.
+ *
+ * `purposeKey` is this script's own shorthand for what a document is about —
+ * the historical Purpose mnemonics (`BYA_OUT`, `HTG_SH_IN`). The application
+ * no longer has Purposes: a realization's direction is the menu it is raised
+ * from, read here off the key's suffix, and every line carries its own
+ * Budget's classification.
+ */
 async function draftDocument(options: {
   purposeKey: string;
   cashBank?: string;
@@ -800,8 +808,8 @@ async function draftDocument(options: {
     });
     if (existing) return null;
   }
-  const purpose = await purposeByKey(options.purposeKey);
-  if (!purpose) throw new Error(`No Purpose ${options.purposeKey} — run npm run db:seed.`);
+  const direction: "In" | "Out" = options.purposeKey.endsWith("_IN") ? "In" : "Out";
+  const prefix = realizationOf(direction).prefix;
 
   const companies = await prisma.sysCompany.findMany({
     select: { id: true, is_parent: true },
@@ -825,15 +833,6 @@ async function draftDocument(options: {
     ? currencies.get(options.currency)!
     : resource?.currency_id ?? currencies.get("IDR")!;
 
-  const partnerId = options.partner
-    ? (
-        await prisma.mPartner.findFirstOrThrow({
-          where: { partner_name: options.partner },
-          select: { id: true },
-        })
-      ).id
-    : null;
-
   const docType = await prisma.sysDocType.findFirstOrThrow({
     where: { doc_table: "bud_budget" },
     select: { id: true },
@@ -852,22 +851,21 @@ async function draftDocument(options: {
 
   const row = await prisma.finCashBankTransaction.create({
     data: {
-      transaction_no: await nextDocumentNumber("CBT", async () => {
+      transaction_no: await nextDocumentNumber(prefix, async () => {
         const last = await prisma.finCashBankTransaction.findFirst({
+          where: { transaction_no: { startsWith: `${prefix}-` } },
           orderBy: { transaction_no: "desc" },
           select: { transaction_no: true },
         });
         return last?.transaction_no ?? null;
       }),
-      transaction_type: purpose.direction,
+      transaction_type: direction,
       document_date: new Date(`${options.date}T00:00:00Z`),
       company_id: companyId,
-      purpose: purpose.key,
       cash_bank_id: resource?.id ?? null,
       currency_id: currencyId,
       exchange_rate: rate,
       cash_bank_layer_id: options.layerId ?? null,
-      partner_id: partnerId,
       transaction_amount: total,
       transaction_base_amount: total * rate,
       note: options.note ?? null,

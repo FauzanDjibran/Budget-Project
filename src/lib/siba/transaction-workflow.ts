@@ -68,7 +68,7 @@ export const TRANSACTION_TRANSITIONS: Record<
 > = {
   submit: {
     label: "Ajukan Dana",
-    permission: "CASH_BANK_TRANSACTION_SUBMIT",
+    permission: "REALIZATION_SUBMIT",
     from: ["Draft"],
     to: "Pending",
     icon: "send",
@@ -83,7 +83,7 @@ export const TRANSACTION_TRANSITIONS: Record<
   },
   post: {
     label: "Post",
-    permission: "CASH_BANK_TRANSACTION_POST",
+    permission: "REALIZATION_POST",
     from: ["Draft"],
     to: "Posted",
     icon: "check",
@@ -98,7 +98,7 @@ export const TRANSACTION_TRANSITIONS: Record<
   },
   cancel: {
     label: "Batalkan",
-    permission: "CASH_BANK_TRANSACTION_CANCEL",
+    permission: "REALIZATION_CANCEL",
     // Also from Pending: the requesting Company may withdraw its own request
     // while it is still open, which closes the Funding Request with it. That is
     // not the induk rejecting — the induk never rejects (§29) — it is the
@@ -151,11 +151,11 @@ export function transactionAbilities(
 ): TransactionAbilities {
   const held = permissions instanceof Set ? permissions : new Set(permissions);
   return {
-    create: held.has("CASH_BANK_TRANSACTION_CREATE"),
-    edit: held.has("CASH_BANK_TRANSACTION_EDIT"),
-    submit: held.has("CASH_BANK_TRANSACTION_SUBMIT"),
-    post: held.has("CASH_BANK_TRANSACTION_POST"),
-    cancel: held.has("CASH_BANK_TRANSACTION_CANCEL"),
+    create: held.has("REALIZATION_CREATE"),
+    edit: held.has("REALIZATION_EDIT"),
+    submit: held.has("REALIZATION_SUBMIT"),
+    post: held.has("REALIZATION_POST"),
+    cancel: held.has("REALIZATION_CANCEL"),
   };
 }
 

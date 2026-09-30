@@ -240,8 +240,12 @@ describe("navigation still resolves every route shape", () => {
       "bud_budget_month"
     );
     assert.equal(
-      resolvePath("/finance/cash-bank-transaction/7").entity?.key,
-      "fin_cash_bank_transaction"
+      resolvePath("/finance/realisasi-pengeluaran/7").entity?.key,
+      "fin_realization_out"
+    );
+    assert.equal(
+      resolvePath("/finance/realisasi-penerimaan/7/edit").entity?.key,
+      "fin_realization_in"
     );
   });
 
@@ -380,7 +384,6 @@ describe("the ledger report reconciles", () => {
         transaction_no: `TST-REF${Date.now() % 100000}`,
         transaction_type: "Out",
         company_id: company,
-        purpose: "BYA_OUT",
         cash_bank_id: cb,
         currency_id: currency,
         transaction_amount: 75_000,

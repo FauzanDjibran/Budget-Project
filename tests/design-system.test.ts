@@ -1232,6 +1232,12 @@ const DOCUMENT_SCREENS: {
   form: string;
   list: string;
   routes: string;
+  /**
+   * The shared module the route files delegate to, where one document type is
+   * mounted under several menus — its `…ViewPage` and `…EditPage` are what
+   * render the form.
+   */
+  pages?: string;
   editable?: false;
   lifecycle?: false;
 }[] = [
@@ -1248,10 +1254,18 @@ const DOCUMENT_SCREENS: {
     routes: "src/app/(app)/budget/budget",
   },
   {
-    name: "Cash Bank Transaction",
+    name: "Realisasi Penerimaan",
     form: "src/components/finance/transaction-form.tsx",
     list: "src/components/finance/transaction-list.tsx",
-    routes: "src/app/(app)/finance/cash-bank-transaction",
+    routes: "src/app/(app)/finance/realisasi-penerimaan",
+    pages: "src/components/finance/realization-pages.tsx",
+  },
+  {
+    name: "Realisasi Pengeluaran",
+    form: "src/components/finance/transaction-form.tsx",
+    list: "src/components/finance/transaction-list.tsx",
+    routes: "src/app/(app)/finance/realisasi-pengeluaran",
+    pages: "src/components/finance/realization-pages.tsx",
   },
   {
     name: "Cash Bank Transfer",
@@ -1381,7 +1395,21 @@ describe("a document screen has one shape", () => {
     });
 
     test(`${doc.name}: view and edit are the same component, and both carry the history`, () => {
-      const view = fileText(`${doc.routes}/[id]/page.tsx`);
+      // A route that delegates to a shared pages module is read through it:
+      // the wrapper must render that module's page, and the page is what has
+      // to render the form and the history.
+      const through = (route: string, suffix: "ViewPage" | "EditPage") => {
+        const text = fileText(route);
+        if (!doc.pages) return text;
+        const name = text.match(new RegExp(`<(\\w+${suffix})\\b`))?.[1];
+        assert.ok(name, `${route} renders no ${suffix} from ${doc.pages}`);
+        const body = fileText(doc.pages).split(/\nexport /).find((c) =>
+          c.startsWith(`async function ${name}(`)
+        );
+        assert.ok(body, `${doc.pages} does not export ${name}`);
+        return body;
+      };
+      const view = through(`${doc.routes}/[id]/page.tsx`, "ViewPage");
       // The component the document's own file exports is what its pages render.
       const exported = fileText(doc.form).match(/export function (\w+)/)?.[1];
       assert.ok(exported, `${doc.form} exports no component`);
@@ -1393,7 +1421,7 @@ describe("a document screen has one shape", () => {
         assert.ok(!existsSync(join(process.cwd(), editPath)), `${doc.name} is listed as never edited`);
         return;
       }
-      const edit = fileText(editPath);
+      const edit = through(editPath, "EditPage");
       assert.ok(renders(edit), `the edit page does not render ${exported} — view and edit have split`);
       assert.match(edit, /<RecordHistoryCard\b/, "the edit page has no Riwayat");
     });

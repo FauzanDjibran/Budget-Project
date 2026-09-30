@@ -36,8 +36,6 @@ import {
   strandedCategories,
   syncControlAccounts,
 } from "@/lib/siba/records";
-import { loadClassification } from "@/lib/siba/classification-data";
-import { directionText } from "@/lib/siba/classification";
 import {
   systemDefaultAccountIds,
   systemDefaultsUsingAccount,
@@ -316,9 +314,6 @@ async function validate(
   if (entity.key === "sys_budget_category") {
     Object.assign(errors, validateBudgetCategory(values));
   }
-  if (entity.key === "sys_purpose") {
-    Object.assign(errors, await validatePurpose(values, currentId, errors));
-  }
   if (entity.key === "acc_fiscal_year" && !parseYear(String(values.year_label ?? ""))) {
     // Everything else about a fiscal year is derived from this, so a value the
     // picker could not have produced has to stop here.
@@ -494,84 +489,12 @@ async function validateAccount(
  * Both halves are refusals rather than silent corrections, because either one
  * would otherwise produce a category that reads as configured and admits
  * nothing. A category allowing neither direction can classify no Budget at all,
- * and one that names a Partner without admitting a Partner Category generates
- * no Purpose, so no document could ever name it.
+ * and one that names a Partner without admitting a Partner Category can
+ * approve no Budget, so no document could ever settle one.
  *
  * Both are answered on this one form now, which is why neither needs the record
  * to exist first — the checks are the same on create and on edit.
  */
-/**
- * A Purpose has to name a combination its Budget Category actually admits.
- *
- * Nothing generates these rows, so nothing stops a maintainer entering one the
- * classification does not allow — and such a row could never be used: the
- * picker filters it out, and the Budget approval chain would refuse the
- * classification anyway. Refusing it here is the rule every other inert
- * combination gets, said at the point one would be created.
- */
-async function validatePurpose(
-  values: FormValues,
-  currentId: number | null,
-  existing: Record<string, string>
-): Promise<Record<string, string>> {
-  const errors: Record<string, string> = {};
-  const categoryId = refValue(values, "budget_category_id");
-  const partnerCategoryId = refValue(values, "partner_category_id");
-  const direction = String(values.direction ?? "");
-  if (existing.budget_category_id || existing.direction || !categoryId) return errors;
-
-  const rule = (await loadClassification()).find((r) => r.id === categoryId);
-  if (!rule) {
-    errors.budget_category_id = "Budget Category tidak ditemukan.";
-    return errors;
-  }
-
-  if (direction === "In" ? !rule.allowsIn : !rule.allowsOut) {
-    errors.direction = `${rule.label} tidak berlaku untuk ${directionText(direction)}.`;
-    return errors;
-  }
-
-  if (!rule.requirePartner) {
-    if (partnerCategoryId) {
-      errors.partner_category_id = `${rule.label} tidak memakai Partner, sehingga Purpose-nya tidak menyebut Partner Category.`;
-      return errors;
-    }
-  } else {
-    if (!partnerCategoryId) {
-      errors.partner_category_id = `${rule.label} memakai Partner, sehingga Purpose-nya harus menyebut Partner Category.`;
-      return errors;
-    }
-    const partner = await prisma.sysPartnerCategory.findUnique({
-      where: { id: partnerCategoryId },
-      select: { category_label: true },
-    });
-    if (!partner || !rule.partnerCategories.includes(partner.category_label)) {
-      errors.partner_category_id = `${rule.label} tidak mengakui Partner Category itu. Tambahkan dulu pada Budget Category tersebut.`;
-      return errors;
-    }
-  }
-
-  // One Purpose per combination — the unique index is the backstop; this is the
-  // message that says which row already holds it.
-  const clash = await prisma.sysPurpose.findFirst({
-    where: {
-      budget_category_id: categoryId,
-      partner_category_id: partnerCategoryId,
-      direction: direction as "In" | "Out",
-      ...(currentId ? { id: { not: currentId } } : {}),
-    },
-    select: { purpose_key: true, status: true },
-  });
-  if (clash) {
-    errors.partner_category_id =
-      clash.status === "Active"
-        ? `Kombinasi ini sudah ada (${clash.purpose_key}).`
-        : `Kombinasi ini sudah ada tetapi non-aktif (${clash.purpose_key}) — aktifkan record itu.`;
-  }
-
-  return errors;
-}
-
 function validateBudgetCategory(values: FormValues): Record<string, string> {
   const errors: Record<string, string> = {};
 
@@ -600,8 +523,8 @@ function validateBudgetCategory(values: FormValues): Record<string, string> {
       "Category ini hanya berlaku untuk Pengeluaran, sehingga posisinya tidak dapat naik saat Penerimaan.";
   }
 
-  // A category that names a Partner keeps a book and needs Purposes, and both
-  // come from the Partner Categories it admits — which are on this same form,
+  // A category that names a Partner keeps a book and classifies Budgets, and
+  // both come from the Partner Categories it admits — which are on this same form,
   // so this is now an ordinary required field rather than a reason to save the
   // record inactive and come back to it.
   //
@@ -696,7 +619,7 @@ async function validateMapping(
  *
  * `Arah` is one question with three answers and is stored as two booleans,
  * because two booleans is what every reader already asks for — the subject
- * book's nature, the Purpose generator's direction list, the CHECK constraints.
+ * book's nature, the Budget approval's direction check, the CHECK constraints.
  * Presenting them as two checkboxes is what let both be switched off.
  *
  * `raises` rides along for the same reason in reverse: a category that moves
@@ -759,22 +682,6 @@ function buildData(entity: Entity, values: FormValues, applies: Set<string>) {
  * target reconciles against the General Ledger alone, which is exactly the
  * kind of account a manual journal exists to reach.
  */
-/**
- * Nothing regenerates the Transaction Purposes, deliberately.
- *
- * They were briefly derived from the classification, so a Budget Category
- * created through the GUI was transactable the moment it was saved. That is
- * reversed on the user's instruction: `sys_purpose` stands in for what a
- * maintainer would type into the database, so it is filled in through Master ›
- * Klasifikasi › Transaction Purpose and the application writes no row on their
- * behalf.
- *
- * A Budget Category with no Purpose therefore cannot be transacted. That is the
- * intended outcome and not a fault — it means whoever added the category has
- * not finished. The Budget Category list states how many Purposes each one
- * holds, so the gap is visible rather than silent.
- */
-
 /** Ids submitted for a multiref, however the form serialised them. */
 function idList(value: unknown): number[] {
   const raw = Array.isArray(value)
@@ -1028,7 +935,7 @@ export async function toggleStatus(
   const actor = guard.actor;
 
   // Activating a Budget Category that names a Partner but has none paired to it
-  // would produce a record that generates no Purpose and keeps a book nothing
+  // would produce a record no Budget can be classified by and a book nothing
   // can post to — configured-looking and inert.
   if (entity.key === "sys_budget_category" && nextActive) {
     if (row.require_partner === true) {

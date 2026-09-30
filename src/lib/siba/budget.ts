@@ -473,7 +473,8 @@ export async function budgetsByIds(ids: number[]): Promise<BudgetRow[]> {
 export type OpenBudgetFilter = {
   companyId: number;
   budgetType: "In" | "Out";
-  categoryId: number;
+  /** Omitted, every Budget Category qualifies — a realization may mix them. */
+  categoryId?: number;
   currencyId: number;
   partnerId?: number | null;
 };
@@ -487,7 +488,7 @@ export async function openBudgetsMatching(
       status: "Open",
       company_id: filter.companyId,
       budget_type: filter.budgetType,
-      category_id: filter.categoryId,
+      ...(filter.categoryId != null ? { category_id: filter.categoryId } : {}),
       currency_id: filter.currencyId,
       ...(filter.partnerId != null ? { partner_id: filter.partnerId } : {}),
     },

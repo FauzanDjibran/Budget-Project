@@ -1,4 +1,5 @@
 import test, { after, before, describe } from "node:test";
+import { realizationOf } from "../src/lib/siba/realization";
 import assert from "node:assert/strict";
 
 import { budgetDocTypeId, fundingRoute } from "../src/lib/siba/finance";
@@ -9,7 +10,6 @@ import {
   withdrawFundingRequest,
 } from "../src/lib/siba/funding";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
-import { purposeByKey } from "../src/lib/siba/purposes";
 import { openCashBankBook } from "../src/lib/siba/cash-bank";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import { MODULES } from "../src/lib/siba/nav";
@@ -162,19 +162,18 @@ async function makeAnakDraft(options: {
   currencyId?: number;
   lines: { budgetId: number; amount: number }[];
 }): Promise<number> {
-  const purpose = (await purposeByKey(options.purpose))!;
+  // `purpose` is the historical mnemonic; its suffix is the direction.
+  const direction = options.purpose.endsWith("_IN") ? "In" : "Out";
   const docType = await budgetDocTypeId();
   const total = options.lines.reduce((t, l) => t + l.amount, 0);
 
   const row = await prisma.finCashBankTransaction.create({
     data: {
       transaction_no: `TSF-CBT${transactions.length + 1}${Date.now() % 100000}`,
-      transaction_type: purpose.direction,
+      transaction_type: direction,
       company_id: anak,
-      purpose: purpose.key,
       cash_bank_id: null,
       currency_id: options.currencyId ?? currency,
-      partner_id: options.partnerId ?? null,
       transaction_amount: total,
       transaction_base_amount: total,
       status: "Draft",
@@ -369,7 +368,7 @@ describe("the funded route is decided by the Company, not by a setting", () => {
 
   test("both capabilities are catalogue entries", () => {
     for (const code of [
-      "CASH_BANK_TRANSACTION_SUBMIT",
+      "REALIZATION_SUBMIT",
       "FUNDING_REQUEST_VIEW",
       "FUNDING_REQUEST_CONFIRM",
     ]) {
@@ -495,7 +494,6 @@ describe("submitting raises a request and moves nothing", () => {
         transaction_no: `TSF-IND${Date.now() % 1_000_000}`,
         transaction_type: "Out",
         company_id: induk,
-        purpose: "BYA_OUT",
         cash_bank_id: cashBank,
         currency_id: currency,
         transaction_amount: 100_000,
@@ -535,7 +533,6 @@ describe("submitting raises a request and moves nothing", () => {
         transaction_no: `TSF-EMP${Date.now() % 1_000_000}`,
         transaction_type: "Out",
         company_id: anak,
-        purpose: "BYA_OUT",
         currency_id: currency,
         transaction_amount: 0,
         transaction_base_amount: 0,
@@ -741,7 +738,7 @@ describe("confirmation posts both Companies, at once", () => {
       where: { id: doc },
       select: { transaction_no: true },
     });
-    const label = (await purposeByKey("HTG_SH_OUT"))!.label;
+    const label = realizationOf("Out").title;
 
     // The anak performed an ordinary realization that happened to be funded,
     // so its journal names its own document and nothing else.

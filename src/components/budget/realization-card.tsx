@@ -5,6 +5,7 @@ import { Icon } from "@/components/icon";
 import { formatDate, formatMoney } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { budgetRealizations } from "@/lib/siba/finance";
+import { realizationHref, realizationOf } from "@/lib/siba/realization";
 
 type Realization = Awaited<ReturnType<typeof budgetRealizations>>[number];
 
@@ -66,7 +67,7 @@ export function RealizationCard({
                 <tr key={r.transactionId}>
                   <td className="no">{i + 1}</td>
                   <td>
-                    <Link href={`/finance/cash-bank-transaction/${r.transactionId}`}>
+                    <Link href={realizationHref(r.direction, r.transactionId)}>
                       <span className="lab">{r.transactionNo}</span>
                     </Link>
                   </td>
@@ -77,7 +78,7 @@ export function RealizationCard({
                       <span className="dash">belum diposting</span>
                     )}
                   </td>
-                  <td className="pri">{r.purposeLabel}</td>
+                  <td className="pri">{realizationOf(r.direction).title}</td>
                   <td>
                     <span className={`bdg ${STATUS_CLASS[r.status] ?? "s-mute"}`}>
                       {STATUS_TEXT[r.status] ?? r.status}

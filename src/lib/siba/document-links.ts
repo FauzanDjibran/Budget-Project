@@ -9,7 +9,10 @@
  * Client-safe: a map of strings and nothing else.
  */
 const ROUTES: Record<string, string> = {
-  fin_cash_bank_transaction: "/finance/cash-bank-transaction",
+  // A realization lives under one of two menus, and the pair does not say
+  // which. Either route answers for any realization: the page sends a document
+  // opened under the other menu's route to its own.
+  fin_cash_bank_transaction: "/finance/realisasi-pengeluaran",
   fin_funding_request: "/finance/funding-request",
   fin_cash_bank_transfer: "/finance/cash-bank-transfer",
   fin_dncn: "/finance/debit-credit-note",

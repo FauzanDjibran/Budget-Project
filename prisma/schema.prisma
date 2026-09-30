@@ -448,7 +448,6 @@ model SysBudgetCategory {
   budgets            BudBudget[]
   mappings           AccBudgetCategoryAccount[]
   partner_categories SysBudgetPartnerCategoryMapping[]
-  purposes           SysPurpose[]
   dncn_notes         FinDncn[]
 
   @@map("sys_budget_category")
@@ -471,55 +470,8 @@ model SysPartnerCategory {
   accounts          AccAccount[]
   mappings          AccBudgetCategoryAccount[]
   budget_categories SysBudgetPartnerCategoryMapping[]
-  purposes          SysPurpose[]
 
   @@map("sys_partner_category")
-}
-
-/// A Transaction Purpose: exactly one Budget Category x one Partner Category x
-/// one direction, which is what lets it resolve to a single account.
-///
-/// These were 22 constants in `src/lib/siba/rules.ts`. They are rows now because
-/// the Budget Categories they classify are rows: a category created through the
-/// GUI that no Purpose named could be planned and booked but never actually
-/// transacted, which is the one link that still needed a developer.
-///
-/// **Generated, not authored.** The 22 were exactly the cross product of the
-/// categories, their admitted Partner Categories and their directions — no more
-/// and no fewer — so `syncPurposes` derives the rows from that matrix and nothing
-/// creates one by hand. What a person edits is the `label`, because that is the
-/// only part no derivation gets right: "Penerimaan Pinjaman dari Cabang" for a
-/// Hutang receipt, where a template would say "Hutang".
-model SysPurpose {
-  id Int @id @default(autoincrement())
-
-  /// What a document stores in `fin_cash_bank_transaction.purpose`. Opaque and
-  /// immutable: the original 22 keep their historical mnemonics (`TTP_CAB_IN`)
-  /// and generated ones carry a system code, because a posted document must go
-  /// on resolving whatever the key looked like when it was written. Nothing
-  /// parses it.
-  purpose_key String @unique
-
-  budget_category_id  Int
-  /// Null where the Purpose takes no Partner — Asset and Biaya.
-  partner_category_id Int?
-  direction           FlowDirection
-
-  note   String?
-  status ActiveStatus @default(Active)
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  budget_category  SysBudgetCategory   @relation(fields: [budget_category_id], references: [id])
-  partner_category SysPartnerCategory? @relation(fields: [partner_category_id], references: [id])
-
-  /// One Purpose per combination — the statement that a Purpose *is* the triple.
-  @@unique([budget_category_id, partner_category_id, direction])
-  @@index([partner_category_id])
-  @@map("sys_purpose")
 }
 
 /// Which Partner Categories a Budget Category admits — the chain
@@ -601,7 +553,6 @@ model MPartner {
   category SysPartnerCategory @relation(fields: [category_id], references: [id])
 
   budgets            BudBudget[]
-  transactions       FinCashBankTransaction[]
   journal_lines      AccJournalLine[]
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
@@ -1313,10 +1264,6 @@ model FinCashBankTransaction {
   posting_date       DateTime?     @db.Timestamptz(6)
   transaction_type   FlowDirection
   company_id         Int
-  /// Purpose key (e.g. `PRV_SH_OUT`), resolved in `src/lib/siba/rules.ts`. A
-  /// purpose carries behaviour a config table cannot express, so it stays
-  /// application logic — CLAUDE.md §12 rejects a `fin_purpose` table.
-  purpose            String
   cash_bank_id       Int?
   /// The currency the document is denominated in — a real input now, not a
   /// figure read off the Cash & Bank. A foreign document may be paid from a
@@ -1334,7 +1281,6 @@ model FinCashBankTransaction {
   /// Null whenever no layer is involved: money coming in, a base-currency
   /// resource, or a document still in Draft that has not chosen one.
   cash_bank_layer_id Int?
-  partner_id         Int?
 
   transaction_amount      Decimal @db.Decimal(18, 2)
   /// What the document was worth in base currency. No longer the identity.
@@ -1351,7 +1297,6 @@ model FinCashBankTransaction {
   company   SysCompany  @relation(fields: [company_id], references: [id])
   currency  RefCurrency @relation(fields: [currency_id], references: [id])
   cash_bank MCashBank?  @relation(fields: [cash_bank_id], references: [id])
-  partner   MPartner?   @relation(fields: [partner_id], references: [id])
 
   lines            FinCashBankTransactionLine[]
   funding_requests FinFundingRequest[]
@@ -1389,11 +1334,9 @@ model FinCashBankTransactionLine {
   /// `settlement_base_amount − transaction_base_amount`. Positive is a gain,
   /// negative a loss, zero writes no journal line.
   ///
-  /// Stored per line even though a SIBA document settles one position at one
-  /// rate, so the two are arithmetically identical: the analytic is what
-  /// answers "what did currency movement cost us on this plan", and keeping it
-  /// per line costs nothing while a document has one Partner and survives a
-  /// document that one day has two.
+  /// Per line, and journaled per line: a realization settles Budgets of
+  /// several categories and Partners, each at its own position's carrying
+  /// rate, so each line has its own difference and none is summed.
   fx_difference           Decimal @default(0) @db.Decimal(18, 2)
 
   created_by Int
@@ -1464,9 +1407,8 @@ model FinFundingRequest {
 // ------------------------------------------------- cash bank transfer
 
 /// How a transfer's two accounts relate, which is the whole of what a transfer
-/// Purpose says. Deliberately **not** a `rules.ts` Purpose: those are one Budget
-/// Category x one Partner Category x one direction, and a transfer has none of
-/// the three. It moves the Company's own money between its own resources, so it
+/// Purpose says. A transfer has no Budget Category, no Partner Category and
+/// no Budget to realize: it moves the Company's own money between its own resources, so it
 /// realizes no Budget, names no Partner and keeps no subject book.
 ///
 /// The catalogue is `src/lib/siba/transfer-catalogue.ts`; this enum is stored so

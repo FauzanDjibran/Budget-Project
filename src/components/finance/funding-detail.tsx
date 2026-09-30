@@ -15,6 +15,7 @@ import { STATUS_TEXT } from "@/lib/siba/entities";
 import type { TransactionLineRow } from "@/lib/siba/finance";
 import type { FundingRequestRow } from "@/lib/siba/funding";
 import { headerButtonClass } from "@/lib/siba/header-actions";
+import { realizationHref } from "@/lib/siba/realization";
 
 export type ProviderResource = {
   id: number;
@@ -195,7 +196,7 @@ export function FundingDetail({
                   <Field label="Realisasi" span={3} help="dokumen yang dibiayai">
                     <div className="ro">
                       {doc ? (
-                        <Link href={`/finance/cash-bank-transaction/${doc.id}`}>
+                        <Link href={realizationHref(doc.transaction_type, doc.id)}>
                           <span className="lab">{doc.transaction_no}</span>
                         </Link>
                       ) : (

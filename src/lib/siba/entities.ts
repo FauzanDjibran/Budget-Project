@@ -126,11 +126,7 @@ export type Field = {
     | "postableAccount"
     | "parentAccount"
     /** Only the Partner Categories the chosen Budget Category admits. */
-    | "admittedPartnerCategory"
-    /** A new Purpose: Budget Categories that allow the chosen Arah and still have a free combination. */
-    | "purposeCategory"
-    /** A new Purpose: admitted Partner Categories no Purpose holds yet for this Arah and category. */
-    | "purposePartnerCategory";
+    | "admittedPartnerCategory";
   /**
    * Named predicate deciding whether the field applies at all. A field that
    * does not apply is hidden and stored as null — the Server Action evaluates
@@ -659,7 +655,7 @@ export const ENTITIES: Entity[] = [
       },
       // Chosen here rather than on a menu of its own. A category that names a
       // Partner is only usable once it admits at least one Partner Category —
-      // no Purpose is generated for it otherwise, and its subject book can
+      // no Budget can be classified by it otherwise, and its subject book can
       // never receive an entry — so the two belong in one save. `required`
       // together with `visibleWhen` reads as "mandatory exactly when the
       // category names a Partner".
@@ -728,7 +724,6 @@ export const ENTITIES: Entity[] = [
       { field: "directions", label: "Arah", computed: true, width: "170px" },
       { field: "partner_categories", label: "Partner Category", computed: true, width: "210px" },
       { field: "book", label: "Buku Subjek", computed: true, width: "150px" },
-      { field: "purpose_count", label: "Purpose", computed: true, numeric: true, width: "92px" },
       { field: "budget_count", label: "Budget", computed: true, numeric: true, width: "86px" },
       { field: "status", label: "Status", isStatus: true, width: "104px", filter: "enum" },
     ],
@@ -776,81 +771,6 @@ export const ENTITIES: Entity[] = [
       { field: "budget_categories", label: "Dipakai Budget Category", computed: true, width: "260px" },
       { field: "partner_count", label: "Partner", computed: true, numeric: true, width: "92px" },
       { field: "status", label: "Status", isStatus: true, width: "110px", filter: "enum" },
-    ],
-  },
-
-  {
-    key: "sys_purpose",
-    slug: "purpose",
-    module: "settings",
-    name: "Transaction Purpose",
-    single: "Purpose",
-    icon: "tags",
-    desc: "Arah × Budget Category × Partner Category, sebagaimana dipilih pada Cash Bank Transaction. Ditambahkan sendiri — Budget Category tanpa Purpose belum dapat ditransaksikan.",
-    codeField: "purpose_key",
-    codePrefix: "purp",
-    statusModel: ACTIVE_STATUS,
-    fields: [
-      // A Purpose *is* the triple direction × Budget Category × Partner
-      // Category, so all three are chosen once and locked. Editing one would
-      // not change this Purpose — it would silently make it a different one,
-      // against which documents have already been posted.
-      //
-      // There is no Sebutan: the label is composed from these three
-      // (`purposeLabel` in `purposes.ts`), so every Purpose reads the same way
-      // and none can drift from what it describes.
-      {
-        name: "direction",
-        label: "Arah",
-        type: "select",
-        options: ["Out", "In"],
-        optionLabels: { Out: "Pengeluaran", In: "Penerimaan" },
-        required: true,
-        locked: true,
-        // Arah decides which Budget Categories make sense, so it is asked
-        // first and clears what it no longer admits.
-        resets: ["budget_category_id", "partner_category_id"],
-        span: 4,
-        help: "arah kas dokumen",
-      },
-      {
-        name: "budget_category_id",
-        label: "Budget Category",
-        type: "ref",
-        ref: "sys_budget_category",
-        required: true,
-        locked: true,
-        resets: ["partner_category_id"],
-        refFilter: "purposeCategory",
-        span: 4,
-        help: "hanya yang berlaku untuk arah itu",
-      },
-      {
-        name: "partner_category_id",
-        label: "Partner Category",
-        type: "ref",
-        ref: "sys_partner_category",
-        required: true,
-        locked: true,
-        // Shown only where the Budget Category names a subject, and offering
-        // only the Partner Categories that category admits — so the reader
-        // never has to guess which ones a Budget Category takes, and cannot
-        // pick one `validatePurpose` would then refuse.
-        visibleWhen: "budgetCategoryRequiresPartner",
-        refFilter: "purposePartnerCategory",
-        span: 4,
-        help: "yang diakui dan belum punya Purpose",
-      },
-      STATUS_FIELD,
-      NOTE_FIELD,
-    ],
-    columns: [
-      { field: "label", label: "Sebutan", computed: true, primary: true },
-      { field: "direction", label: "Arah", computed: true, width: "128px" },
-      { field: "budget_category_id", label: "Budget Category", isRef: true, refLabelOnly: true, width: "160px", filter: "ref" },
-      { field: "partner_category_id", label: "Partner Category", isRef: true, refLabelOnly: true, width: "150px", filter: "ref" },
-      { field: "purpose_key", label: "Key", muted: true, width: "120px", filter: "text" },
-      { field: "status", label: "Status", isStatus: true, width: "104px", filter: "enum" },
     ],
   },
 
