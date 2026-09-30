@@ -1,64 +1,63 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Field, FormRow } from "@/components/ui/form";
 import { Icon } from "@/components/icon";
 import { Dialog } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
-import { formatDate, formatMoney } from "@/lib/format";
+import { formatDate, formatMoney, formatTotals, sumByCurrency } from "@/lib/format";
 import type {
   BudgetMapping,
   BudgetRefs,
   BudgetRow,
+  ClassificationHint,
 } from "@/lib/siba/budget";
 import { BUDGET_TYPE_TEXT } from "@/lib/siba/budget-workflow";
 
 /**
- * Approval is the one transition that also writes data: the approver assigns
- * the Budget Category and, where the category takes a subject, the Partner.
+ * Tetapkan Klasifikasi — one Budget Category and Partner for every Budget in
+ * the selection.
  *
- * Both pickers narrow themselves from `rules.ts` — categories to those valid
- * for the budget's direction, partners to the budget's Company and to the
- * partner categories that category admits. None of that narrowing is the
- * enforcement: `checkClassification` on the server re-checks the whole chain.
- * This dialog exists so an approver is not guessing.
+ * The selection shares a Company and a direction, because both decide what
+ * may be chosen: the categories valid for the direction, the Partners of the
+ * Company. The caller guarantees it; the server re-checks every Budget on its
+ * own through `checkClassification`, so a selection that somehow mixes them
+ * is refused by name rather than half-classified.
+ *
+ * Both pickers narrow themselves from the classification catalogue. None of
+ * that narrowing is the enforcement — this dialog exists so a classifier is
+ * not guessing.
  */
-export function ApproveDialog({
-  budget,
+export function ClassifyDialog({
+  budgets,
   refs,
   mappings,
+  hint,
   errors,
   busy,
   onConfirm,
   onCancel,
 }: {
-  budget: BudgetRow;
+  budgets: BudgetRow[];
   refs: BudgetRefs;
   mappings: BudgetMapping[];
+  /** How a similar Budget was classified before — shown, never prefilled. */
+  hint?: ClassificationHint | null;
   errors: Record<string, string>;
   busy: boolean;
   onConfirm: (categoryId: string | null, partnerId: string | null) => void;
   onCancel: () => void;
 }) {
-  const [categoryId, setCategoryId] = useState(
-    budget.category_id ? String(budget.category_id) : ""
-  );
-  const [partnerId, setPartnerId] = useState(
-    budget.partner_id ? String(budget.partner_id) : ""
-  );
+  const [first] = budgets;
+  const [categoryId, setCategoryId] = useState("");
+  const [partnerId, setPartnerId] = useState("");
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onCancel();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onCancel]);
-
-  /** Direction follows balance-sheet logic — see BUDGET_CATEGORY_RULES. */
   const categories = useMemo(
-    () => refs.categories.filter((c) => c.directions.includes(budget.budget_type)),
-    [refs.categories, budget.budget_type]
+    () =>
+      refs.categories.filter(
+        (c) => c.active && c.directions.includes(first.budget_type)
+      ),
+    [refs.categories, first.budget_type]
   );
 
   const category = categories.find((c) => String(c.id) === categoryId) ?? null;
@@ -68,11 +67,11 @@ export function ApproveDialog({
     if (!category || !needsPartner) return [];
     return refs.partners.filter(
       (p) =>
-        p.companyId === budget.company_id &&
+        p.companyId === first.company_id &&
         p.active &&
         category.partnerCategories.includes(p.categoryLabel)
     );
-  }, [refs.partners, category, needsPartner, budget.company_id]);
+  }, [refs.partners, category, needsPartner, first.company_id]);
 
   const account = useMemo(() => {
     if (!category) return null;
@@ -82,25 +81,38 @@ export function ApproveDialog({
     return (
       mappings.find(
         (m) =>
-          m.companyId === budget.company_id &&
+          m.companyId === first.company_id &&
           m.budgetCategoryId === category.id &&
           m.partnerCategoryId === partnerCategoryId
       ) ?? null
     );
-  }, [mappings, category, needsPartner, partnerId, refs.partners, budget.company_id]);
+  }, [mappings, category, needsPartner, partnerId, refs.partners, first.company_id]);
 
-  const company = refs.companies.find((c) => c.id === budget.company_id);
-  const currency = refs.currencies.find((c) => c.id === budget.currency_id);
-  const arah = BUDGET_TYPE_TEXT[budget.budget_type] ?? budget.budget_type;
+  const company = refs.companies.find((c) => c.id === first.company_id);
+  const currencyOf = (id: number) =>
+    refs.currencies.find((c) => c.id === id)?.label ?? "IDR";
+  const arah = BUDGET_TYPE_TEXT[first.budget_type] ?? first.budget_type;
+  const one = budgets.length === 1;
+
+  const hintCategory = hint
+    ? refs.categories.find((c) => c.id === hint.categoryId) ?? null
+    : null;
+  const hintPartner = hint?.partnerId
+    ? refs.partners.find((p) => p.id === hint.partnerId) ?? null
+    : null;
 
   return (
     <Dialog
       open
-      icon="thumb"
+      icon="tags"
       tone="ok"
       width={620}
-      title="Setujui Budget"
-      subtitle="Tetapkan klasifikasi agar budget siap direalisasikan"
+      title="Tetapkan Klasifikasi"
+      subtitle={
+        one
+          ? "Budget Category dan Partner menentukan buku dan Account realisasinya"
+          : `Satu klasifikasi untuk ${budgets.length} Budget sekaligus`
+      }
       onClose={() => {
         if (!busy) onCancel();
       }}
@@ -120,7 +132,7 @@ export function ApproveDialog({
               "Memproses…"
             ) : (
               <>
-                <Icon name="thumb" size={14} /> Setujui Budget
+                <Icon name="tags" size={14} /> Tetapkan Klasifikasi
               </>
             )}
           </button>
@@ -128,14 +140,23 @@ export function ApproveDialog({
       }
     >
       <div className="apsum">
-        <div>
-          <span>Nomor</span>
-          <b>{budget.budget_no}</b>
-        </div>
-        <div>
-          <span>Tanggal</span>
-          <b>{formatDate(budget.budget_date)}</b>
-        </div>
+        {one ? (
+          <>
+            <div>
+              <span>Nomor</span>
+              <b>{first.budget_no}</b>
+            </div>
+            <div>
+              <span>Tanggal</span>
+              <b>{formatDate(first.budget_date)}</b>
+            </div>
+          </>
+        ) : (
+          <div className="full">
+            <span>Budget</span>
+            <b>{budgets.map((b) => b.budget_no).join(", ")}</b>
+          </div>
+        )}
         <div>
           <span>Company</span>
           <b>{company ? `${company.label} - ${company.name}` : "—"}</b>
@@ -144,17 +165,43 @@ export function ApproveDialog({
           <span>Tipe</span>
           <b>{arah}</b>
         </div>
-        <div className="full">
-          <span>Deskripsi</span>
-          <b>{budget.description}</b>
-        </div>
+        {one && (
+          <div className="full">
+            <span>Deskripsi</span>
+            <b>{first.description}</b>
+          </div>
+        )}
         <div className="full amt">
           <span>Nominal</span>
           <b>
-            {formatMoney(budget.budget_amount, currency?.label ?? "IDR")}
+            {one
+              ? formatMoney(first.budget_amount, currencyOf(first.currency_id))
+              : formatTotals(
+                  sumByCurrency(
+                    budgets.map((b) => ({
+                      currencyId: b.currency_id,
+                      currencyLabel: currencyOf(b.currency_id),
+                      amount: b.budget_amount,
+                    }))
+                  )
+                )}
           </b>
         </div>
       </div>
+
+      {hintCategory && (
+        <div className="apmap">
+          <Icon name="clock" size={13} /> Budget serupa ({hint!.budgetNo})
+          diklasifikasikan sebagai{" "}
+          <span className="lab">{hintCategory.label}</span>
+          {hintPartner && (
+            <>
+              {" "}
+              · <span className="lab">{hintPartner.label}</span> {hintPartner.name}
+            </>
+          )}
+        </div>
+      )}
 
       {errors._form && (
         <div className="err" style={{ marginTop: 12 }}>
@@ -179,6 +226,7 @@ export function ApproveDialog({
             options={categories.map((c) => ({
               value: String(c.id),
               label: c.label,
+              hint: c.name,
             }))}
             onChange={(v) => {
               setCategoryId(v);
@@ -205,9 +253,6 @@ export function ApproveDialog({
             value={partnerId}
             invalid={Boolean(errors.partner_id)}
             disabled={busy || (Boolean(categoryId) && !needsPartner)}
-            // Which Partner may be chosen is decided by the Budget Category,
-            // so until one is picked the field says so rather than greying out
-            // and leaving the reader to work out which other control did it.
             waitingFor={categoryId ? null : "Pilih Budget Category dulu…"}
             placeholder={needsPartner ? "Pilih Partner…" : "Tidak diperlukan"}
             options={partners.map((p) => ({
@@ -235,7 +280,9 @@ export function ApproveDialog({
         ) : (
           <div className="apmap warn">
             <Icon name="warn" size={13} /> Kombinasi ini belum dipetakan ke
-            Account untuk Company tersebut.
+            Account untuk Company tersebut. Klasifikasi tetap dapat
+            ditetapkan, tetapi realisasinya baru dapat di-Post setelah
+            pemetaan dibuat.
           </div>
         )
       ) : null}

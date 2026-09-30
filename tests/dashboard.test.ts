@@ -53,11 +53,12 @@ const AMOUNT = {
   claim: 250_000,
   draft: 700_000,
   rejected: 300_000,
+  awaiting: 600_000,
 };
 
 async function makeBudget(options: {
   companyId: number;
-  status: "Draft" | "Submitted" | "Rejected" | "Open";
+  status: "Draft" | "Submitted" | "Rejected" | "Approved" | "Open";
   amount: number;
   realized?: number;
 }): Promise<number> {
@@ -69,7 +70,9 @@ async function makeBudget(options: {
       company_id: options.companyId,
       currency_id: currency,
       budget_type: "Out",
-      category_id: await budgetCategoryId("Biaya"),
+      // An Approved Budget is waiting for its classification, so it has none.
+      category_id:
+        options.status === "Approved" ? null : await budgetCategoryId("Biaya"),
       description: `Fixture ${key}`,
       budget_amount: options.amount,
       realized_amount: options.realized ?? 0,
@@ -155,6 +158,7 @@ let openClaimedId = 0;
 let submittedId = 0;
 let draftId = 0;
 let rejectedId = 0;
+let awaitingId = 0;
 let requestId = 0;
 let pendingDocumentId = 0;
 
@@ -193,6 +197,11 @@ before(async () => {
     companyId: induk,
     status: "Rejected",
     amount: AMOUNT.rejected,
+  });
+  awaitingId = await makeBudget({
+    companyId: induk,
+    status: "Approved",
+    amount: AMOUNT.awaiting,
   });
   // The anak's, because a Pending document is one the anak raised.
   openClaimedId = await makeBudget({
@@ -269,12 +278,31 @@ describe("the funnel is a partition", () => {
     );
   });
 
+  test("a Budget awaiting classification is its own stage, outside the realizable pool", async () => {
+    const data = await dashboardData([induk, anak]);
+    assert.equal(
+      mine(stageOf(data.funnel.stages, "classification").totals),
+      AMOUNT.awaiting,
+      "the whole plan waits, since nothing can be realized against it yet"
+    );
+    assert.equal(
+      mine((await approvedCommitments([induk, anak])).totals),
+      AMOUNT.openPlain + AMOUNT.openClaimed,
+      "and it is not part of the realizable pool the execution stage splits"
+    );
+    const task = data.funnel.tasks.find((t) => t.key === `budget-${awaitingId}`);
+    assert.equal(task?.stage, "classification");
+  });
+
   test("only approved money reduces the cash projection", async () => {
     const data = await dashboardData([induk, anak]);
     assert.equal(
       mine(data.funnel.committedOut),
-      AMOUNT.openPlain + (AMOUNT.openClaimed - AMOUNT.claim) + AMOUNT.claim,
-      "committed cash is the approved pool: stages two and three, once each"
+      AMOUNT.awaiting +
+        AMOUNT.openPlain +
+        (AMOUNT.openClaimed - AMOUNT.claim) +
+        AMOUNT.claim,
+      "committed cash is everything approved: stages two to four, once each"
     );
     assert.equal(
       mine(data.funnel.committedIn),
@@ -294,11 +322,12 @@ describe("a draft never reaches the dashboard", () => {
 
     const counted =
       mine(stageOf(data.funnel.stages, "approval").totals) +
+      mine(stageOf(data.funnel.stages, "classification").totals) +
       mine(stageOf(data.funnel.stages, "execution").totals) +
       mine(stageOf(data.funnel.stages, "funding").totals);
     assert.equal(
       counted,
-      AMOUNT.submitted + AMOUNT.openPlain + AMOUNT.openClaimed,
+      AMOUNT.submitted + AMOUNT.awaiting + AMOUNT.openPlain + AMOUNT.openClaimed,
       "and neither amount is anywhere in the totals"
     );
   });

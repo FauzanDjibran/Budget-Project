@@ -691,8 +691,8 @@ async function closeOldestYear(actor: number) {
 // ------------------------------------------------------- what the year held
 //
 // Budgets first, because everything Finance does realizes one. Each names its
-// classification the way an approver would have set it (§10 rule 26), so the
-// ones that are Open or Closed are already past that gate.
+// classification the way Klasifikasi Budget would have set it, so the ones
+// that are Open or Closed are already past that gate.
 
 type BudgetSpec = {
   key: string;
@@ -707,10 +707,12 @@ type BudgetSpec = {
   /**
    * `Closed` is written Open and reached by the posting that realizes it in
    * full — nobody closes a Budget by hand (§12). `Open` stays open because what
-   * realizes it falls short. `Submitted`, `Rejected` and `Cancelled` carry no
-   * classification, because only approval classifies (§10 rules 25–26).
+   * realizes it falls short. `Submitted`, `Approved`, `Rejected` and
+   * `Cancelled` carry no classification, because only Klasifikasi Budget
+   * classifies, and only after approval (§10 rules 25–26). `category` is then
+   * what it will be classified as, for the reader of this file.
    */
-  status: "Submitted" | "Open" | "Closed" | "Rejected" | "Cancelled";
+  status: "Submitted" | "Approved" | "Open" | "Closed" | "Rejected" | "Cancelled";
 };
 
 
@@ -756,8 +758,8 @@ async function insertBudgets(
         budget_amount: spec.amount,
         realized_amount: 0,
         description: spec.description,
-        // Only an approved budget has been classified, because approval is
-        // what classifies (§10 rules 25–26).
+        // Only a classified budget carries a classification: Open, or Closed
+        // by the realization that follows (§10 rules 25–26).
         category_id: classified ? categories.get(spec.category)! : null,
         partner_id: classified && spec.partner ? partners.get(spec.partner)! : null,
         status: spec.status === "Closed" ? "Open" : spec.status,
@@ -1614,6 +1616,12 @@ function currentYear(): YearPlan {
       { key: "forklift", company: "induk", date: day(2, 3), type: "Out", category: "Asset", amount: 340_000_000, description: "Pembelian forklift gudang Cikarang", status: "Open" },
       { key: "penyertaan", company: "induk", date: day(2, 10), type: "Out", category: "Investasi", partner: "Cabang Medan", amount: 500_000_000, description: "Penyertaan modal Cabang Medan", status: "Open" },
       { key: "bagihasil", company: "induk", date: day(3, 5), type: "In", category: "Hasil Investasi", partner: "Cabang Surabaya", amount: 120_000_000, description: "Bagi hasil semester I Cabang Surabaya", status: "Submitted" },
+      // Approved and waiting in Klasifikasi Budget, so that queue is not empty
+      // — two of them alike, so its similar-classification hint has something
+      // to point at and its bulk classification something to do.
+      { key: "atk", company: "induk", date: day(3, 2), type: "Out", category: "Biaya", amount: 4_500_000, description: `Pembelian alat tulis kantor pusat kuartal II ${YEAR}`, status: "Approved" },
+      { key: "atkgudang", company: "induk", date: day(3, 3), type: "Out", category: "Biaya", amount: 2_750_000, description: `Pembelian alat tulis kantor gudang kuartal II ${YEAR}`, status: "Approved" },
+      { key: "advanceanak2", company: "anak", date: day(3, 4), type: "Out", category: "Piutang", partner: "Dedi Kurniawan", amount: 7_500_000, description: "Advance operasional Dedi Kurniawan Maret", status: "Approved" },
       { key: "modalkerja", company: "induk", date: day(1, 6), type: "In", category: "Hutang", partner: "H. Suryanto Halim", amount: 750_000_000, description: "Setoran modal kerja dari H. Suryanto Halim", status: "Closed" },
       { key: "prive", company: "induk", date: day(3, 12), type: "Out", category: "Prive", partner: "H. Suryanto Halim", amount: 90_000_000, description: "Pembayaran prive H. Suryanto Halim", status: "Open" },
       { key: "sparepart", company: "induk", date: day(2, 18), type: "Out", category: "Biaya", currency: "USD", amount: 12_000, description: "Pembelian spare part impor dari pemasok Singapura", status: "Open" },

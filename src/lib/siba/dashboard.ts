@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import {
   approvedCommitments,
+  awaitingClassificationCommitments,
   submittedCommitments,
   type CommitmentRow,
 } from "./budget";
@@ -53,7 +54,7 @@ import {
 
 // ------------------------------------------------------------------- stages
 
-export type StageKey = "approval" | "execution" | "funding";
+export type StageKey = "approval" | "classification" | "execution" | "funding";
 
 export type FunnelStage = {
   key: StageKey;
@@ -88,7 +89,7 @@ export type Funnel = {
   /** Every stage's records in one list, longest-waiting first. */
   tasks: TaskRow[];
   /**
-   * Approved money that has not yet moved — stages 2 and 3, per direction.
+   * Approved money that has not yet moved — stages 2 to 4, per direction.
    * Stage 1 is deliberately excluded: an unapproved request is not yet a
    * claim on anybody's cash.
    */
@@ -164,9 +165,10 @@ const budgetTask = (
 export async function dashboardData(
   companyIds: number[]
 ): Promise<DashboardData> {
-  const [submitted, approved, pending, requests, cash, positions, bridge] =
+  const [submitted, awaiting, approved, pending, requests, cash, positions, bridge] =
     await Promise.all([
       submittedCommitments(companyIds),
+      awaitingClassificationCommitments(companyIds),
       approvedCommitments(companyIds),
       pendingCommitments(companyIds),
       openFundingRequests(companyIds),
@@ -224,6 +226,17 @@ export async function dashboardData(
       outTotals: submitted.outTotals,
     },
     {
+      key: "classification",
+      name: "Menunggu Klasifikasi",
+      blockedOn:
+        "Budget sudah disetujui dan menunggu Budget Category serta Partner.",
+      href: "/budget/klasifikasi",
+      count: awaiting.count,
+      totals: awaiting.totals,
+      inTotals: awaiting.inTotals,
+      outTotals: awaiting.outTotals,
+    },
+    {
       key: "execution",
       name: "Siap Direalisasi",
       blockedOn:
@@ -249,15 +262,20 @@ export async function dashboardData(
 
   const tasks = [
     ...submitted.rows.map((r) => budgetTask(r, "approval")),
+    ...awaiting.rows.map((r) => budgetTask(r, "classification")),
     ...executionRows.map((r) => budgetTask(r, "execution")),
     ...fundingTasks,
   ].sort((a, b) => a.since.localeCompare(b.since));
 
+  // An approved Budget is a claim on cash from the moment it is approved;
+  // classifying it only decides which book the money will reach.
   const committedOut = sumByCurrency([
+    ...awaiting.outTotals,
     ...execution.outTotals,
     ...pending.outTotals,
   ]);
   const committedIn = sumByCurrency([
+    ...awaiting.inTotals,
     ...execution.inTotals,
     ...pending.inTotals,
   ]);

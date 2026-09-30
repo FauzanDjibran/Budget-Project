@@ -110,11 +110,15 @@ enum FlowDirection {
   Out
 }
 
+/// `Approved` is the classification stage: an approver has said yes, and the
+/// Budget waits in Klasifikasi Budget for its Category and Partner. Only
+/// `Open` — classified — is realizable. `Rejected` is final, like `Cancelled`.
 enum BudgetStatus {
   Draft
   Cancelled
   Submitted
   Rejected
+  Approved
   Open
   Closed
 }

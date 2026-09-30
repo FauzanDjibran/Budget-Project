@@ -179,6 +179,7 @@ export const PERMISSIONS = [
   { code: "BUDGET_APPROVE", name: "Setujui Budget", module: "budget" },
   { code: "BUDGET_REJECT", name: "Tolak Budget", module: "budget" },
   { code: "BUDGET_CANCEL", name: "Batalkan Budget", module: "budget" },
+  { code: "BUDGET_CLASSIFY", name: "Klasifikasikan Budget", module: "budget" },
 
   // ---------------------------------------------------------------- finance
   { code: "MENU_FINANCE_ACCESS", name: "Akses menu Finance", module: "finance" },

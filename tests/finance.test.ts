@@ -119,7 +119,7 @@ async function makeBudget(options: {
   partnerId?: number | null;
   amount: number;
   realized?: number;
-  status?: "Open" | "Draft" | "Submitted" | "Closed";
+  status?: "Open" | "Draft" | "Submitted" | "Approved" | "Closed";
 }): Promise<number> {
   const key = `${FIXTURE_PREFIX}B${budgets.length + 1}${Date.now() % 100000}`;
   const row = await prisma.budBudget.create({
@@ -669,6 +669,25 @@ describe("only a budget the header admits is eligible", () => {
       currency_id: currency,
     });
     assert.ok(!pool.some((b) => b.id === draft));
+  });
+
+  test("an approved budget still waiting for its classification is never offered", async () => {
+    // Approval no longer classifies: until Klasifikasi Budget gives it a
+    // Category, there is no book and no account for a line to post by.
+    const cashBank = await makeCashBank({});
+    const awaiting = await makeBudget({
+      categoryLabel: "Biaya",
+      amount: 450_000,
+      status: "Approved",
+    });
+
+    const pool = await eligibleBudgets({
+      transaction_type: "Out" as const,
+      company_id: induk,
+      cash_bank_id: cashBank,
+      currency_id: currency,
+    });
+    assert.ok(!pool.some((b) => b.id === awaiting));
   });
 
   test("a budget pointing the other way is never offered", async () => {

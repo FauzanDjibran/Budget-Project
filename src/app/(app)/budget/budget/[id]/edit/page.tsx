@@ -27,7 +27,7 @@ export default async function Page({
   const budget = await getBudget(Number(id));
   if (!budget) notFound();
 
-  // A budget that has left Draft or Rejected is not editable by anyone. The
+  // A budget that has left Draft is not editable by anyone. The
   // route explains rather than rendering a form whose save would be refused —
   // `updateBudget` refuses it either way.
   if (!budgetIsEditable(budget.status)) {

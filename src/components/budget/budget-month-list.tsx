@@ -46,14 +46,14 @@ export function BudgetMonthList({ months }: { months: BudgetMonth[] }) {
         <div className="crumb">
           <span>Budget</span>
           <span>/</span>
-          <span className="cur">Budget Month</span>
+          <span className="cur">Pengajuan Budget</span>
         </div>
         <div className="ph-row">
           <h1>
             <span className="ph-ico">
               <Icon name="clip" size={16} />
             </span>
-            Budget
+            Pengajuan Budget
           </h1>
           <div className="ph-act">
             <Link className="btn" href="/budget/budget/month/all">

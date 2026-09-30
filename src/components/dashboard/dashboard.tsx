@@ -30,6 +30,7 @@ import { reportHref } from "@/lib/siba/reports";
 
 const STAGE_TINT: Record<StageKey, { tone: string; icon: IconName }> = {
   approval: { tone: "t-warn", icon: "clock" },
+  classification: { tone: "t-acc", icon: "tags" },
   execution: { tone: "t-info", icon: "send" },
   funding: { tone: "t-vio", icon: "link" },
 };
@@ -37,6 +38,7 @@ const STAGE_TINT: Record<StageKey, { tone: string; icon: IconName }> = {
 /** What the row wants done, in one word — the queue is mixed, so it must say. */
 const STAGE_TAG: Record<StageKey, string> = {
   approval: "Setujui",
+  classification: "Klasifikasi",
   execution: "Realisasikan",
   funding: "Konfirmasi",
 };
@@ -73,7 +75,7 @@ export function Dashboard({ data }: { data: DashboardData }) {
       </div>
 
       {/* 1 — the funnel. Every rupiah of committed money sits in exactly one
-          of these, and the three together are the whole of what has been
+          of these, and together they are are the whole of what has been
           committed but has not yet reached a book. */}
       <div className="kpis bud">
         {funnel.stages.map((s) => {
@@ -381,7 +383,7 @@ function QueueRow({ task }: { task: TaskRow }) {
 /**
  * Cash, and what the approved half of the funnel will do to it.
  *
- * The commitment columns are the funnel's stages 2 and 3 *in total* — not
+ * The commitment columns are the funnel's stages 2 to 4 *in total* — not
  * broken down again by stage, which the tiles above already did. Stage 1 is
  * excluded on purpose: a Budget nobody has approved is not yet a claim on
  * anyone's cash.

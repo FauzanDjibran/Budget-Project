@@ -510,6 +510,7 @@ describe("the header order each status actually produces", () => {
           approve: true,
           reject: true,
           cancel: true,
+          classify: true,
         }).map((a) => ({ key: a, tone: BUDGET_TRANSITIONS[a].tone })),
       ],
       (i) => i.tone
@@ -519,12 +520,12 @@ describe("the header order each status actually produces", () => {
     assert.deepEqual(budgetHeader("Draft", true), ["cancel", "edit", "submit"]);
   });
 
-  test("a Rejected budget reads Batalkan · Ubah · Ajukan", () => {
-    assert.deepEqual(budgetHeader("Rejected", true), [
-      "cancel",
-      "edit",
-      "submit",
-    ]);
+  test("a Rejected budget is final and offers no transition", () => {
+    assert.deepEqual(budgetHeader("Rejected", false), []);
+  });
+
+  test("an Approved budget reads Klasifikasikan alone", () => {
+    assert.deepEqual(budgetHeader("Approved", false), ["classify"]);
   });
 
   test("a Submitted budget reads Tolak · Batalkan · Setujui", () => {
@@ -1068,6 +1069,17 @@ describe("a list reads the same wherever it is", () => {
     assert.deepEqual(bad.map((f) => f.rel), []);
   });
 
+  test("status tabs and a selection count each have one implementation", () => {
+    const tabs = files.filter(
+      (f) => !f.rel.endsWith("ui/queue-tabs.tsx") && /className="qtabs"/.test(code(f.text))
+    );
+    assert.deepEqual(tabs.map((f) => f.rel), [], "Use `QueueTabs`.");
+    const counts = files.filter(
+      (f) => !f.rel.endsWith("ui/selection.tsx") && /className="selcount"/.test(code(f.text))
+    );
+    assert.deepEqual(counts.map((f) => f.rel), [], "Use `SelectionCount`.");
+  });
+
   test("a KPI tile takes its tint from a tone class", () => {
     const bad = files.filter((f) =>
       /className="i"\s*style=/.test(code(f.text))
@@ -1445,7 +1457,14 @@ describe("a document screen has one shape", () => {
       assert.match(text, /<Pager\b/, "no Pager at the foot of the list");
       assert.match(text, /<th[^>]*>No<\/th>/, "no `No` column");
       if (doc.lifecycle !== false) {
-        assert.match(text, /"Status: semua"/, "no `Status:` filter in the toolbar");
+        // A work queue states its statuses as tabs instead — `QueueTabs`,
+        // one per status with its count — which is the same filter, and the
+        // one that makes a bulk action safe.
+        assert.match(
+          text,
+          /"Status: semua"|<QueueTabs\b/,
+          "no `Status:` filter in the toolbar, and no status tabs"
+        );
       }
       assert.match(text, /className="ract"/, "row actions are not in fixed `.ract` columns");
     });

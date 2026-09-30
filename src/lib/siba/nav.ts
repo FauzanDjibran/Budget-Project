@@ -110,16 +110,25 @@ export const MODULES: NavModule[] = [
     groups: [
       {
         key: "plan",
-        name: "Perencanaan",
+        name: "Budget",
         entities: [
           {
             key: "bud_budget_month",
             slug: "budget",
-            name: "Budget",
-            single: "Budget Month",
+            name: "Pengajuan Budget",
+            single: "Budget",
             icon: "clip",
-            desc: "Perencanaan kebutuhan dana. Pilih bulan untuk membuka daftar Budget di dalamnya.",
+            desc: "Perencanaan kebutuhan dana: buat, ajukan, setujui atau tolak Budget — satu per satu atau sekaligus.",
             permission: "BUDGET_VIEW",
+          },
+          {
+            key: "bud_budget_classification",
+            slug: "klasifikasi",
+            name: "Klasifikasi Budget",
+            single: "Klasifikasi Budget",
+            icon: "tags",
+            desc: "Budget yang sudah disetujui dan menunggu Budget Category serta Partner. Setelah diklasifikasi, Budget siap direalisasikan.",
+            permission: "BUDGET_CLASSIFY",
           },
         ],
       },

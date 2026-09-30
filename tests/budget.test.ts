@@ -7,11 +7,14 @@ import {
   availableActions,
   budgetAbilities,
   budgetIsEditable,
+  commonActions,
   transitionAllowed,
   type BudgetAction,
   type BudgetStatus,
 } from "../src/lib/siba/budget-workflow";
 import {
+  applyBudgetTransition,
+  applyClassification,
   budgetMonths,
   checkClassification,
   listBudgets,
@@ -22,9 +25,11 @@ import {
   childCompanyId,
   cleanupFixtures,
   disconnect,
+  FIXTURE_PREFIX,
   makePartner,
   parentCompanyId,
   prisma,
+  systemUserId,
 } from "./helpers";
 
 /**
@@ -40,7 +45,16 @@ import {
  * below build the ones they need and remove them afterwards.
  */
 
+/** Budgets the bulk cases create; removed with their audit rows afterwards. */
+const made: number[] = [];
+
 after(async () => {
+  if (made.length) {
+    await prisma.auditLog.deleteMany({
+      where: { entity_key: "bud_budget", row_id: { in: made } },
+    });
+    await prisma.budBudget.deleteMany({ where: { id: { in: made } } });
+  }
   await cleanupFixtures();
   await disconnect();
 });
@@ -49,6 +63,7 @@ const ALL_STATUSES: BudgetStatus[] = [
   "Draft",
   "Submitted",
   "Rejected",
+  "Approved",
   "Open",
   "Closed",
   "Cancelled",
@@ -86,11 +101,12 @@ describe("the budget lifecycle is a closed transition table", () => {
     }
   });
 
-  test("Draft and Rejected are the only editable statuses", () => {
+  test("Draft is the only editable status", () => {
+    // A rejection is final: the plan is corrected as a new Budget.
     for (const status of ALL_STATUSES) {
       assert.equal(
         budgetIsEditable(status),
-        status === "Draft" || status === "Rejected",
+        status === "Draft",
         `${status} disagrees about being editable`
       );
     }
@@ -98,16 +114,29 @@ describe("the budget lifecycle is a closed transition table", () => {
 
   test("an approved budget can never be edited", () => {
     // Concept doc §6.4: "Open membuat Budget immutable".
+    assert.equal(budgetIsEditable("Approved"), false);
     assert.equal(budgetIsEditable("Open"), false);
     assert.equal(budgetIsEditable("Closed"), false);
   });
 
-  test("submit is legal only from Draft and Rejected", () => {
+  test("submit is legal only from Draft — a rejected plan is never resubmitted", () => {
     for (const status of ALL_STATUSES) {
       assert.equal(
         transitionAllowed("submit", status),
-        status === "Draft" || status === "Rejected",
+        status === "Draft",
         `submit from ${status}`
+      );
+    }
+  });
+
+  test("approval leads to the classification stage, and only classifying opens a budget", () => {
+    assert.equal(BUDGET_TRANSITIONS.approve.to, "Approved");
+    assert.equal(BUDGET_TRANSITIONS.classify.to, "Open");
+    for (const status of ALL_STATUSES) {
+      assert.equal(
+        transitionAllowed("classify", status),
+        status === "Approved",
+        `classify from ${status}`
       );
     }
   });
@@ -125,7 +154,7 @@ describe("the budget lifecycle is a closed transition table", () => {
   });
 
   test("a final status accepts no transition at all", () => {
-    for (const status of ["Open", "Closed", "Cancelled"] as BudgetStatus[]) {
+    for (const status of ["Rejected", "Open", "Closed", "Cancelled"] as BudgetStatus[]) {
       for (const action of Object.keys(BUDGET_TRANSITIONS) as BudgetAction[]) {
         assert.equal(
           transitionAllowed(action, status),
@@ -141,7 +170,7 @@ describe("the budget lifecycle is a closed transition table", () => {
     // BUDGET_CLOSE nor BUDGET_DELETE. Adding one means adding a catalogue entry
     // first — it must never appear here alone.
     const actions = Object.keys(BUDGET_TRANSITIONS);
-    assert.deepEqual(actions.sort(), ["approve", "cancel", "reject", "submit"]);
+    assert.deepEqual(actions.sort(), ["approve", "cancel", "classify", "reject", "submit"]);
     assert.ok(!PERMISSION_CODES.includes("BUDGET_CLOSE" as never));
     assert.ok(!PERMISSION_CODES.includes("BUDGET_DELETE" as never));
   });
@@ -170,6 +199,28 @@ describe("a permission is required for every transition offered", () => {
       "reject",
       "cancel",
     ]);
+    assert.deepEqual(availableActions("Approved", can), ["classify"]);
+  });
+
+  test("approving does not carry the right to classify, nor the reverse", () => {
+    assert.deepEqual(availableActions("Approved", budgetAbilities(["BUDGET_APPROVE"])), []);
+    assert.deepEqual(
+      availableActions("Submitted", budgetAbilities(["BUDGET_CLASSIFY"])),
+      []
+    );
+  });
+
+  test("a selection is offered only what every one of its statuses allows", () => {
+    const can = budgetAbilities(PERMISSION_CODES);
+    assert.deepEqual(commonActions(["Draft", "Draft"], can), ["submit", "cancel"]);
+    assert.deepEqual(commonActions(["Submitted", "Submitted"], can), [
+      "approve",
+      "reject",
+      "cancel",
+    ]);
+    assert.deepEqual(commonActions(["Draft", "Submitted"], can), ["cancel"]);
+    assert.deepEqual(commonActions(["Draft", "Approved"], can), []);
+    assert.deepEqual(commonActions([], can), []);
   });
 
   test("a menu permission grants nothing inside the module", () => {
@@ -365,5 +416,182 @@ describe("budget numbering", () => {
       select: { id: true },
     });
     assert.equal(clash, null, `${next} is already in use`);
+  });
+});
+
+// ------------------------------------------------------------ bulk writes
+
+/** A Budget written straight through Prisma, at whatever status a case needs. */
+async function makeBudget(options: {
+  status: BudgetStatus;
+  companyId?: number;
+  type?: "In" | "Out";
+}): Promise<{ id: number; no: string }> {
+  const actor = await systemUserId();
+  const currency = await prisma.refCurrency.findFirstOrThrow({
+    where: { currency_label: "IDR" },
+    select: { id: true },
+  });
+  const no = `TST-${FIXTURE_PREFIX}BK${made.length + 1}${Date.now() % 100000}`;
+  const row = await prisma.budBudget.create({
+    data: {
+      budget_no: no,
+      budget_date: new Date(),
+      company_id: options.companyId ?? parent,
+      currency_id: currency.id,
+      budget_type: options.type ?? "Out",
+      description: `Fixture ${no}`,
+      budget_amount: 100_000,
+      status: options.status,
+      created_by: actor,
+    },
+    select: { id: true },
+  });
+  made.push(row.id);
+  return { id: row.id, no };
+}
+
+const statusOf = async (id: number) =>
+  (await prisma.budBudget.findUniqueOrThrow({ where: { id } })).status;
+
+describe("a bulk transition moves every selected budget, or none", () => {
+  test("a selection of Drafts is submitted together, each with its own history", async () => {
+    const actor = await systemUserId();
+    const a = await makeBudget({ status: "Draft" });
+    const b = await makeBudget({ status: "Draft" });
+
+    const result = await applyBudgetTransition([a.id, b.id], "submit", actor);
+    assert.deepEqual(result, { ok: true, count: 2 });
+    assert.equal(await statusOf(a.id), "Submitted");
+    assert.equal(await statusOf(b.id), "Submitted");
+
+    const events = await prisma.auditLog.count({
+      where: { entity_key: "bud_budget", row_id: { in: [a.id, b.id] }, event: "submit" },
+    });
+    assert.equal(events, 2, "one audit row per budget, naming the step");
+  });
+
+  test("one budget the transition does not fit refuses the whole batch, by name", async () => {
+    const actor = await systemUserId();
+    const a = await makeBudget({ status: "Draft" });
+    const b = await makeBudget({ status: "Submitted" });
+
+    const result = await applyBudgetTransition([a.id, b.id], "submit", actor);
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.ok === false && result.errors._form.includes(b.no),
+      "the refusal names the budget that stopped it"
+    );
+    assert.equal(await statusOf(a.id), "Draft", "and nothing else moved");
+  });
+
+  test("approving leaves a budget Approved and unclassified", async () => {
+    const actor = await systemUserId();
+    const a = await makeBudget({ status: "Submitted" });
+    const result = await applyBudgetTransition([a.id], "approve", actor);
+    assert.equal(result.ok, true);
+    const row = await prisma.budBudget.findUniqueOrThrow({ where: { id: a.id } });
+    assert.equal(row.status, "Approved");
+    assert.equal(row.category_id, null);
+  });
+
+  test("a rejected budget cannot be resubmitted", async () => {
+    const actor = await systemUserId();
+    const a = await makeBudget({ status: "Rejected" });
+    const result = await applyBudgetTransition([a.id], "submit", actor);
+    assert.equal(result.ok, false);
+    assert.equal(await statusOf(a.id), "Rejected");
+  });
+
+  test("classify is not a plain transition — it has its own path", async () => {
+    const actor = await systemUserId();
+    const a = await makeBudget({ status: "Approved" });
+    const result = await applyBudgetTransition(
+      [a.id],
+      "classify" as never,
+      actor
+    );
+    assert.equal(result.ok, false);
+    assert.equal(await statusOf(a.id), "Approved");
+  });
+
+  test("an empty selection is refused rather than reported as done", async () => {
+    const result = await applyBudgetTransition([], "submit", await systemUserId());
+    assert.equal(result.ok, false);
+  });
+});
+
+describe("a bulk classification fits every budget, or none", () => {
+  test("one classification opens every selected budget", async () => {
+    const actor = await systemUserId();
+    const a = await makeBudget({ status: "Approved" });
+    const b = await makeBudget({ status: "Approved" });
+    const hutang = await categoryId("Hutang");
+
+    const result = await applyClassification([a.id, b.id], hutang, parentCabang, actor);
+    assert.deepEqual(result, { ok: true, count: 2 });
+    for (const id of [a.id, b.id]) {
+      const row = await prisma.budBudget.findUniqueOrThrow({ where: { id } });
+      assert.equal(row.status, "Open");
+      assert.equal(row.category_id, hutang);
+      assert.equal(row.partner_id, parentCabang);
+    }
+    const events = await prisma.auditLog.count({
+      where: { entity_key: "bud_budget", row_id: { in: [a.id, b.id] }, event: "classify" },
+    });
+    assert.equal(events, 2);
+  });
+
+  test("a budget of another direction refuses the batch, by name", async () => {
+    // Biaya is Out-only, so it fits the Out budget and not the In one.
+    const actor = await systemUserId();
+    const out = await makeBudget({ status: "Approved", type: "Out" });
+    const inn = await makeBudget({ status: "Approved", type: "In" });
+
+    const result = await applyClassification(
+      [out.id, inn.id],
+      await categoryId("Biaya"),
+      null,
+      actor
+    );
+    assert.equal(result.ok, false);
+    const message = result.ok ? "" : Object.values(result.errors)[0];
+    assert.ok(message.includes(inn.no), `"${message}" should name ${inn.no}`);
+    assert.equal(await statusOf(out.id), "Approved", "and nothing was classified");
+  });
+
+  test("a budget of another Company refuses a Partner that is not its own", async () => {
+    const actor = await systemUserId();
+    const mine = await makeBudget({ status: "Approved", companyId: parent });
+    const theirs = await makeBudget({ status: "Approved", companyId: child });
+
+    const result = await applyClassification(
+      [mine.id, theirs.id],
+      await categoryId("Hutang"),
+      parentCabang,
+      actor
+    );
+    assert.equal(result.ok, false);
+    const message = result.ok ? "" : Object.values(result.errors)[0];
+    assert.ok(message.includes(theirs.no), `"${message}" should name ${theirs.no}`);
+    assert.equal(await statusOf(mine.id), "Approved");
+    assert.equal(await statusOf(theirs.id), "Approved");
+  });
+
+  test("only an Approved budget can be classified — never reclassified", async () => {
+    const actor = await systemUserId();
+    const submitted = await makeBudget({ status: "Submitted" });
+    const open = await makeBudget({ status: "Open" });
+    for (const b of [submitted, open]) {
+      const result = await applyClassification(
+        [b.id],
+        await categoryId("Biaya"),
+        null,
+        actor
+      );
+      assert.equal(result.ok, false, `${b.no} must be refused`);
+    }
+    assert.equal(await statusOf(submitted.id), "Submitted");
+    assert.equal(await statusOf(open.id), "Open");
   });
 });

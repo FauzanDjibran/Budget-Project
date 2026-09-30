@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { BudgetList } from "@/components/budget/budget-list";
 import { requirePermission } from "@/lib/siba/auth";
 import {
-  budgetMappings,
+  budgetMonths,
   budgetRefs,
   fiscalPeriod,
   listBudgets,
@@ -15,13 +15,13 @@ import { budgetAbilities } from "@/lib/siba/budget-workflow";
 export const dynamic = "force-dynamic";
 
 /**
- * Budgets inside one month, or `all` for every month at once.
+ * Pengajuan Budget: the Budgets inside one month, or `all` for every month.
  *
  * The month is a Fiscal Period id, and the filter is a date-range query rather
  * than a stored grouping key — which is what makes Budget Month derived.
  *
- * `?status=` opens the list already filtered, so a dashboard tile can name a
- * queue rather than dropping the reader into every budget there is.
+ * `?status=` opens the list on that status's tab, so a dashboard tile can
+ * name a queue rather than dropping the reader into every budget there is.
  */
 export default async function Page({
   params,
@@ -47,9 +47,9 @@ export default async function Page({
     companyIds
   );
 
-  const [refs, mappings, summary, cash] = await Promise.all([
+  const [refs, months, summary, cash] = await Promise.all([
     budgetRefs(),
-    budgetMappings(),
+    budgetMonths(companyIds),
     summarise(budgets),
     cashBookSummary(companyIds),
   ]);
@@ -58,7 +58,7 @@ export default async function Page({
     <BudgetList
       budgets={budgets}
       refs={refs}
-      mappings={mappings}
+      months={months.map((m) => ({ id: m.periodId, label: m.label, name: m.name }))}
       summary={summary}
       cash={cash}
       month={month ? { id: month.id, label: month.label, name: month.name } : null}

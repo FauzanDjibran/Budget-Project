@@ -4,7 +4,7 @@ import { STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetRow } from "@/lib/siba/budget";
 
 /**
- * Stands in for the edit form once a budget has left Draft or Rejected.
+ * Stands in for the edit form once a budget has left Draft.
  *
  * The route stays reachable so a bookmarked or hand-typed URL explains itself
  * rather than 404-ing. It is not the protection — `updateBudget` refuses the
@@ -19,7 +19,7 @@ export function BudgetLocked({ budget }: { budget: BudgetRow }) {
         <div className="crumb">
           <span>Budget</span>
           <span>/</span>
-          <Link href="/budget/budget">Budget Month</Link>
+          <Link href="/budget/budget">Pengajuan Budget</Link>
           <span>/</span>
           <Link href={`/budget/budget/${budget.id}`}>{budget.budget_no}</Link>
           <span>/</span>
@@ -45,10 +45,11 @@ export function BudgetLocked({ budget }: { budget: BudgetRow }) {
           </div>
           <h4>Budget ini tidak dapat diubah</h4>
           <p>
-            Budget hanya dapat diubah selama berstatus Draft atau Ditolak.
-            Budget ini berstatus <b>{status}</b>. Budget yang sudah diajukan
-            tidak boleh berubah di bawah approver, dan budget yang sudah
-            disetujui bersifat final agar realisasinya dapat ditelusuri.
+            Budget hanya dapat diubah selama berstatus Draft. Budget ini
+            berstatus <b>{status}</b>. Budget yang sudah diajukan tidak boleh
+            berubah di bawah approver, budget yang ditolak bersifat final dan
+            diperbaiki sebagai Budget baru, dan budget yang sudah disetujui
+            bersifat final agar realisasinya dapat ditelusuri.
           </p>
           <div className="cta">
             <Link className="btn" href={`/budget/budget/${budget.id}`}>

@@ -4,8 +4,10 @@ import { requirePermission } from "@/lib/siba/auth";
 import {
   budgetMappings,
   budgetRefs,
+  classificationHints,
   getBudget,
   monthOfDate,
+  type ClassificationHint,
 } from "@/lib/siba/budget";
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
 import { budgetRealizations } from "@/lib/siba/finance";
@@ -24,11 +26,13 @@ export default async function Page({
   const budget = await getBudget(Number(id));
   if (!budget) notFound();
 
-  const [refs, mappings, month, realizations] = await Promise.all([
+  const [refs, mappings, month, realizations, hints] = await Promise.all([
     budgetRefs(),
     budgetMappings(),
     monthOfDate(budget.budget_date),
     budgetRealizations(budget.id),
+    // Only an Approved Budget is waiting for a classification to be chosen.
+    budget.status === "Approved" ? classificationHints([budget]) : {},
   ]);
 
   return (
@@ -41,6 +45,7 @@ export default async function Page({
         month={month}
         can={budgetAbilities(actor.permissions)}
         realizations={realizations}
+        hint={(hints as Record<number, ClassificationHint>)[budget.id] ?? null}
       />
       <RecordHistoryCard entityKey="bud_budget" rowId={budget.id} />
     </>

@@ -49,7 +49,8 @@ or invariants that assume a particular row exists.
 
 **Scope:**
 
-- **Built** — authentication and RBAC, Master, Accounting, Budget through approval,
+- **Built** — authentication and RBAC, Master, Accounting, Budget through approval
+  and classification,
   the Cash Bank Book (`cash_bank_ledger` / `cash_bank_balance`), the six **subject
   books** (`sub_ledger` / `sub_ledger_balance`), Finance's **Realisasi Budget** —
   two menus, Realisasi Penerimaan and Realisasi Pengeluaran, over one document that
@@ -79,14 +80,14 @@ or invariants that assume a particular row exists.
 | Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
-| Dashboard | Done — the commitment funnel (submitted → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
+| Dashboard | Done — the commitment funnel (submitted → awaiting classification → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Klasifikasi (Budget Category, Partner Category) | Done — the Budget Category rules are rows now, not a constant: which directions a category allows, whether it names a Partner, and which Partner Categories it admits — **the last chosen on the category's own form and written in the same transaction**, so a new category is usable in one save. Under Pengaturan › Klasifikasi, each deactivable. Retiring a pair stops Budget approval offering it while leaving every record already classified by it readable |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is created Draft, activated into Open, and its twelve periods are generated at that moment. |
 | Backdating | Done — every posting document carries a Tanggal Dokumen chosen on the draft, any day up to today inside a year every Company it writes into still has open. All its book entries and its journal are dated by it; the moment of posting is kept beside it. A posting and a close hold one lock per year and Company, so neither can land inside the other. The book reports read by date and carry no running balance (§12) |
 | Period control (lock, closing, Opening Balance) | Done — a posting is allowed only inside an Open year its Company has not closed, enforced on all four posting paths. **Fiscal Year Closing** moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, and stamps `acc_fiscal_closing`; the year itself reads Closed only once every Company has closed it. Any number of years may stand Open; each Company closes its own oldest first, and no year opens behind a close. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
-| Budget module | Done for create → approve — Budget Month, Budget list, create/edit, and the Draft → Submit → Approve/Reject lifecycle. Bespoke, not registry-driven. |
+| Budget module | Done for create → approve → classify — two menus. **Pengajuan Budget**: Budget Month, the register with status tabs and checkbox selection, create/edit, and the Draft → Submit → Approve/Reject lifecycle, each transition one Budget or many at once. **Klasifikasi Budget**: the classifier's queue of Approved Budgets, grouped Company · Arah · Currency, one Category and Partner for a whole selection. Bulk actions are all-or-nothing. Bespoke, not registry-driven. |
 | Finance module — Realisasi Budget | Done for draft → post — two menus (**Realisasi Penerimaan** `RBM-`, **Realisasi Pengeluaran** `RBK-`) over one document and one table. The header is Company · Cash & Bank · Currency · kurs and nothing else: no Purpose, no Partner, so one document settles Budgets of every category and every Partner. Post writes **one Cash Bank Book entry and one subject-book entry per Budget**, each reading the Budget's own description, and one journal: a cash line, a counter line per Budget on its own mapped account and Partner, and an FX line per Budget where one arises. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
@@ -216,7 +217,7 @@ of its own.
 | Funding writes | `src/app/actions/funding.ts` | Ajukan Dana, withdraw, and the induk's confirmation |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
 | Registry pages | `src/components/master/entity-pages.tsx` | The four registry pages, mounted under each owning module |
-| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast, a document screen's `DocumentHeader` and `Amount`, and a Post confirmation's `JournalPreview`; `list-nav.ts` is the keyboard model every dropdown shares |
+| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast, a document screen's `DocumentHeader` and `Amount`, a Post confirmation's `JournalPreview`, and a work queue's `QueueTabs` and row selection (`selection.tsx`); `list-nav.ts` is the keyboard model every dropdown shares |
 
 ### The module contract
 
@@ -390,8 +391,10 @@ src/
       accounting/closing/  Bespoke: the closing workspace — checklist,
                          journal preview, one confirm
       accounting/opening-balance/  Read-only: the register and /[id]
-      budget/budget/     Bespoke, not registry: month list, /month/[period],
-                         /new, /[id], /[id]/edit
+      budget/budget/     Bespoke, not registry — Pengajuan Budget: month
+                         list, /month/[period], /new (?from= copies), /[id],
+                         /[id]/edit
+      budget/klasifikasi/  Klasifikasi Budget: the queue of Approved Budgets
       finance/realisasi-penerimaan/   Realisasi Budget, In: list, /new, /[id],
                          /[id]/edit — thin wrappers over
                          components/finance/realization-pages.tsx
@@ -427,8 +430,8 @@ src/
                          AccountTree, EntityForm, EntityLocked, CompanyFilter,
                          CashBankBookCard (the master's link into the report)
     budget/              BudgetMonthList, BudgetList, BudgetForm,
-                         ApproveDialog, ReportPicker, CashBalanceDialog,
-                         RealizationCard
+                         ClassificationQueue, ClassifyDialog, ReportPicker,
+                         CashBalanceDialog, RealizationCard
     finance/             TransactionList, TransactionForm, BudgetPicker,
                          KursSelect (which rate layer a payment draws on),
                          OpenItemSelect, RealizationLineDialog (a Realisasi
@@ -1176,20 +1179,36 @@ Implemented and enforced:
     `budget_date` falls inside, resolved by a date-range query at read time.
 25. **A budget is created without classification.** Date, Company, Currency, Type,
     Amount and Description are all a planner supplies. `category_id` and `partner_id`
-    stay null until approval — concept doc §6.2 and §6.3.
-26. **Approval is what classifies.** The approver assigns the Budget Category, and the
-    Partner where the category takes a subject. The category must be valid for the
-    budget's direction, the partner must belong to the budget's Company, be active, and
-    hold a Partner Category that budget category admits. A category that takes no
-    subject stores null rather than a stale partner. `checkClassification` in
-    `budget.ts` is the enforcement; the approval dialog only narrows the pickers.
-27. **A budget is editable only while Draft or Rejected.** Submitting freezes it so it
-    cannot change under its approver; approving freezes it permanently so realization
-    stays traceable. Enforced in `updateBudget`, not merely by hiding the button.
-28. **A missing account mapping does not block approval.** The approval dialog reports
-    an unmapped Company × Category × Partner Category combination, but still allows the
-    approval — that gap belongs to the Accounting module, and refusing here would
-    strand a planner behind someone else's unfinished setup.
+    stay null until classification — concept doc §6.2 and §6.3.
+26. **Classification follows approval, as a step of its own.** Approving moves a
+    Budget to `Approved` and assigns nothing; Klasifikasi Budget then assigns the
+    Budget Category, and the Partner where the category takes a subject, and moves
+    it to `Open` — the only realizable status. Two people, two permissions
+    (`BUDGET_APPROVE`, `BUDGET_CLASSIFY`). The category must be valid for the
+    budget's direction, the partner must belong to the budget's Company, be active,
+    and hold a Partner Category that budget category admits. A category that takes
+    no subject stores null rather than a stale partner. `checkClassification` in
+    `budget.ts` is the enforcement, asked of **every** Budget in a selection; the
+    dialog only narrows the pickers. **A classification is never changed** once
+    set — there is no reclassification path.
+27. **A budget is editable only while Draft, and a rejection is final.** Submitting
+    freezes it so it cannot change under its approver; approving freezes it
+    permanently so realization stays traceable. A **Rejected** Budget is never
+    edited or resubmitted — the user's rule, so a rejection stays a record of what
+    was refused; the plan is corrected as a new Budget, which **Salin**
+    (`/budget/budget/new?from=<id>`) starts from the rejected one's figures.
+    Enforced in `updateBudget` and the transition table, not merely by hiding the
+    button.
+28. **A missing account mapping does not block classification.** The dialog reports
+    an unmapped Company × Category × Partner Category combination, but still allows
+    it — that gap belongs to the Accounting module, and refusing here would strand
+    a classifier behind someone else's unfinished setup. Post refuses it (rule 50).
+108. **A bulk action is all-or-nothing, and names the row that stopped it.**
+    `applyBudgetTransition` and `applyClassification` in `budget.ts` check every
+    selected Budget before writing, write every one in one transaction with a
+    status guard in the `where`, and roll the whole batch back if another user
+    moved a row in between. A refusal names the Budget (`BGT-0003 – …`). One
+    Budget is a selection of one — the detail header calls the same path.
 29. **A cash/bank balance comes only from the Cash Bank Book.** Every resource gets a
     `cash_bank_balance` row when it is registered, and a non-zero starting figure is
     written as an `Opening` entry in `cash_bank_ledger`. Nothing else may hold a
@@ -3440,12 +3459,49 @@ below in outline because the half of it that still holds is easy to lose.**
 - **Reason:** A lifecycle expressed twice is a lifecycle with two answers, and the safe
   one is whichever the code happened to check. One table means a hidden menu item and a
   refused action can never disagree.
-- **Impact:** `Draft → Submit → Submitted → Approve (Open) / Reject (Rejected → Submit)`,
-  plus `Cancel` from Draft, Rejected or Submitted. Editing is confined to Draft and
-  Rejected — concept doc §6.4 makes an approved budget immutable, and a submitted one
-  must not change under its approver. Adding a transition means adding a row here and a
+- **Impact:** `Draft → Submit → Submitted → Approve (Approved) → Classify (Open)`,
+  `Submitted → Reject (Rejected, final)`, and `Cancel` from Draft or Submitted.
+  Editing is confined to Draft — concept doc §6.4 makes an approved budget
+  immutable, a submitted one must not change under its approver, and a rejection
+  is final. `commonActions` is what a selection may take together. Adding a transition means adding a row here and a
   permission to the catalogue, never one without the other.
 - **Do not change unless:** explicitly instructed.
+- **Status:** Frozen, current.
+
+### Approval and classification are two menus, each a work queue (FROZEN)
+- **Decision:** The Budget module has two menus. **Pengajuan Budget** is the
+  register: status tabs (Draft · Diajukan · Disetujui · Open · Semua, each with
+  its count) over one list, a checkbox per row, and the transitions a selection
+  shares in `.ph-act` — Batalkan / Ajukan on Drafts, Tolak / Batalkan / Setujui
+  on Submitted. **Klasifikasi Budget** (`/budget/klasifikasi`,
+  `BUDGET_CLASSIFY`) lists only `Approved` Budgets, grouped Company · Arah ·
+  Currency with a checkbox per group, and has one action: *Tetapkan
+  Klasifikasi*, one Category and Partner for the selection, offered only when
+  it shares a Company and a direction. A classified Budget leaves the queue, so
+  its ideal state is empty. Each row shows how the most similar Budget already
+  classified in its Company and direction was classified
+  (`classificationHints`, word overlap on the description) — **shown, never
+  prefilled**, because a suggestion that fills itself in is a decision nobody
+  took.
+- **Reason:** The user's, to let two roles — approver and classifier — clear
+  their own queues in bulk. Tabs make a bulk action safe: every row inside one
+  tab allows the same transitions. Two menus rather than one with more tabs,
+  because each role then sees only its own queue and columns, the precedent
+  Realisasi Penerimaan / Pengeluaran set.
+- **Impact:** `Approved` joined `BudgetStatus` (migration
+  `20260930190000_budget_classification_stage`). `QueueTabs`, `useSelection` /
+  `SelectAll` / `SelectionCount` in `components/ui` are the one implementation
+  of tabs and selection, and `tests/design-system.test.ts` fails on a copy; a
+  register with `QueueTabs` satisfies `DOCUMENT_SCREENS`' status-filter
+  assertion in place of a `Status:` select. `ClassifyDialog` replaced the
+  approval dialog. Finance's eligibility is unchanged — it already asked for
+  `Open`, which an `Approved` Budget is not.
+- **Not built:** a *Belum Terklasifikasi* category with a suspense mapping, for
+  realizing before classification. It would need DN/CN to move items between
+  books once the real classification is known.
+- **Do not change unless:** explicitly instructed. **Never prefill a
+  classification, never let a selection be half-moved, never offer a bulk
+  action some selected row would refuse, and never reclassify.**
 - **Status:** Frozen, current.
 
 ### A Budget is closed by realization, never by hand (FROZEN)
@@ -3460,8 +3516,8 @@ below in outline because the half of it that still holds is easy to lose.**
   from a menu. The catalogue therefore still has **no** `BUDGET_CLOSE` and no
   `BUDGET_DELETE`, and a capability is a catalogue entry first (§12, "The permission
   catalogue lives in code").
-- **Impact:** `BUDGET_TRANSITIONS` still holds exactly submit / approve / reject /
-  cancel, and a test asserts it. Over-realization is permitted (§6.5) and closes the
+- **Impact:** `BUDGET_TRANSITIONS` holds exactly submit / approve / reject /
+  cancel / classify, and a test asserts it. Over-realization is permitted (§6.5) and closes the
   Budget too — the money left, and a plan cannot be more than finished.
 - **Do not change unless:** explicitly instructed. **Do not add a `BUDGET_CLOSE`
   permission or a close action to the transition table**; if a Budget must be closable
@@ -3623,9 +3679,11 @@ below in outline because the half of it that still holds is easy to lose.**
 ### The dashboard is MECE, and a Draft is not on it (FROZEN)
 - **Decision:** The dashboard answers four questions and no more — what is
   waiting and on whom, where the money is, what the company owes and is owed,
-  and what is broken. Every figure appears **exactly once**, and the three
+  and what is broken. Every figure appears **exactly once**, and the four
   funnel stages **partition** committed money: `Menunggu Persetujuan` (Budget
-  `Submitted`), `Siap Direalisasi` (approved outstanding **minus** what a
+  `Submitted`), `Menunggu Klasifikasi` (Budget `Approved`, its whole plan —
+  nothing can be realized against it yet), `Siap Direalisasi` (classified
+  outstanding **minus** what a
   `Pending` document already holds), and `Menunggu Konfirmasi Induk` (those
   pending documents). **No Draft record appears anywhere** — not a Draft
   Budget, not a Draft document.
@@ -3651,7 +3709,8 @@ below in outline because the half of it that still holds is easy to lose.**
   partition outright — stage two plus stage three equals the approved pool,
   exactly — because that is the property a summary lives or dies by and it
   cannot be seen by looking at the screen.
-- **The projection uses the approved pool only.** Cash is stated per currency
+- **The projection uses the approved pool only** — stages two to four, since an
+  approved Budget is a claim on cash whether or not it is classified yet. Cash is stated per currency
   as `Saldo · Komitmen Keluar · Ekspektasi Masuk · Proyeksi`. Stage one is
   deliberately not in it: a Budget nobody has approved is not yet a claim on
   anyone's cash. The commitment figure is the funnel's total and is **not**
@@ -4192,10 +4251,13 @@ process allowed to restate positions, and it is not built.
   Budget Month table. Budget Month is a date-range query over
   `acc_fiscal_period`; do not add a month column to `bud_budget` either.
 - Do **not** add a Budget Close or Budget Delete action, or move Budget into the entity
-  registry. The lifecycle is create → approve and lives in `budget-workflow.ts`; a
-  Budget reaches `Closed` only as a consequence of posting (§12).
-- Do **not** let a budget be edited outside Draft and Rejected, and do **not** let
-  `category_id` or `partner_id` be set anywhere but approval.
+  registry. The lifecycle is create → approve → classify and lives in
+  `budget-workflow.ts`; a Budget reaches `Closed` only as a consequence of posting (§12).
+- Do **not** let a budget be edited outside Draft, resubmit a Rejected one, or let
+  `category_id` or `partner_id` be set anywhere but Klasifikasi Budget's
+  `applyClassification` — and never on a Budget that already has them (§10 rules 26–27).
+- Do **not** merge Klasifikasi Budget back into approval, or let a bulk action
+  write part of a selection (§10 rule 108, §12).
 - Do **not** add a balance column to `m_cash_bank` or any other master table, and do
   **not** compute a balance anywhere but `src/lib/siba/cash-bank.ts` (§9, §12).
 - Do **not** add an update or delete path to `cash_bank_ledger` or `sub_ledger`.

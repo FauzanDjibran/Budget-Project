@@ -19,8 +19,9 @@ import {
   FormSection,
 } from "@/components/ui/form";
 import {
+  classifyBudgets,
   createBudget,
-  transitionBudget,
+  transitionBudgets,
   updateBudget,
   type BudgetValues,
 } from "@/app/actions/budget";
@@ -29,6 +30,7 @@ import type {
   BudgetMapping,
   BudgetRefs,
   BudgetRow,
+  ClassificationHint,
 } from "@/lib/siba/budget";
 import {
   BUDGET_TRANSITIONS,
@@ -44,14 +46,16 @@ import {
   type ActionTone,
 } from "@/lib/siba/header-actions";
 import type { budgetRealizations } from "@/lib/siba/finance";
-import { ApproveDialog } from "./approve-dialog";
+import { ClassifyDialog } from "./classify-dialog";
 import { RealizationCard } from "./realization-card";
 
 export type BudgetFormMode = "new" | "view" | "edit";
 
 /** Why a Budget's header offers nothing, by status. */
 const LOCK_TEXT: Record<string, string> = {
-  Open: "Terkunci setelah disetujui",
+  Approved: "Menunggu klasifikasi",
+  Open: "Terkunci setelah diklasifikasi",
+  Rejected: "Ditolak — final",
   Closed: "Terealisasi penuh",
   Cancelled: "Budget dibatalkan",
   Submitted: "Menunggu persetujuan",
@@ -61,8 +65,9 @@ const LOCK_TEXT: Record<string, string> = {
 const STATE_NOTE: Record<string, string> = {
   Draft: "Budget masih Draft dan dapat diubah sampai diajukan.",
   Submitted: "Budget sedang diajukan dan tidak dapat diubah sampai disetujui atau ditolak.",
-  Rejected: "Budget ditolak; ubah lalu ajukan kembali.",
-  Open: "Budget sudah disetujui dan terkunci; realisasinya dicatat oleh dokumen Finance yang diposting.",
+  Approved: "Budget sudah disetujui dan menunggu Budget Category serta Partner di Klasifikasi Budget; belum dapat direalisasikan.",
+  Rejected: "Budget ditolak dan bersifat final; perbaikannya dibuat sebagai Budget baru — Salin menyiapkannya dari budget ini.",
+  Open: "Budget sudah diklasifikasi dan terkunci; realisasinya dicatat oleh dokumen Finance yang diposting.",
   Closed: "Realisasi sudah mencapai nominal budget, sehingga budget tertutup otomatis.",
   Cancelled: "Budget dibatalkan dan tidak dapat direalisasikan.",
 };
@@ -72,8 +77,12 @@ const STATE_NOTE: Record<string, string> = {
  *
  * The form carries only what a planner supplies — date, company, currency,
  * type, amount, description. Budget Category and Partner are absent on purpose:
- * concept doc §6.2 says creation has no classification, and §6.3 makes it the
- * approver's decision. They appear here read-only, once approval has set them.
+ * concept doc §6.2 says creation has no classification, and it is assigned in
+ * Klasifikasi Budget after approval. They appear here read-only once set.
+ *
+ * A new Budget may start as a copy (`copyFrom`) — how a rejected plan is
+ * corrected, since a rejection is final. The copy carries what the planner
+ * supplied, never the date, which starts on today like every new date.
  */
 export function BudgetForm({
   mode,
@@ -84,6 +93,8 @@ export function BudgetForm({
   can,
   defaultCurrencyId,
   realizations,
+  copyFrom,
+  hint,
 }: {
   mode: BudgetFormMode;
   budget: BudgetRow | null;
@@ -100,6 +111,10 @@ export function BudgetForm({
   defaultCurrencyId?: number | null;
   /** The documents behind `realized_amount` — view mode only. */
   realizations?: Awaited<ReturnType<typeof budgetRealizations>>;
+  /** The Budget a new one is copied from — `new` mode only. */
+  copyFrom?: BudgetRow | null;
+  /** How a similar Budget was classified — an Approved Budget's view only. */
+  hint?: ClassificationHint | null;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -107,15 +122,17 @@ export function BudgetForm({
   const exists = Boolean(budget);
 
   const [values, setValues] = useState<BudgetValues>(() =>
-    initialValues(budget, defaultCurrencyId)
+    initialValues(budget ?? null, defaultCurrencyId, copyFrom)
   );
+  // A copy is already a change worth confirming before it is thrown away.
+  const startsDirty = mode === "new" && Boolean(copyFrom);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(startsDirty);
   const [saving, setSaving] = useState(false);
 
   const [confirm, setConfirm] = useState<BudgetAction | null>(null);
-  const [approving, setApproving] = useState(false);
-  const [approveErrors, setApproveErrors] = useState<Record<string, string>>({});
+  const [classifying, setClassifying] = useState(false);
+  const [classifyErrors, setClassifyErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
 
   const set = (key: keyof BudgetValues, value: string) => {
@@ -171,18 +188,21 @@ export function BudgetForm({
   ) => {
     if (!budget) return;
     setBusy(true);
-    const result = await transitionBudget(budget.id, action, classification);
+    const result =
+      action === "classify"
+        ? await classifyBudgets([budget.id], classification!)
+        : await transitionBudgets([budget.id], action);
     setBusy(false);
     if (result.ok) {
       setConfirm(null);
-      setApproving(false);
-      setApproveErrors({});
+      setClassifying(false);
+      setClassifyErrors({});
       toast(result.message, `${budget.budget_no} · ${budget.description}`, "ok");
       router.refresh();
       return;
     }
-    if (action === "approve") {
-      setApproveErrors(result.errors);
+    if (action === "classify") {
+      setClassifyErrors(result.errors);
       return;
     }
     setConfirm(null);
@@ -221,6 +241,25 @@ export function BudgetForm({
                   },
                 ]
               : []),
+            // A rejection is final, so correcting the plan means a new
+            // Budget; Salin starts one from this one's figures.
+            ...(can.create && budget.status === "Rejected"
+              ? [
+                  {
+                    key: "copy",
+                    tone: "neutral" as ActionTone,
+                    node: (
+                      <Link
+                        key="copy"
+                        className="btn"
+                        href={`/budget/budget/new?from=${budget.id}`}
+                      >
+                        <Icon name="copy" size={15} /> Salin
+                      </Link>
+                    ),
+                  },
+                ]
+              : []),
             ...actions.map((a) => {
               const t = BUDGET_TRANSITIONS[a];
               return {
@@ -232,7 +271,7 @@ export function BudgetForm({
                     className={headerButtonClass(t.tone)}
                     disabled={busy}
                     onClick={() =>
-                      a === "approve" ? setApproving(true) : setConfirm(a)
+                      a === "classify" ? setClassifying(true) : setConfirm(a)
                     }
                   >
                     <Icon name={t.icon} size={15} /> {t.label}
@@ -253,7 +292,7 @@ export function BudgetForm({
       <DocumentHeader
         module="Budget"
         trail={[
-          { label: "Budget Month", href: "/budget/budget" },
+          { label: "Pengajuan Budget", href: "/budget/budget" },
           { label: month ? month.name : "Semua Bulan", href: listHref(month) },
         ]}
         icon="clip"
@@ -307,7 +346,7 @@ export function BudgetForm({
                 <h3>Data Budget</h3>
                 <p>
                   {mode === "new"
-                    ? "Budget Category dan Partner ditetapkan approver saat persetujuan."
+                    ? "Budget Category dan Partner ditetapkan di Klasifikasi Budget setelah disetujui."
                     : editing
                       ? "Rencana kebutuhan dana dan nominalnya."
                       : "Layer planning — realisasinya terjadi di modul Finance."}
@@ -487,7 +526,7 @@ export function BudgetForm({
                     </FormRow>
                   </FormSection>
 
-                  <FormSection title="Klasifikasi (ditetapkan approver)">
+                  <FormSection title="Klasifikasi">
                     <FormRow>
                       <Field
                         label="Budget Category"
@@ -563,19 +602,20 @@ export function BudgetForm({
         />
       )}
 
-      {approving && budget && (
-        <ApproveDialog
-          budget={budget}
+      {classifying && budget && (
+        <ClassifyDialog
+          budgets={[budget]}
           refs={refs}
           mappings={mappings}
-          errors={approveErrors}
+          hint={hint}
+          errors={classifyErrors}
           busy={busy}
           onConfirm={(categoryId, partnerId) =>
-            run("approve", { category_id: categoryId, partner_id: partnerId })
+            run("classify", { category_id: categoryId, partner_id: partnerId })
           }
           onCancel={() => {
-            setApproving(false);
-            setApproveErrors({});
+            setClassifying(false);
+            setClassifyErrors({});
           }}
         />
       )}
@@ -593,8 +633,19 @@ function listHref(month: { id: number } | null): string {
 
 function initialValues(
   budget: BudgetRow | null,
-  defaultCurrencyId?: number | null
+  defaultCurrencyId?: number | null,
+  copyFrom?: BudgetRow | null
 ): BudgetValues {
+  if (!budget && copyFrom) {
+    return {
+      budget_date: todayIso(),
+      company_id: String(copyFrom.company_id),
+      currency_id: String(copyFrom.currency_id),
+      budget_type: copyFrom.budget_type,
+      budget_amount: String(copyFrom.budget_amount),
+      description: copyFrom.description,
+    };
+  }
   if (!budget) {
     return {
       // A plan is nearly always made for today, so the field starts there and
