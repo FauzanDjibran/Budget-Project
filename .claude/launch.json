@@ -9,6 +9,30 @@
         "dev"
       ],
       "port": 3000
+    },
+    {
+      "name": "start-backdate",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "D:/Claude Code/Budget-Project-backdate/node_modules/next/dist/bin/next",
+        "start",
+        "D:/Claude Code/Budget-Project-backdate",
+        "-p",
+        "3020"
+      ],
+      "port": 3020
+    },
+    {
+      "name": "dev-backdate",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "D:/Claude Code/Budget-Project-backdate/node_modules/next/dist/bin/next",
+        "dev",
+        "D:/Claude Code/Budget-Project-backdate",
+        "-p",
+        "3001"
+      ],
+      "port": 3001
     }
   ]
 }
