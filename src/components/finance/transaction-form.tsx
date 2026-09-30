@@ -12,7 +12,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
 import { KursSelect } from "./kurs-select";
-import { OpenItemSelect } from "./open-item-select";
+import { OpenItemSelect, type ItemAllocation } from "./open-item-select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { JournalPreview } from "@/components/ui/journal-preview";
 import { useToast } from "@/components/ui/toast";
@@ -73,8 +73,11 @@ type DraftLine = {
   partner_id: number | null;
   outstanding: number;
   amount: number;
-  /** The open item a line lowering a subject-book position settles. */
-  item_id: number | null;
+  /**
+   * The open items a line lowering a subject-book position settles, each for
+   * the amount the user chose. Such a line is worth what they add up to.
+   */
+  items: ItemAllocation[];
 };
 
 /**
@@ -146,7 +149,7 @@ export function TransactionForm({
       partner_id: l.partner_id,
       outstanding: l.outstanding_amount,
       amount: l.settlement_amount,
-      item_id: l.item?.id ?? null,
+      items: l.items.map((it) => ({ item_id: it.item.id, amount: it.amount })),
     }))
   );
   const [pool, setPool] = useState<EligibleBudget[]>([]);
@@ -392,6 +395,19 @@ export function TransactionForm({
 
   const poolById = new Map(pool.map((b) => [b.id, b]));
 
+  // What one unit of the document's currency costs on the cash side — the kurs
+  // typed, the chosen layer's, or 1 for rupiah — so the item dialog can say
+  // what each item will recognise. Null until the header states it.
+  const cashRate =
+    kursSource === "identity"
+      ? 1
+      : kursSource === "entered"
+        ? Number(values.exchange_rate) || null
+        : kursSource === "layer"
+          ? (cashBank?.layers.find((y) => y.id === Number(values.cash_bank_layer_id))
+              ?.rate ?? null)
+          : null;
+
   /**
    * Every line in one shape, whichever mode the screen is in, so the table and
    * the Rincian dialog are drawn once. A draft line's plan figures come from
@@ -413,7 +429,10 @@ export function TransactionForm({
           outstanding: l.outstanding,
           draftAllocated: pooled?.draftAllocated ?? 0,
           amount: l.amount,
-          item: pooled?.items.find((it) => it.id === l.item_id) ?? null,
+          items: l.items.flatMap((a) => {
+            const item = pooled?.items.find((it) => it.id === a.item_id);
+            return item ? [{ item, amount: a.amount, fxDifference: null }] : [];
+          }),
           itemRole: pooled?.lowers
             ? "lowers"
             : pooled?.opensItem
@@ -435,8 +454,8 @@ export function TransactionForm({
         outstanding: l.outstanding_amount,
         draftAllocated: 0,
         amount: l.settlement_amount,
-        item: l.item,
-        itemRole: l.item ? "lowers" : null,
+        items: l.items,
+        itemRole: l.items.length ? "lowers" : null,
       }));
   // The column exists only where a line has an open item to state or choose.
   // An accumulating book (Investasi, Hasil Investasi) has nothing to choose or
@@ -466,7 +485,9 @@ export function TransactionForm({
             amount: p.amount,
             // Never preselected, even when only one is open: which item a
             // return settles decides its gain or loss, so it is chosen.
-            item_id: null,
+            // Never preselected, even when only one is open: which items a
+            // return settles, and for how much, decides its gain or loss.
+            items: [],
           },
         ];
       });
@@ -488,7 +509,10 @@ export function TransactionForm({
     const payload = draftLines.map((l) => ({
       budget_id: String(l.budget_id),
       amount: String(l.amount),
-      item_id: l.item_id ? String(l.item_id) : "",
+      items: l.items.map((it) => ({
+        item_id: String(it.item_id),
+        amount: String(it.amount),
+      })),
     }));
     const result =
       mode === "new"
@@ -1017,30 +1041,43 @@ export function TransactionForm({
                               {r.itemRole === "lowers" ? (
                                 editing ? (
                                   <OpenItemSelect
-                                    value={r.item?.id ?? null}
+                                    value={
+                                      draftLines.find((x) => x.budget_id === r.budgetId)
+                                        ?.items ?? []
+                                    }
                                     items={poolById.get(r.budgetId)?.items ?? []}
                                     currencyLabel={currencyLabel}
-                                    invalid={Boolean(errors._lines) && !r.item}
+                                    direction={direction}
+                                    cashRate={cashRate}
+                                    invalid={Boolean(errors._lines) && !r.items.length}
                                     onChange={(v) => {
+                                      // The line is worth what its items add up to.
+                                      const sum =
+                                        Math.round(v.reduce((t, a) => t + a.amount, 0) * 100) / 100;
                                       setDraftLines((ls) =>
                                         ls.map((x) =>
                                           x.budget_id === r.budgetId
-                                            ? { ...x, item_id: v }
+                                            ? { ...x, items: v, amount: v.length ? sum : x.amount }
                                             : x
                                         )
                                       );
                                       setDirty(true);
                                     }}
                                   />
-                                ) : r.item ? (
+                                ) : r.items.length ? (
                                   <span className="dstack">
                                     <span className="d1">
-                                      <span className="lab">{r.item.itemNo}</span>
+                                      <span className="lab">{r.items[0].item.itemNo}</span>
+                                      {r.items.length > 1 && (
+                                        <span className="mny"> +{r.items.length - 1}</span>
+                                      )}
                                     </span>
                                     <span className="d2">
-                                      {currencyLabel === BASE_CURRENCY_LABEL
-                                        ? formatDate(r.item.date)
-                                        : `kurs ${formatRate(r.item.rate)}`}
+                                      {r.items.length > 1
+                                        ? `${r.items.length} item`
+                                        : currencyLabel === BASE_CURRENCY_LABEL
+                                          ? formatDate(r.items[0].item.date)
+                                          : `kurs ${formatRate(r.items[0].item.rate)}`}
                                     </span>
                                   </span>
                                 ) : (
@@ -1068,7 +1105,7 @@ export function TransactionForm({
                             </span>
                           </td>
                           <td className="num">
-                            {editing ? (
+                            {editing && r.itemRole !== "lowers" ? (
                               <MoneyInput
                                 size="sm"
                                 over={over}

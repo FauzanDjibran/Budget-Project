@@ -74,8 +74,11 @@ export type TransactionValues = {
 export type TransactionLineValues = {
   budget_id: string;
   amount: string;
-  /** The open item a line lowering a subject-book position settles. */
-  item_id?: string;
+  /**
+   * The open items a line lowering a subject-book position settles, each for
+   * the amount the user chose. The line is worth what they add up to.
+   */
+  items?: { item_id: string; amount: string }[];
 };
 
 export type TransactionResult =
@@ -152,7 +155,9 @@ const asLines = (lines: TransactionLineValues[]): LineInput[] =>
     .map((l) => ({
       budget_id: num(l.budget_id) ?? 0,
       amount: num(l.amount) ?? 0,
-      item_id: num(l.item_id),
+      items: (l.items ?? [])
+        .map((it) => ({ item_id: num(it.item_id) ?? 0, amount: num(it.amount) ?? 0 }))
+        .filter((it) => it.item_id > 0),
     }))
     .filter((l) => l.budget_id > 0);
 
@@ -247,8 +252,15 @@ export async function createTransaction(
           settlement_exchange_rate: checked.rate,
           transaction_amount: l.amount,
           transaction_base_amount: roundBase(l.amount * checked.rate),
-          sub_ledger_balance_id: l.itemId,
           created_by: g.actor.user.id,
+          items: {
+            create: l.items.map((it, k) => ({
+              sequence_no: k + 1,
+              sub_ledger_balance_id: it.itemId,
+              amount: it.amount,
+              created_by: g.actor.user.id,
+            })),
+          },
         })),
       },
     },
@@ -347,8 +359,15 @@ export async function updateTransaction(
             settlement_exchange_rate: checked.rate,
             transaction_amount: l.amount,
             transaction_base_amount: roundBase(l.amount * checked.rate),
-            sub_ledger_balance_id: l.itemId,
             created_by: g.actor.user.id,
+            items: {
+              create: l.items.map((it, k) => ({
+                sequence_no: k + 1,
+                sub_ledger_balance_id: it.itemId,
+                amount: it.amount,
+                created_by: g.actor.user.id,
+              })),
+            },
           })),
         },
       },

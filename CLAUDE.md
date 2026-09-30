@@ -339,7 +339,7 @@ scripts/
                          what reconciles against the account for the second.
                          Idempotent, sets and clears. Run by hand, never by
                          install or CI
-  reconcile-books.ts     Read-only: fourteen checks that Budget realization,
+  reconcile-books.ts     Read-only: sixteen checks that Budget realization,
                          the Cash Bank Book, the subject books and their open
                          items, and the journals agree with each other and
                          with the General Ledger. Each selects only the rows
@@ -970,7 +970,10 @@ Implemented and enforced:
    traceability. The entries are written inside `applyPosting`'s transaction,
    alongside the Journal and never derived from it (concept doc §13). Two lines
    on the same position are settled in line order, the second against what the
-   first left. Supersedes "one entry per document".
+   first left. Supersedes "one entry per document". **A line settling several
+   open items writes one subject-book entry per item** — an entry names exactly
+   one item — each still reading the Budget's description; the Cash Bank Book
+   entry and the journal's counter line stay one per Budget.
 55. **A subject book is append-only and immutable, like every other book.** No
    update path, no delete path, no cascade. A correction is a further entry,
    which is what keeps `rebuildSubledgerBalance` able to re-derive the
@@ -1512,23 +1515,39 @@ the rules that follow from it.
     too, at a kurs of 1. An item is mutable and provable: summing the entries that
     name it rebuilds it (`rebuildSubledgerItem`). The user's model, so that each
     receipt keeps its own kurs rather than dissolving into an average.
-104. **One Budget line is one item.** Two Piutang Budgets realized in one document
-    open two items, which is the grain SAP and Odoo keep open items at — the
-    receivable line, not the document — and the grain the General Ledger already
-    has, since each Budget writes its own counter line.
-105. **A line lowering a position names the item it settles, and relieves it at
-    that item's own kurs.** Chosen, never preselected, never averaged — which item
-    a return settles decides its gain or loss, and the picker shows each item's
-    date, kurs and remainder. The line is refused without one, with another
-    subject's, or for more than the item still holds, at save (`checkLines`) and
-    again at Post, where `applyPosting` takes `lockSubledgerPosition` for every
-    position it lowers and `recordSubledgerEntry` throws if the item moved since
-    the plan valued it. **So no position can go below zero** through a realization.
+104. **A line raising a position opens one item.** Two Piutang Budgets realized in
+    one document open two items, which is the grain SAP and Odoo keep open items
+    at — the receivable line, not the document — and the grain the General Ledger
+    already has, since each Budget writes its own counter line.
+105. **A line lowering a position names the items it settles, each for an amount
+    the user states, and relieves each at its own kurs.** One line may settle
+    several items of its Budget's Partner (`fin_cash_bank_transaction_line_item`).
+    **Nothing is distributed by the system** — the user's rule: the user ticks
+    each item and states each amount, ticking fills in what that item holds, and
+    there is no oldest-first spreading of a total, because which items a payment
+    settles, and for how much, decides its gain or loss. Chosen, never
+    preselected, never averaged. The line is worth what its items add up to, and
+    it is refused without one, with an item twice, with another subject's, or for
+    more than an item still holds across the whole document, at save
+    (`checkLines`) and again at Post, where `applyPosting` takes
+    `lockSubledgerPosition` for every position it lowers and
+    `recordSubledgerEntry` throws if an item moved since the plan valued it.
+    **So no position can go below zero** through a realization.
 106. **An item may be settled by a document dated before the item was opened.**
     Illogical — a deposit returned before it was received — and allowed on the
     user's instruction, because backdating means any open item may be cleared at
     any time. **Marked as possibly reverted to restricted** once the user has seen
     it in use.
+107. **Each settled item has its own FX difference, on its own journal line.** What
+    the line's cash cost is split across its items in proportion (`allocateBase`
+    in `fx.ts`, the last item taking the rounding, so the shares add up to what
+    left the bank); each item releases its own base at its own kurs; the gap is
+    that item's difference, signed as a gain from the line's direction. An item
+    settled at a gain and one at a loss are a Kredit and a Debit on the one
+    Selisih Kurs account — **never netted**, since netting would hide both. The
+    user's choice, after IAS 21 / PSAK 10 (the difference arises per monetary
+    item settled) and SAP and Odoo (per cleared item). One Selisih Kurs account,
+    not a gain / loss pair, also on the user's choice; its side says which.
 
 Specified in the concept doc, **not yet implemented** (see §13):
 
@@ -2330,8 +2349,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   every entry names it. That last property is why the user asked for the balance
   and the item to be one row.
 - **Impact:** a position can no longer go negative through a realization.
-  `lockSubledgerPosition` is taken by `applyPosting` too. Every Budget line is
-  one item, so a return clearing two items needs two Budget lines. **Two paths
+  `lockSubledgerPosition` is taken by `applyPosting` too. A line lowering a
+  position settles the items the user chose, each for the amount the user
+  stated (§10 rules 105 and 107). **Two paths
   were left behind on the user's instruction**: the funded route and DN/CN are
   both being redesigned, both can still *raise* a position (opening an item), and
   both are refused when they *lower* one, because neither names an item yet.
@@ -2341,8 +2361,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   and the item columns are `NOT NULL`, so it applies to an empty subject book.
 - **Do not change unless:** explicitly instructed. **Never average a position's
   items into a relief, never preselect or auto-settle an item, never merge two
-  items, never let an item go below nothing, and never write a subject-book entry
-  that names no item.**
+  items, never let an item go below nothing, never write a subject-book entry
+  that names no item, never distribute a line's amount across items for the
+  user, and never net two items' FX differences into one journal line.**
 - **Status:** Frozen, current. Supersedes relief at the position's carrying rate
   and the one-row-per-position `sub_ledger_balance`.
 
@@ -4120,7 +4141,6 @@ decisions now that foreclose them.
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
 | Open items for DN/CN and the funded route | Both are being redesigned. Both may raise a position (opening an item) and are refused when they lower one, because neither names an item yet. How a note or a funded line chooses the item it settles is part of their redesign |
-| Several items per line | One Budget line settles one item, so clearing two needs two Budget lines. SAP lets one payment clear many; widening this means a per-line allocation, not a loosened check |
 | Restricting an item's clearing date | An item may be settled by a document dated before it was opened (§10 rule 106), on the user's instruction; they may revert it to restricted after seeing it |
 | DN/CN on a negative position | A position below zero (a cash overpayment) is refused today. Adjusting one needs a rule for its base, which no longer tracks its face |
 | DN/CN tax | A note carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |

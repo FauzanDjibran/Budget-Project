@@ -885,8 +885,20 @@ async function draftDocument(options: {
           settlement_base_amount: l.amount * rate,
           transaction_amount: l.amount,
           transaction_base_amount: l.amount * rate,
-          sub_ledger_balance_id: itemIds[i],
           created_by: actor,
+          // One open item per lowering line, settled for the line amount.
+          items: itemIds[i]
+            ? {
+                create: [
+                  {
+                    sequence_no: 1,
+                    sub_ledger_balance_id: itemIds[i]!,
+                    amount: l.amount,
+                    created_by: actor,
+                  },
+                ],
+              }
+            : undefined,
         })),
       },
     },

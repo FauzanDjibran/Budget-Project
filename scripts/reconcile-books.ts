@@ -25,6 +25,9 @@
  *         balances, foreign layers, open items (Cleared exactly at nil)
  *   13–14 each book equals its General Ledger account — a cash resource on
  *         its own account, a subject book per account and Partner
+ *   15–16 a line settling open items is worth what its items add up to, and
+ *         the items' shares of the cash and of what was released add up to
+ *         the line's own figures
  *
  * WHAT IT LEAVES OUT, ON PURPOSE
  *   An `Opening` Cash Bank Book entry writes no journal (CLAUDE.md §12), so
@@ -94,14 +97,17 @@ HAVING COUNT(l.id) <> COALESCE(cb.n, 0) OR t.transaction_base_amount <> COALESCE
   },
   {
     no: 4,
-    name: "Satu entri Buku Subjek per line yang Category-nya memakai buku, nominal sama",
+    name: "Entri Buku Subjek: satu per open item yang diselesaikan, atau satu per line yang menaikkan",
     sql: `
-, want AS (
+, alloc AS (
+  SELECT line_id, COUNT(*) AS n FROM fin_cash_bank_transaction_line_item GROUP BY line_id
+), want AS (
   SELECT t.id, t.transaction_no,
-         COUNT(*) FILTER (WHERE c.keeps_book) AS n,
+         COALESCE(SUM(COALESCE(a.n, 1)) FILTER (WHERE c.keeps_book), 0) AS n,
          COALESCE(SUM(l.settlement_amount) FILTER (WHERE c.keeps_book), 0) AS amount
   FROM fin_cash_bank_transaction t
   JOIN fin_cash_bank_transaction_line l ON l.transaction_id = t.id
+  LEFT JOIN alloc a ON a.line_id = l.id
   JOIN bud_budget b ON b.id = l.source_doc_id
   JOIN book_cat c ON c.id = b.category_id
   WHERE t.status = 'Posted'
@@ -168,18 +174,65 @@ HAVING COALESCE(j.journals, 0) <> 1 OR COUNT(l.id) <> COALESCE(counter.n, 0)`,
   },
   {
     no: 8,
-    name: "Selisih kurs line dijurnal sebesar itu, di sisi sesuai tandanya",
+    name: "Selisih kurs setiap open item dijurnal sendiri, di sisi sesuai tandanya",
+    // A line settling items journals one line per item, never netted; the
+    // count of FX lines must match the count of non-nil differences too.
     sql: `
-SELECT t.transaction_no, l.sequence_no, l.fx_difference
+, diffs AS (
+  SELECT t.id AS doc, t.transaction_no, a.fx_difference
+  FROM fin_cash_bank_transaction t
+  JOIN fin_cash_bank_transaction_line l ON l.transaction_id = t.id
+  JOIN fin_cash_bank_transaction_line_item a ON a.line_id = l.id
+  WHERE t.status = 'Posted' AND a.fx_difference <> 0
+  UNION ALL
+  SELECT t.id, t.transaction_no, l.fx_difference
+  FROM fin_cash_bank_transaction t
+  JOIN fin_cash_bank_transaction_line l ON l.transaction_id = t.id
+  WHERE t.status = 'Posted' AND l.fx_difference <> 0
+    AND NOT EXISTS (SELECT 1 FROM fin_cash_bank_transaction_line_item a WHERE a.line_id = l.id)
+), wanted AS (
+  SELECT doc, transaction_no,
+         COUNT(*) AS n,
+         SUM(CASE WHEN fx_difference > 0 THEN fx_difference ELSE 0 END) AS gains,
+         SUM(CASE WHEN fx_difference < 0 THEN -fx_difference ELSE 0 END) AS losses
+  FROM diffs GROUP BY doc, transaction_no
+), written AS (
+  SELECT jj.source_doc_id AS doc, COUNT(*) AS n,
+         SUM(jl.kredit_amount) AS gains, SUM(jl.debit_amount) AS losses
+  FROM acc_journal jj JOIN acc_journal_line jl ON jl.journal_id = jj.id
+  WHERE jj.source_doc_type_id = (SELECT tx FROM dt) AND jl.description LIKE 'Selisih kurs%'
+  GROUP BY jj.source_doc_id
+)
+SELECT w.transaction_no, w.n AS differences, COALESCE(j.n, 0) AS fx_lines,
+       w.gains, COALESCE(j.gains, 0) AS credited, w.losses, COALESCE(j.losses, 0) AS debited
+FROM wanted w LEFT JOIN written j ON j.doc = w.doc
+WHERE w.n <> COALESCE(j.n, 0) OR w.gains <> COALESCE(j.gains, 0) OR w.losses <> COALESCE(j.losses, 0)`,
+  },
+  {
+    no: 15,
+    name: "Line yang menyelesaikan open item bernilai jumlah item-nya",
+    sql: `
+SELECT t.transaction_no, l.sequence_no, l.settlement_amount, SUM(a.amount) AS items
 FROM fin_cash_bank_transaction t
 JOIN fin_cash_bank_transaction_line l ON l.transaction_id = t.id
-WHERE t.status = 'Posted' AND l.fx_difference <> 0
-  AND NOT EXISTS (
-    SELECT 1 FROM acc_journal jj JOIN acc_journal_line jl ON jl.journal_id = jj.id
-    WHERE jj.source_doc_type_id = (SELECT tx FROM dt) AND jj.source_doc_id = t.id
-      AND jl.description LIKE 'Selisih kurs%'
-      AND ((l.fx_difference > 0 AND jl.kredit_amount = l.fx_difference)
-        OR (l.fx_difference < 0 AND jl.debit_amount = -l.fx_difference)))`,
+JOIN fin_cash_bank_transaction_line_item a ON a.line_id = l.id
+GROUP BY t.id, l.id
+HAVING l.settlement_amount <> SUM(a.amount)`,
+  },
+  {
+    no: 16,
+    name: "Bagian kas setiap item berjumlah tepat biaya kas line-nya (Posted)",
+    sql: `
+SELECT t.transaction_no, l.sequence_no, l.transaction_base_amount,
+       SUM(a.transaction_base_amount) AS item_shares,
+       l.settlement_base_amount, SUM(a.settlement_base_amount) AS item_released
+FROM fin_cash_bank_transaction t
+JOIN fin_cash_bank_transaction_line l ON l.transaction_id = t.id
+JOIN fin_cash_bank_transaction_line_item a ON a.line_id = l.id
+WHERE t.status = 'Posted'
+GROUP BY t.id, l.id
+HAVING l.transaction_base_amount <> SUM(a.transaction_base_amount)
+    OR l.settlement_base_amount <> SUM(a.settlement_base_amount)`,
   },
   {
     no: 9,
@@ -322,6 +375,7 @@ async function main() {
   });
 
   let failed = 0;
+  results.sort((a, b) => a.no - b.no);
   for (const r of results) {
     if (!r.rows.length) {
       console.log(`✓ ${String(r.no).padStart(2)}. ${r.name}`);

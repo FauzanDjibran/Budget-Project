@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { Dialog } from "@/components/ui/dialog";
 import { formatDate, formatMoney, formatRate } from "@/lib/format";
-import { isBaseCurrency } from "@/lib/siba/currency";
+import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
 import { STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetMapping } from "@/lib/siba/budget";
 import type { OpenItemOption } from "@/lib/siba/finance";
@@ -26,7 +26,11 @@ export type RealizationLineDetail = {
   /** Held by other Draft documents — informational, not yet realized. */
   draftAllocated: number;
   amount: number;
-  item: OpenItemOption | null;
+  /**
+   * The open items the line settles, each for its own amount. `fxDifference`
+   * is signed as a gain and known once posted; null on a draft.
+   */
+  items: { item: OpenItemOption; amount: number; fxDifference: number | null }[];
   /** How this line moves its subject book, where one is known. */
   itemRole: "lowers" | "opens" | "records" | null;
 };
@@ -155,40 +159,59 @@ export function RealizationLineDialog({
         </div>
       )}
 
-      {line.itemRole === "lowers" && (
-        <div className="apsum" style={{ marginTop: 12 }}>
-          <div className="full">
-            <span>Open item yang diselesaikan</span>
-            <b>
-              {line.item ? (
-                `${line.item.itemNo} ${line.item.note ?? ""}`
-              ) : (
-                "Belum dipilih"
-              )}
-            </b>
+      {line.itemRole === "lowers" &&
+        (line.items.length ? (
+          <div className="tw boxed" style={{ marginTop: 12 }}>
+            <table className="grid">
+              <thead>
+                <tr>
+                  <th style={{ width: 92 }}>Open item</th>
+                  <th style={{ width: 92 }}>Tanggal</th>
+                  {foreign && (
+                    <th className="num" style={{ width: 100 }}>
+                      Kurs
+                    </th>
+                  )}
+                  <th className="num">Diselesaikan</th>
+                  {foreign && <th className="num">Selisih kurs</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {line.items.map((it) => (
+                  <tr key={it.item.id}>
+                    <td>
+                      <span className="lab">{it.item.itemNo}</span>
+                    </td>
+                    <td className="mut">{formatDate(it.item.date)}</td>
+                    {foreign && <td className="num">{formatRate(it.item.rate)}</td>}
+                    <td className="num">
+                      <span className="mny">{money(it.amount)}</span>
+                    </td>
+                    {foreign && (
+                      <td className="num">
+                        {it.fxDifference == null ? (
+                          <span className="dash" title="Dinilai saat Post">—</span>
+                        ) : it.fxDifference === 0 ? (
+                          <span className="mny z">{formatMoney(0, BASE_CURRENCY_LABEL)}</span>
+                        ) : (
+                          <span className={`mny${it.fxDifference < 0 ? " neg" : ""}`}>
+                            {formatMoney(Math.abs(it.fxDifference), BASE_CURRENCY_LABEL)}{" "}
+                            {it.fxDifference > 0 ? "laba" : "rugi"}
+                          </span>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          {line.item && (
-            <>
-              <div>
-                <span>Tanggal item</span>
-                <b>{formatDate(line.item.date)}</b>
-              </div>
-              <div>
-                <span>{foreign ? "Kurs item" : "Sisa item"}</span>
-                <b className="mono">
-                  {foreign ? formatRate(line.item.rate) : money(line.item.remaining)}
-                </b>
-              </div>
-              {foreign && (
-                <div className="full">
-                  <span>Sisa item</span>
-                  <b className="mono">{money(line.item.remaining)}</b>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
+        ) : (
+          <div className="apmap warn">
+            <Icon name="warn" size={13} />
+            Open item yang diselesaikan belum dipilih.
+          </div>
+        ))}
 
       <div className="impact" style={{ marginTop: 12 }}>
         <div className="ttl">Saat Post</div>
@@ -204,8 +227,10 @@ export function RealizationLineDialog({
                 ? "bertambah — dicatat per Partner"
                 : line.itemRole === "opens"
                 ? "membuka open item baru"
-                : line.item
-                  ? `menyelesaikan ${line.item.itemNo}`
+                : line.items.length
+                  ? `${line.items.length} entri — menyelesaikan ${line.items
+                      .map((it) => it.item.itemNo)
+                      .join(", ")}`
                   : "menunggu open item"}
             </b>
           </div>

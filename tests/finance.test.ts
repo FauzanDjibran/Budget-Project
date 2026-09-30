@@ -164,8 +164,17 @@ async function makeDraft(options: {
   layerId?: number;
   /** `YYYY-MM-DD`; omitted, the draft carries none and posts as today. */
   documentDate?: string;
-  /** `itemId` names the open item a line lowering a subject-book position settles. */
-  lines: { budgetId: number; amount: number; outstanding: number; itemId?: number }[];
+  /**
+   * `itemId` is shorthand for a line lowering a position that settles one open
+   * item for its whole amount; `items` names several, each for its own amount.
+   */
+  lines: {
+    budgetId: number;
+    amount: number;
+    outstanding: number;
+    itemId?: number;
+    items?: { itemId: number; amount: number }[];
+  }[];
 }): Promise<number> {
   const cashBank = await prisma.mCashBank.findUniqueOrThrow({
     where: { id: options.cashBankId },
@@ -201,8 +210,17 @@ async function makeDraft(options: {
           settlement_base_amount: l.amount,
           transaction_amount: l.amount,
           transaction_base_amount: l.amount,
-          sub_ledger_balance_id: l.itemId ?? null,
           created_by: actor,
+          items: {
+            create: (l.items ?? (l.itemId ? [{ itemId: l.itemId, amount: l.amount }] : [])).map(
+              (it, k) => ({
+                sequence_no: k + 1,
+                sub_ledger_balance_id: it.itemId,
+                amount: it.amount,
+                created_by: actor,
+              })
+            ),
+          },
         })),
       },
     },
@@ -2504,6 +2522,219 @@ describe("a line lowering a position settles the open item it names", () => {
     assert.match(result.ok ? "" : result.errors._form ?? "", /tidak mencukupi/);
   });
 
+  test("one line settles several items, and each difference is its own journal line", async () => {
+    // The worked example again, on ONE Budget line: Titipan at 15.000 and at
+    // 13.000, both returned out of dollars bought at 14.000. Netted, the line
+    // shows nil and hides a gain and a loss; kept per item it is a credit and a
+    // debit on the Selisih Kurs account, and the journal still balances.
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    const bankA = await makeCashBank({ currencyId: otherCurrency });
+    await receive(partner, bankA, 1_000, 15_000);
+    await receive(partner, bankA, 1_000, 13_000);
+    const titipan = await bookKey("Titipan");
+    const [i15, i13] = await prisma.subLedgerBalance.findMany({
+      where: { book: titipan, partner_id: partner, currency_id: otherCurrency },
+      orderBy: { id: "asc" },
+    });
+
+    const bankB = await foreignCash(14_000, 2_000);
+    const budget = await makeBudget({
+      categoryLabel: "Titipan",
+      type: "Out",
+      partnerId: partner,
+      amount: 2_000,
+      currencyId: otherCurrency,
+    });
+    const doc = await makeDraft({
+      transaction_type: "Out" as const,
+      cashBankId: bankB.cashBank,
+      layerId: bankB.layer,
+      lines: [
+        {
+          budgetId: budget,
+          amount: 2_000,
+          outstanding: 2_000,
+          items: [
+            { itemId: i15.id, amount: 1_000 },
+            { itemId: i13.id, amount: 1_000 },
+          ],
+        },
+      ],
+    });
+    await post(doc);
+
+    const line = await prisma.finCashBankTransactionLine.findFirstOrThrow({
+      where: { transaction_id: doc },
+      include: { items: { orderBy: { sequence_no: "asc" } } },
+    });
+    assert.deepEqual(
+      line.items.map((a) => [a.settlement_base_amount.toNumber(), a.transaction_base_amount.toNumber(), a.fx_difference.toNumber()]),
+      [
+        [15_000_000, 14_000_000, 1_000_000],
+        [13_000_000, 14_000_000, -1_000_000],
+      ],
+      "each item released at its own kurs against its share of the cash"
+    );
+    assert.equal(line.fx_difference.toNumber(), 0, "the line's figure is only the sum");
+    assert.equal(
+      line.items.reduce((t, a) => t + a.transaction_base_amount.toNumber(), 0),
+      line.transaction_base_amount.toNumber(),
+      "the shares add up to what left the bank"
+    );
+
+    const entries = await prisma.subLedger.findMany({
+      where: { source_doc_id: doc, book: titipan },
+      orderBy: { id: "asc" },
+    });
+    assert.deepEqual(
+      entries.map((e) => [e.balance_id, e.movement.toNumber(), e.base_movement.toNumber()]),
+      [
+        [i15.id, -1_000, -15_000_000],
+        [i13.id, -1_000, -13_000_000],
+      ],
+      "one subject-book entry per item, each naming it"
+    );
+    const cleared = await prisma.subLedgerBalance.findMany({ where: { id: { in: [i15.id, i13.id] } } });
+    assert.ok(cleared.every((i) => i.status === "Cleared"));
+
+    const journal = await prisma.accJournal.findFirstOrThrow({
+      where: { source_doc_id: doc, journal_no: { startsWith: "JRN-" } },
+      include: { lines: true },
+    });
+    const fx = journal.lines.filter((l) => l.account_id === fxAccount);
+    assert.deepEqual(
+      fx.map((l) => [l.debit_amount.toNumber(), l.kredit_amount.toNumber()]).sort(),
+      [
+        [0, 1_000_000],
+        [1_000_000, 0],
+      ],
+      "a gain on the credit side and a loss on the debit side, never netted"
+    );
+    const debit = journal.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0);
+    const credit = journal.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0);
+    assert.equal(debit, credit);
+  });
+
+  test("a receipt settling several items states each one's gain or loss", async () => {
+    // Piutang lent at 15.000 and 18.000, collected together at 16.000: the
+    // first gains 1 jt (credit), the second loses 2 jt (debit).
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    const rupiah = await makeCashBank({ opening: 50_000_000 });
+    const valas = await makeCashBank({ currencyId: otherCurrency });
+    for (const rate of [15_000, 18_000]) {
+      const lent = await makeBudget({
+        categoryLabel: "Piutang",
+        type: "Out",
+        partnerId: partner,
+        amount: 1_000,
+        currencyId: otherCurrency,
+      });
+      await post(
+        await makeDraft({
+          transaction_type: "Out" as const,
+          cashBankId: rupiah,
+          currencyId: otherCurrency,
+          rate,
+          lines: [{ budgetId: lent, amount: 1_000, outstanding: 1_000 }],
+        })
+      );
+    }
+    const piutang = await bookKey("Piutang");
+    const [i15, i18] = await prisma.subLedgerBalance.findMany({
+      where: { book: piutang, partner_id: partner, currency_id: otherCurrency },
+      orderBy: { id: "asc" },
+    });
+    const collected = await makeBudget({
+      categoryLabel: "Piutang",
+      type: "In",
+      partnerId: partner,
+      amount: 2_000,
+      currencyId: otherCurrency,
+    });
+    const doc = await makeDraft({
+      transaction_type: "In" as const,
+      cashBankId: valas,
+      rate: 16_000,
+      lines: [
+        {
+          budgetId: collected,
+          amount: 2_000,
+          outstanding: 2_000,
+          items: [
+            { itemId: i15.id, amount: 1_000 },
+            { itemId: i18.id, amount: 1_000 },
+          ],
+        },
+      ],
+    });
+    await post(doc);
+
+    const allocations = await prisma.finCashBankTransactionLineItem.findMany({
+      where: { line: { transaction_id: doc } },
+      orderBy: { sequence_no: "asc" },
+    });
+    assert.deepEqual(
+      allocations.map((a) => a.fx_difference.toNumber()),
+      [1_000_000, -2_000_000]
+    );
+    const fx = await prisma.accJournalLine.findMany({
+      where: { journal: { source_doc_id: doc }, account_id: fxAccount },
+    });
+    assert.deepEqual(
+      fx.map((l) => [l.debit_amount.toNumber(), l.kredit_amount.toNumber()]).sort(),
+      [
+        [0, 1_000_000],
+        [2_000_000, 0],
+      ]
+    );
+  });
+
+  test("items are chosen once per line, and never over what they hold", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const cashBank = await makeCashBank({ opening: 10_000_000 });
+    const advance = await makeBudget({ categoryLabel: "Piutang", partnerId: partner, amount: 400_000 });
+    await post(
+      await makeDraft({
+        transaction_type: "Out" as const,
+        cashBankId: cashBank,
+        lines: [{ budgetId: advance, amount: 400_000, outstanding: 400_000 }],
+      })
+    );
+    const item = await openItem(await bookKey("Piutang"), partner, currency);
+    const header = {
+      transaction_type: "In" as const,
+      company_id: induk,
+      cash_bank_id: cashBank,
+      currency_id: currency,
+    };
+    const first = await makeBudget({ categoryLabel: "Piutang", type: "In", partnerId: partner, amount: 400_000 });
+    const second = await makeBudget({ categoryLabel: "Piutang", type: "In", partnerId: partner, amount: 400_000 });
+
+    const twice = await checkLines(header, [
+      {
+        budget_id: first,
+        amount: 0,
+        items: [
+          { item_id: item, amount: 100_000 },
+          { item_id: item, amount: 100_000 },
+        ],
+      },
+    ]);
+    assert.ok(!twice.ok && /sekali/.test(twice.errors._lines), "one item, once per line");
+
+    const across = await checkLines(header, [
+      { budget_id: first, amount: 0, items: [{ item_id: item, amount: 300_000 }] },
+      { budget_id: second, amount: 0, items: [{ item_id: item, amount: 200_000 }] },
+    ]);
+    assert.ok(!across.ok && /melebihi sisa/.test(across.errors._lines), "two lines together may not over-draw it");
+
+    const summed = await checkLines(header, [
+      { budget_id: first, amount: 999, items: [{ item_id: item, amount: 250_000 }] },
+    ]);
+    assert.ok(summed.ok);
+    assert.equal(summed.ok && summed.lines[0].amount, 250_000, "the line is worth its items, not the figure sent");
+  });
+
   test("a partial return keeps the item open at its own kurs", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
     const bankA = await makeCashBank({ currencyId: otherCurrency });
@@ -2598,7 +2829,9 @@ describe("a line lowering a position settles the open item it names", () => {
       currency_id: currency,
     };
     const check = (amount: number, item_id: number | null) =>
-      checkLines(header, [{ budget_id: collection, amount, item_id }]);
+      checkLines(header, [
+        { budget_id: collection, amount, items: item_id ? [{ item_id, amount }] : [] },
+      ]);
 
     const none = await check(100_000, null);
     assert.ok(!none.ok && /Pilih open item/.test(none.errors._lines));
@@ -2608,12 +2841,12 @@ describe("a line lowering a position settles the open item it names", () => {
     assert.ok(!tooMuch.ok && /tidak boleh di bawah nol/.test(tooMuch.errors._lines));
     const exact = await check(400_000, mine);
     assert.ok(exact.ok, "the whole item, to the rupiah, is allowed");
-    assert.equal(exact.ok && exact.lines[0].itemId, mine);
+    assert.deepEqual(exact.ok && exact.lines[0].items, [{ itemId: mine, amount: 400_000 }]);
 
     // A line that raises a position opens its own item and may not name one.
     const advance = await makeBudget({ categoryLabel: "Piutang", partnerId: partner, amount: 100_000 });
     const raising = await checkLines({ ...header, transaction_type: "Out" }, [
-      { budget_id: advance, amount: 100_000, item_id: mine },
+      { budget_id: advance, amount: 100_000, items: [{ item_id: mine, amount: 100_000 }] },
     ]);
     assert.ok(!raising.ok && /membuka item baru/.test(raising.errors._lines));
   });

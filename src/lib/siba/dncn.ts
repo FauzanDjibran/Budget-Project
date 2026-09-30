@@ -11,7 +11,7 @@ import {
   holdPostingPeriod,
   todayDay,
 } from "./fiscal";
-import { originate, relieve, roundBase } from "./fx";
+import { allocateBase, originate, relieve, roundBase } from "./fx";
 import {
   describeJournalLines,
   postJournal,
@@ -605,17 +605,6 @@ class DncnRefused extends Error {
     super("Nota ditolak");
     this.name = "DncnRefused";
   }
-}
-
-/** Splits one base figure across lines in proportion, keeping the total exact. */
-function allocateBase(amounts: number[], total: number, base: number): number[] {
-  let given = 0;
-  return amounts.map((a, i) => {
-    if (i === amounts.length - 1) return roundBase(base - given);
-    const share = roundBase((a * base) / total);
-    given = roundBase(given + share);
-    return share;
-  });
 }
 
 const NOTE_ACCOUNT_KEY: Record<"induk" | "anak", Record<DncnType, SystemDefaultKey>> = {

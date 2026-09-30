@@ -24,7 +24,7 @@ import {
   rateSource,
   settlementRefusal,
 } from "./currency";
-import { drawLayer, fxDifference, relieve, roundBase } from "./fx";
+import { allocateBase, drawLayer, fxDifference, relieve, roundBase } from "./fx";
 import { realizationOf } from "./realization";
 import { nextDocumentNumber } from "./document-number";
 import {
@@ -120,8 +120,17 @@ export type TransactionLineRow = {
   outstanding_amount: number;
   settlement_amount: number;
   budget_status: string;
-  /** The open item the line settles, where it lowers a position. */
-  item: OpenItemOption | null;
+  /** The open items the line settles, where it lowers a position — in order. */
+  items: LineItemRow[];
+};
+
+/** One open item a saved line settles, and what it came to. */
+export type LineItemRow = {
+  item: OpenItemOption;
+  /** In the document's currency. */
+  amount: number;
+  /** Signed as a gain; nil until Post, which is when it is valued. */
+  fxDifference: number;
 };
 
 type TxRecord = {
@@ -210,13 +219,14 @@ export async function transactionLines(
   const lines = await prisma.finCashBankTransactionLine.findMany({
     where: { transaction_id: transactionId },
     orderBy: { sequence_no: "asc" },
+    include: { items: { orderBy: { sequence_no: "asc" } } },
   });
   if (!lines.length) return [];
 
   const [budgets, items] = await Promise.all([
     budgetsByIds(lines.map((l) => l.source_doc_id)),
     subledgerItemsByIds(
-      lines.flatMap((l) => (l.sub_ledger_balance_id ? [l.sub_ledger_balance_id] : []))
+      lines.flatMap((l) => l.items.map((a) => a.sub_ledger_balance_id))
     ),
   ]);
   const byId = new Map(budgets.map((b) => [b.id, b]));
@@ -240,9 +250,18 @@ export async function transactionLines(
         outstanding_amount: l.outstanding_amount.toNumber(),
         settlement_amount: l.settlement_amount.toNumber(),
         budget_status: b.status,
-        item: l.sub_ledger_balance_id
-          ? itemOf.get(l.sub_ledger_balance_id) ?? null
-          : null,
+        items: l.items.flatMap((a) => {
+          const item = itemOf.get(a.sub_ledger_balance_id);
+          return item
+            ? [
+                {
+                  item,
+                  amount: a.amount.toNumber(),
+                  fxDifference: a.fx_difference.toNumber(),
+                },
+              ]
+            : [];
+        }),
       },
     ];
   });
@@ -1001,10 +1020,14 @@ export async function checkHeader(
 
 export type LineInput = {
   budget_id: number;
+  /** Ignored on a line lowering a position: there it is the sum of its items. */
   amount: number;
-  /** The open item a lowering line settles. */
-  item_id?: number | null;
+  /** The open items a lowering line settles, each for the amount the user chose. */
+  items?: { item_id: number; amount: number }[];
 };
+
+/** One chosen open item on a checked line. */
+export type CheckedItem = { itemId: number; amount: number };
 
 export type LineCheck =
   | {
@@ -1013,7 +1036,7 @@ export type LineCheck =
         budgetId: number;
         amount: number;
         outstanding: number;
-        itemId: number | null;
+        items: CheckedItem[];
       }[];
       total: number;
     }
@@ -1035,7 +1058,13 @@ export async function checkLines(
   lines: LineInput[],
   options: { excludeTransactionId?: number } = {}
 ): Promise<LineCheck> {
-  const wanted = lines.filter((l) => l.amount > 0);
+  // A line lowering a position is worth what its chosen items add up to;
+  // whatever amount came with it is not trusted.
+  const amountOf = (l: LineInput) =>
+    l.items?.length
+      ? Math.round(l.items.reduce((t, it) => t + (it.amount > 0 ? it.amount : 0), 0) * 100) / 100
+      : l.amount;
+  const wanted = lines.filter((l) => amountOf(l) > 0);
   if (!wanted.length) {
     return {
       ok: false,
@@ -1065,7 +1094,7 @@ export async function checkLines(
     budgetId: number;
     amount: number;
     outstanding: number;
-    itemId: number | null;
+    items: CheckedItem[];
   }[] = [];
   // What each open item still holds, drawn down line by line: two lines may
   // settle one item, and together they may not take it below nothing.
@@ -1083,9 +1112,10 @@ export async function checkLines(
       };
     }
 
-    const itemId = l.item_id ?? null;
+    const chosen = l.items ?? [];
+    const checked: CheckedItem[] = [];
     if (!budget.lowers) {
-      if (itemId) {
+      if (chosen.length) {
         return {
           ok: false,
           errors: {
@@ -1096,49 +1126,71 @@ export async function checkLines(
         };
       }
     } else {
-      if (!itemId) {
+      if (!chosen.length) {
         return {
           ok: false,
           errors: {
             _lines:
-              `Pilih open item yang diselesaikan ${budget.budget_no}. Setiap ` +
-              "realisasi yang menurunkan posisi menunjuk satu open item.",
+              `Pilih open item yang diselesaikan ${budget.budget_no}, dan nominal ` +
+              "untuk setiap item. Realisasi yang menurunkan posisi menunjuk open item-nya.",
           },
         };
       }
-      // The pool offers only this line's own open items, so an id outside it
-      // is another subject's item, a cleared one, or one that does not exist.
-      const offered = budget.items.find((i) => i.id === itemId);
-      if (!offered) {
-        return {
-          ok: false,
-          errors: {
-            _lines:
-              `Open item pada ${budget.budget_no} bukan milik Partner, buku, dan ` +
-              "currency Budget ini, atau sudah selesai.",
-          },
-        };
+      const once = new Set<number>();
+      for (const c of chosen) {
+        if (once.has(c.item_id)) {
+          return {
+            ok: false,
+            errors: {
+              _lines: `Satu open item hanya boleh dipilih sekali pada ${budget.budget_no}.`,
+            },
+          };
+        }
+        once.add(c.item_id);
+        // The pool offers only this line's own open items, so an id outside
+        // it is another subject's item, a cleared one, or one that does not
+        // exist.
+        const offered = budget.items.find((i) => i.id === c.item_id);
+        if (!offered) {
+          return {
+            ok: false,
+            errors: {
+              _lines:
+                `Open item pada ${budget.budget_no} bukan milik Partner, buku, dan ` +
+                "currency Budget ini, atau sudah selesai.",
+            },
+          };
+        }
+        if (!(c.amount > 0)) {
+          return {
+            ok: false,
+            errors: {
+              _lines: `Nominal untuk ${offered.itemNo} pada ${budget.budget_no} harus lebih dari nol.`,
+            },
+          };
+        }
+        const left = (itemLeft.get(c.item_id) ?? offered.remaining) - c.amount;
+        if (Math.round(left * 100) < 0) {
+          return {
+            ok: false,
+            errors: {
+              _lines:
+                `Nominal untuk ${offered.itemNo} pada ${budget.budget_no} melebihi ` +
+                "sisa open item itu. Posisi buku subjek tidak boleh di bawah nol — " +
+                "kurangi nominalnya.",
+            },
+          };
+        }
+        itemLeft.set(c.item_id, left);
+        checked.push({ itemId: c.item_id, amount: c.amount });
       }
-      const left = (itemLeft.get(itemId) ?? offered.remaining) - l.amount;
-      if (Math.round(left * 100) < 0) {
-        return {
-          ok: false,
-          errors: {
-            _lines:
-              `Realisasi ${budget.budget_no} melebihi sisa open item ` +
-              `${offered.itemNo}. Posisi buku subjek tidak boleh di bawah nol — ` +
-              "kurangi nominalnya atau pilih item lain.",
-          },
-        };
-      }
-      itemLeft.set(itemId, left);
     }
 
     resolved.push({
       budgetId: budget.id,
-      amount: l.amount,
+      amount: amountOf(l),
       outstanding: budget.outstanding,
-      itemId: budget.lowers ? itemId : null,
+      items: checked,
     });
   }
 
@@ -1447,13 +1499,32 @@ export type PostingLine = {
   transactionBase: number;
   /** What the obligation released for this line, in base. */
   settlementBase: number;
-  /** `settlementBase − transactionBase`, signed. Zero writes no journal line. */
+  /**
+   * Signed as a gain. On a line settling items, the sum of theirs — read, not
+   * journaled; each item's difference is its own journal line.
+   */
   fxDifference: number;
   counterAccountId: number;
   /** The subject book this line writes into, where its category keeps one. */
   book: SubledgerDef | null;
-  /** The open item a lowering line settles; null where the line raises. */
-  itemId: number | null;
+  /** The items a lowering line settles, in the user's order; empty where it raises. */
+  items: PostingItem[];
+};
+
+/** One open item a line settles, valued. */
+export type PostingItem = {
+  /** `fin_cash_bank_transaction_line_item.id`. */
+  allocationId: number;
+  itemId: number;
+  itemNo: string;
+  /** In the document's currency. */
+  amount: number;
+  /** What the item released, at its own kurs. */
+  settlementBase: number;
+  /** This item's share of what the line's cash cost. */
+  transactionBase: number;
+  /** Signed as a gain: positive on the credit side, negative on the debit side. */
+  fxDifference: number;
 };
 
 export type PostingPlan = {
@@ -1497,7 +1568,7 @@ async function planPosting(
       id: number;
       source_doc_id: number;
       settlement_amount: { toNumber(): number };
-      sub_ledger_balance_id: number | null;
+      items: { id: number; sub_ledger_balance_id: number; amount: { toNumber(): number } }[];
     }[];
   },
   budgets: Map<
@@ -1533,51 +1604,95 @@ async function planPosting(
     const book = catalogue && budget.partner_id != null ? catalogue : null;
 
     // Raising a position is the origin of its value, so both sides come from
-    // the cash and no difference can arise. Lowering one releases what the
-    // **chosen item** was raised at — never an average of the position — and
-    // the gap to what the cash cost is this line's FX difference.
+    // the cash and no difference can arise. Lowering one settles the **items
+    // the user chose, for the amounts the user chose** — each released at the
+    // kurs it was raised at, never an average — and what the line's cash cost
+    // is split across them in proportion (`allocateBase`, the last item taking
+    // the rounding so the shares add up to what left the bank). Each item's gap
+    // is its own FX difference, signed as a gain from the line's direction.
     let settlementBase = cash.base;
-    let itemId: number | null = null;
+    let fx = 0;
+    const settled: PostingItem[] = [];
+    const cents = (n: number) => Math.round(n * 100);
     if (book && subledgerMovement(book, direction, amount) < 0) {
-      itemId = line.sub_ledger_balance_id ?? null;
-      const item: SubledgerItem | null = itemId ? await subledgerItem(itemId) : null;
-      if (
-        !item ||
-        item.book !== book.key ||
-        item.partnerId !== budget.partner_id ||
-        item.currencyId !== doc.currency_id
-      ) {
+      if (!line.items.length) {
         return {
           ok: false,
           errors: {
             _form:
-              `${budget.budget_no} belum menunjuk open item yang cocok. Ubah ` +
-              "dokumen dan pilih open item yang diselesaikan.",
+              `${budget.budget_no} belum menunjuk open item yang diselesaikan. Ubah ` +
+              "dokumen dan pilih open item-nya.",
           },
         };
       }
-      const held = items.get(item.id) ?? {
-        foreign: item.remaining,
-        base: item.baseRemaining,
-      };
-      const cents = (n: number) => Math.round(n * 100);
-      if (item.status !== "Open" || cents(amount) > cents(held.foreign)) {
+      const allocated = line.items.map((a) => a.amount.toNumber());
+      if (cents(allocated.reduce((t, a) => t + a, 0)) !== cents(amount)) {
         return {
           ok: false,
           errors: {
             _form:
-              `Open item ${item.itemNo} tinggal ${held.foreign}, tidak cukup untuk ` +
-              `${budget.budget_no}. Kemungkinan sudah diselesaikan dokumen lain — ` +
-              "ubah dokumen dan pilih item lain.",
+              `Nominal ${budget.budget_no} tidak sama dengan jumlah open item yang ` +
+              "diselesaikannya. Ubah dokumen dan periksa nominal per item.",
           },
         };
       }
-      const relief = relieve(
-        held,
-        cents(amount) === cents(held.foreign) ? held.foreign : amount
-      );
-      settlementBase = relief.base;
-      items.set(item.id, relief.remaining);
+      const cashShares = allocateBase(allocated, amount, cash.base);
+      settlementBase = 0;
+      for (const [k, allocation] of line.items.entries()) {
+        const share = allocated[k];
+        const item: SubledgerItem | null = await subledgerItem(
+          allocation.sub_ledger_balance_id
+        );
+        if (
+          !item ||
+          item.book !== book.key ||
+          item.partnerId !== budget.partner_id ||
+          item.currencyId !== doc.currency_id
+        ) {
+          return {
+            ok: false,
+            errors: {
+              _form:
+                `${budget.budget_no} menunjuk open item yang bukan milik Partner, ` +
+                "buku, dan currency-nya. Ubah dokumen dan pilih ulang.",
+            },
+          };
+        }
+        const held = items.get(item.id) ?? {
+          foreign: item.remaining,
+          base: item.baseRemaining,
+        };
+        if (item.status !== "Open" || cents(share) > cents(held.foreign)) {
+          return {
+            ok: false,
+            errors: {
+              _form:
+                `Open item ${item.itemNo} tinggal ${held.foreign}, tidak cukup untuk ` +
+                `${budget.budget_no}. Kemungkinan sudah diselesaikan dokumen lain — ` +
+                "ubah dokumen dan periksa nominalnya.",
+            },
+          };
+        }
+        const relief = relieve(
+          held,
+          cents(share) === cents(held.foreign) ? held.foreign : share
+        );
+        items.set(item.id, relief.remaining);
+        const itemFx =
+          (direction === "In" ? -1 : 1) *
+          fxDifference(relief.base, cashShares[k]).amount;
+        settled.push({
+          allocationId: allocation.id,
+          itemId: item.id,
+          itemNo: item.itemNo,
+          amount: share,
+          settlementBase: relief.base,
+          transactionBase: cashShares[k],
+          fxDifference: itemFx,
+        });
+        settlementBase = roundBase(settlementBase + relief.base);
+        fx = roundBase(fx + itemFx);
+      }
     }
 
     lines.push({
@@ -1594,23 +1709,26 @@ async function planPosting(
       // (released − cost) reads that way when money leaves; when it arrives
       // the same residual is a loss — a receivable carried at 15.000 and
       // collected at 13.000 gave up more than the cash brought in — so a
-      // receipt turns it over. Without this every foreign receipt settling an
-      // item at another kurs wrote the difference on the wrong side and the
-      // journal refused to balance.
-      fxDifference:
-        (direction === "In" ? -1 : 1) *
-        fxDifference(settlementBase, cash.base).amount,
+      // receipt turns it over. On a line settling items it is the sum of
+      // theirs, for reading; each item's is journaled on its own.
+      fxDifference: fx,
       counterAccountId: mapped.accounts.get(budget.id)!,
       book,
-      itemId,
+      items: settled,
     });
   }
 
   // An FX difference has to land somewhere named. The account is only looked
   // up when a difference actually arises, so ordinary rupiah work is never
   // blocked by a setting it does not use.
+  // Asked of every item, not of the line total: a gain on one item and a loss
+  // on another can sum to nil on the line and still be two journal lines.
   let fxAccountId: number | null = null;
-  if (lines.some((l) => l.fxDifference !== 0)) {
+  if (
+    lines.some(
+      (l) => l.fxDifference !== 0 || l.items.some((it) => it.fxDifference !== 0)
+    )
+  ) {
     const settings = await systemDefaults();
     fxAccountId = refValueOf(
       settings,
@@ -1707,20 +1825,30 @@ async function journalEntries(
       description: l.description,
     });
 
-    // This line's residual, and only when it has one. Its side is the
-    // balancing side, never chosen: a gain sits on the credit side because the
-    // obligation gave up more than the currency cost, and a loss on the debit
-    // side for the mirror reason.
-    if (l.fxDifference !== 0 && plan.fxAccountId) {
-      const magnitude = Math.abs(l.fxDifference);
-      const gain = l.fxDifference > 0;
+    // The residuals, and only where there is one. A line settling open items
+    // has one per item — never netted, so an item settled at a gain and one at
+    // a loss stay a credit and a debit (IAS 21 / PSAK 10 recognise it per
+    // monetary item settled). A line raising a position has none: both sides
+    // came from the same cash. Each side is the balancing side, never chosen:
+    // a gain on the credit side, a loss on the debit side, whichever way the
+    // money moved.
+    const residuals = l.items.length
+      ? l.items.map((it) => ({
+          amount: it.fxDifference,
+          description: `Selisih kurs — ${l.description} · ${it.itemNo}`,
+        }))
+      : [{ amount: l.fxDifference, description: `Selisih kurs — ${l.description}` }];
+    for (const r of residuals) {
+      if (r.amount === 0 || !plan.fxAccountId) continue;
+      const magnitude = Math.abs(r.amount);
+      const gain = r.amount > 0;
       lines.push({
         accountId: plan.fxAccountId,
         currencyId: baseCurrency,
         rate: 1,
         debit: gain ? 0 : magnitude,
         credit: gain ? magnitude : 0,
-        description: `Selisih kurs — ${l.description}`,
+        description: r.description,
       });
     }
   }
@@ -1788,7 +1916,7 @@ export async function applyPosting(
   const doc = await prisma.finCashBankTransaction.findUnique({
     where: { id: transactionId },
     include: {
-      lines: true,
+      lines: { include: { items: { orderBy: { sequence_no: "asc" } } } },
       currency: { select: { currency_label: true } },
       cash_bank: { select: { currency: { select: { currency_label: true } } } },
     },
@@ -1886,7 +2014,7 @@ export async function applyPosting(
     const held = [
       ...new Set(
         plan.lines
-          .filter((l) => l.itemId && l.book)
+          .filter((l) => l.items.length && l.book)
           .map((l) => `${l.book!.key}|${l.partnerId}`)
       ),
     ].sort();
@@ -1962,28 +2090,43 @@ export async function applyPosting(
       // one — one entry per Budget, never summed per Partner, so a Partner
       // settling six plans shows six movements. Written straight from the
       // document like the Cash Bank Book, never derived from the journal.
+      //
+      // A line lowering a position writes one entry per item it settles —
+      // an entry names exactly one item — each at that item's own rate and
+      // reading the Budget's description, so the book still traces every
+      // movement to the plan it settled. A raising line writes one entry,
+      // which opens its item.
       if (line.book) {
-        await recordSubledgerEntry(tx, {
-          book: line.book,
-          partnerId: line.partnerId!,
-          currencyId: doc.currency_id,
-          date,
-          type: "Transaction",
-          direction,
-          amount: line.amount,
-          // **This book's own rate**, not the cash side's. A relief releases
-          // what the position was carried at; the gap between the two is the
-          // line's FX difference, and it lives in the journal.
-          rate: line.amount ? line.settlementBase / line.amount : plan.rate,
-          baseAmount: line.settlementBase,
-          // Null raises a new open item; an id settles the one chosen, and the
-          // book refuses if it has moved since the plan valued it.
-          itemId: line.itemId,
-          sourceDocTypeId: docTypeId,
-          sourceDocId: doc.id,
-          note: line.description,
-          actorId,
-        });
+        const entries = line.items.length
+          ? line.items.map((it) => ({
+              amount: it.amount,
+              baseAmount: it.settlementBase,
+              itemId: it.itemId as number | null,
+            }))
+          : [{ amount: line.amount, baseAmount: line.settlementBase, itemId: null }];
+        for (const e of entries) {
+          await recordSubledgerEntry(tx, {
+            book: line.book,
+            partnerId: line.partnerId!,
+            currencyId: doc.currency_id,
+            date,
+            type: "Transaction",
+            direction,
+            amount: e.amount,
+            // **This book's own rate**, not the cash side's. A relief releases
+            // what the item was carried at; the gap to what the cash cost is
+            // the item's FX difference, and it lives in the journal.
+            rate: e.amount ? e.baseAmount / e.amount : plan.rate,
+            baseAmount: e.baseAmount,
+            // Null raises a new open item; an id settles the one chosen, and
+            // the book refuses if it has moved since the plan valued it.
+            itemId: e.itemId,
+            sourceDocTypeId: docTypeId,
+            sourceDocId: doc.id,
+            note: line.description,
+            actorId,
+          });
+        }
       }
     }
 
@@ -2030,6 +2173,17 @@ export async function applyPosting(
           updated_by: actorId,
         },
       });
+      for (const it of share.items) {
+        await tx.finCashBankTransactionLineItem.update({
+          where: { id: it.allocationId },
+          data: {
+            settlement_base_amount: it.settlementBase,
+            transaction_base_amount: it.transactionBase,
+            fx_difference: it.fxDifference,
+            updated_by: actorId,
+          },
+        });
+      }
     }
 
     await tx.finCashBankTransaction.update({

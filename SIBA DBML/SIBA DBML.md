@@ -1082,16 +1082,11 @@ table fin_cash_bank_transaction_line {
   transaction_amount          decimal(18,2) [not null]
   transaction_base_amount     decimal(18,2) [not null]
 
-  // This line's own settlement_base_amount − transaction_base_amount. Each
-  // line settles its own open item at that item's own kurs, so each carries
-  // its own difference and its own journal line.
+  // The line's FX result, signed as a gain. On a line settling open items it
+  // is the sum of its items' differences, for reading only — each item's is
+  // journaled on its own line (fin_cash_bank_transaction_line_item), never
+  // netted.
   fx_difference               decimal(18,2) [not null, default: 0]
-
-  // The subject-book open item (sub_ledger_balance.id) a line lowering a
-  // position settles; null where the line raises one (it opens its own item
-  // at Post) or its Budget Category keeps no book. A plain id, not a ref, like
-  // cash_bank_layer_id: the item belongs to the subject-book module.
-  sub_ledger_balance_id       int
 
   created_by                  int [not null]
   updated_by                  int
@@ -1102,6 +1097,45 @@ table fin_cash_bank_transaction_line {
   indexes {
     (transaction_id, sequence_no) [unique]
     (source_doc_type_id, source_doc_id)
+  }
+}
+
+// The open items one Realisasi line settles, and for how much each. A line
+// lowering a subject-book position may settle several items of its Budget's
+// Partner; the user picks each item and states each amount — nothing is
+// distributed by the system — and the line's settlement_amount is their sum.
+// Each item is relieved at its own kurs and has its own FX difference, on a
+// journal line of its own (IAS 21 / PSAK 10: per monetary item settled).
+// Empty for a line that raises a position or whose category keeps no book.
+table fin_cash_bank_transaction_line_item {
+  id                          int [pk, increment, not null]
+
+  line_id                     int [not null, ref : > fin_cash_bank_transaction_line.id]
+  sequence_no                 int [not null]
+  // The item settled (sub_ledger_balance.id). A plain id, not a ref, like
+  // cash_bank_layer_id: the item belongs to the subject-book module.
+  sub_ledger_balance_id       int [not null]
+
+  // Document currency; more than nil (CHECK), never more than the item holds.
+  amount                      decimal(18,2) [not null]
+  // What the item released at its own kurs. Written at Post.
+  settlement_base_amount      decimal(18,2) [not null, default: 0]
+  // This item's share of the line's cash cost; a line's shares add up to its
+  // transaction_base_amount exactly (the last takes the rounding). At Post.
+  transaction_base_amount     decimal(18,2) [not null, default: 0]
+  // Signed as a gain: positive posts to the credit side, negative the debit.
+  fx_difference               decimal(18,2) [not null, default: 0]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (line_id, sub_ledger_balance_id) [unique]
+    (line_id, sequence_no) [unique]
+    sub_ledger_balance_id
   }
 }
 

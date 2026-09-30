@@ -348,3 +348,23 @@ export function settle(input: SettlementInput): Settlement {
     remaining: relief.remaining,
   };
 }
+
+/**
+ * Splits one base figure across parts in proportion to their amounts, keeping
+ * the total exact: every part but the last is rounded on its own, and the last
+ * takes whatever is left. So the parts always add back to the figure that was
+ * actually booked — what left the bank, what a position released — rather than
+ * to a sum of roundings nobody booked.
+ *
+ * A Debit / Credit Note splits its base across its reasons this way, and a
+ * Realisasi line splits what its cash cost across the open items it settles.
+ */
+export function allocateBase(amounts: number[], total: number, base: number): number[] {
+  let given = 0;
+  return amounts.map((a, i) => {
+    if (i === amounts.length - 1) return roundBase(base - given);
+    const share = roundBase((a * base) / total);
+    given = roundBase(given + share);
+    return share;
+  });
+}

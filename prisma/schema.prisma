@@ -1381,33 +1381,72 @@ model FinCashBankTransactionLine {
   /// What the **cash cost**: this line's share of the base value that actually
   /// left the bank, at the layer's rate or the rate the bank converted at.
   transaction_base_amount Decimal @db.Decimal(18, 2)
-  /// `settlement_base_amount − transaction_base_amount`. Positive is a gain,
-  /// negative a loss, zero writes no journal line.
-  ///
-  /// Per line, and journaled per line: a realization settles Budgets of
-  /// several categories and Partners, each at its own position's carrying
-  /// rate, so each line has its own difference and none is summed.
+  /// The line's FX result, signed as a gain: positive is a gain, negative a
+  /// loss. On a line settling open items it is the **sum of its items'**
+  /// differences, kept for reading only — each item's is journaled on a line of
+  /// its own (`FinCashBankTransactionLineItem.fx_difference`), never netted.
   fx_difference           Decimal @default(0) @db.Decimal(18, 2)
-
-  /// The subject-book open item this line settles (`sub_ledger_balance.id`),
-  /// where the line lowers a position. The obligation releases at **this
-  /// item's** rate, so the choice decides the line's FX difference. Null where
-  /// the line raises a position (it opens a new item at Post) or its Budget
-  /// Category keeps no book. A plain id rather than a relation, like
-  /// `cash_bank_layer_id`: the item belongs to the subject-book module.
-  sub_ledger_balance_id Int?
 
   created_by Int
   updated_by Int?
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  transaction     FinCashBankTransaction @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
-  source_doc_type SysDocType             @relation(fields: [source_doc_type_id], references: [id])
+  transaction     FinCashBankTransaction         @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  source_doc_type SysDocType                     @relation(fields: [source_doc_type_id], references: [id])
+  /// The open items a line lowering a subject-book position settles, each for
+  /// an amount the user chose. Empty where the line raises a position or its
+  /// Budget Category keeps no book.
+  items           FinCashBankTransactionLineItem[]
 
   @@unique([transaction_id, sequence_no])
   @@index([source_doc_type_id, source_doc_id])
   @@map("fin_cash_bank_transaction_line")
+}
+
+/// One open item a Realisasi line settles, and for how much.
+///
+/// A line lowering a position — a Titipan returned, a Hutang paid, a Piutang
+/// collected — may settle several items of its Budget's Partner at once. The
+/// user picks each item and states each amount; nothing is distributed by the
+/// system. The line's `settlement_amount` is the sum of its items.
+///
+/// Each item is relieved at **its own** kurs and has its own FX difference,
+/// journaled on its own line: an item raised at 15.000 and one at 13.000,
+/// settled with dollars costing 14.000, are a gain and a loss, and netting
+/// them would hide both (IAS 21 / PSAK 10 recognise the difference per
+/// monetary item settled, and SAP and Odoo keep it per cleared item).
+model FinCashBankTransactionLineItem {
+  id          Int @id @default(autoincrement())
+  line_id     Int
+  sequence_no Int
+  /// The item settled (`sub_ledger_balance.id`). A plain id rather than a
+  /// relation, like `cash_bank_layer_id`: the item belongs to the subject-book
+  /// module.
+  sub_ledger_balance_id Int
+
+  /// In the document's currency; more than nil, never more than the item holds.
+  amount                  Decimal @db.Decimal(18, 2)
+  /// What the item released, at its own kurs. Written at Post.
+  settlement_base_amount  Decimal @default(0) @db.Decimal(18, 2)
+  /// This item's share of what the line's cash cost. Written at Post; the
+  /// shares of a line add up to the line's `transaction_base_amount` exactly.
+  transaction_base_amount Decimal @default(0) @db.Decimal(18, 2)
+  /// Signed as a gain. Positive posts to the credit side, negative to the
+  /// debit side, zero writes no journal line.
+  fx_difference           Decimal @default(0) @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  line FinCashBankTransactionLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
+
+  @@unique([line_id, sub_ledger_balance_id])
+  @@unique([line_id, sequence_no])
+  @@index([sub_ledger_balance_id])
+  @@map("fin_cash_bank_transaction_line_item")
 }
 
 /// The intercompany bridge: what the anak needs, and which resource of the
