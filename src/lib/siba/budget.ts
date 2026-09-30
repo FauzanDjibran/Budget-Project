@@ -13,7 +13,10 @@ import {
 import { loadClassification } from "./classification-data";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import {
+  BUDGET_TRANSITIONS,
   NOT_APPROVED,
+  transitionAllowed,
+  type BudgetAction,
   type BudgetStatus,
 } from "./budget-workflow";
 
@@ -366,9 +369,9 @@ export async function budgetMappings(): Promise<BudgetMapping[]> {
 // ------------------------------------------------------------- enforcement
 
 /**
- * The classification an approver assigns, checked against every rule at once.
+ * The classification a classifier assigns, checked against every rule at once.
  *
- * The approval dialog offers only valid combinations, but a Server Action is
+ * The classification dialog offers only valid combinations, but a Server Action is
  * reachable directly with any pair of ids — this is what actually enforces the
  * chain Budget Category -> allowed Partner Categories -> Partner.
  */
@@ -379,7 +382,7 @@ export async function checkClassification(
 ): Promise<Record<string, string>> {
   if (!budgetCategoryId) {
     return {
-      category_id: "Budget Category wajib ditetapkan sebelum menyetujui.",
+      category_id: "Budget Category wajib ditetapkan.",
     };
   }
 
@@ -772,3 +775,287 @@ export async function approvedCommitments(
       .filter((r) => r.amount > 0)
   );
 }
+
+// ------------------------------------------------------------ bulk writes
+
+/**
+ * The answer to a bulk write: every row moved, or none did and the refusal
+ * names the Budget that stopped it. All-or-nothing is the user's rule — a
+ * batch that half-lands leaves the operator reconciling the list by eye.
+ */
+export type BulkResult =
+  | { ok: true; count: number }
+  | { ok: false; errors: Record<string, string> };
+
+/** "BGT-0003 – Sewa gudang: …" — a refusal says which row it is about. */
+const naming = (b: { budget_no: string; description: string }, why: string) =>
+  `${b.budget_no} – ${b.description}: ${why}`;
+
+class StaleBatch extends Error {}
+
+const STALE =
+  "Sebagian Budget baru saja diubah pengguna lain. Muat ulang lalu coba lagi.";
+
+/**
+ * Moves every listed Budget through one lifecycle transition, or none.
+ *
+ * `classify` is not accepted here — it writes data as well as a status, and
+ * `applyClassification` is its one path. The permission is the caller's to
+ * have checked; this is the rule the Server Action delegates to, so a test
+ * can drive it without a session.
+ */
+export async function applyBudgetTransition(
+  ids: number[],
+  action: Exclude<BudgetAction, "classify">,
+  actorId: number
+): Promise<BulkResult> {
+  const transition = BUDGET_TRANSITIONS[action];
+  if (!transition || (action as string) === "classify") {
+    return { ok: false, errors: { _form: "Aksi tidak dikenal." } };
+  }
+  const unique = [...new Set(ids)];
+  if (!unique.length) {
+    return { ok: false, errors: { _form: "Pilih minimal satu Budget." } };
+  }
+
+  const budgets = await prisma.budBudget.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, budget_no: true, description: true, status: true },
+    orderBy: { budget_no: "asc" },
+  });
+  if (budgets.length !== unique.length) {
+    return { ok: false, errors: { _form: "Sebagian Budget tidak ditemukan." } };
+  }
+  const blocked = budgets.find(
+    (b) => !transitionAllowed(action, b.status as BudgetStatus)
+  );
+  if (blocked) {
+    return {
+      ok: false,
+      errors: {
+        _form: naming(
+          blocked,
+          `berstatus ${blocked.status} dan tidak dapat di-${transition.label.toLowerCase()}.`
+        ),
+      },
+    };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // The status guard is repeated in the write, so a row another user moved
+      // since it was read makes the count come up short and the batch roll back.
+      const moved = await tx.budBudget.updateMany({
+        where: { id: { in: unique }, status: { in: transition.from } },
+        data: { status: transition.to, updated_by: actorId },
+      });
+      if (moved.count !== unique.length) throw new StaleBatch();
+      await tx.auditLog.createMany({
+        data: unique.map((id) => ({
+          entity_key: "bud_budget",
+          row_id: id,
+          action: "UPDATE" as const,
+          event: action,
+          by: actorId,
+        })),
+      });
+    });
+  } catch (error) {
+    if (error instanceof StaleBatch) return { ok: false, errors: { _form: STALE } };
+    throw error;
+  }
+  return { ok: true, count: unique.length };
+}
+
+/**
+ * Classifies every listed Budget with one Budget Category and Partner, or
+ * none of them, and opens each for realization.
+ *
+ * Each Budget is checked on its own through `checkClassification` — the
+ * direction and the Company are the Budget's, so one pair can be right for
+ * one row and wrong for the next, and the refusal names that row.
+ */
+export async function applyClassification(
+  ids: number[],
+  categoryId: number | null,
+  partnerId: number | null,
+  actorId: number
+): Promise<BulkResult> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) {
+    return { ok: false, errors: { _form: "Pilih minimal satu Budget." } };
+  }
+
+  const budgets = await prisma.budBudget.findMany({
+    where: { id: { in: unique } },
+    select: {
+      id: true,
+      budget_no: true,
+      description: true,
+      status: true,
+      company_id: true,
+      budget_type: true,
+    },
+    orderBy: { budget_no: "asc" },
+  });
+  if (budgets.length !== unique.length) {
+    return { ok: false, errors: { _form: "Sebagian Budget tidak ditemukan." } };
+  }
+  const blocked = budgets.find(
+    (b) => !transitionAllowed("classify", b.status as BudgetStatus)
+  );
+  if (blocked) {
+    return {
+      ok: false,
+      errors: {
+        _form: naming(
+          blocked,
+          "hanya Budget yang sudah disetujui dan belum diklasifikasi yang dapat diklasifikasikan."
+        ),
+      },
+    };
+  }
+
+  for (const b of budgets) {
+    const problems = await checkClassification(b, categoryId, partnerId);
+    if (Object.keys(problems).length) {
+      // With one row the problem is the field's; with several it is named
+      // against the row whose direction or Company the pair does not fit.
+      if (budgets.length === 1) return { ok: false, errors: problems };
+      const [field, why] = Object.entries(problems)[0];
+      return { ok: false, errors: { [field]: naming(b, why) } };
+    }
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const moved = await tx.budBudget.updateMany({
+        where: { id: { in: unique }, status: { in: BUDGET_TRANSITIONS.classify.from } },
+        data: {
+          category_id: categoryId,
+          // A category that takes no subject stores null, never a stale partner.
+          partner_id: partnerId,
+          status: BUDGET_TRANSITIONS.classify.to,
+          updated_by: actorId,
+        },
+      });
+      if (moved.count !== unique.length) throw new StaleBatch();
+      await tx.auditLog.createMany({
+        data: unique.map((id) => ({
+          entity_key: "bud_budget",
+          row_id: id,
+          action: "UPDATE" as const,
+          event: "classify",
+          by: actorId,
+        })),
+      });
+    });
+  } catch (error) {
+    if (error instanceof StaleBatch) return { ok: false, errors: { _form: STALE } };
+    throw error;
+  }
+  return { ok: true, count: unique.length };
+}
+
+// ------------------------------------------------------- classification queue
+
+/**
+ * How a Budget like this one was classified before — shown to the classifier
+ * beside the row, and never prefilled: which Category a plan belongs to is a
+ * decision, and a suggestion that fills itself in is a decision nobody took.
+ */
+export type ClassificationHint = {
+  budgetNo: string;
+  categoryId: number;
+  partnerId: number | null;
+};
+
+const words = (text: string) =>
+  new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2)
+  );
+
+/**
+ * Budgets approved and waiting for a Category — what Klasifikasi Budget shows,
+ * with a hint per row from the most similar Budget already classified in the
+ * same Company and direction.
+ */
+export async function classificationQueue(
+  companyIds: number[]
+): Promise<{ rows: BudgetRow[]; hints: Record<number, ClassificationHint> }> {
+  if (!companyIds.length) return { rows: [], hints: {} };
+  const queued = await prisma.budBudget.findMany({
+    where: { status: "Approved", company_id: { in: companyIds } },
+    orderBy: [{ budget_date: "asc" }, { id: "asc" }],
+  });
+  const rows = queued.map(toRow);
+  if (!rows.length) return { rows, hints: {} };
+
+  const history = await prisma.budBudget.findMany({
+    where: {
+      status: { in: ["Open", "Closed"] },
+      category_id: { not: null },
+      company_id: { in: [...new Set(rows.map((r) => r.company_id))] },
+    },
+    select: {
+      budget_no: true,
+      company_id: true,
+      budget_type: true,
+      description: true,
+      category_id: true,
+      partner_id: true,
+    },
+    orderBy: { updated_at: "desc" },
+    take: 1000,
+  });
+  const past = history.map((h) => ({ ...h, words: words(h.description) }));
+
+  const hints: Record<number, ClassificationHint> = {};
+  for (const r of rows) {
+    const mine = words(r.description);
+    if (!mine.size) continue;
+    let best: (typeof past)[number] | null = null;
+    let bestScore = 0;
+    for (const h of past) {
+      if (h.company_id !== r.company_id || h.budget_type !== r.budget_type) continue;
+      let shared = 0;
+      for (const w of mine) if (h.words.has(w)) shared++;
+      const score = shared / (mine.size + h.words.size - shared);
+      // Newest first, so a tie keeps the most recent classification.
+      if (score > bestScore) {
+        best = h;
+        bestScore = score;
+      }
+    }
+    if (best && bestScore >= 0.5) {
+      hints[r.id] = {
+        budgetNo: best.budget_no,
+        categoryId: best.category_id!,
+        partnerId: best.partner_id,
+      };
+    }
+  }
+  return { rows, hints };
+}
+
+/**
+ * Budgets approved and not yet classified, as the dashboard's funnel states
+ * them — the whole plan, since nothing can be realized against it yet.
+ */
+export async function awaitingClassificationCommitments(
+  companyIds: number[]
+): Promise<CommitmentQueue> {
+  if (!companyIds.length) return emptyQueue();
+  const rows = await prisma.budBudget.findMany({
+    where: { status: "Approved", company_id: { in: companyIds } },
+    include: {
+      company: { select: { company_label: true } },
+      currency: { select: { currency_label: true } },
+    },
+  });
+  return toQueue(rows.map((b) => toCommitment(b, b.budget_amount.toNumber())));
+}
+

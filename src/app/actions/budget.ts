@@ -8,11 +8,14 @@ import { isAccessDenied } from "@/lib/siba/auth-errors";
 import {
   BUDGET_TRANSITIONS,
   budgetIsEditable,
-  transitionAllowed,
   type BudgetAction,
   type BudgetStatus,
 } from "@/lib/siba/budget-workflow";
-import { checkClassification, nextBudgetNo } from "@/lib/siba/budget";
+import {
+  applyBudgetTransition,
+  applyClassification,
+  nextBudgetNo,
+} from "@/lib/siba/budget";
 
 /**
  * Budget writes.
@@ -24,13 +27,18 @@ import { checkClassification, nextBudgetNo } from "@/lib/siba/budget";
  *     transition's permission. The row menu reads the same table to decide what
  *     to show, but an action is reachable directly with any id and any status,
  *     so the check below is the one that counts.
- *  2. **The classification.** Approval assigns Budget Category and Partner, and
- *     `checkClassification` re-checks the whole chain — direction, whether the
- *     category takes a subject, and whether the partner is one it admits.
+ *  2. **The classification.** Klasifikasi Budget assigns Budget Category and
+ *     Partner, and `checkClassification` re-checks the whole chain for every
+ *     Budget — direction, whether the category takes a subject, and whether
+ *     the partner is one it admits.
  *
- * Editing is refused outright once a budget leaves Draft or Rejected: concept
- * doc §6.4 makes an approved budget immutable, and a budget awaiting approval
- * must not change under the approver.
+ * Both run on a selection and are all-or-nothing: the rules live in
+ * `budget.ts` (`applyBudgetTransition`, `applyClassification`), where a test
+ * can reach them without a session.
+ *
+ * Editing is refused outright once a budget leaves Draft: concept doc §6.4
+ * makes an approved budget immutable, a budget awaiting approval must not
+ * change under the approver, and a rejection is final.
  */
 
 export type BudgetValues = {
@@ -174,8 +182,8 @@ export async function updateBudget(
       ok: false,
       errors: {
         _form:
-          "Budget hanya dapat diubah selama berstatus Draft atau Ditolak. " +
-          "Budget yang sudah diajukan atau disetujui bersifat final.",
+          "Budget hanya dapat diubah selama berstatus Draft. Budget yang " +
+          "sudah diajukan, disetujui atau ditolak bersifat final.",
       },
     };
   }
@@ -201,70 +209,67 @@ export async function updateBudget(
 }
 
 export type TransitionResult =
-  | { ok: true; status: BudgetStatus; message: string }
+  | { ok: true; status: BudgetStatus; count: number; message: string }
   | { ok: false; errors: Record<string, string> };
 
 /**
- * Runs one lifecycle transition.
+ * Runs one lifecycle transition on every selected Budget, or on none.
  *
- * `classification` applies to `approve` only, which is the single transition
- * that also writes data: the Budget Category and Partner an approver assigns.
+ * A single Budget is a selection of one — the detail header and the row menu
+ * call this exactly as the bulk bar does, so there is one path and one answer.
+ * `classify` is refused here: it writes data, and `classifyBudgets` is its path.
  */
-export async function transitionBudget(
-  id: number,
-  action: BudgetAction,
-  classification?: { category_id: string | null; partner_id: string | null }
+export async function transitionBudgets(
+  ids: number[],
+  action: BudgetAction
 ): Promise<TransitionResult> {
   const transition = BUDGET_TRANSITIONS[action];
-  if (!transition) return { ok: false, errors: { _form: "Aksi tidak dikenal." } };
+  if (!transition || action === "classify") {
+    return { ok: false, errors: { _form: "Aksi tidak dikenal." } };
+  }
 
   const g = await authorize(transition.permission);
   if (!g.ok) return g.denial;
 
-  const budget = await prisma.budBudget.findUnique({
-    where: { id },
-    select: {
-      status: true,
-      company_id: true,
-      budget_type: true,
-      budget_no: true,
-      description: true,
-    },
-  });
-  if (!budget) return { ok: false, errors: { _form: "Budget tidak ditemukan." } };
+  const result = await applyBudgetTransition(ids, action, g.actor.user.id);
+  if (!result.ok) return result;
 
-  const status = budget.status as BudgetStatus;
-  if (!transitionAllowed(action, status)) {
-    return {
-      ok: false,
-      errors: {
-        _form: `Budget berstatus ${status} tidak dapat di-${transition.label.toLowerCase()}.`,
-      },
-    };
-  }
-
-  const data: Record<string, unknown> = {
+  revalidateBudget(ids.length === 1 ? ids[0] : undefined);
+  return {
+    ok: true,
     status: transition.to,
-    updated_by: g.actor.user.id,
+    count: result.count,
+    message: transition.done,
   };
+}
 
-  if (action === "approve") {
-    const categoryId = num(classification?.category_id ?? null);
-    const partnerId = num(classification?.partner_id ?? null);
-    const problems = await checkClassification(budget, categoryId, partnerId);
-    if (Object.keys(problems).length) return { ok: false, errors: problems };
-    data.category_id = categoryId;
-    // A category that takes no subject stores null, never a stale partner.
-    data.partner_id = partnerId;
-  }
+/**
+ * Assigns one Budget Category and Partner to every selected Budget, or to
+ * none, and opens each for realization.
+ */
+export async function classifyBudgets(
+  ids: number[],
+  classification: { category_id: string | null; partner_id: string | null }
+): Promise<TransitionResult> {
+  const transition = BUDGET_TRANSITIONS.classify;
+  const g = await authorize(transition.permission);
+  if (!g.ok) return g.denial;
 
-  await prisma.budBudget.update({ where: { id }, data });
-  // The transition key, not a generic edit: this is the row that lets the
-  // history say who approved and who rejected.
-  await audit(id, "UPDATE", action, g.actor.user.id);
-  revalidateBudget(id);
+  const result = await applyClassification(
+    ids,
+    num(classification.category_id),
+    num(classification.partner_id),
+    g.actor.user.id
+  );
+  if (!result.ok) return result;
 
-  return { ok: true, status: transition.to, message: transition.done };
+  revalidateBudget(ids.length === 1 ? ids[0] : undefined);
+  return {
+    ok: true,
+    status: transition.to,
+    count: result.count,
+    message: transition.done,
+  };
 }
 
 /**
@@ -285,9 +290,10 @@ async function audit(
   });
 }
 
-function revalidateBudget(id: number) {
+function revalidateBudget(id?: number) {
   revalidatePath("/budget/budget");
   revalidatePath("/budget/budget/month/[period]", "page");
-  revalidatePath(`/budget/budget/${id}`);
+  revalidatePath("/budget/klasifikasi");
+  if (id != null) revalidatePath(`/budget/budget/${id}`);
   revalidatePath("/dashboard");
 }

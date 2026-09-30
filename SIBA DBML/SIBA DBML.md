@@ -993,6 +993,8 @@ table bud_budget {
 
   budget_type                 enum('In', 'Out') [not null]
 
+  // Null until the Budget is classified in Klasifikasi Budget, which moves it
+  // from Approved to Open. Approval itself classifies nothing.
   category_id                 int [ref : >? sys_budget_category.id]
   partner_id                  int [ref : >? m_partner.id]
 
@@ -1001,7 +1003,10 @@ table bud_budget {
   budget_amount               decimal(18,2) [not null]
   realized_amount             decimal(18,2) [not null, default: 0]
 
-  status                      enum('Draft', 'Cancelled', 'Submitted', 'Rejected', 'Open', 'Closed') [not null, default: 'Draft']
+  // Draft -> Submitted -> Approved (awaiting classification) -> Open
+  // (classified, realizable) -> Closed. Rejected and Cancelled are final:
+  // a rejected plan is replaced by a new Budget, never resubmitted.
+  status                      enum('Draft', 'Cancelled', 'Submitted', 'Rejected', 'Approved', 'Open', 'Closed') [not null, default: 'Draft']
 
   created_by                  int [not null]
   updated_by                  int

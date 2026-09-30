@@ -1,24 +1,30 @@
 /**
  * The Budget lifecycle, written once and read by both sides.
  *
- *   Draft ──submit──> Submitted ──approve──> Open ──> (Closed, in V2)
- *     ^                   │
- *     │                   └──reject──> Rejected ──submit──> Submitted
- *     └── edit ───────────────────────────┘
+ *   Draft ──submit──> Submitted ──approve──> Approved ──classify──> Open ──> Closed
+ *     │                   │                (Klasifikasi Budget)       (by realization)
+ *     │                   └──reject──> Rejected   (final)
+ *     └──cancel──> Cancelled                      (final; also from Submitted)
  *
- *   Draft / Rejected / Submitted ──cancel──> Cancelled  (final)
+ * Approval and classification are two steps done by two people: the approver
+ * decides whether the plan is justified, and the classifier gives it the
+ * Budget Category and Partner its realization will post by. Only a classified
+ * Budget — `Open` — can be realized.
+ *
+ * `Rejected` is final. A plan the approver turned down is replaced by a new
+ * Budget, never edited and resubmitted — the user's rule, so that a
+ * rejection stays a record of what was refused.
  *
  * Every transition names the status it may start from, the status it produces,
- * and the one permission it needs. The row menu reads this table to decide what
- * to offer; the Server Action reads the same table to decide what to allow, so
- * a hidden menu item and a refused action can never disagree.
+ * and the one permission it needs. The list, the detail header and the Server
+ * Action all read this table, so a hidden button and a refused action can
+ * never disagree.
  *
  * Client-safe on purpose — no `server-only`, no database import.
  *
- * Close and Delete are deliberately absent. Closing belongs to realization,
- * which is V2, and the permission catalogue carries neither `BUDGET_CLOSE` nor
- * `BUDGET_DELETE`. `Closed` still exists as a status because seeded data
- * carries it and the list must render it.
+ * Close and Delete are deliberately absent: a Budget closes as a consequence of
+ * realization, and the catalogue carries neither `BUDGET_CLOSE` nor
+ * `BUDGET_DELETE`.
  */
 import type { IconName } from "@/components/icon";
 import type { ActionTone } from "./header-actions";
@@ -29,11 +35,12 @@ export type BudgetStatus =
   | "Draft"
   | "Submitted"
   | "Rejected"
+  | "Approved"
   | "Open"
   | "Closed"
   | "Cancelled";
 
-export type BudgetAction = "submit" | "approve" | "reject" | "cancel";
+export type BudgetAction = "submit" | "approve" | "reject" | "cancel" | "classify";
 
 export type BudgetTransition = {
   label: string;
@@ -55,14 +62,14 @@ export const BUDGET_TRANSITIONS: Record<BudgetAction, BudgetTransition> = {
   submit: {
     label: "Ajukan",
     permission: "BUDGET_SUBMIT",
-    from: ["Draft", "Rejected"],
+    from: ["Draft"],
     to: "Submitted",
     icon: "send",
     tone: "primary",
     title: "Ajukan Budget?",
     body:
       "Budget akan masuk daftar pengajuan dan menunggu persetujuan. Setelah " +
-      "diajukan, isian tidak dapat diubah kecuali ditolak.",
+      "diajukan, isiannya tidak dapat diubah lagi.",
     confirmLabel: "Ya, Ajukan",
     done: "Budget diajukan",
   },
@@ -70,13 +77,13 @@ export const BUDGET_TRANSITIONS: Record<BudgetAction, BudgetTransition> = {
     label: "Setujui",
     permission: "BUDGET_APPROVE",
     from: ["Submitted"],
-    to: "Open",
+    to: "Approved",
     icon: "thumb",
     tone: "primary",
-    title: "Setujui Budget",
+    title: "Setujui Budget?",
     body:
-      "Budget menjadi Open dan siap direalisasikan. Isiannya tidak dapat " +
-      "diubah lagi setelah disetujui.",
+      "Budget masuk Klasifikasi Budget untuk diberi Category dan Partner, " +
+      "lalu siap direalisasikan. Isiannya tidak dapat diubah lagi.",
     confirmLabel: "Ya, Setujui",
     done: "Budget disetujui",
   },
@@ -89,15 +96,15 @@ export const BUDGET_TRANSITIONS: Record<BudgetAction, BudgetTransition> = {
     tone: "danger",
     title: "Tolak Budget?",
     body:
-      "Budget dikembalikan ke pembuat sebagai Ditolak, dan dapat diperbaiki " +
-      "lalu diajukan ulang.",
+      "Status Ditolak bersifat final: budget tidak dapat diubah atau diajukan " +
+      "ulang. Perbaikannya dibuat sebagai Budget baru.",
     confirmLabel: "Ya, Tolak",
     done: "Budget ditolak",
   },
   cancel: {
     label: "Batalkan",
     permission: "BUDGET_CANCEL",
-    from: ["Draft", "Rejected", "Submitted"],
+    from: ["Draft", "Submitted"],
     to: "Cancelled",
     icon: "block",
     tone: "danger",
@@ -107,6 +114,20 @@ export const BUDGET_TRANSITIONS: Record<BudgetAction, BudgetTransition> = {
       "final dan tidak dapat dikembalikan.",
     confirmLabel: "Ya, Batalkan",
     done: "Budget dibatalkan",
+  },
+  classify: {
+    label: "Klasifikasikan",
+    permission: "BUDGET_CLASSIFY",
+    from: ["Approved"],
+    to: "Open",
+    icon: "tags",
+    tone: "primary",
+    title: "Tetapkan Klasifikasi",
+    body:
+      "Budget Category dan Partner ditetapkan, dan budget menjadi Open — siap " +
+      "direalisasikan. Klasifikasi tidak dapat diubah lagi.",
+    confirmLabel: "Ya, Tetapkan",
+    done: "Budget diklasifikasikan",
   },
 };
 
@@ -119,10 +140,11 @@ export function transitionAllowed(
 }
 
 /**
- * A budget is editable only while it is the creator's to change. Approval makes
- * it immutable — concept doc §6.4, "Open membuat Budget immutable".
+ * A budget is editable only while it is the planner's to change. Submitting
+ * freezes it, and a rejection is final (concept doc §6.4, and the user's rule
+ * that a rejected plan is replaced rather than resubmitted).
  */
-export const EDITABLE_STATUSES: BudgetStatus[] = ["Draft", "Rejected"];
+export const EDITABLE_STATUSES: BudgetStatus[] = ["Draft"];
 
 export function budgetIsEditable(status: BudgetStatus): boolean {
   return EDITABLE_STATUSES.includes(status);
@@ -136,6 +158,7 @@ export type BudgetAbilities = {
   approve: boolean;
   reject: boolean;
   cancel: boolean;
+  classify: boolean;
 };
 
 export function budgetAbilities(permissions: Iterable<string>): BudgetAbilities {
@@ -147,6 +170,7 @@ export function budgetAbilities(permissions: Iterable<string>): BudgetAbilities 
     approve: held.has("BUDGET_APPROVE"),
     reject: held.has("BUDGET_REJECT"),
     cancel: held.has("BUDGET_CANCEL"),
+    classify: held.has("BUDGET_CLASSIFY"),
   };
 }
 
@@ -155,8 +179,24 @@ export function availableActions(
   status: BudgetStatus,
   can: BudgetAbilities
 ): BudgetAction[] {
-  const order: BudgetAction[] = ["submit", "approve", "reject", "cancel"];
+  const order: BudgetAction[] = ["submit", "approve", "classify", "reject", "cancel"];
   return order.filter((a) => transitionAllowed(a, status) && can[a]);
+}
+
+/**
+ * What a selection of budgets can be moved by together: the actions every one
+ * of them allows. A bulk action is all-or-nothing, so offering one that some
+ * selected row would refuse would only fail at the server.
+ */
+export function commonActions(
+  statuses: BudgetStatus[],
+  can: BudgetAbilities
+): BudgetAction[] {
+  if (!statuses.length) return [];
+  const [first, ...rest] = statuses;
+  return availableActions(first, can).filter((a) =>
+    rest.every((s) => transitionAllowed(a, s))
+  );
 }
 
 /** Statuses a budget counts as "not yet approved" in the KPI row. */

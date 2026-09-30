@@ -9,41 +9,61 @@ import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { Pager } from "@/components/ui/pager";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { QueueTabs } from "@/components/ui/queue-tabs";
+import { SelectAll, SelectionCount, useSelection } from "@/components/ui/selection";
 import { useToast } from "@/components/ui/toast";
-import { transitionBudget } from "@/app/actions/budget";
-import { formatDate, formatMoney, formatTotals } from "@/lib/format";
+import { transitionBudgets } from "@/app/actions/budget";
+import { formatDate, formatMoney, formatTotals, sumByCurrency } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type {
-  BudgetMapping,
-  BudgetRefs,
-  BudgetRow,
-  BudgetSummary,
-} from "@/lib/siba/budget";
+import type { BudgetRefs, BudgetRow, BudgetSummary } from "@/lib/siba/budget";
 import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import {
   BUDGET_TRANSITIONS,
   BUDGET_TYPE_TEXT,
   availableActions,
   budgetIsEditable,
+  commonActions,
   type BudgetAbilities,
   type BudgetAction,
 } from "@/lib/siba/budget-workflow";
-import { menuButtonClass } from "@/lib/siba/header-actions";
-import { ApproveDialog } from "./approve-dialog";
+import {
+  headerButtonClass,
+  menuButtonClass,
+  orderForHeader,
+} from "@/lib/siba/header-actions";
 import { CashBalanceDialog } from "./cash-balance-dialog";
 import { ReportPicker } from "./report-picker";
 
 /**
- * The budget list for one month, or for every month.
+ * Pengajuan Budget — the Budget register, and where a plan is made, submitted,
+ * approved or rejected.
  *
- * `can` mirrors the caller's permissions so the row menu offers only what they
- * may use. It is presentation: `transitionBudget` re-checks both the permission
- * and whether the transition is legal from the budget's current status.
+ * The tabs are statuses. Inside one tab every row allows the same transitions,
+ * so ticking rows and pressing one header button moves them all — the bulk
+ * action this screen exists for. A bulk action is all-or-nothing: if one row
+ * is refused, none is moved and the refusal names it.
+ *
+ * Classification is not done here. An approved Budget waits in Klasifikasi
+ * Budget, a separate workstation for whoever assigns Category and Partner.
+ *
+ * `can` mirrors the caller's permissions so only usable actions are offered.
+ * It is presentation: `transitionBudgets` re-checks both the permission and
+ * whether every row may take the transition.
  */
+
+/** The tabs, in lifecycle order. `""` is every status. */
+const TABS: { value: string; label: string }[] = [
+  { value: "Draft", label: "Draft" },
+  { value: "Submitted", label: "Diajukan" },
+  { value: "Approved", label: "Disetujui" },
+  { value: "Open", label: "Open" },
+  { value: "", label: "Semua" },
+];
+
 export function BudgetList({
   budgets,
   refs,
-  mappings,
+  months,
   summary,
   cash,
   month,
@@ -52,20 +72,26 @@ export function BudgetList({
 }: {
   budgets: BudgetRow[];
   refs: BudgetRefs;
-  mappings: BudgetMapping[];
+  /** Every Budget Month, for the month filter. */
+  months: { id: number; label: string; name: string }[];
   summary: BudgetSummary;
   cash: CashBookSummary;
   /** null when the page is showing every month at once. */
   month: { id: number; label: string; name: string } | null;
   can: BudgetAbilities;
-  /** Status the page was opened filtered to, from `?status=` — see the route. */
+  /** Tab the page was opened on, from `?status=` — see the route. */
   initialStatus?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
+  // Classification is Klasifikasi Budget's work, never this register's —
+  // an approved row here offers nothing to whoever may classify it.
+  const listCan = useMemo(() => ({ ...can, classify: false }), [can]);
 
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState(initialStatus ?? "");
+  const [status, setStatus] = useState(
+    TABS.some((t) => t.value === initialStatus) ? initialStatus! : ""
+  );
   const [type, setType] = useState("");
   const [company, setCompany] = useState("");
   const [sort, setSort] = useState<{ field: string; dir: "asc" | "desc" }>({
@@ -76,9 +102,7 @@ export function BudgetList({
   const [perPage, setPerPage] = useState(25);
 
   const [menuFor, setMenuFor] = useState<{ row: BudgetRow; x: number; y: number } | null>(null);
-  const [confirm, setConfirm] = useState<{ row: BudgetRow; action: BudgetAction } | null>(null);
-  const [approving, setApproving] = useState<BudgetRow | null>(null);
-  const [approveErrors, setApproveErrors] = useState<Record<string, string>>({});
+  const [confirm, setConfirm] = useState<{ ids: number[]; action: BudgetAction } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showCash, setShowCash] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -98,12 +122,12 @@ export function BudgetList({
     return (id: number | null) => (id == null ? null : byId.get(id) ?? null);
   }, [refs.categories]);
 
-  const filtered = useMemo(() => {
-    let out = budgets.slice();
-    if (status) out = out.filter((b) => b.status === status);
+  // Every filter but the tab, so each tab's count answers "how many here,
+  // given what I have narrowed to" rather than a number the list never shows.
+  const narrowed = useMemo(() => {
+    let out = budgets;
     if (type) out = out.filter((b) => b.budget_type === type);
     if (company) out = out.filter((b) => String(b.company_id) === company);
-
     const q = query.trim().toLowerCase();
     if (q) {
       out = out.filter((b) =>
@@ -120,7 +144,11 @@ export function BudgetList({
           .includes(q)
       );
     }
+    return out;
+  }, [budgets, type, company, query, companyOf, categoryOf]);
 
+  const filtered = useMemo(() => {
+    const out = status ? narrowed.filter((b) => b.status === status) : narrowed.slice();
     const dir = sort.dir === "asc" ? 1 : -1;
     out.sort((a, b) => {
       switch (sort.field) {
@@ -147,17 +175,20 @@ export function BudgetList({
       }
     });
     return out;
-  }, [budgets, status, type, company, query, sort, companyOf, categoryOf]);
+  }, [narrowed, status, sort, categoryOf]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / perPage));
   const current = Math.min(page, pages);
   const from = (current - 1) * perPage;
   const pageRows = filtered.slice(from, from + perPage);
 
-  const activeFilters =
-    (status ? 1 : 0) + (type ? 1 : 0) + (company ? 1 : 0) + (query ? 1 : 0);
+  const tabs = TABS.map((t) => ({
+    ...t,
+    count: t.value ? narrowed.filter((b) => b.status === t.value).length : narrowed.length,
+  }));
+
+  const activeFilters = (type ? 1 : 0) + (company ? 1 : 0) + (query ? 1 : 0);
   const clearAll = () => {
-    setStatus("");
     setType("");
     setCompany("");
     setQuery("");
@@ -166,29 +197,48 @@ export function BudgetList({
 
   const submitted = budgets.filter((b) => b.status === "Submitted");
 
+  // ---------------------------------------------------------------- selection
+
+  // A row is selectable only when this user may move it somehow; a row that
+  // offers nothing keeps an empty checkbox cell.
+  const actionable = (b: BudgetRow) => availableActions(b.status, listCan).length > 0;
+  const selectable = useMemo(
+    () => filtered.filter(actionable).map((b) => b.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtered, listCan]
+  );
+  const selection = useSelection(selectable);
+  const pageSelectable = pageRows.filter(actionable).map((b) => b.id);
+
+  const selected = useMemo(() => {
+    const ids = new Set(selection.ids);
+    return budgets.filter((b) => ids.has(b.id));
+  }, [budgets, selection.ids]);
+  const bulk = commonActions(
+    selected.map((b) => b.status),
+    listCan
+  );
+
   // ------------------------------------------------------------- transitions
 
-  const run = async (
-    row: BudgetRow,
-    action: BudgetAction,
-    classification?: { category_id: string | null; partner_id: string | null }
-  ) => {
+  const run = async (ids: number[], action: BudgetAction) => {
     setBusy(true);
-    const result = await transitionBudget(row.id, action, classification);
+    const result = await transitionBudgets(ids, action);
     setBusy(false);
+    setConfirm(null);
     if (result.ok) {
-      setConfirm(null);
-      setApproving(null);
-      setApproveErrors({});
-      toast(result.message, `${row.budget_no} · ${row.description}`, "ok");
+      const one = budgets.find((b) => b.id === ids[0]);
+      toast(
+        result.message,
+        result.count === 1 && one
+          ? `${one.budget_no} · ${one.description}`
+          : `${result.count} Budget`,
+        "ok"
+      );
+      selection.clear();
       router.refresh();
       return;
     }
-    if (action === "approve") {
-      setApproveErrors(result.errors);
-      return;
-    }
-    setConfirm(null);
     toast(
       "Tidak dapat diproses",
       result.errors._form ?? Object.values(result.errors)[0],
@@ -198,12 +248,20 @@ export function BudgetList({
 
   const openAction = (row: BudgetRow, action: BudgetAction) => {
     setMenuFor(null);
-    if (action === "approve") {
-      setApproveErrors({});
-      setApproving(row);
-    } else {
-      setConfirm({ row, action });
-    }
+    setConfirm({ ids: [row.id], action });
+  };
+
+  const confirmSubject = (ids: number[]) => {
+    const rows = budgets.filter((b) => ids.includes(b.id));
+    if (rows.length === 1) return `${rows[0].budget_no} – ${rows[0].description}`;
+    const totals = sumByCurrency(
+      rows.map((b) => ({
+        currencyId: b.currency_id,
+        currencyLabel: currencyOf(b.currency_id),
+        amount: b.budget_amount,
+      }))
+    );
+    return `${rows.length} Budget · ${formatTotals(totals)}`;
   };
 
   // ------------------------------------------------------------------ render
@@ -211,7 +269,11 @@ export function BudgetList({
   const newHref = month
     ? `/budget/budget/new?month=${month.id}`
     : "/budget/budget/new";
-  const backHref = month ? `/budget/budget/month/${month.id}` : "/budget/budget/month/all";
+
+  const goMonth = (id: string) => {
+    const tab = status ? `?status=${status}` : "";
+    router.push(id ? `/budget/budget/month/${id}${tab}` : `/budget/budget${tab}`);
+  };
 
   const sortHead = (field: string, label: string, extra?: string, width?: number) => (
     <th
@@ -237,24 +299,50 @@ export function BudgetList({
     <>
       <DocumentHeader
         module="Budget"
-        trail={[{ label: "Budget Month", href: "/budget/budget" }]}
         icon="clip"
-        title={month ? month.name : "Semua Bulan"}
-        tags={month && <span className="lab lg">{month.label}</span>}
-        sub="Layer planning. Budget menyediakan rencana nominal dan klasifikasi bisnis; realisasinya terjadi di modul Finance."
+        title="Pengajuan Budget"
+        tags={month && <span className="lab lg">{month.name}</span>}
+        sub="Layer planning. Budget menyediakan rencana nominal; klasifikasinya ditetapkan di Klasifikasi Budget dan realisasinya terjadi di modul Finance."
       >
-        <button className="btn" onClick={() => setShowReport(true)}>
-          <Icon name="print" size={15} /> Laporan Pengajuan
-          {submitted.length > 0 && (
-            <span className="bdg s-info" style={{ marginLeft: 2 }}>
-              {submitted.length}
-            </span>
-          )}
-        </button>
-        {can.create && (
-          <Link className="btn primary" href={newHref}>
-            <Icon name="plus" size={15} /> Tambah Budget
-          </Link>
+        {selection.ids.length > 0 ? (
+          <>
+            <SelectionCount count={selection.ids.length} onClear={selection.clear} />
+            {bulk.length ? (
+              orderForHeader(bulk, (a) => BUDGET_TRANSITIONS[a].tone).map((a) => {
+                const t = BUDGET_TRANSITIONS[a];
+                return (
+                  <button
+                    key={a}
+                    className={headerButtonClass(t.tone)}
+                    disabled={busy}
+                    onClick={() => setConfirm({ ids: selection.ids, action: a })}
+                  >
+                    <Icon name={t.icon} size={15} /> {t.label}
+                  </button>
+                );
+              })
+            ) : (
+              <span className="lockchip">
+                <Icon name="lock" size={13} /> Tidak ada aksi yang berlaku untuk semua pilihan
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            <button className="btn" onClick={() => setShowReport(true)}>
+              <Icon name="print" size={15} /> Laporan Pengajuan
+              {submitted.length > 0 && (
+                <span className="bdg s-info" style={{ marginLeft: 2 }}>
+                  {submitted.length}
+                </span>
+              )}
+            </button>
+            {can.create && (
+              <Link className="btn primary" href={newHref}>
+                <Icon name="plus" size={15} /> Tambah Budget
+              </Link>
+            )}
+          </>
         )}
       </DocumentHeader>
 
@@ -265,9 +353,7 @@ export function BudgetList({
           style={{ textAlign: "left", font: "inherit" }}
         >
           <div className="h">
-            <span
-              className="i t-ok"
-            >
+            <span className="i t-ok">
               <Icon name="wallet2" size={14} />
             </span>
             <span className="l">Saldo Kas &amp; Bank</span>
@@ -303,9 +389,7 @@ export function BudgetList({
           style={{ textAlign: "left", font: "inherit" }}
         >
           <div className="h">
-            <span
-              className="i t-warn"
-            >
+            <span className="i t-warn">
               <Icon name="clock" size={14} />
             </span>
             <span className="l">Belum Disetujui</span>
@@ -326,21 +410,28 @@ export function BudgetList({
           style={{ textAlign: "left", font: "inherit" }}
         >
           <div className="h">
-            <span
-              className="i t-info"
-            >
+            <span className="i t-info">
               <Icon name="send" size={14} />
             </span>
             <span className="l">Belum Direalisasi</span>
           </div>
           <div className="v">{summary.unrealized}</div>
           <div className="d">
-            {formatTotals(summary.unrealizedTotals)} sisa dari budget disetujui
+            {formatTotals(summary.unrealizedTotals)} sisa dari budget terklasifikasi
           </div>
         </button>
       </div>
 
       <div className="card">
+        <QueueTabs
+          tabs={tabs}
+          value={status}
+          onChange={(v) => {
+            setStatus(v);
+            setPage(1);
+          }}
+        />
+
         <div className="toolbar">
           <SearchField
             value={query}
@@ -353,19 +444,18 @@ export function BudgetList({
 
           <Select
             variant="toolbar"
-            value={status}
-            set={Boolean(status)}
-            ariaLabel="Filter status"
+            value={month ? String(month.id) : ""}
+            set={Boolean(month)}
+            ariaLabel="Filter bulan"
             options={[
-              { value: "", label: "Status: semua" },
-              ...["Draft", "Submitted", "Rejected", "Open", "Closed", "Cancelled"].map(
-                (s) => ({ value: s, label: STATUS_TEXT[s] ?? s })
-              ),
+              { value: "", label: "Bulan: semua" },
+              ...months.map((m) => ({
+                value: String(m.id),
+                label: m.name,
+                hint: m.label,
+              })),
             ]}
-            onChange={(v) => {
-              setStatus(v);
-              setPage(1);
-            }}
+            onChange={goMonth}
           />
 
           <Select
@@ -403,15 +493,6 @@ export function BudgetList({
             }}
           />
 
-          {month && (
-            <span className="mchip">
-              <Icon name="cal" size={12} /> {month.name}
-              <Link href="/budget/budget/month/all" title="Tampilkan semua bulan">
-                <Icon name="block" size={11} />
-              </Link>
-            </span>
-          )}
-
           {activeFilters > 0 && (
             <button className="btn sm ghost" onClick={clearAll}>
               Bersihkan filter ({activeFilters})
@@ -430,6 +511,13 @@ export function BudgetList({
               <table className="grid">
                 <thead>
                   <tr>
+                    <th className="selchk">
+                      <SelectAll
+                        many={pageSelectable}
+                        has={selection.has}
+                        onToggle={() => selection.toggleMany(pageSelectable)}
+                      />
+                    </th>
                     <th style={{ width: 38 }}>No</th>
                     {sortHead("budget_no", "Nomor", undefined, 100)}
                     {sortHead("budget_date", "Tanggal", undefined, 104)}
@@ -446,12 +534,24 @@ export function BudgetList({
                     const currency = currencyOf(b.currency_id);
                     const inn = b.budget_type === "In";
                     const over = b.realized_amount > b.budget_amount;
-                    const actions = availableActions(b.status, can);
+                    const actions = availableActions(b.status, listCan);
+                    const on = selection.has(b.id);
                     return (
                       <tr
                         key={b.id}
+                        className={on ? "sel" : undefined}
                         onClick={() => router.push(`/budget/budget/${b.id}`)}
                       >
+                        <td className="selchk" onClick={(e) => e.stopPropagation()}>
+                          {actions.length > 0 && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Pilih ${b.budget_no}`}
+                              checked={on}
+                              onChange={() => selection.toggle(b.id)}
+                            />
+                          )}
+                        </td>
                         <td className="no">{from + i + 1}</td>
                         <td>
                           <Link href={`/budget/budget/${b.id}`}>
@@ -563,19 +663,23 @@ export function BudgetList({
               <Icon name={budgets.length ? "srch" : "clip"} size={20} />
             </div>
             <h4>
-              {budgets.length
-                ? "Tidak ada budget yang cocok"
-                : month
-                  ? `Belum ada budget di ${month.name}`
-                  : "Belum ada budget"}
+              {narrowed.length
+                ? `Tidak ada budget berstatus ${TABS.find((t) => t.value === status)?.label ?? ""}`
+                : budgets.length
+                  ? "Tidak ada budget yang cocok"
+                  : month
+                    ? `Belum ada budget di ${month.name}`
+                    : "Belum ada budget"}
             </h4>
             <p>
-              {budgets.length
-                ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
-                : "Budget yang dibuat akan dikelompokkan otomatis ke bulan sesuai Tanggal Budget."}
+              {narrowed.length
+                ? "Pilih tab lain untuk melihat budget pada status berbeda."
+                : budgets.length
+                  ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
+                  : "Budget yang dibuat akan dikelompokkan otomatis ke bulan sesuai Tanggal Budget."}
             </p>
             <div className="cta">
-              {budgets.length ? (
+              {narrowed.length ? null : budgets.length ? (
                 <button className="btn" onClick={clearAll}>
                   Bersihkan filter
                 </button>
@@ -596,7 +700,7 @@ export function BudgetList({
           row={menuFor.row}
           x={menuFor.x}
           y={menuFor.y}
-          can={can}
+          can={listCan}
           onPick={(action) => openAction(menuFor.row, action)}
           onClose={() => setMenuFor(null)}
         />
@@ -608,35 +712,15 @@ export function BudgetList({
           icon={BUDGET_TRANSITIONS[confirm.action].icon}
           tone={BUDGET_TRANSITIONS[confirm.action].tone === "danger" ? "danger" : "brand"}
           title={BUDGET_TRANSITIONS[confirm.action].title}
-          subject={`${confirm.row.budget_no} – ${confirm.row.description}`}
+          subject={confirmSubject(confirm.ids)}
           body={BUDGET_TRANSITIONS[confirm.action].body}
           confirmLabel={BUDGET_TRANSITIONS[confirm.action].confirmLabel}
           confirmTone={
             BUDGET_TRANSITIONS[confirm.action].tone === "danger" ? "solid-danger" : "primary"
           }
           busy={busy}
-          onConfirm={() => run(confirm.row, confirm.action)}
+          onConfirm={() => run(confirm.ids, confirm.action)}
           onCancel={() => setConfirm(null)}
-        />
-      )}
-
-      {approving && (
-        <ApproveDialog
-          budget={approving}
-          refs={refs}
-          mappings={mappings}
-          errors={approveErrors}
-          busy={busy}
-          onConfirm={(categoryId, partnerId) =>
-            run(approving, "approve", {
-              category_id: categoryId,
-              partner_id: partnerId,
-            })
-          }
-          onCancel={() => {
-            setApproving(null);
-            setApproveErrors({});
-          }}
         />
       )}
 
@@ -654,11 +738,9 @@ export function BudgetList({
         />
       )}
 
-      {/* Keeps `backHref` meaningful for screen readers on the empty state. */}
       <p className="foot-note">
-        Budget dikelompokkan ke bulan berdasarkan Tanggal Budget.{" "}
-        <Link href={backHref}>Lihat bulan ini</Link> atau{" "}
-        <Link href="/budget/budget">kembali ke daftar bulan</Link>.
+        Centang beberapa budget pada satu tab untuk mengajukan, menyetujui, menolak atau
+        membatalkannya sekaligus — semua diproses, atau tidak satu pun.
       </p>
     </>
   );

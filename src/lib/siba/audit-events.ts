@@ -74,13 +74,14 @@ function fromTransition(
   return { label, icon: source.icon, tone: source.tone };
 }
 
-/** Budget: Draft → Submitted → Open, and Closed by realization. */
+/** Budget: Draft → Submitted → Approved → Open, and Closed by realization. */
 const BUDGET_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
   submit: fromTransition(BUDGET_TRANSITIONS.submit, "Diajukan"),
   approve: fromTransition(BUDGET_TRANSITIONS.approve, "Disetujui"),
   reject: fromTransition(BUDGET_TRANSITIONS.reject, "Ditolak"),
   cancel: fromTransition(BUDGET_TRANSITIONS.cancel, "Dibatalkan"),
+  classify: fromTransition(BUDGET_TRANSITIONS.classify, "Diklasifikasikan"),
   // Nobody closes a Budget by hand (CLAUDE.md §10 rule 36) — it closes because
   // a posting reached its planned amount, so the actor on the row is whoever
   // posted rather than whoever decided.
