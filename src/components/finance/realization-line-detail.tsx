@@ -28,7 +28,7 @@ export type RealizationLineDetail = {
   amount: number;
   item: OpenItemOption | null;
   /** How this line moves its subject book, where one is known. */
-  itemRole: "lowers" | "opens" | null;
+  itemRole: "lowers" | "opens" | "records" | null;
 };
 
 /**
@@ -200,7 +200,9 @@ export function RealizationLineDialog({
           <div className="ir">
             <span>Buku Subjek {line.category}</span>
             <b>
-              {line.itemRole === "opens"
+              {line.itemRole === "records"
+                ? "bertambah — dicatat per Partner"
+                : line.itemRole === "opens"
                 ? "membuka open item baru"
                 : line.item
                   ? `menyelesaikan ${line.item.itemNo}`

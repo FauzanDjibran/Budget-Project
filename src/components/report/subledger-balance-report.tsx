@@ -137,6 +137,7 @@ export function SubledgerBalanceReport({
                         foreign={foreign}
                         money={money}
                         base={base}
+                        noun={report.book.nature === "cumulative" ? "rincian" : "open item"}
                       />
                     );
                   })}
@@ -174,6 +175,7 @@ function PartnerRows({
   foreign,
   money,
   base,
+  noun,
 }: {
   row: Report["groups"][number]["rows"][number];
   isOpen: boolean;
@@ -182,6 +184,12 @@ function PartnerRows({
   foreign: boolean;
   money: (n: number) => string;
   base: (n: number) => string;
+  /**
+   * What a row unfolds into. A book that only accumulates — Investasi, Hasil
+   * Investasi — keeps its items as a record of where the money went or came
+   * from; nothing ever settles them, so they are not called open items.
+   */
+  noun: string;
 }) {
   const figure = (n: number, strong = false) => (
     <span className={`mny${n ? "" : " z"}${n < 0 ? " neg" : ""}`}>
@@ -197,7 +205,7 @@ function PartnerRows({
               <button
                 className="tgl"
                 onClick={onToggle}
-                title={isOpen ? "Tutup open item" : "Buka open item"}
+                title={isOpen ? `Tutup ${noun}` : `Buka ${noun}`}
               >
                 <span className={`chev${isOpen ? " o" : ""}`}>
                   <Icon name="chev" size={11} />
@@ -220,7 +228,9 @@ function PartnerRows({
               </span>
             )}
             {r.items.length > 0 && (
-              <span className="cd">{r.items.length} open item</span>
+              <span className="cd">
+                {r.items.length} {noun}
+              </span>
             )}
           </div>
         </td>

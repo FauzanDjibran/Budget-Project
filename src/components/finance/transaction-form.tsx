@@ -414,7 +414,13 @@ export function TransactionForm({
           draftAllocated: pooled?.draftAllocated ?? 0,
           amount: l.amount,
           item: pooled?.items.find((it) => it.id === l.item_id) ?? null,
-          itemRole: pooled?.lowers ? "lowers" : pooled?.opensItem ? "opens" : null,
+          itemRole: pooled?.lowers
+            ? "lowers"
+            : pooled?.opensItem
+              ? pooled.accumulates
+                ? "records"
+                : "opens"
+              : null,
         };
       })
     : lines.map((l) => ({
@@ -433,7 +439,11 @@ export function TransactionForm({
         itemRole: l.item ? "lowers" : null,
       }));
   // The column exists only where a line has an open item to state or choose.
-  const showItems = rows.some((r) => r.itemRole !== null);
+  // An accumulating book (Investasi, Hasil Investasi) has nothing to choose or
+  // settle, so it does not bring the column in on its own.
+  const showItems = rows.some(
+    (r) => r.itemRole === "lowers" || r.itemRole === "opens"
+  );
 
   const alreadyPicked = new Set(draftLines.map((l) => l.budget_id));
   const pickable = pool.filter((b) => !alreadyPicked.has(b.id));

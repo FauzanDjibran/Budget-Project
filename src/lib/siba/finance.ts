@@ -499,6 +499,13 @@ export type EligibleBudget = {
   lowers: boolean;
   /** True when realizing this Budget raises a position, opening a new item. */
   opensItem: boolean;
+  /**
+   * True when the book this line raises only ever accumulates — Investasi,
+   * Hasil Investasi. Its items are a record of where the money went or came
+   * from, never something a later line settles, so the form does not speak of
+   * an open item for it.
+   */
+  accumulates: boolean;
   /** The open items this line may settle, oldest first. Empty unless `lowers`. */
   items: OpenItemOption[];
 };
@@ -703,6 +710,7 @@ export async function eligibleBudgets(
   const books = await loadSubledgers();
   const lowering = new Map<number, string>();
   const opening = new Set<number>();
+  const accumulating = new Set<number>();
   for (const { row } of outstanding) {
     const book = subledgerForCategory(books, row.category_id);
     if (book && row.partner_id != null) {
@@ -710,6 +718,7 @@ export async function eligibleBudgets(
         lowering.set(row.id, book.key);
       } else {
         opening.add(row.id);
+        if (book.nature === "cumulative") accumulating.add(row.id);
       }
     }
   }
@@ -726,6 +735,7 @@ export async function eligibleBudgets(
   return outstanding.map(({ row, left }) => ({
     lowers: lowering.has(row.id),
     opensItem: opening.has(row.id),
+    accumulates: accumulating.has(row.id),
     items: lowering.has(row.id)
       ? openItems
           .filter(

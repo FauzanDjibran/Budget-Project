@@ -286,8 +286,9 @@ async function subledgerPage({
         runAt={runAt}
         footnote={
           <>
-            Saldo akhir setiap Partner adalah jumlah sisa open item-nya per{" "}
-            {formatDate(range.to)}, masing-masing pada kurs saat item itu dibuka.
+            {data.book.nature === "cumulative"
+              ? "Buku ini hanya bertambah; rinciannya mencatat setiap realisasi per Partner, pada kursnya sendiri."
+              : `Saldo akhir setiap Partner adalah jumlah sisa open item-nya per ${formatDate(range.to)}, masing-masing pada kurs saat item itu dibuka.`}
           </>
         }
       >

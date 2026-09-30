@@ -2403,6 +2403,15 @@ Specified in the concept doc, **not yet implemented** (see §13):
   opened (§10 rule 106). The movement figures come from `subledgerReport`
   itself, so the two reports cannot disagree about a Partner.
   `tests/subledger.test.ts` holds it at three dates.
+- **A book that only accumulates speaks of *rincian*, not open items.**
+  Investasi and Hasil Investasi exist for reporting — how much went to each
+  Partner, and where investment income came from — and the user states they
+  are deliberately unlinked: an investment is never settled by a return, and
+  no return traces to one investment. Their items are still written (every
+  entry names one), but nothing settles them, so Saldo Buku Subjek unfolds a
+  row into *rincian* and a Realisasi line for them shows no Open Item column.
+  Keyed on the book's derived `nature` (`cumulative`), never on a label.
+  Prive is a two-way book on purpose: the user treats it like a Piutang.
 - **The per-currency total is a reversal, on the user's approval.** Buku
   Subjek's rule was that nothing is totalled across subjects. Two Partners'
   Hutang in one currency do add up to something a reader acts on — what the
