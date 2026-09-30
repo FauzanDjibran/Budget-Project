@@ -366,11 +366,19 @@ export function TransactionForm({
 
   const inn = direction === "In";
 
+  // The resource's balance is in the resource's own currency, which is not the
+  // document's when a foreign document is paid from a rupiah account — there
+  // the movement is the document total at the entered kurs.
+  const balanceCurrency = cashBank?.currencyLabel ?? currencyLabel;
+  const resourceTotal =
+    balanceCurrency !== currencyLabel
+      ? total * (Number(editing ? values.exchange_rate : transaction?.exchange_rate) || 0)
+      : total;
   const balanceBefore = cashBank?.balance ?? 0;
   const balanceAfter =
     transaction?.status === "Posted" || transaction?.status === "Cancelled"
       ? balanceBefore
-      : balanceBefore + (inn ? 1 : -1) * total;
+      : balanceBefore + (inn ? 1 : -1) * resourceTotal;
 
   // ------------------------------------------------------------------ lines
 
@@ -1183,7 +1191,7 @@ export function TransactionForm({
                           ? "Saldo tidak berubah"
                           : "Saldo setelah posting"}
                     </span>
-                    <b>{formatMoney(balanceAfter, currencyLabel)}</b>
+                    <b>{formatMoney(balanceAfter, balanceCurrency)}</b>
                   </div>
                 </div>
               </div>
@@ -1236,7 +1244,7 @@ export function TransactionForm({
               {cashBank && (
                 <div>
                   <span>{cashBank.label} sesudah</span>
-                  <b>{formatMoney(balanceAfter, currencyLabel)}</b>
+                  <b>{formatMoney(balanceAfter, balanceCurrency)}</b>
                 </div>
               )}
             </div>

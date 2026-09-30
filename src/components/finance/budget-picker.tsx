@@ -43,7 +43,7 @@ export function BudgetPicker({
 
   // Every word has to match somewhere in the row, like every other search in
   // the application — "piutang medan" finds a Piutang Budget for Cabang Medan.
-  const words = query.toLowerCase().split(/s+/).filter(Boolean);
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = pool.filter((b) => {
     if (!words.length) return true;
     const c = classify(b);
