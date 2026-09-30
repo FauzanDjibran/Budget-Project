@@ -1,5 +1,6 @@
 "use server";
 
+import type { JournalPreviewLine } from "@/lib/siba/journal";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { type Actor } from "@/lib/siba/access";
@@ -8,6 +9,7 @@ import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import {
   applyDncn,
+  previewDncn,
   checkDncnHeader,
   checkDncnLines,
   nextNoteNo,
@@ -304,4 +306,21 @@ function revalidateDncn(id: number) {
   revalidatePath(`/finance/debit-credit-note/${id}`);
   // Posting moves a subject position and writes a journal.
   revalidatePath("/dashboard");
+}
+
+/**
+ * The journal Post would write for this nota, for its confirmation —
+ * consequences before commitment. Asks the Post permission itself, because
+ * only someone who could post it is being asked to confirm it, and it runs
+ * the posting path as a dry run, so it refuses exactly as Post would.
+ */
+export async function previewDncnPost(
+  id: number
+): Promise<
+  | { ok: true; lines: JournalPreviewLine[] }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const g = await authorize(DNCN_TRANSITIONS.post.permission);
+  if (!g.ok) return g.denial;
+  return previewDncn(id);
 }

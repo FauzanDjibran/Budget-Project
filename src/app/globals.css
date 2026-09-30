@@ -438,6 +438,11 @@ td.acts{width:88px;padding-right:7px}
 .cbo{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:12.5px}
 .cbo:hover,.cbo.hi{background:var(--brand-50)}
 .cbo.sel{background:var(--accent-50)}
+/* ↓ / ↑ move `.cbo.hi` (`list-nav.ts`), and hovering moves it too, so a row
+   the mouse merely rests on must not keep its own hover colour beside the
+   highlighted one. */
+.cbpop .cbo:not(.hi):not(.sel):hover{background:transparent}
+.cbpop .cbo.sel.hi{background:var(--brand-50)}
 .cbo .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
 .cbo .tick{color:var(--brand);flex:0 0 auto}
 /* A heading over a run of options, for a list long enough that the reader needs
@@ -545,6 +550,9 @@ td.acts{width:88px;padding-right:7px}
 @keyframes fi{from{opacity:0}to{opacity:1}}
 .modal{background:#fff;border-radius:var(--r-xl);box-shadow:var(--sh-xl);width:min(384px,100%);padding:24px;text-align:center;
   border:1px solid var(--line-2);animation:mi .17s cubic-bezier(.2,.9,.3,1)}
+/* A confirmation that states what it commits to at length — the journal a
+   Post will write. Same centred question, a wider body. */
+.modal.wide{width:min(640px,100%)}
 @keyframes mi{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
 .modal .mi{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}
 /* The tinted icon's tone is a class, not an inline style: four dialogs used to
@@ -593,6 +601,12 @@ td.acts{width:88px;padding-right:7px}
 .dstack{display:flex;flex-direction:column;line-height:1.3;gap:1px;min-width:0}
 .dstack .d1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--ink);max-width:260px}
 .dstack .d2{font-family:var(--f-mono);font-size:10px;color:var(--muted-2)}
+/* A second line that carries names as well as a code — a Realisasi line's
+   Budget number, Category and Partner. Names are never mono (§8), so the line
+   is the body font and only its code opts back in. */
+.dstack .d2.tx{font-family:inherit;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dstack .d2.tx .mono{font-size:10.5px;color:var(--muted-2)}
+.lwarn{display:inline-flex;align-items:center;gap:3px;margin-left:8px;font-size:10px;font-weight:700;color:var(--warn)}
 /* ---------- money entry ----------
    One control for every amount somebody types, drawn by `ui/money-input.tsx`:
    the currency label sits inside the box on the left, the figure is mono,
@@ -959,6 +973,7 @@ a{color:inherit;text-decoration:none}
 
 /* ---------- confirm dialog that needs one input of its own ---------- */
 .modal .mbody{margin-top:16px;text-align:left}
+.modal.wide .mbody{max-height:52vh;overflow-y:auto}
 .modal .mbody .fld{padding:0}
 
 /* ============================================================ date field

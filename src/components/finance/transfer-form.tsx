@@ -13,6 +13,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
 import { KursSelect } from "./kurs-select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { JournalPreview } from "@/components/ui/journal-preview";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import {
@@ -20,6 +21,7 @@ import {
   transitionTransfer,
   updateTransfer,
   type TransferValues,
+  previewTransferPost,
 } from "@/app/actions/transfer";
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
@@ -128,6 +130,8 @@ export function TransferForm({
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState<TransferAction | null>(null);
   const [busy, setBusy] = useState(false);
+  // Post is answerable once its journal preview has loaded and not refused.
+  const [postReady, setPostReady] = useState(false);
 
   const purpose = transferPurposeOf(values.purpose);
   const source =
@@ -385,6 +389,7 @@ export function TransferForm({
     const result = await transitionTransfer(transfer.id, action);
     setBusy(false);
     setConfirm(null);
+    setPostReady(false);
     if (result.ok) {
       toast(result.message, transfer.transfer_no, "ok");
       router.refresh();
@@ -1036,8 +1041,20 @@ export function TransferForm({
           }
           busy={busy}
           onConfirm={() => run(confirm)}
-          onCancel={() => setConfirm(null)}
-        />
+          onCancel={() => {
+            setConfirm(null);
+            setPostReady(false);
+          }}
+          wide={confirm === "post"}
+          confirmDisabled={confirm === "post" && !postReady}
+        >
+          {confirm === "post" && (
+            <JournalPreview
+              load={() => previewTransferPost(transfer.id)}
+              onReady={setPostReady}
+            />
+          )}
+        </ConfirmDialog>
       )}
     </>
   );

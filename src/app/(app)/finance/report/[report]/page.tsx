@@ -16,11 +16,11 @@ import { companyScope } from "@/lib/siba/company-access";
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import {
-  subledgerItemReport,
+  subledgerBalanceReport,
   subledgerReport,
   subledgerSubjects,
 } from "@/lib/siba/subledger";
-import { SubledgerItemReport } from "@/components/report/subledger-item-report";
+import { SubledgerBalanceReport } from "@/components/report/subledger-balance-report";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { BookFilter } from "@/components/report/book-filter";
 import { ReportCompany } from "@/components/report/report-run";
@@ -254,12 +254,12 @@ async function subledgerPage({
     </>
   );
 
-  // The open items: the same book read as a standing position — what each
-  // Partner's position is made of now, item by item, at its own kurs.
-  if (report.key === "subledger_item") {
+  // The summary step: each Partner's saldo over the same period, with the
+  // open items its closing is made of — Saldo Kas & Bank's counterpart.
+  if (report.key === "subledger_balance") {
     const [subjects, data] = await Promise.all([
       subledgerSubjects(books, book.key, companyIds),
-      subledgerItemReport(books, book.key, { companyIds, partnerIds }),
+      subledgerBalanceReport(books, book.key, range, { companyIds, partnerIds }),
     ]);
     if (!data) notFound();
     return (
@@ -274,7 +274,6 @@ async function subledgerPage({
             selectedIds={partnerIds}
             from={range.from}
             to={range.to}
-            dateless
             subjectRequired={report.subjectRequired}
             label="Partner"
             param="partners"
@@ -287,12 +286,12 @@ async function subledgerPage({
         runAt={runAt}
         footnote={
           <>
-            Baris yang menurunkan posisi menyelesaikan satu open item pilihan
-            pengguna, pada kurs item itu sendiri.
+            Saldo akhir setiap Partner adalah jumlah sisa open item-nya per{" "}
+            {formatDate(range.to)}, masing-masing pada kurs saat item itu dibuka.
           </>
         }
       >
-        <SubledgerItemReport book={data.book} items={data.items} />
+        <SubledgerBalanceReport report={data} companyId={company.id} />
       </ReportView>
     );
   }

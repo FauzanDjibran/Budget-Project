@@ -34,7 +34,12 @@ import {
   todayDay,
   type TransactionDateCheck,
 } from "./fiscal";
-import { postJournal, type JournalLineInput } from "./journal";
+import {
+  describeJournalLines,
+  postJournal,
+  type JournalLineInput,
+  type JournalPreviewLine,
+} from "./journal";
 import {
   type SubledgerDef,
   subledgerForCategory,
@@ -1164,7 +1169,7 @@ export async function checkLines(
 // ------------------------------------------------------------------ posting
 
 export type PostingResult =
-  | { ok: true; closed: number }
+  | { ok: true; closed: number; journal?: JournalLineInput[] }
   | { ok: false; errors: Record<string, string> };
 
 /**
@@ -1753,7 +1758,13 @@ async function baseCurrencyId(): Promise<number> {
  */
 export async function applyPosting(
   transactionId: number,
-  actorId: number
+  actorId: number,
+  /**
+   * Stop once the journal is known and write nothing — what the Post
+   * confirmation shows. Every check and every valuation above that point runs
+   * exactly as it does for a real Post, so the preview is the journal.
+   */
+  dryRun = false
 ): Promise<PostingResult> {
   const doc = await prisma.finCashBankTransaction.findUnique({
     where: { id: transactionId },
@@ -1841,6 +1852,7 @@ export async function applyPosting(
 
   const entries = await journalEntries(doc, plan);
   if (!entries.ok) return { ok: false, errors: entries.errors };
+  if (dryRun) return { ok: true, closed: 0, journal: entries.lines };
 
   try {
   await prisma.$transaction(async (tx) => {
@@ -2746,4 +2758,19 @@ export async function pendingCommitments(
     rows: rows.sort((a, b) => a.since.localeCompare(b.since)),
     claims,
   };
+}
+
+/**
+ * The journal Post would write for this document, named for a reader — or
+ * the refusal Post would give. Writes nothing.
+ */
+export async function previewPosting(
+  transactionId: number
+): Promise<
+  | { ok: true; lines: JournalPreviewLine[] }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const result = await applyPosting(transactionId, 0, true);
+  if (!result.ok) return result;
+  return { ok: true, lines: await describeJournalLines(result.journal ?? []) };
 }

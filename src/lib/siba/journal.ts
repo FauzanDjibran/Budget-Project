@@ -67,6 +67,82 @@ type Client = typeof prisma | Prisma.TransactionClient;
  * which is what the journal balances in. A base-currency line passes `1`, and
  * that is the only case where `1` is right.
  */
+/**
+ * A line's value in base currency — the figure the journal is measured in. A
+ * caller that knows the exact figure supplies it; everything else multiplies
+ * once. One statement of it, so a posting and its preview cannot differ.
+ */
+function lineBase(line: JournalLineInput): number {
+  const onDebit = Math.round(line.debit * 100) > 0;
+  return line.baseAmount ?? roundBase((onDebit ? line.debit : line.credit) * line.rate);
+}
+
+/** One line of a journal a posting *would* write, named for a reader. */
+export type JournalPreviewLine = {
+  accountLabel: string;
+  accountName: string;
+  partnerLabel: string | null;
+  partnerName: string | null;
+  description: string;
+  /** Base currency, the measure the journal balances in. */
+  debit: number;
+  credit: number;
+  /** The transaction-currency face, where it is not base. */
+  trxAmount: number;
+  currencyLabel: string;
+  rate: number;
+};
+
+/**
+ * The journal lines a posting computed, resolved to what a reader recognises —
+ * the account's number and name, the Partner — and valued in base exactly as
+ * `postJournal` will value them. Writes nothing.
+ *
+ * This is what a Post confirmation shows: consequences before commitment. The
+ * lines come from the document's own posting path run as a dry run, never from
+ * a second calculation, so the preview is the journal and not an estimate of
+ * it.
+ */
+export async function describeJournalLines(
+  lines: JournalLineInput[]
+): Promise<JournalPreviewLine[]> {
+  const [accounts, partners, currencies] = await Promise.all([
+    prisma.accAccount.findMany({
+      where: { id: { in: [...new Set(lines.map((l) => l.accountId))] } },
+      select: { id: true, account_label: true, account_name: true },
+    }),
+    prisma.mPartner.findMany({
+      where: {
+        id: { in: [...new Set(lines.flatMap((l) => (l.partnerId ? [l.partnerId] : [])))] },
+      },
+      select: { id: true, partner_label: true, partner_name: true },
+    }),
+    prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
+  ]);
+  const accountOf = new Map(accounts.map((a) => [a.id, a]));
+  const partnerOf = new Map(partners.map((p) => [p.id, p]));
+  const currencyOf = new Map(currencies.map((c) => [c.id, c.currency_label]));
+
+  return lines.map((l) => {
+    const onDebit = Math.round(l.debit * 100) > 0;
+    const base = lineBase(l);
+    const account = accountOf.get(l.accountId);
+    const partner = l.partnerId ? partnerOf.get(l.partnerId) : null;
+    return {
+      accountLabel: account?.account_label ?? "—",
+      accountName: account?.account_name ?? "",
+      partnerLabel: partner?.partner_label ?? null,
+      partnerName: partner?.partner_name ?? null,
+      description: l.description,
+      debit: onDebit ? base : 0,
+      credit: onDebit ? 0 : base,
+      trxAmount: onDebit ? l.debit : l.credit,
+      currencyLabel: currencyOf.get(l.currencyId) ?? "",
+      rate: l.rate,
+    };
+  });
+}
+
 export type JournalLineInput = {
   accountId: number;
   partnerId?: number | null;
@@ -191,7 +267,7 @@ function resolveJournalLines(lines: JournalLineInput[]): {
 
     // The base value lands on the same side the foreign amount did. A caller
     // that knows the exact figure supplies it; everything else multiplies once.
-    const base = line.baseAmount ?? roundBase((onDebit ? line.debit : line.credit) * line.rate);
+    const base = lineBase(line);
     if (base <= 0) {
       throw new Error(
         `Baris journal ${i + 1} bernilai nol dalam mata uang dasar dan tidak dapat diposting.`

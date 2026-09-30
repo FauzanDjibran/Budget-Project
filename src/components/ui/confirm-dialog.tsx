@@ -18,6 +18,8 @@ export function ConfirmDialog({
   confirmLabel,
   confirmTone = "primary",
   busy,
+  confirmDisabled,
+  wide,
   onConfirm,
   onCancel,
   children,
@@ -31,6 +33,13 @@ export function ConfirmDialog({
   confirmLabel: string;
   confirmTone?: "primary" | "solid-danger";
   busy?: boolean;
+  /** Offered but not yet answerable — a Post whose preview has not loaded, or refused. */
+  confirmDisabled?: boolean;
+  /**
+   * Room for what the question commits to, such as the journal a Post will
+   * write. Still one centred question; only the body is wider.
+   */
+  wide?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   /** Extra input the confirmation itself needs, e.g. a replacement password. */
@@ -57,7 +66,7 @@ export function ConfirmDialog({
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <div className="modal" role="dialog" aria-modal="true">
+      <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
         <div className={`mi ${toneClass}`}>
           <Icon name={icon} size={21} />
         </div>
@@ -72,7 +81,7 @@ export function ConfirmDialog({
           <button
             className={`btn ${confirmTone}`}
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
           >
             {busy ? "Memproses…" : confirmLabel}
           </button>

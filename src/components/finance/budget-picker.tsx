@@ -69,6 +69,20 @@ export function BudgetPicker({
       return next;
     });
 
+  // Ticks what the search is showing, each at its full outstanding — or, when
+  // every shown row is already ticked, clears them. A figure already typed
+  // into a ticked row is kept.
+  const allShown = shown.length > 0 && shown.every((b) => picked[b.id] !== undefined);
+  const toggleAll = () =>
+    setPicked((p) => {
+      const next = { ...p };
+      for (const b of shown) {
+        if (allShown) delete next[b.id];
+        else if (next[b.id] === undefined) next[b.id] = b.outstanding;
+      }
+      return next;
+    });
+
   const chosen = Object.keys(picked).map(Number);
   const total = chosen.reduce((t, id) => t + (picked[id] || 0), 0);
 
@@ -135,7 +149,15 @@ export function BudgetPicker({
               <table className="grid pkt2">
                 <thead>
                   <tr>
-                    <th style={{ width: 34 }} />
+                    <th className="pkchk" style={{ width: 34 }}>
+                      <input
+                        type="checkbox"
+                        checked={allShown}
+                        title={allShown ? "Batalkan semua" : "Pilih semua"}
+                        aria-label="Pilih semua"
+                        onChange={toggleAll}
+                      />
+                    </th>
                     <th style={{ width: 88 }}>Nomor</th>
                     <th>Deskripsi</th>
                     <th style={{ width: 190 }}>Klasifikasi</th>

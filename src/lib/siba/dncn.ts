@@ -12,7 +12,12 @@ import {
   todayDay,
 } from "./fiscal";
 import { originate, relieve, roundBase } from "./fx";
-import { postJournal, type JournalLineInput } from "./journal";
+import {
+  describeJournalLines,
+  postJournal,
+  type JournalLineInput,
+  type JournalPreviewLine,
+} from "./journal";
 import {
   DNCN_TYPES,
   dncnDirection,
@@ -592,7 +597,7 @@ export function positionRefusal(
 // ------------------------------------------------------------------ posting
 
 export type DncnPostingResult =
-  | { ok: true; baseAmount: number }
+  | { ok: true; baseAmount: number; journal?: JournalLineInput[] }
   | { ok: false; errors: Record<string, string> };
 
 class DncnRefused extends Error {
@@ -632,7 +637,16 @@ const NOTE_ACCOUNT_KEY: Record<"induk" | "anak", Record<DncnType, SystemDefaultK
  * action resolves a caller and then calls this, and the suite calls the same
  * function.
  */
-export async function applyDncn(noteId: number, actorId: number): Promise<DncnPostingResult> {
+export async function applyDncn(
+  noteId: number,
+  actorId: number,
+  /**
+   * Run the whole posting and roll it back once the journal is known — what
+   * the Post confirmation shows. The position is read under its lock inside
+   * the transaction, so a rolled-back run values it exactly as Post will.
+   */
+  dryRun = false
+): Promise<DncnPostingResult> {
   const doc = await prisma.finDncn.findUnique({
     where: { id: noteId },
     include: {
@@ -817,13 +831,16 @@ export async function applyDncn(noteId: number, actorId: number): Promise<DncnPo
         })),
       ];
 
+      const ordered = debitNote ? lines : [...lines.slice(1), lines[0]];
+      if (dryRun) throw new DncnDryRun(ordered);
+
       await postJournal(tx, {
         companyId: doc.company_id,
         postingDate: new Date(`${date}T00:00:00Z`),
         description: label,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
-        lines: debitNote ? lines : [...lines.slice(1), lines[0]],
+        lines: ordered,
         actorId,
       });
 
@@ -846,6 +863,7 @@ export async function applyDncn(noteId: number, actorId: number): Promise<DncnPo
       });
     });
   } catch (error) {
+    if (error instanceof DncnDryRun) return { ok: true, baseAmount, journal: error.lines };
     if (error instanceof DncnRefused) return { ok: false, errors: error.errors };
     if (error instanceof PeriodShut) return { ok: false, errors: { _form: error.message } };
     throw error;
@@ -888,4 +906,24 @@ export async function summariseNotes(rows: DncnRow[]): Promise<DncnSummary> {
     debitTotals: totals("Debit"),
     creditTotals: totals("Credit"),
   };
+}
+
+/** Carries a dry run's journal out of the transaction it rolls back. */
+class DncnDryRun extends Error {
+  constructor(readonly lines: JournalLineInput[]) {
+    super("Pratinjau nota");
+    this.name = "DncnDryRun";
+  }
+}
+
+/** The journal Post would write for this note, or its refusal. Writes nothing. */
+export async function previewDncn(
+  noteId: number
+): Promise<
+  | { ok: true; lines: JournalPreviewLine[] }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const result = await applyDncn(noteId, 0, true);
+  if (!result.ok) return result;
+  return { ok: true, lines: await describeJournalLines(result.journal ?? []) };
 }

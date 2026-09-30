@@ -12,6 +12,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { JournalPreview } from "@/components/ui/journal-preview";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import {
@@ -19,6 +20,7 @@ import {
   transitionDncn,
   updateDncn,
   type DncnValues,
+  previewDncnPost,
 } from "@/app/actions/dncn";
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
@@ -99,6 +101,8 @@ export function DncnForm({
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState<DncnAction | null>(null);
   const [busy, setBusy] = useState(false);
+  // Post is answerable once its journal preview has loaded and not refused.
+  const [postReady, setPostReady] = useState(false);
 
   const type = (values.note_type || null) as DncnType | null;
   const book = refs.books.find((b) => String(b.categoryId) === values.budget_category_id) ?? null;
@@ -214,6 +218,7 @@ export function DncnForm({
     const result = await transitionDncn(note.id, action);
     setBusy(false);
     setConfirm(null);
+    setPostReady(false);
     if (result.ok) {
       toast(result.message, note.note_no, "ok");
       router.refresh();
@@ -712,8 +717,20 @@ export function DncnForm({
           confirmTone={DNCN_TRANSITIONS[confirm].tone === "danger" ? "solid-danger" : "primary"}
           busy={busy}
           onConfirm={() => run(confirm)}
-          onCancel={() => setConfirm(null)}
-        />
+          onCancel={() => {
+            setConfirm(null);
+            setPostReady(false);
+          }}
+          wide={confirm === "post"}
+          confirmDisabled={confirm === "post" && !postReady}
+        >
+          {confirm === "post" && (
+            <JournalPreview
+              load={() => previewDncnPost(note.id)}
+              onReady={setPostReady}
+            />
+          )}
+        </ConfirmDialog>
       )}
     </>
   );

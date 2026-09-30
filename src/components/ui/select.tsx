@@ -3,6 +3,7 @@
 import { Fragment, useId, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { AnchoredPopup } from "@/components/ui/anchored-popup";
+import { startIndex, useListNav } from "@/components/ui/list-nav";
 
 /**
  * The application's dropdown.
@@ -145,6 +146,21 @@ export function Select({
 
   const visible = filterOptions(options, query);
 
+  // ↓ / ↑ / Home / End move the highlight, Enter picks it (`useListNav`) —
+  // the same keys the FK picker answers to.
+  const pickable = visible.map((o) => !o.disabled);
+  const listRef = useRef<HTMLDivElement>(null);
+  const nav = useListNav({
+    listRef,
+    pickable,
+    initial: startIndex(pickable, query ? -1 : visible.findIndex((o) => o.value === value)),
+    resetKey: `${open}|${query}`,
+  });
+  const close = () => {
+    setOpen(false);
+    setQuery("");
+  };
+
   const cls = [
     TRIGGER_CLASS[variant],
     // Only the field trigger has a small size: `sm` is the 32px a line table's
@@ -185,10 +201,8 @@ export function Select({
       onChange={(e) => setQuery(e.target.value)}
       placeholder={selected?.label ?? prompt}
       onKeyDown={(e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        const first = visible.find((o) => !o.disabled);
-        if (first) pick(first.value);
+        if (e.key === "Tab") return close();
+        nav.onKey(e, (i) => pick(visible[i].value), true);
       }}
     />
   ) : variant === "field" ? (
@@ -220,7 +234,20 @@ export function Select({
         tabIndex={inert || searching ? -1 : 0}
         onMouseDown={toggle}
         onKeyDown={(e) => {
-          if (open || inert) return;
+          if (inert) return;
+          if (open) {
+            // A list without a search box keeps focus on the trigger, so the
+            // trigger is what moves through it.
+            if (searching) return;
+            if (e.key === "Tab") return close();
+            if (e.key === " ") {
+              e.preventDefault();
+              if (nav.active >= 0 && pickable[nav.active]) pick(visible[nav.active].value);
+              return;
+            }
+            nav.onKey(e, (i) => pick(visible[i].value), false);
+            return;
+          }
           if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
             e.preventDefault();
             setOpen(true);
@@ -246,7 +273,7 @@ export function Select({
         className="cbpop"
         maxWidth={LIST_MAX_WIDTH[listWidth]}
       >
-        <div className="l" id={listId} role="listbox">
+        <div className="l" id={listId} role="listbox" ref={listRef}>
           {visible.length ? (
             visible.map((o, i) => (
               <Fragment key={o.value}>
@@ -256,9 +283,10 @@ export function Select({
                   </div>
                 )}
                 <div
+                  {...nav.optionProps(i)}
                   role="option"
                   aria-selected={o.value === value}
-                  className={`cbo${o.value === value ? " sel" : ""}${o.disabled ? " off" : ""}`}
+                  className={`cbo${o.value === value ? " sel" : ""}${o.disabled ? " off" : ""}${i === nav.active ? " hi" : ""}`}
                   onClick={() => {
                     if (o.disabled) return;
                     pick(o.value);

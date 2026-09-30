@@ -1,5 +1,6 @@
 "use server";
 
+import type { JournalPreviewLine } from "@/lib/siba/journal";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { type Actor } from "@/lib/siba/access";
@@ -10,6 +11,7 @@ import { checkTransactionDate } from "@/lib/siba/fiscal";
 import { roundBase } from "@/lib/siba/fx";
 import {
   applyTransfer,
+  previewTransfer,
   checkTransferHeader,
   checkTransferLines,
   nextTransferNo,
@@ -375,4 +377,21 @@ function revalidateTransfer(id: number) {
   // that read either are stale the moment this returns.
   revalidatePath("/master/cash-bank");
   revalidatePath("/dashboard");
+}
+
+/**
+ * The journal Post would write for this transfer, for its confirmation —
+ * consequences before commitment. Asks the Post permission itself, because
+ * only someone who could post it is being asked to confirm it, and it runs
+ * the posting path as a dry run, so it refuses exactly as Post would.
+ */
+export async function previewTransferPost(
+  id: number
+): Promise<
+  | { ok: true; lines: JournalPreviewLine[] }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const g = await authorize(TRANSFER_TRANSITIONS.post.permission);
+  if (!g.ok) return g.denial;
+  return previewTransfer(id);
 }

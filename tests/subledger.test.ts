@@ -14,6 +14,7 @@ import {
   recordSubledgerEntry,
   rebuildSubledgerBalance,
   subledgerPosition,
+  subledgerBalanceReport,
   subledgerReport,
   subledgerSubjects,
 } from "../src/lib/siba/subledger";
@@ -169,12 +170,12 @@ describe("a category keeps a book exactly when it names a Partner", () => {
     // Master › Klasifikasi needs no report, no permission and no menu entry
     // written for it. If this ever becomes one-report-per-book again, a new
     // category silently has no way to be read.
-    // Two readings of the same books — the period's movement and the open
-    // items standing now — and each takes the book as a parameter.
+    // Two readings of the same books — the entries, and each Partner's saldo
+    // with the open items behind it — and each takes the book as a parameter.
     const subledgerReports = REPORTS.filter((r) => r.subledger);
     assert.deepEqual(
       subledgerReports.map((r) => r.slug),
-      ["subledger", "subledger-item"],
+      ["subledger", "subledger-balance"],
       "one Report View per reading, never one per book — the book is a parameter"
     );
 
@@ -496,6 +497,44 @@ describe("a subledger report reconciles on its own page", () => {
       !hutang.some((s) => s.id === partner),
       "and is not offered by a book it never moved in"
     );
+  });
+
+  test("Saldo Buku Subjek states the same figures, and its items add up to the closing", async () => {
+    // The summary step of the pair: the Buku Subjek's own figures per Partner,
+    // with the open items behind the closing read as of the period's end.
+    for (const [range, closing, remaining] of [
+      [january, 3_200_000, [1_600_000, 1_000_000, 600_000]],
+      // As of the day before the January settlement: the first item is whole.
+      [{ from: "2025-12-01", to: "2025-12-31" }, 2_000_000, [2_000_000]],
+      [{ from: "2026-06-01", to: "2026-06-30" }, 4_199_999, [1_600_000, 1_000_000, 600_000, 999_999]],
+    ] as const) {
+      const report = await subledgerBalanceReport(books, bookOf("Prive").key, range, {
+        partnerIds: [partner],
+        companyIds: [induk],
+      });
+      const row = report!.groups[0].rows[0];
+      assert.equal(row.closing, closing);
+      assert.equal(row.closing, row.opening + row.raised - row.lowered);
+      assert.deepEqual(
+        row.items.map((i) => i.remaining),
+        [...remaining],
+        `items as of ${range.to}, oldest first`
+      );
+      assert.equal(
+        Math.round(row.items.reduce((t, i) => t + i.remaining, 0) * 100),
+        Math.round(row.closing * 100),
+        "the open items are the closing position, entry for entry"
+      );
+      assert.equal(report!.groups[0].closing, row.closing, "totalled per currency");
+    }
+  });
+
+  test("Saldo Buku Subjek respects the Company scope", async () => {
+    const report = await subledgerBalanceReport(books, bookOf("Prive").key, january, {
+      partnerIds: [partner],
+      companyIds: [-1],
+    });
+    assert.deepEqual(report!.groups, []);
   });
 
   test("an unknown book answers with nothing rather than guessing", async () => {

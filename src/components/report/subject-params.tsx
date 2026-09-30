@@ -47,7 +47,6 @@ export function SubjectParams({
   companyId,
   extraParams,
   lead,
-  dateless = false,
 }: {
   slug: string;
   subjects: RefOption[];
@@ -75,8 +74,6 @@ export function SubjectParams({
   extraParams?: Record<string, string | number | null | undefined>;
   /** What comes before the subject on the first row — the Company, the book. */
   lead?: React.ReactNode;
-  /** A standing position rather than a period: no date range at all. */
-  dateless?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -85,7 +82,7 @@ export function SubjectParams({
   const [start, setStart] = useState(from);
   const [end, setEnd] = useState(to);
 
-  const invalid = !dateless && invalidRange(start, end);
+  const invalid = invalidRange(start, end);
   const missingSubject = subjectRequired && selected.length === 0;
 
   useReportRun(
@@ -97,7 +94,8 @@ export function SubjectParams({
             company: companyId ?? null,
             ...extraParams,
             [param]: selected.join(","),
-            ...(dateless ? {} : { from: start, to: end }),
+            from: start,
+            to: end,
           })
         );
       });
@@ -128,9 +126,7 @@ export function SubjectParams({
         </div>
       </div>
 
-      {!dateless && (
-        <PeriodRow start={start} end={end} onStart={setStart} onEnd={setEnd} />
-      )}
+      <PeriodRow start={start} end={end} onStart={setStart} onEnd={setEnd} />
     </>
   );
 }

@@ -889,69 +889,148 @@ export async function openSubledgerItems(
   return rows.map(toItem);
 }
 
-export type SubledgerItemRow = SubledgerItem & {
-  partnerLabel: string;
-  partnerName: string;
+/** One open item as it stood on a report's end date. */
+export type SubledgerItemAsOf = {
+  id: number;
+  itemNo: string;
+  /** `YYYY-MM-DD` — when the item was raised. */
+  date: string;
+  rate: number;
+  original: number;
+  /** What the entries dated on or before the end date left on the item. */
+  remaining: number;
+  baseRemaining: number;
+  note: string | null;
+};
+
+/** One Partner and currency in the Saldo Buku Subjek. */
+export type SubledgerBalanceRow = Omit<SubledgerSubject, "entries"> & {
+  /** The items the closing position is made of, as of the period's end. */
+  items: SubledgerItemAsOf[];
+};
+
+export type SubledgerBalanceGroup = {
+  currencyId: number;
   currencyLabel: string;
-  /** False when the item disagrees with the entries that name it. */
-  reconciles: boolean;
+  rows: SubledgerBalanceRow[];
+  opening: number;
+  raised: number;
+  lowered: number;
+  closing: number;
+  baseClosing: number;
+};
+
+export type SubledgerBalanceReport = {
+  book: SubledgerDef;
+  range: PeriodRange;
+  /** One group per currency, never added across currencies. */
+  groups: SubledgerBalanceGroup[];
 };
 
 /**
- * Every item of one book, for the open-item report: the Company's scope, the
- * Partners asked for, and whether cleared items are included.
+ * Saldo Buku Subjek — every Partner's position in one book over a period, and
+ * the open items each closing position is made of.
+ *
+ * The movement figures are the Buku Subjek's own (`subledgerReport`), so the
+ * two reports cannot disagree about a Partner. The items are read **as of the
+ * period's end**: each item's remainder is the sum of the entries that name it
+ * dated on or before `to`, which makes the items add up to the closing
+ * position by construction — the same entries, grouped by item instead of by
+ * Partner. An item with nothing left on that date is not listed.
+ *
+ * A Partner whose position was nil throughout the period and did not move is
+ * left out: it has nothing to report, and listing every Partner that ever held
+ * something would bury the ones that do.
+ *
+ * Totals are per currency. Adding two Partners' Hutang is meaningful — it is
+ * what the control account in the General Ledger should hold — while adding
+ * USD to rupiah at face value is not.
  */
-export async function subledgerItemReport(
+export async function subledgerBalanceReport(
   books: SubledgerDef[],
   bookKey: string,
-  options: { companyIds: number[]; partnerIds?: number[]; includeCleared?: boolean }
-): Promise<{ book: SubledgerDef; items: SubledgerItemRow[] } | null> {
-  const book = subledgerByKey(books, bookKey);
-  if (!book) return null;
-  const rows = await prisma.subLedgerBalance.findMany({
+  range: PeriodRange,
+  options: { partnerIds?: number[]; companyIds: number[] }
+): Promise<SubledgerBalanceReport | null> {
+  const ledger = await subledgerReport(books, bookKey, range, options);
+  if (!ledger) return null;
+  const { book } = ledger;
+
+  const subjects = ledger.subjects.filter(
+    (s) => s.opening !== 0 || s.entries.length > 0 || s.closing !== 0
+  );
+  if (!subjects.length) return { book, range, groups: [] };
+
+  const sums = await prisma.subLedger.groupBy({
+    by: ["balance_id"],
     where: {
       book: book.key,
-      ...(options.includeCleared ? {} : { status: "Open" as const }),
-      partner: {
-        company_id: { in: options.companyIds },
-        ...(options.partnerIds?.length ? { id: { in: options.partnerIds } } : {}),
-      },
+      entry_date: { lte: startOf(range.to) },
+      OR: subjects.map((s) => ({ partner_id: s.partnerId, currency_id: s.currencyId })),
     },
-    include: {
-      partner: { select: { partner_label: true, partner_name: true } },
-      currency: { select: { currency_label: true } },
-    },
-    orderBy: [{ opened_date: "asc" }, { id: "asc" }],
+    _sum: { movement: true, base_movement: true },
   });
-  const sums = rows.length
-    ? await prisma.subLedger.groupBy({
-        by: ["balance_id"],
-        where: { balance_id: { in: rows.map((r) => r.id) } },
-        _sum: { movement: true, base_movement: true },
+  const standing = sums.filter((s) => cents(s._sum.movement?.toNumber() ?? 0) !== 0);
+  const records = standing.length
+    ? await prisma.subLedgerBalance.findMany({
+        where: { id: { in: standing.map((s) => s.balance_id) } },
+        orderBy: [{ opened_date: "asc" }, { id: "asc" }],
       })
     : [];
-  const sumOf = new Map(sums.map((s) => [s.balance_id, s._sum]));
-  const items = rows.map((r) => {
-    const s = sumOf.get(r.id);
-    return {
-      ...toItem(r),
-      partnerLabel: r.partner.partner_label,
-      partnerName: r.partner.partner_name,
-      currencyLabel: r.currency.currency_label,
-      reconciles:
-        !!s &&
-        cents(s.movement?.toNumber() ?? 0) === cents(r.balance.toNumber()) &&
-        roundBase(s.base_movement?.toNumber() ?? 0) === roundBase(r.base_balance.toNumber()),
-    };
-  });
-  items.sort(
-    (a, b) =>
-      a.partnerLabel.localeCompare(b.partnerLabel) ||
-      a.currencyLabel.localeCompare(b.currencyLabel) ||
-      a.date.localeCompare(b.date) ||
-      a.id - b.id
-  );
-  return { book, items };
+  const sumOf = new Map(standing.map((s) => [s.balance_id, s._sum]));
+
+  const itemsOf = new Map<string, SubledgerItemAsOf[]>();
+  for (const r of records) {
+    const s = sumOf.get(r.id)!;
+    const k = `${r.partner_id}:${r.currency_id}`;
+    itemsOf.set(k, [
+      ...(itemsOf.get(k) ?? []),
+      {
+        id: r.id,
+        itemNo: r.item_no,
+        date: r.opened_date.toISOString().slice(0, 10),
+        rate: r.rate.toNumber(),
+        original: r.original.toNumber(),
+        remaining: s.movement?.toNumber() ?? 0,
+        baseRemaining: roundBase(s.base_movement?.toNumber() ?? 0),
+        note: r.note,
+      },
+    ]);
+  }
+
+  const groups = new Map<number, SubledgerBalanceGroup>();
+  for (const s of subjects) {
+    const { entries: _entries, ...rest } = s;
+    void _entries;
+    let g = groups.get(s.currencyId);
+    if (!g) {
+      g = {
+        currencyId: s.currencyId,
+        currencyLabel: s.currencyLabel,
+        rows: [],
+        opening: 0,
+        raised: 0,
+        lowered: 0,
+        closing: 0,
+        baseClosing: 0,
+      };
+      groups.set(s.currencyId, g);
+    }
+    g.rows.push({ ...rest, items: itemsOf.get(`${s.partnerId}:${s.currencyId}`) ?? [] });
+    g.opening += s.opening;
+    g.raised += s.raised;
+    g.lowered += s.lowered;
+    g.closing += s.closing;
+    g.baseClosing = roundBase(g.baseClosing + s.baseClosing);
+  }
+
+  return {
+    book,
+    range,
+    groups: [...groups.values()].sort((a, b) =>
+      a.currencyLabel.localeCompare(b.currencyLabel)
+    ),
+  };
 }
 
 /**

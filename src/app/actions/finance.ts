@@ -1,5 +1,6 @@
 "use server";
 
+import type { JournalPreviewLine } from "@/lib/siba/journal";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { type Actor } from "@/lib/siba/access";
@@ -9,6 +10,7 @@ import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { roundBase } from "@/lib/siba/fx";
 import {
   applyPosting,
+  previewPosting,
   budgetDocTypeId,
   checkDocumentDate,
   checkHeader,
@@ -472,4 +474,21 @@ function revalidateFinance(id: number, direction: "In" | "Out") {
   revalidatePath("/budget/budget/month/[period]", "page");
   revalidatePath("/master/cash-bank");
   revalidatePath("/dashboard");
+}
+
+/**
+ * The journal Post would write for this dokumen, for its confirmation —
+ * consequences before commitment. Asks the Post permission itself, because
+ * only someone who could post it is being asked to confirm it, and it runs
+ * the posting path as a dry run, so it refuses exactly as Post would.
+ */
+export async function previewTransactionPost(
+  id: number
+): Promise<
+  | { ok: true; lines: JournalPreviewLine[] }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const g = await authorize(TRANSACTION_TRANSITIONS.post.permission);
+  if (!g.ok) return g.denial;
+  return previewPosting(id);
 }

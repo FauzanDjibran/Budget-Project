@@ -14,6 +14,7 @@ import { RateInput } from "@/components/ui/rate-input";
 import { KursSelect } from "./kurs-select";
 import { OpenItemSelect } from "./open-item-select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { JournalPreview } from "@/components/ui/journal-preview";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
 import {
@@ -22,6 +23,7 @@ import {
   transitionTransaction,
   updateTransaction,
   type TransactionValues,
+  previewTransactionPost,
 } from "@/app/actions/finance";
 import { requestFunding, withdrawFunding } from "@/app/actions/funding";
 import {
@@ -32,7 +34,6 @@ import {
   todayIso,
 } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, rateSource } from "@/lib/siba/currency";
-import { STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetMapping } from "@/lib/siba/budget";
 import type {
   EligibleBudget,
@@ -55,6 +56,10 @@ import {
   type ActionTone,
 } from "@/lib/siba/header-actions";
 import { BudgetPicker } from "./budget-picker";
+import {
+  RealizationLineDialog,
+  type RealizationLineDetail,
+} from "./realization-line-detail";
 
 export type TransactionFormMode = "new" | "view" | "edit";
 
@@ -150,9 +155,12 @@ export function TransactionForm({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [detail, setDetail] = useState<RealizationLineDetail | null>(null);
 
   const [confirm, setConfirm] = useState<TransactionAction | null>(null);
   const [busy, setBusy] = useState(false);
+  // Post is answerable once its journal preview has loaded and not refused.
+  const [postReady, setPostReady] = useState(false);
 
   const companyId = values.company_id ? Number(values.company_id) : null;
   const cashBank =
@@ -382,6 +390,51 @@ export function TransactionForm({
 
   // ------------------------------------------------------------------ lines
 
+  const poolById = new Map(pool.map((b) => [b.id, b]));
+
+  /**
+   * Every line in one shape, whichever mode the screen is in, so the table and
+   * the Rincian dialog are drawn once. A draft line's plan figures come from
+   * the eligibility pool; a saved line carries them itself.
+   */
+  const rows: RealizationLineDetail[] = editing
+    ? draftLines.map((l) => {
+        const pooled = poolById.get(l.budget_id);
+        const c = classify(l);
+        return {
+          budgetId: l.budget_id,
+          budgetNo: l.budget_no,
+          budgetDate: l.budget_date,
+          description: l.description,
+          budgetStatus: null,
+          ...c,
+          budgetAmount: pooled?.budget_amount ?? null,
+          realizedAmount: pooled?.realized_amount ?? null,
+          outstanding: l.outstanding,
+          draftAllocated: pooled?.draftAllocated ?? 0,
+          amount: l.amount,
+          item: pooled?.items.find((it) => it.id === l.item_id) ?? null,
+          itemRole: pooled?.lowers ? "lowers" : pooled?.opensItem ? "opens" : null,
+        };
+      })
+    : lines.map((l) => ({
+        budgetId: l.budget_id,
+        budgetNo: l.budget_no,
+        budgetDate: l.budget_date,
+        description: l.description,
+        budgetStatus: l.budget_status,
+        ...classify(l),
+        budgetAmount: l.budget_amount,
+        realizedAmount: l.realized_amount,
+        outstanding: l.outstanding_amount,
+        draftAllocated: 0,
+        amount: l.settlement_amount,
+        item: l.item,
+        itemRole: l.item ? "lowers" : null,
+      }));
+  // The column exists only where a line has an open item to state or choose.
+  const showItems = rows.some((r) => r.itemRole !== null);
+
   const alreadyPicked = new Set(draftLines.map((l) => l.budget_id));
   const pickable = pool.filter((b) => !alreadyPicked.has(b.id));
 
@@ -473,6 +526,7 @@ export function TransactionForm({
       : await transitionTransaction(transaction.id, action);
     setBusy(false);
     setConfirm(null);
+    setPostReady(false);
     if (result.ok) {
       toast(result.message, transaction.transaction_no, "ok");
       router.refresh();
@@ -906,205 +960,160 @@ export function TransactionForm({
               </div>
             )}
 
-            {(editing ? draftLines.length : lines.length) ? (
+            {rows.length ? (
               <div className="tw">
                 <table className="grid ltab">
                   <thead>
                     <tr>
                       <th style={{ width: 34 }}>No</th>
-                      <th style={{ width: 92 }}>Budget</th>
-                      <th>Deskripsi</th>
-                      <th style={{ width: 210 }}>Klasifikasi</th>
-                      <th style={{ width: 170 }}>Open Item</th>
-                      <th className="num" style={{ width: 124 }}>
-                        Nominal Budget
-                      </th>
-                      <th className="num" style={{ width: 124 }}>
+                      <th>Budget</th>
+                      {showItems && <th style={{ width: 180 }}>Open Item</th>}
+                      <th className="num" style={{ width: 150 }}>
                         Outstanding
                       </th>
-                      <th className="num" style={{ width: editing ? 164 : 150 }}>
-                        Realisasi Dokumen
+                      <th className="num" style={{ width: 164 }}>
+                        Realisasi
                       </th>
-                      <th style={{ width: 44 }} />
+                      <th style={{ width: editing ? 64 : 40 }} />
                     </tr>
                   </thead>
                   <tbody>
-                    {editing
-                      ? draftLines.map((l, i) => {
-                          const over = l.amount > l.outstanding;
-                          const full = l.amount >= l.outstanding;
-                          const pooled = pool.find((b) => b.id === l.budget_id);
-                          const planned = pooled?.budget_amount ?? null;
-                          const c = classify(l);
-                          return (
-                            <tr key={l.budget_id} className={over ? "overrow" : undefined}>
-                              <td className="no">{i + 1}</td>
-                              <td>
-                                <span className="lab">{l.budget_no}</span>
-                              </td>
-                              <td className="pri">
-                                <span className="dstack">
-                                  <span className="d1">{l.description}</span>
-                                  <span className="d2">
-                                    {formatDate(l.budget_date)}
+                    {rows.map((r, i) => {
+                      const over = r.amount > r.outstanding;
+                      const full = !over && r.amount > 0 && r.amount >= r.outstanding;
+                      return (
+                        <tr key={r.budgetId} className={over ? "overrow" : undefined}>
+                          <td className="no">{i + 1}</td>
+                          <td className="pri">
+                            <span className="dstack">
+                              <span className="d1">{r.description}</span>
+                              <span className="d2 tx">
+                                <span className="mono">{r.budgetNo}</span> ·{" "}
+                                {r.category}
+                                {r.partner ? ` · ${r.partner}` : ""}
+                                {!r.account && (
+                                  <span
+                                    className="lwarn"
+                                    title="Account belum dipetakan — Post akan ditolak"
+                                  >
+                                    <Icon name="warn" size={11} /> belum dipetakan
                                   </span>
-                                </span>
-                              </td>
-                              <LineClass c={c} />
-                              <td>
-                                {pooled?.lowers ? (
+                                )}
+                              </span>
+                            </span>
+                          </td>
+                          {showItems && (
+                            <td>
+                              {r.itemRole === "lowers" ? (
+                                editing ? (
                                   <OpenItemSelect
-                                    value={l.item_id}
-                                    items={pooled.items}
+                                    value={r.item?.id ?? null}
+                                    items={poolById.get(r.budgetId)?.items ?? []}
                                     currencyLabel={currencyLabel}
-                                    invalid={Boolean(errors._lines) && !l.item_id}
+                                    invalid={Boolean(errors._lines) && !r.item}
                                     onChange={(v) => {
-                                      setDraftLines((rows) =>
-                                        rows.map((r) =>
-                                          r.budget_id === l.budget_id
-                                            ? { ...r, item_id: v }
-                                            : r
+                                      setDraftLines((ls) =>
+                                        ls.map((x) =>
+                                          x.budget_id === r.budgetId
+                                            ? { ...x, item_id: v }
+                                            : x
                                         )
                                       );
                                       setDirty(true);
                                     }}
                                   />
-                                ) : pooled?.opensItem ? (
-                                  <span className="mut">item baru saat Post</span>
+                                ) : r.item ? (
+                                  <span className="dstack">
+                                    <span className="d1">
+                                      <span className="lab">{r.item.itemNo}</span>
+                                    </span>
+                                    <span className="d2">
+                                      {currencyLabel === BASE_CURRENCY_LABEL
+                                        ? formatDate(r.item.date)
+                                        : `kurs ${formatRate(r.item.rate)}`}
+                                    </span>
+                                  </span>
                                 ) : (
                                   <span className="dash">—</span>
-                                )}
-                              </td>
-                              <td className="num">
-                                <span className="mny">
-                                  {planned == null
-                                    ? "—"
-                                    : formatMoney(planned, currencyLabel)}
+                                )
+                              ) : r.itemRole === "opens" ? (
+                                <span className="mut">item baru saat Post</span>
+                              ) : (
+                                <span className="dash">—</span>
+                              )}
+                            </td>
+                          )}
+                          <td className="num">
+                            <span className="mstack">
+                              <span className={`mny${r.outstanding ? "" : " z"}`}>
+                                {formatMoney(r.outstanding, currencyLabel)}
+                              </span>
+                              {over ? (
+                                <span className="rz warnrz">
+                                  over {formatMoney(r.amount - r.outstanding, currencyLabel)}
                                 </span>
-                              </td>
-                              <td className="num">
-                                <span className={`mny${l.outstanding ? "" : " z"}`}>
-                                  {formatMoney(l.outstanding, currencyLabel)}
-                                </span>
-                              </td>
-                              <td className="num">
-                                <MoneyInput
-                                  size="sm"
-                                  over={over}
-                                  ariaLabel="Nominal realisasi"
-                                  value={l.amount ? String(l.amount) : ""}
-                                  onChange={(raw) => {
-                                    setDraftLines((rows) =>
-                                      rows.map((r) =>
-                                        r.budget_id === l.budget_id
-                                          ? { ...r, amount: raw ? Number(raw) : 0 }
-                                          : r
-                                      )
-                                    );
-                                    setDirty(true);
-                                  }}
-                                />
-                                {over ? (
-                                  <span
-                                    className="overtag"
-                                    title="Realisasi melebihi outstanding"
-                                  >
-                                    Over{" "}
-                                    {formatMoney(
-                                      l.amount - l.outstanding,
-                                      currencyLabel
-                                    )}
-                                  </span>
-                                ) : full ? (
-                                  <span className="fulltag">Menutup budget</span>
-                                ) : null}
-                              </td>
-                              <td className="acts">
+                              ) : full ? (
+                                <span className="rz">menutup budget</span>
+                              ) : null}
+                            </span>
+                          </td>
+                          <td className="num">
+                            {editing ? (
+                              <MoneyInput
+                                size="sm"
+                                over={over}
+                                ariaLabel="Nominal realisasi"
+                                value={r.amount ? String(r.amount) : ""}
+                                onChange={(raw) => {
+                                  setDraftLines((ls) =>
+                                    ls.map((x) =>
+                                      x.budget_id === r.budgetId
+                                        ? { ...x, amount: raw ? Number(raw) : 0 }
+                                        : x
+                                    )
+                                  );
+                                  setDirty(true);
+                                }}
+                              />
+                            ) : (
+                              <span className={`mny${over ? " over" : ""}`}>
+                                {formatMoney(r.amount, currencyLabel)}
+                              </span>
+                            )}
+                          </td>
+                          <td className="acts">
+                            <span className="ract">
+                              <button
+                                className="iact"
+                                title="Rincian Budget"
+                                onClick={() => setDetail(r)}
+                              >
+                                <Icon name="eye" size={14} />
+                              </button>
+                              {editing && (
                                 <button
                                   className="iact del"
                                   title="Keluarkan dari dokumen"
                                   onClick={() => {
-                                    setDraftLines((rows) =>
-                                      rows.filter((r) => r.budget_id !== l.budget_id)
+                                    setDraftLines((ls) =>
+                                      ls.filter((x) => x.budget_id !== r.budgetId)
                                     );
                                     setDirty(true);
                                   }}
                                 >
                                   <Icon name="trash" size={14} />
                                 </button>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      : lines.map((l, i) => {
-                          const over = l.settlement_amount > l.outstanding_amount;
-                          const c = classify(l);
-                          return (
-                            <tr key={l.id} className={over ? "overrow" : undefined}>
-                              <td className="no">{i + 1}</td>
-                              <td>
-                                <span className="lab">{l.budget_no}</span>
-                              </td>
-                              <td className="pri">
-                                <span className="dstack">
-                                  <span className="d1">{l.description}</span>
-                                  <span className="d2">
-                                    {formatDate(l.budget_date)} ·{" "}
-                                    {STATUS_TEXT[l.budget_status] ?? l.budget_status}
-                                  </span>
-                                </span>
-                              </td>
-                              <LineClass c={c} />
-                              <td>
-                                {l.item ? (
-                                  <span className="dstack">
-                                    <span className="d1">
-                                      <span className="lab">{l.item.itemNo}</span>
-                                    </span>
-                                    <span className="d2">
-                                      {currencyLabel === BASE_CURRENCY_LABEL
-                                        ? formatDate(l.item.date)
-                                        : `kurs ${formatRate(l.item.rate)}`}
-                                    </span>
-                                  </span>
-                                ) : (
-                                  <span className="dash">—</span>
-                                )}
-                              </td>
-                              <td className="num">
-                                <span className="mny">
-                                  {formatMoney(l.budget_amount, currencyLabel)}
-                                </span>
-                              </td>
-                              <td className="num">
-                                <span
-                                  className={`mny${l.outstanding_amount ? "" : " z"}`}
-                                >
-                                  {formatMoney(l.outstanding_amount, currencyLabel)}
-                                </span>
-                              </td>
-                              <td className="num">
-                                <span className={`mny${over ? " over" : ""}`}>
-                                  {formatMoney(l.settlement_amount, currencyLabel)}
-                                </span>
-                              </td>
-                              <td className="acts">
-                                <Link
-                                  className="iact"
-                                  href={`/budget/budget/${l.budget_id}`}
-                                  title="Buka Budget"
-                                >
-                                  <Icon name="eye" size={14} />
-                                </Link>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                              )}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   <tfoot>
                     <tr className="totrow">
-                      <td colSpan={7} style={{ textAlign: "right" }}>
-                        Total Realisasi Dokumen
+                      <td colSpan={showItems ? 4 : 3} style={{ textAlign: "right" }}>
+                        Total Realisasi
                       </td>
                       <td className="num">
                         <span className="mny big">
@@ -1123,18 +1132,14 @@ export function TransactionForm({
                 </div>
                 <h4>
                   {editing
-                    ? headerReady
-                      ? "Belum ada Budget dipilih"
-                      : "Lengkapi header dokumen"
+                    ? (budgetWaitingFor ?? "Belum ada Budget dipilih")
                     : "Dokumen tanpa Budget"}
                 </h4>
                 <p>
                   {editing
                     ? headerReady
                       ? "Tekan Tambah Budget untuk melihat Budget yang memenuhi kriteria header dokumen ini."
-                      : funded
-                        ? "Pilih Company dan Currency terlebih dahulu."
-                        : "Pilih Company, Cash & Bank, dan Currency terlebih dahulu."
+                      : "Budget yang dapat direalisasikan ditentukan oleh header dokumen."
                     : "Tidak ada line pada dokumen ini."}
                 </p>
               </div>
@@ -1200,6 +1205,15 @@ export function TransactionForm({
         </div>
       </div>
 
+      {detail && (
+        <RealizationLineDialog
+          line={detail}
+          currencyLabel={currencyLabel}
+          cashBankLabel={funded ? null : cashBank?.label ?? null}
+          onClose={() => setDetail(null)}
+        />
+      )}
+
       {picking && (
         <BudgetPicker
           pool={pickable}
@@ -1229,59 +1243,22 @@ export function TransactionForm({
           }
           busy={busy}
           onConfirm={() => run(confirm)}
-          onCancel={() => setConfirm(null)}
+          onCancel={() => {
+            setConfirm(null);
+            setPostReady(false);
+          }}
+          wide={confirm === "post"}
+          confirmDisabled={confirm === "post" && !postReady}
         >
           {confirm === "post" && (
-            <div className="apsum" style={{ marginTop: 14, textAlign: "left" }}>
-              <div>
-                <span>Budget direalisasi</span>
-                <b>{lines.length} budget</b>
-              </div>
-              <div className="amt">
-                <span>Nominal</span>
-                <b>{formatMoney(total, currencyLabel)}</b>
-              </div>
-              {cashBank && (
-                <div>
-                  <span>{cashBank.label} sesudah</span>
-                  <b>{formatMoney(balanceAfter, balanceCurrency)}</b>
-                </div>
-              )}
-            </div>
+            <JournalPreview
+              load={() => previewTransactionPost(transaction.id)}
+              onReady={setPostReady}
+            />
           )}
         </ConfirmDialog>
       )}
     </>
-  );
-}
-
-/**
- * One line's classification cell: its Budget Category and Partner, then the
- * account that combination posts to — or the gap, stated where it is.
- */
-function LineClass({
-  c,
-}: {
-  c: {
-    category: string;
-    partner: string | null;
-    account: BudgetMapping | null;
-  };
-}) {
-  return (
-    <td>
-      <span className="dstack">
-        <span className="d1">
-          {c.category}
-          {c.partner ? ` · ${c.partner}` : ""}
-        </span>
-        <span className="d2">
-          {c.account
-            ? `${c.account.accountLabel} ${c.account.accountName}`
-            : "account belum dipetakan"}
-        </span>
-      </span>
-    </td>
   );
 }
 

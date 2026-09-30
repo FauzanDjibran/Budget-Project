@@ -1469,3 +1469,71 @@ describe("a document screen has one shape", () => {
     });
   }
 });
+
+/**
+ * Consequences before commitment. Every document that posts shows, in its
+ * Post confirmation, the journal Post is about to write — produced by the
+ * document's own posting path as a dry run, so the preview is the journal.
+ * A new posting document joins this list in the change that builds it.
+ */
+describe("a Post confirmation shows the journal it will write", () => {
+  const POSTING_FORMS = [
+    "src/components/finance/transaction-form.tsx",
+    "src/components/finance/transfer-form.tsx",
+    "src/components/finance/dncn-form.tsx",
+  ];
+  for (const rel of POSTING_FORMS) {
+    test(`${rel} previews its journal in the Post confirmation`, () => {
+      const text = fileText(rel);
+      assert.match(text, /<JournalPreview\b/, "the Post confirmation shows no journal");
+      assert.match(
+        text,
+        /confirmDisabled=\{confirm === "post" && !postReady\}/,
+        "Post can be confirmed before its journal has loaded"
+      );
+    });
+  }
+
+  test("the preview has one implementation", () => {
+    const offenders = files
+      .filter((f) => f.rel !== "src/components/ui/journal-preview.tsx")
+      .filter((f) => /describeJournalLines\(/.test(code(f.text)))
+      .filter((f) => !f.rel.startsWith("src/lib/siba/"))
+      .map((f) => f.rel);
+    assert.deepEqual(offenders, [], "a screen resolves journal lines itself");
+  });
+});
+
+/**
+ * A Realisasi line keeps what the user acts on — the Budget, its open item,
+ * the outstanding and the amount — and everything that only helps check it
+ * lives in the Rincian Budget dialog. The line table used to carry eight
+ * columns and left the description about sixty pixels at 1366px.
+ */
+describe("a Realisasi line is concise, its detail one click away", () => {
+  const rel = "src/components/finance/transaction-form.tsx";
+  test("the line opens its Rincian dialog", () => {
+    assert.match(fileText(rel), /<RealizationLineDialog\b/);
+  });
+  test("the plan's own figures and the mapping are not columns of the line", () => {
+    const text = fileText(rel);
+    for (const heading of ["Nominal Budget", "Klasifikasi", "Deskripsi"]) {
+      assert.doesNotMatch(
+        text,
+        new RegExp(`<th[^>]*>\s*${heading}\s*</th>`),
+        `the line table has a ${heading} column again`
+      );
+    }
+  });
+});
+
+/** Every dropdown answers the keyboard the same way — one highlight, `list-nav.ts`. */
+describe("dropdowns share one keyboard model", () => {
+  for (const name of ["combobox", "select"]) {
+    test(`${name} is driven by useListNav`, () => {
+      const text = fileText(`src/components/ui/${name}.tsx`);
+      assert.match(text, /useListNav\(/, `${name} handles its own keys`);
+      assert.match(text, /" hi"/, `${name} draws no keyboard highlight`);
+    });
+  }
+});

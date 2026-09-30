@@ -91,7 +91,7 @@ or invariants that assume a particular row exists.
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
 | Debit / Credit Note | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget. A Debit Note debits the Partner's account and a Credit Note credits it, so the book's own `raises` decides whether the position rises or falls and one document serves every book. Which books may be adjusted is `allows_dncn` on the Budget Category (Titipan, Hutang, Piutang). Post writes one `Adjustment` entry and one balanced journal against the Company's Debit Note or Credit Note System Default, under a lock on the position; nothing may go below zero, and a negative position is not adjustable yet |
-| Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its `Posisi Open Item` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
+| Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
@@ -164,7 +164,7 @@ of its own.
 | Currency rules | `src/lib/siba/currency.ts` | The base currency, which resource may settle which document, and where a kurs comes from (`identity` / `layer` / `entered`); client-safe |
 | Account numbering | `src/lib/siba/account-code.ts` | The dotted lineage code — parsing, segments, ordering; client-safe |
 | Company access | `src/lib/siba/company-access.ts` | Permissions -> the Companies a user may read; `server-only` |
-| Journal | `src/lib/siba/journal.ts` | The posting engine and the shared balance rule — writes the journal a posting produces, and the draft CRUD a manual journal is edited through. `JRN-` / `JUR-` numbering; `server-only` |
+| Journal | `src/lib/siba/journal.ts` | The posting engine and the shared balance rule — writes the journal a posting produces, and the draft CRUD a manual journal is edited through; `describeJournalLines` names a journal a posting *would* write, for its Post confirmation. `JRN-` / `JUR-` numbering; `server-only` |
 | General Ledger | `src/lib/siba/ledger.ts` | General Ledger and Trial Balance over journal lines, `statementMovements` (a statement's range sum at `(account, partner?)` grain, less one year's closing journal), `closingBalances` at `(account, partner?)` grain, and the shared `openingBasis` that stands on an Opening Balance snapshot rather than scanning a Company's whole history; `server-only` |
 | Opening Balance | `src/lib/siba/opening-balance.ts` | The immutable per-Company, per-year snapshot: writing one, reading one back, and `openingBasisFor`, which is what the two ledger reports open from. `OPB-` numbering; `server-only` |
 | Fiscal Year closing | `src/lib/siba/closing.ts` | The seven blocking checks, the closing journal preview, and the one transaction that writes the `CLS-` journal, the `OPB-` snapshot and the closing record. Names no other module's table; `server-only` |
@@ -216,7 +216,7 @@ of its own.
 | Funding writes | `src/app/actions/funding.ts` | Ajukan Dana, withdraw, and the induk's confirmation |
 | Shell | `src/components/shell/app-shell.tsx` | Topbar, icon rail, collapsible submenu |
 | Registry pages | `src/components/master/entity-pages.tsx` | The four registry pages, mounted under each owning module |
-| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast, and a document screen's `DocumentHeader` and `Amount` |
+| Generic UI | `src/components/master/`, `src/components/ui/` | Table, tree, form, and the shared controls: `Combobox`, `Select`, `DateInput`, `MoneyInput`, `SearchField`, `Dialog`, `ConfirmDialog`, toast, a document screen's `DocumentHeader` and `Amount`, and a Post confirmation's `JournalPreview`; `list-nav.ts` is the keyboard model every dropdown shares |
 
 ### The module contract
 
@@ -424,6 +424,8 @@ src/
                          RealizationCard
     finance/             TransactionList, TransactionForm, BudgetPicker,
                          KursSelect (which rate layer a payment draws on),
+                         OpenItemSelect, RealizationLineDialog (a Realisasi
+                         line's Rincian),
                          FundingList, FundingDetail,
                          TransferList, TransferForm,
                          DncnList, DncnForm
@@ -433,7 +435,8 @@ src/
                          TrialBalanceParams for the Trial Balance — the date
                          range row shared as PeriodRow), and the
                          report bodies: Cash Bank Ledger, Cash Bank Balance,
-                         Cash Bank Layer, General Ledger, Subledger, the one
+                         Cash Bank Layer, General Ledger, Subledger, Subledger
+                         Balance (Saldo Buku Subjek), the one
                          statement body the Laba Rugi and the Neraca share,
                          and the Trial Balance, on that body's tree and fold
     dashboard/           Dashboard — the funnel, the cash table, the positions
@@ -704,6 +707,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | FK pickers | `Combobox` — searchable, `CODE – Name` options. **The control itself is the search box**: opening turns it into a text input in place, and the popup carries no filter bar of its own |
 | Sets | `MultiSelect` — a searchable picker that adds, chips that remove. **Never a checkbox per option**: a grid grows with the catalogue rather than with the answer |
 | Dropdowns | `Select` — **never a native `<select>`**; `variant` picks the trigger class (`field` / `toolbar` / `compact` / `ctx`). Searchable once the list is long, and searched the same way — in the trigger. A long list of combinations takes `group` on its options and `listWidth="wide"` |
+| Keyboard in a list | `Combobox`, `Select` and `MultiSelect` share one highlight (`components/ui/list-nav.ts`): ↓ / ↑ move it, Home / End outside a search box, Enter picks, Esc or Tab closes. It starts on the current value and follows the mouse; `MultiSelect` stays open between picks. Carried from ERP-Project's P65 |
 | Dropdown search | Every word must match, across label + hint + group. A list of facets is searched by naming facets — `pengeluaran cabang` — and one substring against the whole row finds nothing |
 | Popups | `AnchoredPopup` draws every list and calendar — portalled to `document.body`, placed from the trigger's rect, flipping and clamping to the room it has. **Never positioned inside its control** |
 | Direction | Always **Penerimaan** (`In`) and **Pengeluaran** (`Out`), everywhere. `directionText` in `lib/siba/classification.ts` is the one map; the raw enum is never shown |
@@ -723,6 +727,8 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Validation | Inline `.err` under the field + `.bad` on the control + error toast |
 | Unsaved changes | `.ph-dirty` chip with pulse indicator, in `.ph-act` beside Simpan. `Batal` is `CancelButton`: it leaves at once while the form is clean and asks — *Konfirmasi Buang Perubahan* — while it is dirty. `Mode Ubah` is always `t-warn` |
 | Confirmations | `ConfirmDialog` — small, centred, one question: tinted icon, subject chip, **consequence copy** |
+| Post confirmation | Every posting document's Post confirmation shows **the journal it will write** — `JournalPreview` in a `ConfirmDialog wide`, loaded from the document's own posting path run as a dry run, so it is the journal and not an estimate. Ya, Post stays disabled until it has loaded, and a Post that would be refused says why there (§12) |
+| Document lines | A line keeps **what the user acts on** — on Realisasi the Budget (description over `number · Category · Partner`), its open item, the outstanding and the amount. What only helps check a line — the plan's own figures, the account it posts to, the item's kurs, what Post writes for it — is in a **Rincian** `Dialog` behind the line's `eye` action. A gap that blocks Post (an unmapped account) still shows on the line, as `.lwarn` |
 | Panel dialogs | `Dialog` — wide and left-aligned: fixed header (tinted `.mi sm`, title, subtitle, close), scrolling `.rp-body`, fixed `.rp-foot`. Everything that is not a confirmation |
 | Feedback | Toasts via `useToast()` |
 | Empty states | `.empty` — icon, heading, explanation, CTA only when the user can act. Two sizes: `.empty` fills a page, `.empty.sm` sits inside a card, a dialog or a report body. **Never a hand-written padding** |
@@ -1792,8 +1798,10 @@ Specified in the concept doc, **not yet implemented** (see §13):
   once its list is long, and both search **in the trigger**: opening replaces
   the control's contents with a `.cbq` text input, in the same box, at the same
   height, in the same place. The popup carries the list and nothing else —
-  `.cbpop .s` is gone from the stylesheet. Enter picks the first remaining
-  option, Escape closes, and clicking the trigger again closes it.
+  `.cbpop .s` is gone from the stylesheet. ↓ / ↑ move a highlight and Enter
+  picks it — the highlight returns to the first match as the query changes, so
+  typing and pressing Enter still picks the first remaining option. Escape or
+  Tab closes, and clicking the trigger again closes it.
 - **Reason:** The popup used to grow a search bar of its own, directly below
   the control. The field a user had just clicked was therefore not the field
   they had to type into, and reaching it was a second mouse movement — which
@@ -2290,7 +2298,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   item. A Realisasi line lowering a position names the item it settles
   (`fin_cash_bank_transaction_line.sub_ledger_balance_id`, a plain id like
   `cash_bank_layer_id`) and relieves it at that item's kurs. §10 rules 103–106
-  are the statement of it; **Posisi Open Item** under Finance › Laporan reads it.
+  are the statement of it; **Saldo Buku Subjek** under Finance › Laporan reads it, each Partner's closing unfolding into its open items.
 - **Reason:** the user's, from a real case. A Titipan received at 15.000 into one
   bank and returned from another bank's dollars bought at 13.000 recognised a
   difference against the **average** of every receipt, so the result depended on
@@ -2366,6 +2374,66 @@ Specified in the concept doc, **not yet implemented** (see §13):
   unclosed years back into one figure, never hardcode a computed line's
   position, never sign a row by its own account's normal balance, and never
   produce the Neraca without the accounts it places its figures on.**
+- **Status:** Frozen, current.
+
+### The subject books are a two-step pair, like the Cash Bank Book (FROZEN)
+- **Decision:** Finance › Laporan carries **Buku Subjek** (the entries) and
+  **Saldo Buku Subjek** (`report/subledger-balance`), the way it carries Buku
+  Kas & Bank and Saldo Kas & Bank. Both take the same filter — Company · Buku ·
+  Partner · Periode — and the same permission. Saldo Buku Subjek is one section
+  per currency, one row per Partner: Saldo Awal · Bertambah · Berkurang ·
+  closing, plus Nilai IDR on a foreign section, **totalled per currency**. A
+  row folds open onto the **open items its closing is made of, as of the
+  period's last day**, each at the kurs it was raised at; the Partner's code
+  drills to its Buku Subjek for the same period.
+- **Reason:** The user's, reviewing Finance after the open-item change: Buku
+  Subjek and the dateless Posisi Open Item read as two unrelated reports, one
+  saying how a position moved and the other what it was made of now, with no
+  path between them. Posisi Open Item is gone.
+- **Why the items reconcile.** An item's remainder on a date is the sum of
+  the entries that name it dated on or before it (`subledgerBalanceReport` in
+  `subledger.ts`), so the items are the closing position regrouped — equal by
+  construction, including for an item settled by a document dated before it
+  opened (§10 rule 106). The movement figures come from `subledgerReport`
+  itself, so the two reports cannot disagree about a Partner.
+  `tests/subledger.test.ts` holds it at three dates.
+- **The per-currency total is a reversal, on the user's approval.** Buku
+  Subjek's rule was that nothing is totalled across subjects. Two Partners'
+  Hutang in one currency do add up to something a reader acts on — what the
+  control account in the General Ledger should hold — so the summary states
+  it. Currencies are still never added together.
+- **Do not change unless:** explicitly instructed. **Do not bring back a
+  separate open-item report, do not total across currencies, and do not read
+  an item's remainder as of a date from its stored balance** — that is today's
+  figure.
+- **Status:** Frozen, current.
+
+### A Post confirmation shows the journal it will write (FROZEN)
+- **Decision:** Realisasi, Cash Bank Transfer and Debit / Credit Note each
+  show, inside their Post `ConfirmDialog` (`wide`), the journal Post is about
+  to write — account, Partner, foreign face, debit and kredit in base, total.
+  `applyPosting`, `applyTransfer` and `applyDncn` take a `dryRun` flag:
+  Realisasi stops once its journal is known, before its transaction opens;
+  Transfer and DN/CN run their whole transaction and roll it back, because
+  they draw layers and read positions under a lock inside it.
+  `previewPosting` / `previewTransfer` / `previewDncn` name the lines through
+  `describeJournalLines`, and each Server Action asks the Post permission.
+  **Ya, Post** stays disabled until the preview has loaded, and a Post that
+  would be refused says why there, before the button is pressed.
+- **Reason:** ERP-Project's convention — *consequences before commitment* —
+  which SIBA lacked: Realisasi alone showed an ad-hoc summary, and Transfer
+  and DN/CN showed nothing at all, though a Post is permanent. A preview built
+  by a second calculation would be an estimate that can drift from what Post
+  writes; a dry run of the real path cannot.
+- **Impact:** Numbering is max + 1 inside the transaction, so a rolled-back
+  run leaves no gap. `tests/finance.test.ts` holds that the preview equals
+  the written journal, line for line, and writes nothing;
+  `tests/design-system.test.ts` that every posting form shows it. The manual
+  journal needs none: its lines *are* the journal.
+- **Do not change unless:** explicitly instructed. **Never compute a preview
+  by a second path, never let a preview write, and never let Post be
+  confirmed before its preview has loaded.** A new posting document joins
+  `POSTING_FORMS` in the change that builds it.
 - **Status:** Frozen, current.
 
 ### The Laba Rugi is multi-step, per fiscal period, with an optional comparison (FROZEN)

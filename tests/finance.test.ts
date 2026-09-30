@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyPosting,
+  previewPosting,
   budgetDocTypeId,
   checkHeader,
   checkLines,
@@ -1187,6 +1188,55 @@ describe("posting writes a balanced journal alongside the book", () => {
     const credit = j.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0);
     assert.equal(Math.round(debit * 100), Math.round(credit * 100));
     assert.equal(Math.round(debit * 100), 750_000 * 100);
+  });
+
+  test("the Post preview is the journal Post writes, and writes nothing itself", async () => {
+    // Consequences before commitment: the confirmation shows this preview, so
+    // it has to be the journal and not an estimate of it — and opening the
+    // confirmation must move nothing.
+    const cashBank = await makeCashBank({ opening: 5_000_000 });
+    const budget = await makeBudget({
+      type: "Out",
+      categoryLabel: "Biaya",
+      amount: 640_000,
+    });
+    const doc = await makeDraft({
+      transaction_type: "Out" as const,
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 640_000, outstanding: 640_000 }],
+    });
+
+    const preview = await previewPosting(doc);
+    assert.ok(preview.ok, JSON.stringify(preview));
+    assert.equal(await prisma.accJournal.count({ where: { source_doc_id: doc } }), 0);
+    assert.equal(
+      (await prisma.finCashBankTransaction.findUniqueOrThrow({ where: { id: doc } })).status,
+      "Draft",
+      "a preview is not a Post"
+    );
+
+    await post(doc);
+    const written = await prisma.accJournal.findFirstOrThrow({
+      where: { source_doc_id: doc },
+      include: { lines: { orderBy: { sequence_no: "asc" } } },
+    });
+    const labelOf = new Map(
+      (
+        await prisma.accAccount.findMany({
+          where: { id: { in: written.lines.map((l) => l.account_id) } },
+          select: { id: true, account_label: true },
+        })
+      ).map((a) => [a.id, a.account_label])
+    );
+    assert.deepEqual(
+      preview.lines.map((l) => [l.accountLabel, l.debit, l.credit]),
+      written.lines.map((l) => [
+        labelOf.get(l.account_id),
+        l.debit_amount.toNumber(),
+        l.kredit_amount.toNumber(),
+      ]),
+      "the same accounts, sides and base figures, in the same order"
+    );
   });
 
   test("money out credits the cash account and debits its counterpart", async () => {

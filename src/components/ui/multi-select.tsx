@@ -71,6 +71,7 @@ export function MultiSelect({
         // onto an empty list.
         disabled={disabled || (!remaining.length && !waitingFor)}
         waitingFor={waitingFor}
+        keepOpen
         onChange={add}
       />
 

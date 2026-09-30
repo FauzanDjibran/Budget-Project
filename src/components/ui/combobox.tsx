@@ -3,6 +3,7 @@
 import { useId, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { AnchoredPopup } from "@/components/ui/anchored-popup";
+import { startIndex, useListNav } from "@/components/ui/list-nav";
 import type { RefOption } from "@/lib/siba/records";
 
 /**
@@ -15,8 +16,11 @@ import type { RefOption } from "@/lib/siba/records";
  * text input in place — same box, same height, same position — so clicking and
  * typing are one gesture and no second bar appears anywhere.
  *
- * Enter picks the first remaining option, which is what a filter narrowed to
- * one is for. Escape closes; `AnchoredPopup` takes it in the capture phase, so
+ * ↓ / ↑ move a highlight through the list and Enter picks it (`useListNav`);
+ * the highlight starts on the current value and returns to the first match as
+ * the query changes, so typing and pressing Enter still picks the first
+ * remaining option, which is what a filter narrowed to one is for. Tab closes
+ * without picking. Escape closes; `AnchoredPopup` takes it in the capture phase, so
  * one press closes this and not the dialog around it.
  *
  * Inactive records are hidden, except the one currently selected — otherwise
@@ -32,6 +36,7 @@ export function Combobox({
   disabled,
   waitingFor,
   emptyText,
+  keepOpen,
   onChange,
 }: {
   value: number | null;
@@ -64,6 +69,11 @@ export function Combobox({
    * nothing still reads "Tidak ada pilihan yang cocok".
    */
   emptyText?: string | null;
+  /**
+   * Stay open after a pick, with the query cleared — for `MultiSelect`, where
+   * each pick adds one chip and the next is usually wanted straight away.
+   */
+  keepOpen?: boolean;
   onChange: (value: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -80,6 +90,15 @@ export function Combobox({
     return (
       o.label.toLowerCase().includes(q) || o.name.toLowerCase().includes(q)
     );
+  });
+
+  const pickable = visible.map(() => true);
+  const listRef = useRef<HTMLDivElement>(null);
+  const nav = useListNav({
+    listRef,
+    pickable,
+    initial: startIndex(pickable, query ? -1 : visible.findIndex((o) => o.id === value)),
+    resetKey: `${open}|${query}|${visible.length}`,
   });
 
   if (disabled || waitingFor) {
@@ -104,7 +123,7 @@ export function Combobox({
 
   const pick = (id: number) => {
     onChange(id);
-    setOpen(false);
+    if (!keepOpen) setOpen(false);
     setQuery("");
   };
 
@@ -153,10 +172,12 @@ export function Combobox({
               selected ? `${selected.label} – ${selected.name}` : placeholder
             }
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                if (visible.length) pick(visible[0].id);
+              if (e.key === "Tab") {
+                setOpen(false);
+                setQuery("");
+                return;
               }
+              nav.onKey(e, (i) => pick(visible[i].id), true);
             }}
           />
         ) : (
@@ -201,12 +222,15 @@ export function Combobox({
         width="anchor"
         className="cbpop"
       >
-        <div className="l" id={listId} role="listbox">
+        <div className="l" id={listId} role="listbox" ref={listRef}>
           {visible.length ? (
-            visible.map((o) => (
+            visible.map((o, i) => (
               <div
                 key={o.id}
-                className={`cbo${o.id === value ? " sel" : ""}`}
+                {...nav.optionProps(i)}
+                role="option"
+                aria-selected={o.id === value}
+                className={`cbo${o.id === value ? " sel" : ""}${i === nav.active ? " hi" : ""}`}
                 onClick={() => pick(o.id)}
               >
                 <span className="lab">{o.label}</span>

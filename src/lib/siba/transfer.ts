@@ -15,7 +15,12 @@ import {
 } from "./fiscal";
 import { roundBase } from "./fx";
 import { valueTransferLine } from "./transfer-valuation";
-import { postJournal, type JournalLineInput } from "./journal";
+import {
+  describeJournalLines,
+  postJournal,
+  type JournalLineInput,
+  type JournalPreviewLine,
+} from "./journal";
 import { refValueOf } from "./system-defaults";
 import { systemDefaults } from "./system-settings";
 import {
@@ -660,7 +665,7 @@ export async function checkTransferLines(
 // ------------------------------------------------------------------ posting
 
 export type TransferPostingResult =
-  | { ok: true; fxDifference: number }
+  | { ok: true; fxDifference: number; journal?: JournalLineInput[] }
   | { ok: false; errors: Record<string, string> };
 
 /**
@@ -972,7 +977,13 @@ async function transferJournalLines(
  */
 export async function applyTransfer(
   transferId: number,
-  actorId: number
+  actorId: number,
+  /**
+   * Run the whole posting and roll it back once the journal is known — what
+   * the Post confirmation shows. The layers are drawn inside the transaction,
+   * so a rolled-back run is the only way to value them exactly as Post will.
+   */
+  dryRun = false
 ): Promise<TransferPostingResult> {
   const doc = await prisma.finCashBankTransfer.findUnique({
     where: { id: transferId },
@@ -1039,6 +1050,7 @@ export async function applyTransfer(
 
       const entries = await transferJournalLines(doc, plan, label);
       if (!entries.ok) throw new TransferRefused(entries.errors);
+      if (dryRun) throw new TransferDryRun(entries.lines);
 
       // The source gives up once, however many destinations there are.
       await recordCashBankEntry(tx, {
@@ -1133,6 +1145,9 @@ export async function applyTransfer(
     if (error instanceof PeriodShut) {
       return { ok: false, errors: { _form: error.message } };
     }
+    if (error instanceof TransferDryRun) {
+      return { ok: true, fxDifference, journal: error.lines };
+    }
     if (error instanceof TransferRefused) {
       return { ok: false, errors: error.errors };
     }
@@ -1189,4 +1204,24 @@ export async function summariseTransfers(
       }))
     ),
   };
+}
+
+/** Carries a dry run's journal out of the transaction it rolls back. */
+class TransferDryRun extends Error {
+  constructor(readonly lines: JournalLineInput[]) {
+    super("Pratinjau transfer");
+    this.name = "TransferDryRun";
+  }
+}
+
+/** The journal Post would write for this transfer, or its refusal. Writes nothing. */
+export async function previewTransfer(
+  transferId: number
+): Promise<
+  | { ok: true; lines: JournalPreviewLine[] }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const result = await applyTransfer(transferId, 0, true);
+  if (!result.ok) return result;
+  return { ok: true, lines: await describeJournalLines(result.journal ?? []) };
 }
