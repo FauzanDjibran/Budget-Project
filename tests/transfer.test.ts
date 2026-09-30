@@ -934,7 +934,11 @@ describe("a posting that refuses leaves nothing behind", () => {
       lines: [{ to, amount: 500_000 }],
     });
 
-    await assert.rejects(() => applyTransfer(id, actor));
+    // Refused rather than thrown, so the screen can say why — and still after
+    // the rollback, which is what leaves both books untouched.
+    const result = await applyTransfer(id, actor);
+    assert.equal(result.ok, false);
+    assert.match(result.ok ? "" : result.errors._form ?? "", /tidak mencukupi/);
     assert.equal((await balanceOf(from)).balance.toNumber(), 100_000);
     assert.equal((await balanceOf(to)).balance.toNumber(), 0);
   });

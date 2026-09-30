@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { formatNumber } from "@/lib/format";
 import type { Prisma } from "@/generated/prisma/client";
 import { nextDocumentNumber } from "./document-number";
 import { openLayer } from "./cash-bank-layers";
@@ -75,7 +76,7 @@ export class InsufficientFunds extends Error {
     readonly requested: number
   ) {
     super(
-      `Saldo Cash & Bank tidak mencukupi: tersedia ${balance}, dibutuhkan ${requested}. ` +
+      `Saldo Cash & Bank tidak mencukupi: tersedia ${formatNumber(balance)}, dibutuhkan ${formatNumber(requested)}. ` +
         "Transaksi dibatalkan."
     );
     this.name = "InsufficientFunds";

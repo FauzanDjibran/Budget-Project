@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
-import { recordCashBankEntry } from "./cash-bank";
+import { InsufficientFunds, recordCashBankEntry } from "./cash-bank";
 import { drawFromLayer, openLayer, openLayersFor, type LayerOption } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL, consumesLayer, isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
@@ -1142,7 +1142,7 @@ export async function applyTransfer(
     // A refusal is a decision, not a failure: it is raised as a throw only
     // because it has to roll back the layers already drawn inside the
     // transaction, and it comes back out as the ordinary error shape.
-    if (error instanceof PeriodShut) {
+    if (error instanceof PeriodShut || error instanceof InsufficientFunds) {
       return { ok: false, errors: { _form: error.message } };
     }
     if (error instanceof TransferDryRun) {

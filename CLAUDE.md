@@ -1433,11 +1433,17 @@ the rules that follow from it.
     one implementation. **In a subject book "what it was carried at" is the chosen
     open item's own kurs**, never an average of the position (rule 105).
 74. **The FX difference is the balancing figure, and its sign is never chosen
-    separately.** It is `settlementBase − transactionBase`: positive is a gain on
-    the credit side, negative a loss on the debit side, exactly zero writes no
-    line at all. Deriving it from the balance requirement rather than computing a
-    magnitude and then assigning a side is what makes an unbalanced FX entry
-    unrepresentable.
+    separately.** The kernel's residual is `settlementBase − transactionBase`,
+    which reads as a gain when money **leaves** — a Hutang released at more
+    than the currency cost. When money **arrives** the same residual is a loss —
+    a Piutang carried at 15.000 collected at 13.000 — so a Realisasi line stores
+    it turned over for a receipt: signed as a gain, positive on the credit side,
+    negative a loss on the debit side, exactly zero writes no line at all.
+    Deriving it from the balance requirement rather than computing a magnitude
+    and then assigning a side is what makes an unbalanced FX entry
+    unrepresentable — until the turning-over was added, every foreign receipt
+    settling an item at another kurs was refused as unbalanced.
+    `tests/finance.test.ts` holds both directions.
 75. **A difference needs a named account, and posting is refused without one.**
     Each Company names its own Account Selisih Kurs in System Default. The account
     is resolved **only when a difference actually arises**, so ordinary rupiah work

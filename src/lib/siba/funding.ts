@@ -15,6 +15,7 @@ import {
   type TransactionRow,
 } from "./finance";
 import { PeriodShut } from "./fiscal";
+import { InsufficientFunds } from "./cash-bank";
 import { realizationOf } from "./realization";
 import { intercompanyBridge } from "./system-settings";
 
@@ -474,7 +475,7 @@ export async function confirmFundingRequest(
   } catch (error) {
     // A year that closed between the check and the write: nothing was
     // written, and the request is still open to confirm on another date.
-    if (error instanceof PeriodShut) {
+    if (error instanceof PeriodShut || error instanceof InsufficientFunds) {
       return { ok: false, errors: { _form: error.message } };
     }
     throw error;

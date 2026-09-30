@@ -8,7 +8,7 @@ import {
   openBudgetsMatching,
   realizeBudgets,
 } from "./budget";
-import { recordCashBankEntry } from "./cash-bank";
+import { InsufficientFunds, recordCashBankEntry } from "./cash-bank";
 import {
   LayerNotAvailable,
   drawFromLayer,
@@ -1580,7 +1580,16 @@ async function planPosting(
       accountAmount: cash.accountAmount,
       transactionBase: cash.base,
       settlementBase,
-      fxDifference: fxDifference(settlementBase, cash.base).amount,
+      // Signed as a gain, positive on the credit side. The kernel's residual
+      // (released − cost) reads that way when money leaves; when it arrives
+      // the same residual is a loss — a receivable carried at 15.000 and
+      // collected at 13.000 gave up more than the cash brought in — so a
+      // receipt turns it over. Without this every foreign receipt settling an
+      // item at another kurs wrote the difference on the wrong side and the
+      // journal refused to balance.
+      fxDifference:
+        (direction === "In" ? -1 : 1) *
+        fxDifference(settlementBase, cash.base).amount,
       counterAccountId: mapped.accounts.get(budget.id)!,
       book,
       itemId,
@@ -2029,7 +2038,11 @@ export async function applyPosting(
     if (
       error instanceof PeriodShut ||
       error instanceof LayerNotAvailable ||
-      error instanceof SubledgerItemUnavailable
+      error instanceof SubledgerItemUnavailable ||
+      // A payment larger than the resource holds is a refusal the user can
+      // act on, not a fault: it used to escape as an exception and land on
+      // the generic error screen.
+      error instanceof InsufficientFunds
     ) {
       return { ok: false, errors: { _form: error.message } };
     }

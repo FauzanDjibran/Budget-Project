@@ -2426,6 +2426,84 @@ describe("a line lowering a position settles the open item it names", () => {
     );
   });
 
+  test("a receipt settling an item states its difference on the side that balances", async () => {
+    // A Piutang lent out at 15.000 and 16.000, collected at 13.000 (a loss:
+    // the receivable gave up more than the cash brought in) and at 17.000 (a
+    // gain). Money arriving turns the kernel's residual over; before it did,
+    // both collections wrote the difference on the wrong side and the journal
+    // refused to balance, so no foreign receipt at another kurs could post.
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    const rupiah = await makeCashBank({ opening: 50_000_000 });
+    const valas = await makeCashBank({ currencyId: otherCurrency });
+    for (const rate of [15_000, 16_000]) {
+      const budget = await makeBudget({
+        categoryLabel: "Piutang",
+        type: "Out",
+        partnerId: partner,
+        amount: 1_000,
+        currencyId: otherCurrency,
+      });
+      await post(
+        await makeDraft({
+          transaction_type: "Out" as const,
+          cashBankId: rupiah,
+          currencyId: otherCurrency,
+          rate,
+          lines: [{ budgetId: budget, amount: 1_000, outstanding: 1_000 }],
+        })
+      );
+    }
+    const piutang = await bookKey("Piutang");
+    const items = await prisma.subLedgerBalance.findMany({
+      where: { book: piutang, partner_id: partner, currency_id: otherCurrency },
+      orderBy: { id: "asc" },
+    });
+
+    for (const [item, rate, fx] of [
+      [items[0], 13_000, -2_000_000],
+      [items[1], 17_000, 1_000_000],
+    ] as const) {
+      const budget = await makeBudget({
+        categoryLabel: "Piutang",
+        type: "In",
+        partnerId: partner,
+        amount: 1_000,
+        currencyId: otherCurrency,
+      });
+      const doc = await makeDraft({
+        transaction_type: "In" as const,
+        cashBankId: valas,
+        rate,
+        lines: [{ budgetId: budget, amount: 1_000, outstanding: 1_000, itemId: item.id }],
+      });
+      await post(doc);
+      const line = await prisma.finCashBankTransactionLine.findFirstOrThrow({
+        where: { transaction_id: doc },
+      });
+      assert.equal(line.fx_difference.toNumber(), fx, "signed as a gain, from the receipt's side");
+      const fxRow = await fxLine(doc);
+      assert.ok(fxRow, "a difference is journaled");
+      assert.equal(
+        fx > 0 ? fxRow.kredit_amount.toNumber() : fxRow.debit_amount.toNumber(),
+        Math.abs(fx),
+        fx > 0 ? "a gain on the credit side" : "a loss on the debit side"
+      );
+    }
+  });
+
+  test("a payment larger than the resource holds is refused, not thrown", async () => {
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const budget = await makeBudget({ categoryLabel: "Biaya", type: "Out", amount: 2_000_000 });
+    const doc = await makeDraft({
+      transaction_type: "Out" as const,
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 2_000_000, outstanding: 2_000_000 }],
+    });
+    const result = await applyPosting(doc, actor);
+    assert.equal(result.ok, false, "the Server Action gets a refusal to show, not an error screen");
+    assert.match(result.ok ? "" : result.errors._form ?? "", /tidak mencukupi/);
+  });
+
   test("a partial return keeps the item open at its own kurs", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
     const bankA = await makeCashBank({ currencyId: otherCurrency });
