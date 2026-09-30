@@ -12,6 +12,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
 import { KursSelect } from "./kurs-select";
+import { OpenItemSelect } from "./open-item-select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
@@ -67,6 +68,8 @@ type DraftLine = {
   partner_id: number | null;
   outstanding: number;
   amount: number;
+  /** The open item a line lowering a subject-book position settles. */
+  item_id: number | null;
 };
 
 /**
@@ -138,6 +141,7 @@ export function TransactionForm({
       partner_id: l.partner_id,
       outstanding: l.outstanding_amount,
       amount: l.settlement_amount,
+      item_id: l.item?.id ?? null,
     }))
   );
   const [pool, setPool] = useState<EligibleBudget[]>([]);
@@ -389,6 +393,9 @@ export function TransactionForm({
             partner_id: b.partner_id,
             outstanding: b.outstanding,
             amount: p.amount,
+            // Never preselected, even when only one is open: which item a
+            // return settles decides its gain or loss, so it is chosen.
+            item_id: null,
           },
         ];
       });
@@ -410,6 +417,7 @@ export function TransactionForm({
     const payload = draftLines.map((l) => ({
       budget_id: String(l.budget_id),
       amount: String(l.amount),
+      item_id: l.item_id ? String(l.item_id) : "",
     }));
     const result =
       mode === "new"
@@ -899,6 +907,7 @@ export function TransactionForm({
                       <th style={{ width: 92 }}>Budget</th>
                       <th>Deskripsi</th>
                       <th style={{ width: 210 }}>Klasifikasi</th>
+                      <th style={{ width: 170 }}>Open Item</th>
                       <th className="num" style={{ width: 124 }}>
                         Nominal Budget
                       </th>
@@ -916,9 +925,8 @@ export function TransactionForm({
                       ? draftLines.map((l, i) => {
                           const over = l.amount > l.outstanding;
                           const full = l.amount >= l.outstanding;
-                          const planned =
-                            pool.find((b) => b.id === l.budget_id)?.budget_amount ??
-                            null;
+                          const pooled = pool.find((b) => b.id === l.budget_id);
+                          const planned = pooled?.budget_amount ?? null;
                           const c = classify(l);
                           return (
                             <tr key={l.budget_id} className={over ? "overrow" : undefined}>
@@ -935,6 +943,30 @@ export function TransactionForm({
                                 </span>
                               </td>
                               <LineClass c={c} />
+                              <td>
+                                {pooled?.lowers ? (
+                                  <OpenItemSelect
+                                    value={l.item_id}
+                                    items={pooled.items}
+                                    currencyLabel={currencyLabel}
+                                    invalid={Boolean(errors._lines) && !l.item_id}
+                                    onChange={(v) => {
+                                      setDraftLines((rows) =>
+                                        rows.map((r) =>
+                                          r.budget_id === l.budget_id
+                                            ? { ...r, item_id: v }
+                                            : r
+                                        )
+                                      );
+                                      setDirty(true);
+                                    }}
+                                  />
+                                ) : pooled?.opensItem ? (
+                                  <span className="mut">item baru saat Post</span>
+                                ) : (
+                                  <span className="dash">—</span>
+                                )}
+                              </td>
                               <td className="num">
                                 <span className="mny">
                                   {planned == null
@@ -1015,6 +1047,22 @@ export function TransactionForm({
                                 </span>
                               </td>
                               <LineClass c={c} />
+                              <td>
+                                {l.item ? (
+                                  <span className="dstack">
+                                    <span className="d1">
+                                      <span className="lab">{l.item.itemNo}</span>
+                                    </span>
+                                    <span className="d2">
+                                      {currencyLabel === BASE_CURRENCY_LABEL
+                                        ? formatDate(l.item.date)
+                                        : `kurs ${formatRate(l.item.rate)}`}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className="dash">—</span>
+                                )}
+                              </td>
                               <td className="num">
                                 <span className="mny">
                                   {formatMoney(l.budget_amount, currencyLabel)}
@@ -1047,7 +1095,7 @@ export function TransactionForm({
                   </tbody>
                   <tfoot>
                     <tr className="totrow">
-                      <td colSpan={6} style={{ textAlign: "right" }}>
+                      <td colSpan={7} style={{ textAlign: "right" }}>
                         Total Realisasi Dokumen
                       </td>
                       <td className="num">

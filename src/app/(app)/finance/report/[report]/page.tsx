@@ -15,7 +15,12 @@ import {
 import { companyScope } from "@/lib/siba/company-access";
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
-import { subledgerReport, subledgerSubjects } from "@/lib/siba/subledger";
+import {
+  subledgerItemReport,
+  subledgerReport,
+  subledgerSubjects,
+} from "@/lib/siba/subledger";
+import { SubledgerItemReport } from "@/components/report/subledger-item-report";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { BookFilter } from "@/components/report/book-filter";
 import { ReportCompany } from "@/components/report/report-run";
@@ -235,6 +240,63 @@ async function subledgerPage({
   // same way an unreadable `?company=` falls back inside what is permitted.
   const book = books.find((b) => b.key === bookKey) ?? books[0];
 
+  const lead = (
+    <>
+      <ReportCompany options={options} selectedId={company.id} />
+      {books.length > 1 && (
+        <>
+          <span className="rl">Buku</span>
+          <div className="rf">
+            <BookFilter books={books} selectedKey={book.key} />
+          </div>
+        </>
+      )}
+    </>
+  );
+
+  // The open items: the same book read as a standing position — what each
+  // Partner's position is made of now, item by item, at its own kurs.
+  if (report.key === "subledger_item") {
+    const [subjects, data] = await Promise.all([
+      subledgerSubjects(books, book.key, companyIds),
+      subledgerItemReport(books, book.key, { companyIds, partnerIds }),
+    ]);
+    if (!data) notFound();
+    return (
+      <ReportView
+        report={{ ...report, desc: data.book.name }}
+        filter={
+          <SubjectParams
+            lead={lead}
+            slug={slug}
+            extraParams={{ book: book.key }}
+            subjects={subjects}
+            selectedIds={partnerIds}
+            from={range.from}
+            to={range.to}
+            dateless
+            subjectRequired={report.subjectRequired}
+            label="Partner"
+            param="partners"
+            addPlaceholder="Tambah Partner…"
+            allPlaceholder="Semua Partner"
+            missingHint="Pilih minimal satu Partner terlebih dahulu."
+            companyId={company.id}
+          />
+        }
+        runAt={runAt}
+        footnote={
+          <>
+            Baris yang menurunkan posisi menyelesaikan satu open item pilihan
+            pengguna, pada kurs item itu sendiri.
+          </>
+        }
+      >
+        <SubledgerItemReport book={data.book} items={data.items} />
+      </ReportView>
+    );
+  }
+
   const [subjects, data] = await Promise.all([
     subledgerSubjects(books, book.key, companyIds),
     subledgerReport(books, book.key, range, { partnerIds, companyIds }),
@@ -247,19 +309,7 @@ async function subledgerPage({
       filter={
         <>
           <SubjectParams
-            lead={
-              <>
-                <ReportCompany options={options} selectedId={company.id} />
-                {books.length > 1 && (
-                  <>
-                    <span className="rl">Buku</span>
-                    <div className="rf">
-                      <BookFilter books={books} selectedKey={book.key} />
-                    </div>
-                  </>
-                )}
-              </>
-            }
+            lead={lead}
             slug={slug}
             extraParams={{ book: book.key }}
             subjects={subjects}

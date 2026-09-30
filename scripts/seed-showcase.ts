@@ -36,6 +36,9 @@ import { applyTransfer, nextTransferNo } from "@/lib/siba/transfer";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
 import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
 import { applyDncn, nextNoteNo } from "@/lib/siba/dncn";
+import { dncnDirection } from "@/lib/siba/dncn-workflow";
+import { subledgerForCategory, subledgerMovement } from "@/lib/siba/subledger-catalogue";
+import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { executeClosing } from "@/lib/siba/closing";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
@@ -848,6 +851,7 @@ async function draftDocument(options: {
 
   const total = options.lines.reduce((t, l) => t + l.amount, 0);
   const rate = options.rate ?? 1;
+  const itemIds = await itemsFor(direction, currencyId, options.date, options.lines);
 
   const row = await prisma.finCashBankTransaction.create({
     data: {
@@ -881,6 +885,7 @@ async function draftDocument(options: {
           settlement_base_amount: l.amount * rate,
           transaction_amount: l.amount,
           transaction_base_amount: l.amount * rate,
+          sub_ledger_balance_id: itemIds[i],
           created_by: actor,
         })),
       },
@@ -889,6 +894,58 @@ async function draftDocument(options: {
   });
   tally("cash bank transactions");
   return row.id;
+}
+
+/**
+ * The open item each line settles, where the line lowers a subject-book
+ * position — chosen as a clerk would: the oldest item of that Partner, book and
+ * currency raised by the document's date that still holds the line's amount.
+ * Null for a line that raises a position (it opens its own item at Post) or
+ * whose Budget Category keeps no book.
+ */
+async function itemsFor(
+  direction: "In" | "Out",
+  currencyId: number,
+  date: string,
+  lines: { budgetId: number; amount: number }[]
+): Promise<(number | null)[]> {
+  const books = await loadSubledgers();
+  const budgets = await prisma.budBudget.findMany({
+    where: { id: { in: lines.map((l) => l.budgetId) } },
+    select: { id: true, category_id: true, partner_id: true },
+  });
+  const taken = new Map<number, number>();
+  const out: (number | null)[] = [];
+  for (const l of lines) {
+    const budget = budgets.find((b) => b.id === l.budgetId)!;
+    const book = subledgerForCategory(books, budget.category_id);
+    if (!book || budget.partner_id == null || subledgerMovement(book, direction, 1) > 0) {
+      out.push(null);
+      continue;
+    }
+    const items = await prisma.subLedgerBalance.findMany({
+      where: {
+        book: book.key,
+        partner_id: budget.partner_id,
+        currency_id: currencyId,
+        status: "Open",
+        opened_date: { lte: new Date(`${date}T00:00:00Z`) },
+      },
+      orderBy: [{ opened_date: "asc" }, { id: "asc" }],
+      select: { id: true, balance: true },
+    });
+    const item = items.find(
+      (i) => i.balance.toNumber() - (taken.get(i.id) ?? 0) >= l.amount
+    );
+    if (!item) {
+      throw new Error(
+        `No open ${book.name} item for budget ${l.budgetId} holds ${l.amount} by ${date}.`
+      );
+    }
+    taken.set(item.id, (taken.get(item.id) ?? 0) + l.amount);
+    out.push(item.id);
+  }
+  return out;
 }
 
 /**
@@ -1259,6 +1316,15 @@ async function writeNote(spec: NoteSpec, actor: number) {
     where: { category_label: spec.book },
     select: { id: true },
   });
+
+  // A note that lowers a position would have to settle an open item, and how
+  // a note chooses one is still being designed. Until then the showcase writes
+  // only the notes that raise a position.
+  const book = subledgerForCategory(await loadSubledgers(), category.id);
+  if (book && subledgerMovement(book, dncnDirection(spec.type), 1) < 0) {
+    console.log(`  skipped ${spec.type} note on ${spec.book}: lowers a position (DN/CN open items not designed yet)`);
+    return;
+  }
   const partner = await prisma.mPartner.findFirstOrThrow({
     where: { partner_name: spec.partner },
     select: { id: true, company_id: true },

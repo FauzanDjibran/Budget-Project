@@ -24,7 +24,7 @@ import {
   rateSource,
   settlementRefusal,
 } from "./currency";
-import { drawLayer, fxDifference, roundBase, settle } from "./fx";
+import { drawLayer, fxDifference, relieve, roundBase } from "./fx";
 import { realizationOf } from "./realization";
 import { nextDocumentNumber } from "./document-number";
 import {
@@ -41,7 +41,15 @@ import {
   subledgerMovement,
 } from "./subledger-catalogue";
 import { loadSubledgers } from "./subledger-data";
-import { recordSubledgerEntry, subledgerPosition } from "./subledger";
+import {
+  SubledgerItemUnavailable,
+  lockSubledgerPosition,
+  openSubledgerItems,
+  recordSubledgerEntry,
+  subledgerItem,
+  subledgerItemsByIds,
+  type SubledgerItem,
+} from "./subledger";
 import { systemDefaults } from "./system-settings";
 import { refValueOf } from "./system-defaults";
 import type { TransactionStatus } from "./transaction-workflow";
@@ -107,6 +115,8 @@ export type TransactionLineRow = {
   outstanding_amount: number;
   settlement_amount: number;
   budget_status: string;
+  /** The open item the line settles, where it lowers a position. */
+  item: OpenItemOption | null;
 };
 
 type TxRecord = {
@@ -198,8 +208,14 @@ export async function transactionLines(
   });
   if (!lines.length) return [];
 
-  const budgets = await budgetsByIds(lines.map((l) => l.source_doc_id));
+  const [budgets, items] = await Promise.all([
+    budgetsByIds(lines.map((l) => l.source_doc_id)),
+    subledgerItemsByIds(
+      lines.flatMap((l) => (l.sub_ledger_balance_id ? [l.sub_ledger_balance_id] : []))
+    ),
+  ]);
   const byId = new Map(budgets.map((b) => [b.id, b]));
+  const itemOf = new Map(items.map((i) => [i.id, itemOption(i)]));
 
   return lines.flatMap((l) => {
     const b = byId.get(l.source_doc_id);
@@ -219,6 +235,9 @@ export async function transactionLines(
         outstanding_amount: l.outstanding_amount.toNumber(),
         settlement_amount: l.settlement_amount.toNumber(),
         budget_status: b.status,
+        item: l.sub_ledger_balance_id
+          ? itemOf.get(l.sub_ledger_balance_id) ?? null
+          : null,
       },
     ];
   });
@@ -467,7 +486,36 @@ export type EligibleBudget = {
   outstanding: number;
   /** Settlement already written by *other* Draft documents — informational. */
   draftAllocated: number;
+  /**
+   * True when realizing this Budget **lowers** a subject-book position — a
+   * Titipan returned, a Hutang paid, a Piutang collected. Such a line must name
+   * the open item it settles; a line that raises a position opens one at Post.
+   */
+  lowers: boolean;
+  /** True when realizing this Budget raises a position, opening a new item. */
+  opensItem: boolean;
+  /** The open items this line may settle, oldest first. Empty unless `lowers`. */
+  items: OpenItemOption[];
 };
+
+/** One open item as a line's picker offers it. */
+export type OpenItemOption = {
+  id: number;
+  itemNo: string;
+  date: string;
+  rate: number;
+  remaining: number;
+  note: string | null;
+};
+
+const itemOption = (i: SubledgerItem): OpenItemOption => ({
+  id: i.id,
+  itemNo: i.itemNo,
+  date: i.date,
+  rate: i.rate,
+  remaining: i.remaining,
+  note: i.note,
+});
 
 export type TransactionHeader = {
   /** Fixed by the menu the document was opened from, never typed. */
@@ -644,7 +692,45 @@ export async function eligibleBudgets(
     options.excludeTransactionId ?? null
   );
 
+  // Which lines lower a subject-book position, and the open items each may
+  // settle. Asked of the book's own direction, so a Titipan returned and a
+  // Piutang collected both read as lowering whatever the cash direction is.
+  const books = await loadSubledgers();
+  const lowering = new Map<number, string>();
+  const opening = new Set<number>();
+  for (const { row } of outstanding) {
+    const book = subledgerForCategory(books, row.category_id);
+    if (book && row.partner_id != null) {
+      if (subledgerMovement(book, header.transaction_type, 1) < 0) {
+        lowering.set(row.id, book.key);
+      } else {
+        opening.add(row.id);
+      }
+    }
+  }
+  const openItems = await openSubledgerItems(
+    outstanding
+      .filter(({ row }) => lowering.has(row.id))
+      .map(({ row }) => ({
+        book: lowering.get(row.id)!,
+        partnerId: row.partner_id!,
+        currencyId: context.currencyId,
+      }))
+  );
+
   return outstanding.map(({ row, left }) => ({
+    lowers: lowering.has(row.id),
+    opensItem: opening.has(row.id),
+    items: lowering.has(row.id)
+      ? openItems
+          .filter(
+            (i) =>
+              i.book === lowering.get(row.id) &&
+              i.partnerId === row.partner_id &&
+              i.currencyId === context.currencyId
+          )
+          .map(itemOption)
+      : [],
     id: row.id,
     budget_no: row.budget_no,
     budget_date: row.budget_date,
@@ -898,10 +984,24 @@ export async function checkHeader(
   };
 }
 
-export type LineInput = { budget_id: number; amount: number };
+export type LineInput = {
+  budget_id: number;
+  amount: number;
+  /** The open item a lowering line settles. */
+  item_id?: number | null;
+};
 
 export type LineCheck =
-  | { ok: true; lines: { budgetId: number; amount: number; outstanding: number }[]; total: number }
+  | {
+      ok: true;
+      lines: {
+        budgetId: number;
+        amount: number;
+        outstanding: number;
+        itemId: number | null;
+      }[];
+      total: number;
+    }
   | { ok: false; errors: Record<string, string> };
 
 /**
@@ -946,7 +1046,15 @@ export async function checkLines(
   const eligible = await eligibleBudgets(header, options);
   const byId = new Map(eligible.map((b) => [b.id, b]));
 
-  const resolved: { budgetId: number; amount: number; outstanding: number }[] = [];
+  const resolved: {
+    budgetId: number;
+    amount: number;
+    outstanding: number;
+    itemId: number | null;
+  }[] = [];
+  // What each open item still holds, drawn down line by line: two lines may
+  // settle one item, and together they may not take it below nothing.
+  const itemLeft = new Map<number, number>();
   for (const l of wanted) {
     const budget = byId.get(l.budget_id);
     if (!budget) {
@@ -959,10 +1067,63 @@ export async function checkLines(
         },
       };
     }
+
+    const itemId = l.item_id ?? null;
+    if (!budget.lowers) {
+      if (itemId) {
+        return {
+          ok: false,
+          errors: {
+            _lines:
+              `${budget.budget_no} tidak menurunkan posisi buku subjek, sehingga ` +
+              "tidak menyelesaikan open item — posting akan membuka item baru.",
+          },
+        };
+      }
+    } else {
+      if (!itemId) {
+        return {
+          ok: false,
+          errors: {
+            _lines:
+              `Pilih open item yang diselesaikan ${budget.budget_no}. Setiap ` +
+              "realisasi yang menurunkan posisi menunjuk satu open item.",
+          },
+        };
+      }
+      // The pool offers only this line's own open items, so an id outside it
+      // is another subject's item, a cleared one, or one that does not exist.
+      const offered = budget.items.find((i) => i.id === itemId);
+      if (!offered) {
+        return {
+          ok: false,
+          errors: {
+            _lines:
+              `Open item pada ${budget.budget_no} bukan milik Partner, buku, dan ` +
+              "currency Budget ini, atau sudah selesai.",
+          },
+        };
+      }
+      const left = (itemLeft.get(itemId) ?? offered.remaining) - l.amount;
+      if (Math.round(left * 100) < 0) {
+        return {
+          ok: false,
+          errors: {
+            _lines:
+              `Realisasi ${budget.budget_no} melebihi sisa open item ` +
+              `${offered.itemNo}. Posisi buku subjek tidak boleh di bawah nol — ` +
+              "kurangi nominalnya atau pilih item lain.",
+          },
+        };
+      }
+      itemLeft.set(itemId, left);
+    }
+
     resolved.push({
       budgetId: budget.id,
       amount: l.amount,
       outstanding: budget.outstanding,
+      itemId: budget.lowers ? itemId : null,
     });
   }
 
@@ -1276,6 +1437,8 @@ export type PostingLine = {
   counterAccountId: number;
   /** The subject book this line writes into, where its category keeps one. */
   book: SubledgerDef | null;
+  /** The open item a lowering line settles; null where the line raises. */
+  itemId: number | null;
 };
 
 export type PostingPlan = {
@@ -1293,7 +1456,7 @@ export type PostingPlan = {
  *
  * Each line is a settlement of its own. The cash gives up what that line cost
  * (the layer's rate, or the rate the bank converted at), and the line's own
- * obligation releases what it was carried at in its own subject book. Where
+ * obligation releases what **the open item it settles** was raised at. Where
  * they disagree the residual is **that line's** FX difference, journaled on its
  * own line — never summed across the document.
  *
@@ -1301,7 +1464,7 @@ export type PostingPlan = {
  * by paying out, a first-ever Hutang — the movement *is* the origin of the
  * value, so the two sides come from the same place and no difference arises.
  *
- * Two lines against the same position are settled one after the other: the
+ * Two lines against the same open item are settled one after the other: the
  * second relieves what the first left, which is what the book will hold when
  * its entry is written.
  */
@@ -1315,7 +1478,12 @@ async function planPosting(
     currency_id: number;
     currency: { currency_label: string };
     cash_bank: { currency: { currency_label: string } } | null;
-    lines: { id: number; source_doc_id: number; settlement_amount: { toNumber(): number } }[];
+    lines: {
+      id: number;
+      source_doc_id: number;
+      settlement_amount: { toNumber(): number };
+      sub_ledger_balance_id: number | null;
+    }[];
   },
   budgets: Map<
     number,
@@ -1337,8 +1505,10 @@ async function planPosting(
   const direction = doc.transaction_type as "In" | "Out";
   const books = await loadSubledgers();
 
-  // The positions this document touches, as they stand now, moved line by line.
-  const positions = new Map<string, { foreign: number; base: number }>();
+  // The open items this document settles, as they stand now, drawn down line
+  // by line — two lines may settle one item, and the second relieves what the
+  // first left, which is what the book will hold when its entry is written.
+  const items = new Map<number, { foreign: number; base: number }>();
   const lines: PostingLine[] = [];
   for (const [i, line] of doc.lines.entries()) {
     const budget = lineBudgets[i];
@@ -1347,29 +1517,52 @@ async function planPosting(
     const catalogue = subledgerForCategory(books, budget.category_id);
     const book = catalogue && budget.partner_id != null ? catalogue : null;
 
+    // Raising a position is the origin of its value, so both sides come from
+    // the cash and no difference can arise. Lowering one releases what the
+    // **chosen item** was raised at — never an average of the position — and
+    // the gap to what the cash cost is this line's FX difference.
     let settlementBase = cash.base;
-    if (book) {
-      const key = `${book.key}|${budget.partner_id}`;
-      const position =
-        positions.get(key) ??
-        (await subledgerPosition(book.key, budget.partner_id!, doc.currency_id));
-      const raises = subledgerMovement(book, direction, amount) > 0;
-      if (raises) {
-        positions.set(key, {
-          foreign: position.foreign + amount,
-          base: roundBase(position.base + cash.base),
-        });
-      } else {
-        settlementBase = settle({
-          position,
-          foreign: amount,
-          transactionBase: cash.base,
-        }).settlementBase;
-        positions.set(key, {
-          foreign: position.foreign - amount,
-          base: roundBase(position.base - settlementBase),
-        });
+    let itemId: number | null = null;
+    if (book && subledgerMovement(book, direction, amount) < 0) {
+      itemId = line.sub_ledger_balance_id ?? null;
+      const item: SubledgerItem | null = itemId ? await subledgerItem(itemId) : null;
+      if (
+        !item ||
+        item.book !== book.key ||
+        item.partnerId !== budget.partner_id ||
+        item.currencyId !== doc.currency_id
+      ) {
+        return {
+          ok: false,
+          errors: {
+            _form:
+              `${budget.budget_no} belum menunjuk open item yang cocok. Ubah ` +
+              "dokumen dan pilih open item yang diselesaikan.",
+          },
+        };
       }
+      const held = items.get(item.id) ?? {
+        foreign: item.remaining,
+        base: item.baseRemaining,
+      };
+      const cents = (n: number) => Math.round(n * 100);
+      if (item.status !== "Open" || cents(amount) > cents(held.foreign)) {
+        return {
+          ok: false,
+          errors: {
+            _form:
+              `Open item ${item.itemNo} tinggal ${held.foreign}, tidak cukup untuk ` +
+              `${budget.budget_no}. Kemungkinan sudah diselesaikan dokumen lain — ` +
+              "ubah dokumen dan pilih item lain.",
+          },
+        };
+      }
+      const relief = relieve(
+        held,
+        cents(amount) === cents(held.foreign) ? held.foreign : amount
+      );
+      settlementBase = relief.base;
+      items.set(item.id, relief.remaining);
     }
 
     lines.push({
@@ -1385,6 +1578,7 @@ async function planPosting(
       fxDifference: fxDifference(settlementBase, cash.base).amount,
       counterAccountId: mapped.accounts.get(budget.id)!,
       book,
+      itemId,
     });
   }
 
@@ -1654,6 +1848,22 @@ export async function applyPosting(
     // transaction and re-asked under the hold: the check above was before it.
     await holdPostingPeriod(tx, [doc.company_id], date);
 
+    // Every position this document lowers, held for the rest of the
+    // transaction so two documents settling one open item cannot both pass
+    // against the same remaining figure. Taken after the period lock and in one
+    // fixed order, so nothing waits in a circle.
+    const held = [
+      ...new Set(
+        plan.lines
+          .filter((l) => l.itemId && l.book)
+          .map((l) => `${l.book!.key}|${l.partnerId}`)
+      ),
+    ].sort();
+    for (const k of held) {
+      const [bookKey, partnerId] = k.split("|");
+      await lockSubledgerPosition(tx, bookKey, Number(partnerId), doc.currency_id);
+    }
+
     const direction = doc.transaction_type as "In" | "Out";
     const opensLayer = createsLayer(
       direction,
@@ -1735,6 +1945,9 @@ export async function applyPosting(
           // line's FX difference, and it lives in the journal.
           rate: line.amount ? line.settlementBase / line.amount : plan.rate,
           baseAmount: line.settlementBase,
+          // Null raises a new open item; an id settles the one chosen, and the
+          // book refuses if it has moved since the plan valued it.
+          itemId: line.itemId,
           sourceDocTypeId: docTypeId,
           sourceDocId: doc.id,
           note: line.description,
@@ -1801,7 +2014,11 @@ export async function applyPosting(
     });
   });
   } catch (error) {
-    if (error instanceof PeriodShut || error instanceof LayerNotAvailable) {
+    if (
+      error instanceof PeriodShut ||
+      error instanceof LayerNotAvailable ||
+      error instanceof SubledgerItemUnavailable
+    ) {
       return { ok: false, errors: { _form: error.message } };
     }
     throw error;

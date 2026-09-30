@@ -507,12 +507,19 @@ table sub_ledger {
 
   amount                      decimal(18,2) [not null]
   movement                    decimal(18,2) [not null]
+  // The open item's remaining amount after this entry — the item, not the
+  // whole position, which is the sum of its items.
   balance_after               decimal(18,2) [not null]
 
   rate                        decimal(18,6) [not null]
   base_amount                 decimal(18,2) [not null]
   base_movement               decimal(18,2) [not null]
   base_balance_after          decimal(18,2) [not null]
+
+  // The open item this entry moved. A raising entry opens a new item and names
+  // it; a lowering entry names the item the user chose and relieves it at that
+  // item's own rate. Summing an item's entries rebuilds it.
+  balance_id                  int [not null, ref : > sub_ledger_balance.id]
 
   source_doc_type_id          int [ref : >? sys_doc_type.id]
   source_doc_id               int
@@ -525,31 +532,57 @@ table sub_ledger {
 
   indexes {
     (book, partner_id, entry_date)
+    balance_id
     (source_doc_type_id, source_doc_id)
   }
 }
 
+// The OPEN ITEMS of the subject books: one row per movement that raised a
+// position, and the balance and the item are the same row. A position (book x
+// Partner x currency) is not a row — it is the sum of its items, computed on
+// read. Each item keeps the kurs it was raised at, so a line lowering the
+// position names the item it settles and relieves it at that item's own rate,
+// never at an average. Rupiah is itemised too, at a kurs of 1. Mutable, and
+// provable from the entries that name it. No item may go below nothing, so no
+// position can go negative.
 table sub_ledger_balance {
   id                          int [pk, increment, not null]
+
+  // SBI-0001 — how pickers and reports name an item.
+  item_no                     varchar(255) [not null, unique]
 
   book                        varchar(255) [not null]
 
   partner_id                  int [not null, ref : > m_partner.id]
   currency_id                 int [not null, ref : > ref_currency.id]
 
+  // When it was raised, the kurs it was raised at, and what it was raised by —
+  // facts of the raising movement, like a rate layer's. Never change.
+  opened_date                 date [not null]
+  rate                        decimal(18,6) [not null]
+  original                    decimal(18,2) [not null]
+  base_original               decimal(18,2) [not null]
+
+  // What remains of the item, on both measures.
   balance                     decimal(18,2) [not null, default: 0]
   base_balance                decimal(18,2) [not null, default: 0]
+
+  status                      enum('Open', 'Cleared') [not null, default: 'Open']
 
   entry_count                 int [not null, default: 0]
 
   last_entry_id               int
   last_entry_date             date
 
+  // The document that raised it (weak pair) and the words it was raised under.
+  source_doc_type_id          int
+  source_doc_id               int
+  note                        text
+
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 
   indexes {
-    (book, partner_id, currency_id) [unique]
-    book
+    (book, partner_id, currency_id, status)
   }
 }
 
@@ -1050,9 +1083,15 @@ table fin_cash_bank_transaction_line {
   transaction_base_amount     decimal(18,2) [not null]
 
   // This line's own settlement_base_amount − transaction_base_amount. Each
-  // line settles its own Budget's position at that position's own carrying
-  // rate, so each carries its own difference and its own journal line.
+  // line settles its own open item at that item's own kurs, so each carries
+  // its own difference and its own journal line.
   fx_difference               decimal(18,2) [not null, default: 0]
+
+  // The subject-book open item (sub_ledger_balance.id) a line lowering a
+  // position settles; null where the line raises one (it opens its own item
+  // at Post) or its Budget Category keeps no book. A plain id, not a ref, like
+  // cash_bank_layer_id: the item belongs to the subject-book module.
+  sub_ledger_balance_id       int
 
   created_by                  int [not null]
   updated_by                  int

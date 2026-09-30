@@ -69,7 +69,12 @@ export type TransactionValues = {
   note: string;
 };
 
-export type TransactionLineValues = { budget_id: string; amount: string };
+export type TransactionLineValues = {
+  budget_id: string;
+  amount: string;
+  /** The open item a line lowering a subject-book position settles. */
+  item_id?: string;
+};
 
 export type TransactionResult =
   | { ok: true; id: number; transaction_no?: string }
@@ -142,7 +147,11 @@ async function refuseCompany(
 
 const asLines = (lines: TransactionLineValues[]): LineInput[] =>
   lines
-    .map((l) => ({ budget_id: num(l.budget_id) ?? 0, amount: num(l.amount) ?? 0 }))
+    .map((l) => ({
+      budget_id: num(l.budget_id) ?? 0,
+      amount: num(l.amount) ?? 0,
+      item_id: num(l.item_id),
+    }))
     .filter((l) => l.budget_id > 0);
 
 /**
@@ -236,6 +245,7 @@ export async function createTransaction(
           settlement_exchange_rate: checked.rate,
           transaction_amount: l.amount,
           transaction_base_amount: roundBase(l.amount * checked.rate),
+          sub_ledger_balance_id: l.itemId,
           created_by: g.actor.user.id,
         })),
       },
@@ -335,6 +345,7 @@ export async function updateTransaction(
             settlement_exchange_rate: checked.rate,
             transaction_amount: l.amount,
             transaction_base_amount: roundBase(l.amount * checked.rate),
+            sub_ledger_balance_id: l.itemId,
             created_by: g.actor.user.id,
           })),
         },

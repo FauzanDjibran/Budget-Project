@@ -479,8 +479,9 @@ export async function cleanupFixtures(): Promise<void> {
     });
     await prisma.finDncn.deleteMany({ where: { id: { in: notes } } });
   }
-  await prisma.subLedgerBalance.deleteMany({ where: fixturePartners });
+  // Entries first: each names the open item it moved.
   await prisma.subLedger.deleteMany({ where: fixturePartners });
+  await prisma.subLedgerBalance.deleteMany({ where: fixturePartners });
 
   await prisma.mPartner.deleteMany({
     where: { partner_label: { startsWith: FIXTURE_PREFIX } },

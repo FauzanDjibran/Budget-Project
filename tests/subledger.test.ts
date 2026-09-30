@@ -13,6 +13,7 @@ import { loadSubledgers } from "../src/lib/siba/subledger-data";
 import {
   recordSubledgerEntry,
   rebuildSubledgerBalance,
+  subledgerPosition,
   subledgerReport,
   subledgerSubjects,
 } from "../src/lib/siba/subledger";
@@ -168,11 +169,13 @@ describe("a category keeps a book exactly when it names a Partner", () => {
     // Master › Klasifikasi needs no report, no permission and no menu entry
     // written for it. If this ever becomes one-report-per-book again, a new
     // category silently has no way to be read.
+    // Two readings of the same books — the period's movement and the open
+    // items standing now — and each takes the book as a parameter.
     const subledgerReports = REPORTS.filter((r) => r.subledger);
-    assert.equal(
-      subledgerReports.length,
-      1,
-      "one Report View for every book — the book is a parameter, not a report"
+    assert.deepEqual(
+      subledgerReports.map((r) => r.slug),
+      ["subledger", "subledger-item"],
+      "one Report View per reading, never one per book — the book is a parameter"
     );
 
     const report = reportBySlug("subledger");
@@ -273,7 +276,12 @@ describe("the book is append-only, and its total is derived", () => {
 
   test("entries accumulate and the stored balance follows them", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
-    const entry = (date: string, direction: "In" | "Out", amount: number) =>
+    const entry = (
+      date: string,
+      direction: "In" | "Out",
+      amount: number,
+      itemId?: number
+    ) =>
       prisma.$transaction((tx) =>
         recordSubledgerEntry(tx, {
           book: bookOf("Hutang"),
@@ -284,24 +292,28 @@ describe("the book is append-only, and its total is derived", () => {
           direction,
           amount,
           rate: 1,
+          itemId,
           note: `${FIXTURE_PREFIX} ${direction} ${amount}`,
           actorId: actor,
         })
       );
 
-    await entry("2026-01-10", "In", 10_000_000);
-    await entry("2026-02-05", "Out", 4_000_000);
+    const first = await entry("2026-01-10", "In", 10_000_000);
+    const repaid = await entry("2026-02-05", "Out", 4_000_000, first.balance_id);
     const third = await entry("2026-02-20", "In", 1_500_000);
 
+    assert.equal(repaid.balance_id, first.balance_id, "a repayment settles the item it names");
+    assert.equal(repaid.balance_after.toNumber(), 6_000_000, "and that item is what moves");
+    assert.notEqual(third.balance_id, first.balance_id, "a new borrowing is a new item");
     assert.equal(
-      third.balance_after.toNumber(),
+      (await subledgerPosition(bookOf("Hutang").key, partner, currency)).foreign,
       7_500_000,
       "10.000.000 borrowed, 4.000.000 repaid, 1.500.000 borrowed again"
     );
     assert.equal(
       (await rebuildSubledgerBalance(bookOf("Hutang").key, partner, currency)).balance,
       7_500_000,
-      "and recomputing from the entries agrees with the stored total"
+      "and recomputing every item from its entries agrees with the stored total"
     );
   });
 
@@ -370,8 +382,8 @@ describe("the book is append-only, and its total is derived", () => {
         [700, 5_000_000]
       );
     } finally {
-      await prisma.subLedgerBalance.deleteMany({ where: { currency_id: other.id } });
       await prisma.subLedger.deleteMany({ where: { currency_id: other.id } });
+      await prisma.subLedgerBalance.deleteMany({ where: { currency_id: other.id } });
       await prisma.refCurrency.delete({ where: { id: other.id } });
     }
   });
@@ -391,8 +403,10 @@ describe("a subledger report reconciles on its own page", () => {
       ["2026-01-31", "Out", 600_000], // exactly `to`: inside
       ["2026-02-01", "Out", 999_999], // after the period: excluded
     ];
+    // Money out raises a Prive; the one In lowers it, settling the first item.
+    let firstItem: number | undefined;
     for (const [date, direction, amount] of entries) {
-      await prisma.$transaction((tx) =>
+      const written = await prisma.$transaction((tx) =>
         recordSubledgerEntry(tx, {
           book: bookOf("Prive"),
           partnerId: partner,
@@ -402,9 +416,11 @@ describe("a subledger report reconciles on its own page", () => {
           direction,
           amount,
           rate: 1,
+          itemId: direction === "In" ? firstItem : undefined,
           actorId: actor,
         })
       );
+      firstItem ??= written.balance_id;
     }
   });
 
@@ -551,6 +567,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
         direction: "Out",
         amount: 400,
         rate: 15_000,
+        itemId: raised.balance_id,
         actorId: actor,
       })
     );
@@ -604,21 +621,28 @@ describe("a position carries a rate, and it is derived from what built it", () =
     assert.equal(subject.carryingRate, 15_300, "weighted, not either rate quoted");
     assert.ok(subject.reconciles, "both measures agree with the stored total");
 
-    // Settle it to nothing. The position then has no rate at all.
-    await prisma.$transaction((tx) =>
-      recordSubledgerEntry(tx, {
-        book: bookOf("Hutang"),
-        partnerId: partner,
-        currencyId: currency,
-        date: "2026-03-20",
-        type: "Transaction",
-        direction: "Out",
-        amount: 500,
-        rate: 15_300,
-        baseAmount: 7_650_000,
-        actorId: actor,
-      })
-    );
+    // Settle both items to nothing, each at its own rate. The position then has
+    // no rate at all.
+    const items = await prisma.subLedgerBalance.findMany({
+      where: { book: bookOf("Hutang").key, partner_id: partner },
+      orderBy: { id: "asc" },
+    });
+    for (const item of items) {
+      await prisma.$transaction((tx) =>
+        recordSubledgerEntry(tx, {
+          book: bookOf("Hutang"),
+          partnerId: partner,
+          currencyId: currency,
+          date: "2026-03-20",
+          type: "Transaction",
+          direction: "Out",
+          amount: item.balance.toNumber(),
+          rate: item.rate.toNumber(),
+          itemId: item.id,
+          actorId: actor,
+        })
+      );
+    }
     const cleared = await subledgerReport(books, bookOf("Hutang").key, march, {
       partnerIds: [partner],
       companyIds: [induk],
@@ -635,12 +659,14 @@ describe("a position carries a rate, and it is derived from what built it", () =
 
   test("opening + naik - turun = closing holds on the base measure too", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    // The repayment settles the January item, at January's rate.
+    let january: number | undefined;
     for (const [date, direction, amount, rate] of [
       ["2026-01-10", "In", 1_000, 15_000],
       ["2026-02-14", "In", 500, 16_000],
-      ["2026-02-20", "Out", 300, 15_333.333333],
+      ["2026-02-20", "Out", 300, 15_000],
     ] as const) {
-      await prisma.$transaction((tx) =>
+      const written = await prisma.$transaction((tx) =>
         recordSubledgerEntry(tx, {
           book: bookOf("Hutang"),
           partnerId: partner,
@@ -650,9 +676,11 @@ describe("a position carries a rate, and it is derived from what built it", () =
           direction,
           amount,
           rate,
+          itemId: direction === "Out" ? january : undefined,
           actorId: actor,
         })
       );
+      january ??= written.balance_id;
     }
 
     // February only, so January folds into the opening on both measures.

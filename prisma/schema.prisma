@@ -796,6 +796,16 @@ enum SubLedgerEntryType {
   Adjustment
 }
 
+/// Whether an open item still holds anything.
+enum SubLedgerItemStatus {
+  /// Still holds a remaining amount, and may be chosen by a line that lowers
+  /// its position.
+  Open
+  /// Relieved to nothing. Kept, because it is part of how the position was
+  /// built, and never offered again.
+  Cleared
+}
+
 /// The subject books — Titipan, Hutang, Piutang, Prive, Investasi and Hasil
 /// Investasi — in one append-only table, keyed by `book`.
 ///
@@ -833,7 +843,8 @@ model SubLedger {
   /// entry raises the subject's position, negative where it lowers it. Summing
   /// this column reconstructs the balance, which is how the total is verified.
   movement      Decimal @db.Decimal(18, 2)
-  /// The subject's position after this entry, in its own currency.
+  /// The open item's remaining amount after this entry, in its own currency —
+  /// the item, not the whole position, which is the sum of its items.
   balance_after Decimal @db.Decimal(18, 2)
 
   /// **This book's own settlement rate**, converting the subject's currency to
@@ -854,6 +865,13 @@ model SubLedger {
   /// `balance_after` in base currency.
   base_balance_after Decimal @db.Decimal(18, 2)
 
+  /// The open item this entry moved. An entry that raises a position opens a
+  /// new item and names it; one that lowers a position names the item the user
+  /// chose and relieves it at that item's own rate. Summing an item's entries
+  /// rebuilds it, which is what keeps a mutable item provable from an
+  /// append-only book.
+  balance_id Int
+
   /// What caused the movement, as the weak document pair every book uses.
   source_doc_type_id Int?
   source_doc_id      Int?
@@ -863,43 +881,75 @@ model SubLedger {
   created_by Int
   created_at DateTime @default(now()) @db.Timestamptz(6)
 
-  partner         MPartner    @relation(fields: [partner_id], references: [id])
-  currency        RefCurrency @relation(fields: [currency_id], references: [id])
-  source_doc_type SysDocType? @relation(fields: [source_doc_type_id], references: [id])
+  partner         MPartner         @relation(fields: [partner_id], references: [id])
+  currency        RefCurrency      @relation(fields: [currency_id], references: [id])
+  source_doc_type SysDocType?      @relation(fields: [source_doc_type_id], references: [id])
+  item            SubLedgerBalance @relation(fields: [balance_id], references: [id])
 
   @@index([book, partner_id, entry_date])
+  @@index([balance_id])
   @@index([source_doc_type_id, source_doc_id])
   @@map("sub_ledger")
 }
 
-/// One row per subject and currency, derived from `sub_ledger` and written in
-/// the same transaction as the entry that changed it. Never written on its own:
-/// `rebuildSubledgerBalance` recomputes it from the entries.
+/// The **open items** of the subject books: one row per movement that raised a
+/// position, and the balance and the item are the same row.
 ///
-/// Currency is part of the key because amounts are never converted (§12): a
-/// Partner owing IDR and USD holds two positions, not one blended figure.
+/// A position — book × Partner × currency — is no longer a row. It is the sum
+/// of its items, computed on read. Each item keeps what it was raised at, so a
+/// line that lowers the position names the item it settles and relieves it at
+/// that item's own rate, rather than at an average of every receipt: two
+/// Titipan received at 15.000 and 13.000 stay two items, and which one a
+/// return settles is a choice the user makes and can see. Rupiah is itemised
+/// too, at a rate of 1 — the item is a matching unit as well as a rate.
+///
+/// Derived from `sub_ledger` and written in the same transaction as the entry
+/// that moved it, never on its own: `rebuildSubledgerBalance` recomputes an item
+/// from the entries that name it. Mutable, unlike the book, and provable from
+/// the book for exactly that reason.
+///
+/// Nothing may take an item below nothing, so no position can go negative.
 model SubLedgerBalance {
   id          Int    @id @default(autoincrement())
+  /// `SBI-0001`. How the picker and the reports name an item — a rate names
+  /// several items at once and a date names every item raised that day.
+  item_no     String @unique
   book        String
   partner_id  Int
   currency_id Int
 
-  balance         Decimal   @default(0) @db.Decimal(18, 2)
-  /// The same position in base currency. The subject's carrying rate is
-  /// `base_balance ÷ balance`, derived on read — it is what a later relief
-  /// releases at, and the reason an FX difference can arise at all.
-  base_balance    Decimal   @default(0) @db.Decimal(18, 2)
-  entry_count     Int       @default(0)
+  /// When the item was raised: the document date of the entry that opened it.
+  opened_date DateTime @db.Date
+  /// The rate the item was raised at — a fact of the movement that raised it,
+  /// in the same sense as a rate layer's. Relief releases base in proportion to
+  /// what is left, so `base_balance ÷ balance` equals it for the item's life.
+  rate          Decimal @db.Decimal(18, 6)
+  /// What the item was raised by, on both measures. Never changes.
+  original      Decimal @db.Decimal(18, 2)
+  base_original Decimal @db.Decimal(18, 2)
+
+  /// What remains of the item, in its own currency.
+  balance         Decimal             @default(0) @db.Decimal(18, 2)
+  /// What remains of the item in base currency.
+  base_balance    Decimal             @default(0) @db.Decimal(18, 2)
+  status          SubLedgerItemStatus @default(Open)
+  entry_count     Int                 @default(0)
   last_entry_id   Int?
-  last_entry_date DateTime? @db.Date
+  last_entry_date DateTime?           @db.Date
+
+  /// The document that raised the item, as the weak pair every book uses, and
+  /// the words it was raised under — the Budget's own description.
+  source_doc_type_id Int?
+  source_doc_id      Int?
+  note               String?
 
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   partner  MPartner    @relation(fields: [partner_id], references: [id])
   currency RefCurrency @relation(fields: [currency_id], references: [id])
+  entries  SubLedger[]
 
-  @@unique([book, partner_id, currency_id])
-  @@index([book])
+  @@index([book, partner_id, currency_id, status])
   @@map("sub_ledger_balance")
 }
 
@@ -1338,6 +1388,14 @@ model FinCashBankTransactionLine {
   /// several categories and Partners, each at its own position's carrying
   /// rate, so each line has its own difference and none is summed.
   fx_difference           Decimal @default(0) @db.Decimal(18, 2)
+
+  /// The subject-book open item this line settles (`sub_ledger_balance.id`),
+  /// where the line lowers a position. The obligation releases at **this
+  /// item's** rate, so the choice decides the line's FX difference. Null where
+  /// the line raises a position (it opens a new item at Post) or its Budget
+  /// Category keeps no book. A plain id rather than a relation, like
+  /// `cash_bank_layer_id`: the item belongs to the subject-book module.
+  sub_ledger_balance_id Int?
 
   created_by Int
   updated_by Int?

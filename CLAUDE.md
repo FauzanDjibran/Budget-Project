@@ -76,7 +76,7 @@ or invariants that assume a particular row exists.
 | Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered |
 | Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. Period-end revaluation is **not** built (§13) |
 | Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows them and says when they stop reconciling with the book |
-| Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. Six Report Views under Finance › Laporan. No manual entry and no Opening path yet |
+| Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done — the commitment funnel (submitted → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
@@ -91,7 +91,7 @@ or invariants that assume a particular row exists.
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
 | Debit / Credit Note | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget. A Debit Note debits the Partner's account and a Credit Note credits it, so the book's own `raises` decides whether the position rises or falls and one document serves every book. Which books may be adjusted is `allows_dncn` on the Budget Category (Titipan, Hutang, Piutang). Post writes one `Adjustment` entry and one balanced journal against the Company's Debit Note or Credit Note System Default, under a lock on the position; nothing may go below zero, and a negative position is not adjustable yet |
-| Report Views | Done — the screen type plus eleven reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs` and the six subject books under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
+| Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its `Posisi Open Item` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
@@ -192,7 +192,7 @@ of its own.
 | Cash Bank Book | `src/lib/siba/cash-bank.ts` | Append-only ledger writes on **both measures**, the materialised balance, `CBL-` numbering, per-currency summary; `server-only` |
 | Rate layers | `src/lib/siba/cash-bank-layers.ts` | A foreign resource's parcels of currency — `openLayer`, `drawFromLayer`, `reconcileLayers`, the layer report, `CBLY-` numbering. Owned by the Cash Bank Book, so it imports only the kernel; `server-only` |
 | Subledger catalogue | `src/lib/siba/subledger-catalogue.ts` | Which categories keep a subject book, which way each one moves; client-safe |
-| Subject books | `src/lib/siba/subledger.ts` | Append-only `sub_ledger` writes on both measures, the materialised position, `SBL-` numbering, the six reports; `server-only` |
+| Subject books | `src/lib/siba/subledger.ts` | Append-only `sub_ledger` writes on both measures, the **open items** (`sub_ledger_balance`, `SBI-` numbering) a raise opens and a lowering settles, `SBL-` numbering, the book and open-item reports; `server-only` |
 | Manual journal | `src/lib/siba/manual-journal.ts` | Which account a person may write to by hand, which line needs a Partner, which needs a kurs — the control-account rule; `server-only` |
 | Journal lifecycle | `src/lib/siba/journal-workflow.ts` | A manual journal's Draft → Post / Cancel, one transition table; client-safe |
 | Transaction lifecycle | `src/lib/siba/transaction-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
@@ -1424,7 +1424,8 @@ the rules that follow from it.
     Purpose, never the direction, never which book is being written. Where nothing
     is on the books the movement *is* the origin of the value, both measures come
     from the same place, and no difference can arise. `settle` in `fx.ts` is the
-    one implementation.
+    one implementation. **In a subject book "what it was carried at" is the chosen
+    open item's own kurs**, never an average of the position (rule 105).
 74. **The FX difference is the balancing figure, and its sign is never chosen
     separately.** It is `settlementBase − transactionBase`: positive is a gain on
     the credit side, negative a loss on the debit side, exactly zero writes no
@@ -1480,6 +1481,34 @@ the rules that follow from it.
 102. **A note is Draft → Post / Cancel, and a posted note is final.** Its type
     is fixed once saved, because the number series (`DN-` / `CN-`) says it; a
     posted note is corrected by a note of the opposite type.
+
+**Open items** — how a subject book holds a position.
+
+103. **A subject book is kept in open items, and the balance row is the item.**
+    Every movement that raises a position opens one row in `sub_ledger_balance`
+    (`SBI-0001`) at the kurs it moved at, and every `sub_ledger` entry names the
+    item it moved (`balance_id`). A position — book × Partner × currency — is no
+    longer a row: it is the sum of its items, computed on read. Rupiah is itemised
+    too, at a kurs of 1. An item is mutable and provable: summing the entries that
+    name it rebuilds it (`rebuildSubledgerItem`). The user's model, so that each
+    receipt keeps its own kurs rather than dissolving into an average.
+104. **One Budget line is one item.** Two Piutang Budgets realized in one document
+    open two items, which is the grain SAP and Odoo keep open items at — the
+    receivable line, not the document — and the grain the General Ledger already
+    has, since each Budget writes its own counter line.
+105. **A line lowering a position names the item it settles, and relieves it at
+    that item's own kurs.** Chosen, never preselected, never averaged — which item
+    a return settles decides its gain or loss, and the picker shows each item's
+    date, kurs and remainder. The line is refused without one, with another
+    subject's, or for more than the item still holds, at save (`checkLines`) and
+    again at Post, where `applyPosting` takes `lockSubledgerPosition` for every
+    position it lowers and `recordSubledgerEntry` throws if the item moved since
+    the plan valued it. **So no position can go below zero** through a realization.
+106. **An item may be settled by a document dated before the item was opened.**
+    Illogical — a deposit returned before it was received — and allowed on the
+    user's instruction, because backdating means any open item may be cleared at
+    any time. **Marked as possibly reverted to restricted** once the user has seen
+    it in use.
 
 Specified in the concept doc, **not yet implemented** (see §13):
 
@@ -2251,6 +2280,47 @@ Specified in the concept doc, **not yet implemented** (see §13):
   category label.
 - **Status:** Frozen, current. Supersedes "The subject books are one mechanism
   with six books".
+
+### A subject book is kept in open items (FROZEN)
+- **Decision:** `sub_ledger_balance` holds **open items**, one per movement that
+  raised a position, and the balance row *is* the item — there is no separate item
+  table and no position row. Each item carries `item_no`, the date and kurs it was
+  raised at, what it was raised by (`original` / `base_original`), what remains
+  on both measures, and `Open` / `Cleared`. Each `sub_ledger` entry names its
+  item. A Realisasi line lowering a position names the item it settles
+  (`fin_cash_bank_transaction_line.sub_ledger_balance_id`, a plain id like
+  `cash_bank_layer_id`) and relieves it at that item's kurs. §10 rules 103–106
+  are the statement of it; **Posisi Open Item** under Finance › Laporan reads it.
+- **Reason:** the user's, from a real case. A Titipan received at 15.000 into one
+  bank and returned from another bank's dollars bought at 13.000 recognised a
+  difference against the **average** of every receipt, so the result depended on
+  receipts that had nothing to do with this return, and a stakeholder refusing to
+  bear it saw a "phantom" loss. FX difference is inevitable while the ledger
+  balances; what the user wanted was for its size to be a visible choice. Checked
+  against PSAK 221 first: relieving a monetary item at the carrying amount of a
+  specifically identified part is compliant, and the lifetime total is the same
+  as averaging — only which return carries it changes.
+- **Not a cash layer under another name.** A layer is a fungible parcel that
+  exists only in foreign currency and only for valuation; an item is a specific
+  obligation, exists in every currency, and is provable from the book because
+  every entry names it. That last property is why the user asked for the balance
+  and the item to be one row.
+- **Impact:** a position can no longer go negative through a realization.
+  `lockSubledgerPosition` is taken by `applyPosting` too. Every Budget line is
+  one item, so a return clearing two items needs two Budget lines. **Two paths
+  were left behind on the user's instruction**: the funded route and DN/CN are
+  both being redesigned, both can still *raise* a position (opening an item), and
+  both are refused when they *lower* one, because neither names an item yet.
+  Their tests that lower a position are marked `todo` with that reason rather
+  than rewritten, and the showcase skips the DN/CN notes that lower a position.
+- **The migration is a reset**, like the Realisasi one before it: `balance_id`
+  and the item columns are `NOT NULL`, so it applies to an empty subject book.
+- **Do not change unless:** explicitly instructed. **Never average a position's
+  items into a relief, never preselect or auto-settle an item, never merge two
+  items, never let an item go below nothing, and never write a subject-book entry
+  that names no item.**
+- **Status:** Frozen, current. Supersedes relief at the position's carrying rate
+  and the one-row-per-position `sub_ledger_balance`.
 
 ### The Neraca is cumulative, per fiscal period, with each unclosed year on its own line (FROZEN)
 - **Decision:** A Report View under Accounting (`accounting/report/balance-sheet`,
@@ -3956,6 +4026,9 @@ decisions now that foreclose them.
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
+| Open items for DN/CN and the funded route | Both are being redesigned. Both may raise a position (opening an item) and are refused when they lower one, because neither names an item yet. How a note or a funded line chooses the item it settles is part of their redesign |
+| Several items per line | One Budget line settles one item, so clearing two needs two Budget lines. SAP lets one payment clear many; widening this means a per-line allocation, not a loosened check |
+| Restricting an item's clearing date | An item may be settled by a document dated before it was opened (§10 rule 106), on the user's instruction; they may revert it to restricted after seeing it |
 | DN/CN on a negative position | A position below zero (a cash overpayment) is refused today. Adjusting one needs a rule for its base, which no longer tracks its face |
 | DN/CN tax | A note carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
 | Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
@@ -4021,6 +4094,9 @@ process allowed to restate positions, and it is not built.
   subject book. That is what put a deploy between a new category and its book (§12).
 - Do **not** resolve a book through a category label. The
   Budget Category owns the book, and the lookup takes its id (§12).
+- Do **not** relieve a subject-book position at an average, preselect or auto-settle
+  an open item, merge two items, or write a subject-book entry that names no item.
+  A line lowering a position names the item it settles (§10 rules 103–105, §12).
 - Do **not** sign a subject book by the cash direction. Each book declares which
   direction raises it, and `subledgerMovement` is the only place that is decided
   (§10 rule 53).
@@ -4364,7 +4440,7 @@ process allowed to restate positions, and it is not built.
 | An audit entry names a record by its current name | `audit_log` stores no snapshot, so a record renamed since it changed reads under the name it has now. Inventing a snapshot would be worse than saying nothing, but it does mean the panel is not a record of what a thing was called at the time. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The subject books have no opening balance | A subledger entry is written by posting a Cash Bank Transaction or a Debit / Credit Note (`Adjustment`). `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated (§13). |
-| Cash posting does not take the position lock | `lockSubledgerPosition` serialises Debit / Credit Notes against each other. `recordSubledgerEntry` itself still reads the balance and then writes it, so a note and a cash posting on the same position at the same instant can still race, as two cash postings always could. Taking the lock in `applyPosting` too closes it. |
+| Funded route and DN/CN cannot lower a position | Open items arrived while both were being redesigned, and neither names the item it settles yet. A funded confirmation or a note that would lower a subject-book position is refused (the funded one as an unhandled error, tolerated on the user's instruction); raising one works. Nine tests are marked `todo` for it, and the showcase skips those notes. |
 | A note's counter account is one per side, whichever book | One Debit Note and one Credit Note account per Company, so a Titipan adjustment and a Piutang adjustment land in the same P&L account. Fine for the three books the seed allows; a book needing its own counter account would need the account on the category. |
 | A transfer shows in the Cash Bank Book by number, not as a link | `sourceDocumentNumbers` in `cash-bank.ts` resolves only `fin_cash_bank_transaction`, which is already the baselined crossing this table records below. A transfer entry therefore carries `TRF-0001 — <Purpose>` in its note and has no drill-through. Extending that function to a second table would deepen the debt; the clean fix is to make labelling a `(doc_type_id, doc_id)` pair the caller's job, which is a decision in its own right. |
 | A subject book's report shows a document's note, not a link | An entry carries its source as the weak `(doc_type_id, doc_id)` pair and its document number inside `note`. Resolving that to a link would mean the book importing Finance, which is the boundary crossing `cash-bank.ts` already has and that has not been decided. |
@@ -4376,7 +4452,7 @@ process allowed to restate positions, and it is not built.
 | A close drops a go-live Opening Balance | `closingBalances` in `ledger.ts`, which a close snapshots the next year from, sums **journal lines only** — it does not stand on an earlier snapshot the way `openingBasis` does. A developer-injected go-live snapshot (null source) therefore reaches the reports of its own year and is left out of the snapshot the close writes, so every year after the first close would open without the go-live figures. Harmless while no go-live snapshot exists; the showcase avoids it by funding the business with postings. The fix is to make `closingBalances` open from `openingBasisFor` like the reports do, which touches the close and needs its own test at the boundary. |
 | A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
-| A backdated settlement is valued at today's carrying rate | A subject-book relief releases base at the carrying rate the position holds when the posting is written, not as of the backdated day, so the FX difference can land in a different period than an on-time posting would have put it. Lifetime totals are identical. Accepted, because the alternative restates stored base figures (§12). |
+| A backdated settlement draws on today's cash layer | A subject-book relief now releases at its open item's own kurs, which never changes, so the obligation side no longer depends on when a backdated document is posted. The cash side still draws on its layer as it stands at posting (§12). |
 | The zero rules ignore the backdated day | A backdated payment is checked against the balance as it stands when posted, so a base-currency book can have been below zero in between. Accepted for base currency; a foreign resource is held by its layers (§12). |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |

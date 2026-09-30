@@ -29,6 +29,11 @@ export type ReportParams =
   | "account-period"
   | "subledger-period"
   /**
+   * A book and a set of Partners with **no** date range — the open items, a
+   * standing position like the rate layers: what can be settled now.
+   */
+  | "subledger"
+  /**
    * The Company and a date range, nothing else — the Trial Balance, whose
    * subject is every account by definition. `?all=1` lists the silent ones too.
    */
@@ -198,7 +203,30 @@ const SUBLEDGER_REPORT: ReportDef = {
   subledger: true,
 };
 
-export const REPORTS: readonly ReportDef[] = [...FIXED_REPORTS, SUBLEDGER_REPORT];
+/**
+ * The open items of a subject book — what each Partner's position is made of
+ * right now, item by item, at the kurs each was raised at. The same book
+ * parameter as the Buku Subjek and the same permission, because it is the same
+ * book read as a standing position rather than as a period's movement.
+ */
+const SUBLEDGER_ITEM_REPORT: ReportDef = {
+  key: "subledger_item",
+  slug: "subledger-item",
+  module: "finance",
+  name: "Posisi Open Item",
+  desc: "Open item setiap Partner pada buku yang dipilih — sisa dan kurs masing-masing item yang belum selesai.",
+  icon: "layers",
+  permission: "REPORT_SUBLEDGER_VIEW",
+  params: "subledger",
+  subjectRequired: false,
+  subledger: true,
+};
+
+export const REPORTS: readonly ReportDef[] = [
+  ...FIXED_REPORTS,
+  SUBLEDGER_REPORT,
+  SUBLEDGER_ITEM_REPORT,
+];
 
 export type ReportKey = (typeof FIXED_REPORTS)[number]["key"];
 
