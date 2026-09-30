@@ -15,6 +15,7 @@
     "db:seed-showcase": "node --env-file-if-exists=.env --conditions=react-server --import tsx scripts/seed-showcase.ts",
     "db:neon-seed-showcase": "node scripts/with-remote.mjs node --conditions=react-server --import tsx scripts/seed-showcase.ts",
     "db:backfill-account-flags": "node --env-file-if-exists=.env --conditions=react-server --import tsx scripts/backfill-account-flags.ts",
+    "db:reconcile": "node --env-file-if-exists=.env --import tsx scripts/reconcile-books.ts",
     "db:truncate-transactions": "node --env-file-if-exists=.env --import tsx scripts/truncate-transactions.ts",
     "db:reset": "prisma migrate reset --force",
     "db:neon-reset": "node scripts/with-remote.mjs --destructive npx prisma migrate reset --force",

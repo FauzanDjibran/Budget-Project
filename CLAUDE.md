@@ -339,6 +339,13 @@ scripts/
                          what reconciles against the account for the second.
                          Idempotent, sets and clears. Run by hand, never by
                          install or CI
+  reconcile-books.ts     Read-only: fourteen checks that Budget realization,
+                         the Cash Bank Book, the subject books and their open
+                         items, and the journals agree with each other and
+                         with the General Ledger. Each selects only the rows
+                         that disagree; exits 1 if any does. Runs inside a
+                         READ ONLY transaction. Run by hand after touching a
+                         posting path, never by install or CI
   truncate-transactions.ts  Empties every transaction store and leaves master
                          and system data standing — the documents, the books
                          and their audit rows, in one transaction. Reports and
@@ -514,6 +521,7 @@ npm run db:seed              # sync system data; idempotent, destroys nothing
                              # (runs under --conditions=react-server)
 npm run db:seed-showcase     # dev only: four believable years of business data (NOT the seeder)
 npm run db:backfill-account-flags  # one-off: resync Postable + Control Account to the structure
+npm run db:reconcile         # read-only: do the books agree? exits 1 if not
 npm run db:truncate-transactions          # reports what it would delete, deletes nothing
 npm run db:truncate-transactions -- --confirm  # DESTRUCTIVE: empties the documents and
                                                # the books, keeps master + system data
@@ -1572,7 +1580,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   assertions in the test suite, `lockSubledgerPosition` in `subledger.ts` and
   `lockFiscalPeriod` in `fiscal.ts`,
   which takes a transaction-scoped advisory lock through a parameterised tagged
-  template. None interpolates user input into SQL text. Do not introduce raw SQL
+  template, and the constant reconciliation queries in
+  `scripts/reconcile-books.ts`, which run inside a READ ONLY transaction and
+  take no input at all. None interpolates user input into SQL text. Do not introduce raw SQL
   with interpolated user input.
 
 ## 12. Important Decisions / Frozen Decisions
