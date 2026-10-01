@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
@@ -43,7 +42,6 @@ export function FiscalYearActions({
   status: FiscalYearStatus;
   can: FiscalYearAbilities;
 }) {
-  const router = useRouter();
   const toast = useToast();
   const [confirm, setConfirm] = useState<FiscalYearAction | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,7 +64,6 @@ export function FiscalYearActions({
         : subject,
       "ok"
     );
-    router.refresh();
   };
 
   // Header order — danger, then neutral, then the one primary. The closing

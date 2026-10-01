@@ -182,7 +182,6 @@ export function BudgetForm({
       "ok"
     );
     router.push(`/budget/budget/${result.id}`);
-    router.refresh();
   };
 
   const run = async (
@@ -201,7 +200,6 @@ export function BudgetForm({
       setClassifying(false);
       setClassifyErrors({});
       toast(result.message, `${budget.budget_no} · ${budget.description}`, "ok");
-      router.refresh();
       return;
     }
     if (action === "classify") {

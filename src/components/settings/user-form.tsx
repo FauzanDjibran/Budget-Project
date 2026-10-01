@@ -110,7 +110,6 @@ export function UserForm({
       setDirty(false);
       toast("User dibuat", `${values.name} sekarang dapat masuk ke aplikasi.`, "ok");
       router.push(`/settings/user/${result.id}`);
-      router.refresh();
       return;
     }
 
@@ -138,7 +137,6 @@ export function UserForm({
     setDirty(false);
     toast("Perubahan tersimpan", "Data user berhasil diperbarui.", "ok");
     router.push(`/settings/user/${user!.id}`);
-    router.refresh();
   };
 
   const onReset = async () => {
@@ -166,7 +164,6 @@ export function UserForm({
     setStatusOpen(false);
     if (result.ok) {
       toast("Status diperbarui", `${user!.name} sekarang ${next === "Active" ? "aktif" : "nonaktif"}.`, "ok");
-      router.refresh();
     } else {
       toast("Tidak diizinkan", firstError(result.errors), "err");
     }

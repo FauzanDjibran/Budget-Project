@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
@@ -18,7 +17,6 @@ import type { ProfileView as Profile } from "@/lib/siba/profile";
  * change access even if one were added.
  */
 export function ProfileView({ profile }: { profile: Profile }) {
-  const router = useRouter();
   const toast = useToast();
 
   const [name, setName] = useState(profile.name);
@@ -44,7 +42,6 @@ export function ProfileView({ profile }: { profile: Profile }) {
     setSavingIdentity(false);
     if (result.ok) {
       toast("Profil diperbarui", "Nama dan inisial Anda sudah tersimpan.", "ok");
-      router.refresh();
     } else {
       setIdentityErrors(result.errors);
       toast("Belum bisa disimpan", "Periksa kembali isian Anda.", "err");
@@ -65,7 +62,6 @@ export function ProfileView({ profile }: { profile: Profile }) {
         "Sesi Anda di perangkat lain telah diakhiri. Perangkat ini tetap masuk.",
         "ok"
       );
-      router.refresh();
     } else {
       setPwErrors(result.errors);
       toast("Password tidak diubah", "Periksa kembali isian Anda.", "err");

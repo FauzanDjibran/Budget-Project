@@ -109,7 +109,6 @@ export function JournalList({
       return;
     }
     toast(result.message, row.journalNo, "ok");
-    router.refresh();
   };
 
   return (

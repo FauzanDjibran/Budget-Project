@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
@@ -46,7 +45,6 @@ export function JournalActions({
   isManual: boolean;
   can: JournalAbilities;
 }) {
-  const router = useRouter();
   const toast = useToast();
   const [confirm, setConfirm] = useState<JournalAction | null>(null);
   const [busy, setBusy] = useState(false);
@@ -69,7 +67,6 @@ export function JournalActions({
       return;
     }
     toast(result.message, subject, "ok");
-    router.refresh();
   };
 
   const actions = availableJournalActions(status, can);

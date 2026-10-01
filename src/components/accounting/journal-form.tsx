@@ -245,7 +245,6 @@ export function JournalForm({
     setDirty(false);
     toast("Journal disimpan", `${result.journalNo} · Draft`, "ok");
     router.push(`/accounting/journal/${result.id}`);
-    router.refresh();
   }
 
   const backHref = journal

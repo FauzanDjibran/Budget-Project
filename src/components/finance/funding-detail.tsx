@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { DocumentHeader } from "@/components/ui/document-header";
 import { Combobox } from "@/components/ui/combobox";
@@ -62,7 +61,6 @@ export function FundingDetail({
   bridgeMissing: string[];
   canConfirm: boolean;
 }) {
-  const router = useRouter();
   const toast = useToast();
 
   const [asking, setAsking] = useState(false);
@@ -92,7 +90,6 @@ export function FundingDetail({
     }
     setAsking(false);
     toast(result.message, request.funding_request_no, "ok");
-    router.refresh();
   };
 
   return (

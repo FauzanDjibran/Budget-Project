@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { DocumentHeader } from "@/components/ui/document-header";
 import { SearchField } from "@/components/ui/search-field";
@@ -47,7 +46,6 @@ export function ClassificationQueue({
   refs: BudgetRefs;
   mappings: BudgetMapping[];
 }) {
-  const router = useRouter();
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [classifying, setClassifying] = useState<number[] | null>(null);
@@ -124,7 +122,6 @@ export function ClassificationQueue({
     setClassifying(null);
     setErrors({});
     selection.clear();
-    router.refresh();
   };
 
   const dialogRows = classifying

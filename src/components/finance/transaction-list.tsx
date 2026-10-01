@@ -142,7 +142,6 @@ export function TransactionList({
     setConfirm(null);
     if (result.ok) {
       toast(result.message, row.transaction_no, "ok");
-      router.refresh();
       return;
     }
     toast(

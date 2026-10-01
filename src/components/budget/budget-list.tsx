@@ -236,7 +236,6 @@ export function BudgetList({
         "ok"
       );
       selection.clear();
-      router.refresh();
       return;
     }
     toast(

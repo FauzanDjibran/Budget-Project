@@ -209,7 +209,6 @@ export function DncnForm({
       "ok"
     );
     router.push(`/finance/debit-credit-note/${result.id}`);
-    router.refresh();
   };
 
   const run = async (action: DncnAction) => {
@@ -221,7 +220,6 @@ export function DncnForm({
     setPostReady(false);
     if (result.ok) {
       toast(result.message, note.note_no, "ok");
-      router.refresh();
       return;
     }
     toast("Tidak dapat diproses", result.errors._form ?? Object.values(result.errors)[0], "err");

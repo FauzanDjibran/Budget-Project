@@ -92,7 +92,6 @@ export function DncnList({
     setConfirm(null);
     if (result.ok) {
       toast(result.message, row.note_no, "ok");
-      router.refresh();
       return;
     }
     toast("Tidak dapat diproses", result.errors._form ?? Object.values(result.errors)[0], "err");

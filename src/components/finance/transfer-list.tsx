@@ -125,7 +125,6 @@ export function TransferList({
     setConfirm(null);
     if (result.ok) {
       toast(result.message, row.transfer_no, "ok");
-      router.refresh();
       return;
     }
     toast(

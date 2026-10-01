@@ -68,7 +68,6 @@ export function UserList({
         "ok"
       );
       setPending(null);
-      router.refresh();
     } else {
       toast("Tidak diizinkan", firstError(result.errors), "err");
       setPending(null);

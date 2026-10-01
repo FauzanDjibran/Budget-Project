@@ -120,7 +120,6 @@ export function RoleForm({
           setSaving(false);
           toast("Role dibuat tanpa permission", firstError(perms.errors), "err");
           router.push(`/settings/role/${result.id}`);
-          router.refresh();
           return;
         }
       }
@@ -128,7 +127,6 @@ export function RoleForm({
       setDirty(false);
       toast("Role dibuat", `${values.role_name} siap diberikan kepada user.`, "ok");
       router.push(`/settings/role/${result.id}`);
-      router.refresh();
       return;
     }
 
@@ -154,7 +152,6 @@ export function RoleForm({
     setDirty(false);
     toast("Perubahan tersimpan", "Role berhasil diperbarui.", "ok");
     router.push(`/settings/role/${role!.id}`);
-    router.refresh();
   };
 
   const onToggleStatus = async () => {
@@ -165,7 +162,6 @@ export function RoleForm({
     setStatusOpen(false);
     if (result.ok) {
       toast("Status diperbarui", `${role!.role_name} sekarang ${next === "Active" ? "aktif" : "nonaktif"}.`, "ok");
-      router.refresh();
     } else {
       toast("Tidak diizinkan", firstError(result.errors), "err");
     }

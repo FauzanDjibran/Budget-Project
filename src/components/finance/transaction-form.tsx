@@ -550,7 +550,6 @@ export function TransactionForm({
       "ok"
     );
     router.push(realizationHref(direction, result.id));
-    router.refresh();
   };
 
   const run = async (action: TransactionAction) => {
@@ -573,7 +572,6 @@ export function TransactionForm({
     setPostReady(false);
     if (result.ok) {
       toast(result.message, transaction.transaction_no, "ok");
-      router.refresh();
       return;
     }
     toast(

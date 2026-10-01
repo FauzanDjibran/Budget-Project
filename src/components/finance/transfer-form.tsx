@@ -380,7 +380,6 @@ export function TransferForm({
       "ok"
     );
     router.push(`/finance/cash-bank-transfer/${result.id}`);
-    router.refresh();
   };
 
   const run = async (action: TransferAction) => {
@@ -392,7 +391,6 @@ export function TransferForm({
     setPostReady(false);
     if (result.ok) {
       toast(result.message, transfer.transfer_no, "ok");
-      router.refresh();
       return;
     }
     toast(

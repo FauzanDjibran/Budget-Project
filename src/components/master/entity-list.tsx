@@ -184,7 +184,6 @@ export function EntityList({
         "ok"
       );
       setPendingToggle(null);
-      router.refresh();
     } else {
       toast("Gagal", result.message ?? "Status tidak dapat diubah.", "err");
       setPendingToggle(null);
