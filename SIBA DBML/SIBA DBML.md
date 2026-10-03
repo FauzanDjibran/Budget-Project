@@ -506,7 +506,9 @@ table sub_ledger {
   currency_id                 int [not null, ref : > ref_currency.id]
 
   entry_date                  date [not null]
-  entry_type                  enum('Opening', 'Transaction', 'Adjustment') [not null]
+  // Conversion: a Pencairan Open Item — a foreign item released at its own
+  // kurs, and the base-currency item it became, opened in the same book.
+  entry_type                  enum('Opening', 'Transaction', 'Adjustment', 'Conversion') [not null]
   direction                   enum('In', 'Out') [not null]
 
   amount                      decimal(18,2) [not null]
@@ -1236,6 +1238,129 @@ table fin_cash_bank_transfer_line {
   indexes {
     (transfer_id, sequence_no) [unique]
     to_cash_bank_id
+  }
+}
+
+// PENCAIRAN OPEN ITEM: foreign currency sold out of the Company's own Cash &
+// Bank, and ONE Partner's open items in that currency converted to base
+// currency at the SAME kurs, in one document. The cash leg is a Pencairan (one
+// foreign source, one layer, base-currency destinations each at its own kurs);
+// the Partner leg releases each chosen foreign item at its own kurs and opens
+// one base-currency item per line, in the same book, for exactly what that
+// line's sale produced. One Selisih Kurs journal line per document — a
+// difference of the sale, never a revaluation. Its own module, not a fourth
+// Transfer purpose: a transfer names no Partner and writes no subject book.
+table fin_item_conversion {
+  id                          int [pk, increment, not null]
+
+  // POI-0001.
+  conversion_no               varchar(255) [not null, unique]
+  // Chosen on the draft, any day up to today; Post dates everything by it.
+  document_date               date
+  posting_date                timestamptz
+
+  // The source's Company, derived rather than picked.
+  company_id                  int [not null, ref : > sys_company.id]
+  // The foreign source; money always leaves it.
+  from_cash_bank_id           int [not null, ref : > m_cash_bank.id]
+  // The source's own currency, and the currency of every item converted.
+  currency_id                 int [not null, ref : > ref_currency.id]
+  // The one source layer the sale draws on (cash_bank_layer.id, plain id).
+  cash_bank_layer_id          int [not null]
+
+  // One book (a subject book is a Budget Category) and one Partner.
+  budget_category_id          int [not null, ref : > sys_budget_category.id]
+  partner_id                  int [not null, ref : > m_partner.id]
+
+  conversion_amount           decimal(18,2) [not null]
+  // What the layer released; provisional on a Draft, written at Post.
+  conversion_base_amount      decimal(18,2) [not null]
+  // The one Selisih Kurs figure, signed as a gain. Written at Post.
+  fx_difference               decimal(18,2) [not null, default: 0]
+
+  note                        text
+
+  status                      enum('Draft', 'Pending', 'Posted', 'Cancelled') [not null, default: 'Draft']
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    company_id
+    partner_id
+    status
+  }
+}
+
+// One base-currency destination, worth exactly the items it converts.
+table fin_item_conversion_line {
+  id                          int [pk, increment, not null]
+
+  conversion_id               int [not null, ref : > fin_item_conversion.id]
+  sequence_no                 int [not null]
+
+  // A base-currency Cash & Bank; never twice in one document.
+  to_cash_bank_id             int [not null, ref : > m_cash_bank.id]
+
+  // Document currency, > 0 (CHECK); the sum of the line's items.
+  amount                      decimal(18,2) [not null]
+  // > 0 (CHECK). The rate the bank bought at, and the rate the items convert at.
+  exchange_rate               decimal(18,6) [not null]
+
+  // Written at Post: what the layer released, what the bank paid in base
+  // (= the new item's value), and the new item (sub_ledger_balance.id).
+  out_base_amount             decimal(18,2) [not null, default: 0]
+  in_amount                   decimal(18,2) [not null, default: 0]
+  opened_item_id              int
+
+  // The line's two halves of the difference, each signed as a gain. The
+  // journal carries their sum, once per document.
+  cash_fx_difference          decimal(18,2) [not null, default: 0]
+  item_fx_difference          decimal(18,2) [not null, default: 0]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (conversion_id, sequence_no) [unique]
+    to_cash_bank_id
+  }
+}
+
+// One foreign open item a line converts, chosen and stated by the user.
+table fin_item_conversion_line_item {
+  id                          int [pk, increment, not null]
+
+  line_id                     int [not null, ref : > fin_item_conversion_line.id]
+  sequence_no                 int [not null]
+  // sub_ledger_balance.id — a plain id: the item is the subject book's.
+  sub_ledger_balance_id       int [not null]
+
+  // > 0 (CHECK), never more than the item holds across the document.
+  amount                      decimal(18,2) [not null]
+  // Written at Post: what the item released at its own kurs, its share of
+  // the new base-currency item (a line's shares add up to its in_amount), and
+  // its difference signed as a gain.
+  settlement_base_amount      decimal(18,2) [not null, default: 0]
+  converted_base_amount       decimal(18,2) [not null, default: 0]
+  fx_difference               decimal(18,2) [not null, default: 0]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (line_id, sub_ledger_balance_id) [unique]
+    (line_id, sequence_no) [unique]
+    sub_ledger_balance_id
   }
 }
 

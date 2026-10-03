@@ -228,6 +228,23 @@ export const PERMISSIONS = [
   },
   { code: "CASH_BANK_TRANSFER_CANCEL", name: "Batalkan Cash Bank Transfer", module: "finance" },
 
+  // Pencairan Open Item: selling foreign currency and converting a Partner's
+  // own open items to base currency at the same kurs. Its own capabilities,
+  // because changing what the Company owes or is owed by a third party is a
+  // different authority from moving its own money between pockets.
+  { code: "ITEM_CONVERSION_VIEW", name: "Lihat Pencairan Open Item", module: "finance" },
+  { code: "ITEM_CONVERSION_CREATE", name: "Tambah Pencairan Open Item", module: "finance" },
+  { code: "ITEM_CONVERSION_EDIT", name: "Ubah Pencairan Open Item", module: "finance" },
+  {
+    code: "ITEM_CONVERSION_POST",
+    name: "Post Pencairan Open Item",
+    module: "finance",
+    description:
+      "Menjual valuta asing dan mengkonversi open item Partner ke Rupiah pada " +
+      "kurs yang sama. Selisih pencairan dijurnal sebagai satu baris.",
+  },
+  { code: "ITEM_CONVERSION_CANCEL", name: "Batalkan Pencairan Open Item", module: "finance" },
+
   // Debit / Credit Note: adjusting a Partner's standing position without cash.
   // Its own capabilities, because writing a receivable down is an authority of
   // its own — the one a cash clerk should not hold by default.

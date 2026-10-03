@@ -25,6 +25,7 @@ import { BUDGET_TRANSITIONS } from "./budget-workflow";
 import { DNCN_TRANSITIONS } from "./dncn-workflow";
 import { FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
 import type { ActionTone } from "./header-actions";
+import { CONVERSION_TRANSITIONS } from "./item-conversion-workflow";
 import { JOURNAL_TRANSITIONS } from "./journal-workflow";
 import { TRANSACTION_TRANSITIONS } from "./transaction-workflow";
 import { TRANSFER_TRANSITIONS } from "./transfer-workflow";
@@ -121,6 +122,13 @@ const TRANSFER_EVENTS: Record<string, AuditEventLabel> = {
   cancel: fromTransition(TRANSFER_TRANSITIONS.cancel, "Dibatalkan"),
 };
 
+/** Pencairan Open Item: Draft → Posted, or Draft → Cancelled. */
+const CONVERSION_EVENTS: Record<string, AuditEventLabel> = {
+  ...COMMON,
+  post: fromTransition(CONVERSION_TRANSITIONS.post, "Diposting"),
+  cancel: fromTransition(CONVERSION_TRANSITIONS.cancel, "Dibatalkan"),
+};
+
 /** Debit / Credit Note: Draft → Posted, or Draft → Cancelled. */
 const DNCN_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
@@ -202,6 +210,7 @@ const BY_ENTITY: Record<string, Record<string, AuditEventLabel>> = {
   bud_budget: BUDGET_EVENTS,
   fin_cash_bank_transaction: TRANSACTION_EVENTS,
   fin_cash_bank_transfer: TRANSFER_EVENTS,
+  fin_item_conversion: CONVERSION_EVENTS,
   fin_dncn: DNCN_EVENTS,
   fin_funding_request: FUNDING_EVENTS,
   acc_fiscal_year: FISCAL_EVENTS,

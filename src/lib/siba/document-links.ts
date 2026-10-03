@@ -16,6 +16,7 @@ const ROUTES: Record<string, string> = {
   fin_funding_request: "/finance/funding-request",
   fin_cash_bank_transfer: "/finance/cash-bank-transfer",
   fin_dncn: "/finance/debit-credit-note",
+  fin_item_conversion: "/finance/pencairan-open-item",
   acc_fiscal_year: "/accounting/fiscal-year",
   acc_opening_balance: "/accounting/opening-balance",
 };

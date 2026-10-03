@@ -8,6 +8,7 @@ import { budgetsByIds } from "./budget";
 import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer";
 import { noteNumbersByIds } from "./dncn";
+import { conversionNumbersByIds } from "./item-conversion";
 import { fundingRequestNumbersByIds } from "./funding";
 import { fiscalClosingLabels } from "./fiscal";
 import { journalNumbersByIds } from "./journal";
@@ -87,6 +88,10 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
   fin_dncn: {
     label: "Debit / Credit Note",
     resolve: noteNumbersByIds,
+  },
+  fin_item_conversion: {
+    label: "Pencairan Open Item",
+    resolve: conversionNumbersByIds,
   },
   fin_funding_request: {
     label: "Funding Request",

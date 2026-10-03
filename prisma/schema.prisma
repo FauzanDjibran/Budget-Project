@@ -360,6 +360,7 @@ model SysCompany {
   transactions FinCashBankTransaction[]
   transfers    FinCashBankTransfer[]
   dncn_notes   FinDncn[]
+  conversions  FinItemConversion[]
 
   journals AccJournal[]
 
@@ -481,6 +482,7 @@ model SysBudgetCategory {
   mappings           AccBudgetCategoryAccount[]
   partner_categories SysBudgetPartnerCategoryMapping[]
   dncn_notes         FinDncn[]
+  conversions        FinItemConversion[]
 
   @@map("sys_budget_category")
 }
@@ -560,6 +562,7 @@ model RefCurrency {
   subledger_balances SubLedgerBalance[]
   funding_requests   FinFundingRequest[]
   dncn_notes         FinDncn[]
+  conversions        FinItemConversion[]
 
   @@map("ref_currency")
 }
@@ -589,6 +592,7 @@ model MPartner {
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
   dncn_notes         FinDncn[]
+  conversions        FinItemConversion[]
 
   opening_balance_lines AccOpeningBalanceLine[]
 
@@ -621,6 +625,8 @@ model MCashBank {
   transactions     FinCashBankTransaction[]
   transfers_out    FinCashBankTransfer[]
   transfers_in     FinCashBankTransferLine[]
+  conversions_out  FinItemConversion[]
+  conversions_in   FinItemConversionLine[]
   ledger           CashBankLedger[]
   layers           CashBankLayer[]
   book_balance     CashBankBalance?
@@ -826,6 +832,9 @@ enum SubLedgerEntryType {
   Transaction
   /// A manual correction, recorded rather than edited into an existing entry.
   Adjustment
+  /// A Pencairan Open Item: a foreign item released at its own kurs, and the
+  /// base-currency item it became, opened beside it in the same book.
+  Conversion
 }
 
 /// Whether an open item still holds anything.
@@ -1674,6 +1683,158 @@ model FinCashBankTransferLine {
   @@unique([transfer_id, sequence_no])
   @@index([to_cash_bank_id])
   @@map("fin_cash_bank_transfer_line")
+}
+
+// ---------------------------------------------------------------- pencairan open item
+
+/// Pencairan Open Item: foreign currency sold out of a Cash & Bank, and the
+/// Partner's own open items in that currency converted to base currency at the
+/// **same** kurs, in one document.
+///
+/// The cash leg is a Pencairan — one foreign source, one layer, base-currency
+/// destinations each at its own kurs. The Partner leg releases each chosen
+/// foreign item at its own kurs and opens one base-currency item per line, in
+/// the same book, for exactly what that line's sale produced. Because one kurs
+/// values both legs, the only difference left is the gap between the cash
+/// layer's kurs and the items' kurs, and it is journalled as **one** Selisih
+/// Kurs line per document — a difference of the sale, not a revaluation.
+///
+/// Its own module rather than a fourth Transfer purpose: a transfer names no
+/// Partner and writes no subject book (CLAUDE.md §10 rule 84), and this
+/// document exists to do both. One book and one Partner per document.
+model FinItemConversion {
+  id            Int       @id @default(autoincrement())
+  /// `POI-0001`.
+  conversion_no String    @unique
+  /// Chosen on the draft, any day up to today; Post dates everything by it.
+  document_date DateTime? @db.Date
+  posting_date  DateTime? @db.Timestamptz(6)
+
+  /// The source's Company, derived rather than picked.
+  company_id         Int
+  /// The foreign source. Money always leaves this resource.
+  from_cash_bank_id  Int
+  /// The source's own currency — the foreign side of the sale, and the
+  /// currency of every item the document converts.
+  currency_id        Int
+  /// The source layer the sale draws on. One document, one layer.
+  cash_bank_layer_id Int
+
+  /// The book (a subject book is a Budget Category) and the Partner whose
+  /// items are converted. One of each per document.
+  budget_category_id Int
+  partner_id         Int
+
+  /// Total sold, in the document currency.
+  conversion_amount      Decimal @db.Decimal(18, 2)
+  /// What the source layer released for it. Provisional on a Draft; Post
+  /// writes what the layer actually released.
+  conversion_base_amount Decimal @db.Decimal(18, 2)
+  /// The one Selisih Kurs figure, signed as a gain. Written at Post.
+  fx_difference          Decimal @default(0) @db.Decimal(18, 2)
+
+  note   String?
+  status TransactionStatus @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company         SysCompany        @relation(fields: [company_id], references: [id])
+  from_cash_bank  MCashBank         @relation(fields: [from_cash_bank_id], references: [id])
+  currency        RefCurrency       @relation(fields: [currency_id], references: [id])
+  budget_category SysBudgetCategory @relation(fields: [budget_category_id], references: [id])
+  partner         MPartner          @relation(fields: [partner_id], references: [id])
+
+  lines FinItemConversionLine[]
+
+  @@index([company_id])
+  @@index([partner_id])
+  @@index([status])
+  @@map("fin_item_conversion")
+}
+
+/// One base-currency destination of the sale, and the items it converts.
+///
+/// The items a line names add up to exactly the line's foreign amount: the
+/// Partner's money is what is being sold, so a line never mixes it with the
+/// Company's own. The line opens one base-currency item for what the bank
+/// paid, which is therefore exactly what the destination received.
+model FinItemConversionLine {
+  id            Int @id @default(autoincrement())
+  conversion_id Int
+  sequence_no   Int
+
+  /// Where the base currency lands. Never twice in one document.
+  to_cash_bank_id Int
+
+  /// In the document currency.
+  amount        Decimal @db.Decimal(18, 2)
+  /// Document currency to base: the rate the bank bought at, and the rate the
+  /// items are converted at. Always an input.
+  exchange_rate Decimal @db.Decimal(18, 6)
+
+  /// What the source layer released for this line. Written at Post.
+  out_base_amount Decimal @default(0) @db.Decimal(18, 2)
+  /// What arrived, in base currency — `amount × exchange_rate` — and the
+  /// value of the base-currency item the line opens. Written at Post.
+  in_amount       Decimal @default(0) @db.Decimal(18, 2)
+  /// The base-currency item the line opened (`sub_ledger_balance.id`), a
+  /// plain id like `cash_bank_layer_id`. Null until Post.
+  opened_item_id  Int?
+
+  /// The two halves of the line's difference, each signed as a gain: the cash
+  /// sold above or below its layer's kurs, and the items converted at a kurs
+  /// other than their own. The journal carries their sum, once per document.
+  cash_fx_difference Decimal @default(0) @db.Decimal(18, 2)
+  item_fx_difference Decimal @default(0) @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  conversion   FinItemConversion           @relation(fields: [conversion_id], references: [id], onDelete: Cascade)
+  to_cash_bank MCashBank                   @relation(fields: [to_cash_bank_id], references: [id])
+  items        FinItemConversionLineItem[]
+
+  @@unique([conversion_id, sequence_no])
+  @@index([to_cash_bank_id])
+  @@map("fin_item_conversion_line")
+}
+
+/// One foreign open item a line converts, and for how much — chosen and
+/// stated by the user, never distributed.
+model FinItemConversionLineItem {
+  id          Int @id @default(autoincrement())
+  line_id     Int
+  sequence_no Int
+  /// The item converted (`sub_ledger_balance.id`). A plain id: the item
+  /// belongs to the subject-book module.
+  sub_ledger_balance_id Int
+
+  /// In the document currency; more than nil, never more than the item holds.
+  amount                 Decimal @db.Decimal(18, 2)
+  /// What the item released at its own kurs. Written at Post.
+  settlement_base_amount Decimal @default(0) @db.Decimal(18, 2)
+  /// This item's share of the base-currency item the line opened. A line's
+  /// shares add up to its `in_amount` exactly. Written at Post.
+  converted_base_amount  Decimal @default(0) @db.Decimal(18, 2)
+  /// Signed as a gain. Part of the document's one Selisih Kurs line.
+  fx_difference          Decimal @default(0) @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  line FinItemConversionLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
+
+  @@unique([line_id, sub_ledger_balance_id])
+  @@unique([line_id, sequence_no])
+  @@index([sub_ledger_balance_id])
+  @@map("fin_item_conversion_line_item")
 }
 
 // ---------------------------------------------------------------- dn / cn

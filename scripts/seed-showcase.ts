@@ -37,6 +37,7 @@ import { applyTransfer, nextTransferNo } from "@/lib/siba/transfer";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
 import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
 import { applyDncn, nextNoteNo } from "@/lib/siba/dncn";
+import { applyConversion, nextConversionNo } from "@/lib/siba/item-conversion";
 import { dncnDirection } from "@/lib/siba/dncn-workflow";
 import { subledgerForCategory, subledgerMovement } from "@/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
@@ -320,6 +321,7 @@ const PARTNERS: [label: string, name: string, category: string][] = [
   ["SYH", "H. Suryanto Halim", "Stakeholder"],
   ["RDK", "Ratna Dewi Kusuma", "Stakeholder"],
   ["MAS", "PT Mitra Abadi Sentosa", "Stakeholder"],
+  ["ADF", "PT Adib Food", "Stakeholder"],
 ];
 
 /**
@@ -1127,6 +1129,115 @@ async function postTransfer(spec: TransferSpec, actor: number) {
   }
 }
 
+// ------------------------------------------------------ pencairan open item
+//
+// A Partner's foreign Titipan cashed into rupiah: the dollars are sold out of
+// a foreign account and the Partner's items converted at the same kurs, so the
+// journal carries one Selisih Kurs line. The layer is chosen from before the
+// Titipan arrived, as the user's own worked example has it — the dollars sold
+// were bought earlier, at another kurs, which is what leaves a difference.
+
+type ConversionSpec = {
+  /** The Tanggal Dokumen, `YYYY-MM-DD`. */
+  date: string;
+  from: string;
+  /** The day the layer drawn on must have been acquired by. */
+  layerBy: string;
+  book: "Titipan" | "Hutang" | "Piutang";
+  partner: string;
+  rate: number;
+  note: string;
+  lines: { to: string; amount: number }[];
+};
+
+/** Drafts and posts one Pencairan Open Item through `applyConversion`, refusing loudly. */
+async function postConversion(spec: ConversionSpec, actor: number) {
+  const already = await prisma.finItemConversion.findFirst({
+    where: { note: spec.note },
+    select: { id: true },
+  });
+  if (already) return;
+
+  const from = await prisma.mCashBank.findFirstOrThrow({
+    where: { cash_bank_label: spec.from },
+    select: { id: true, company_id: true, currency_id: true },
+  });
+  const total = spec.lines.reduce((t, l) => t + l.amount, 0);
+  const layer = await layerFor(spec.from, total, spec.layerBy);
+  const category = await prisma.sysBudgetCategory.findFirstOrThrow({
+    where: { category_label: spec.book },
+    select: { id: true },
+  });
+  const book = subledgerForCategory(await loadSubledgers(), category.id)!;
+  const partner = await prisma.mPartner.findFirstOrThrow({
+    where: { partner_name: spec.partner },
+    select: { id: true },
+  });
+
+  // The items, chosen as a clerk would: the oldest that still holds each
+  // line's amount by the document's date.
+  const items = await prisma.subLedgerBalance.findMany({
+    where: {
+      book: book.key,
+      partner_id: partner.id,
+      currency_id: from.currency_id,
+      status: "Open",
+      opened_date: { lte: new Date(`${spec.date}T00:00:00Z`) },
+    },
+    orderBy: [{ opened_date: "asc" }, { id: "asc" }],
+    select: { id: true, balance: true },
+  });
+  const taken = new Map<number, number>();
+  const lines = [];
+  for (const [i, line] of spec.lines.entries()) {
+    const item = items.find((it) => it.balance.toNumber() - (taken.get(it.id) ?? 0) >= line.amount);
+    if (!item) throw new Error(`No open ${book.name} item of ${spec.partner} holds ${line.amount}.`);
+    taken.set(item.id, (taken.get(item.id) ?? 0) + line.amount);
+    const to = await prisma.mCashBank.findFirstOrThrow({
+      where: { cash_bank_label: line.to },
+      select: { id: true },
+    });
+    lines.push({
+      sequence_no: i + 1,
+      to_cash_bank_id: to.id,
+      amount: line.amount,
+      exchange_rate: spec.rate,
+      created_by: actor,
+      items: {
+        create: [{ sequence_no: 1, sub_ledger_balance_id: item.id, amount: line.amount, created_by: actor }],
+      },
+    });
+  }
+
+  const row = await prisma.finItemConversion.create({
+    data: {
+      conversion_no: await nextConversionNo(),
+      document_date: new Date(`${spec.date}T00:00:00Z`),
+      company_id: from.company_id,
+      from_cash_bank_id: from.id,
+      currency_id: from.currency_id,
+      cash_bank_layer_id: layer.id,
+      budget_category_id: category.id,
+      partner_id: partner.id,
+      conversion_amount: total,
+      conversion_base_amount: total * layer.rate,
+      note: spec.note,
+      status: "Draft",
+      created_by: actor,
+      lines: { create: lines },
+    },
+    select: { id: true },
+  });
+  await audit("fin_item_conversion", row.id, actor);
+  const result = await applyConversion(row.id, actor);
+  if (!result.ok) {
+    throw new Error(
+      `Pencairan Open Item "${spec.note}" refused: ${Object.values(result.errors).join(" ")}`
+    );
+  }
+  tally("pencairan open item");
+}
+
 
 // ------------------------------------------------------- the funding requests
 //
@@ -1436,6 +1547,8 @@ type CbtEvent = {
   purpose: string;
   cashBank?: string;
   currency?: "IDR" | "USD";
+  /** The kurs a foreign receipt was credited at — an input, where no layer is drawn. */
+  rate?: number;
   partner?: string;
   note: string;
   lines: { budget: string; amount: number }[];
@@ -1456,7 +1569,8 @@ type Event =
       confirmFrom?: string;
     }
   | { kind: "journal"; date: string; spec: ManualSpec }
-  | { kind: "note"; date: string; spec: NoteSpec };
+  | { kind: "note"; date: string; spec: NoteSpec }
+  | { kind: "conversion"; date: string; spec: ConversionSpec };
 
 type YearPlan = { year: number; budgets: BudgetSpec[]; events: Event[] };
 
@@ -1646,6 +1760,9 @@ function currentYear(): YearPlan {
       { key: "listrik", company: "induk", date: day(1, 5), type: "Out", category: "Biaya", amount: 8_100_000, description: `Tagihan listrik dan telepon Desember ${YEAR - 1}`, status: "Closed" },
       { key: "gaji", company: "induk", date: day(6, 10), type: "Out", category: "Biaya", amount: 130_000_000, description: `Gaji dan tunjangan karyawan semester I ${YEAR}`, status: "Closed" },
       { key: "bagihasilsby", company: "induk", date: day(6, 2), type: "In", category: "Hasil Investasi", partner: "Cabang Surabaya", amount: 620_000_000, description: `Bagi hasil semester I ${YEAR} Cabang Surabaya`, status: "Closed" },
+      // A stakeholder's dollar Titipan, part of which is later cashed into
+      // rupiah by a Pencairan Open Item.
+      { key: "titipanadib", company: "induk", date: day(9, 1), type: "In", category: "Titipan", partner: "PT Adib Food", currency: "USD", amount: 30_000, description: `Titipan dana impor bahan baku PT Adib Food ${YEAR}`, status: "Closed" },
     ],
     events: [
       journal(reversal(YEAR - 1, 8_100_000)),
@@ -1688,6 +1805,11 @@ function currentYear(): YearPlan {
       journal(depreciation(YEAR, 2, 24_000_000)),
       { kind: "cbt", date: day(7, 13), purpose: "HIN_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Bagi hasil semester I ${YEAR} Cabang Surabaya diterima`, lines: [{ budget: "bagihasilsby", amount: 620_000_000 }] },
       transfer({ purpose: "Transfer", from: "BCA-OPS", currency: "IDR", rate: 1, date: day(8, 28), note: "Menunggu jadwal pembayaran gaji akhir bulan", lines: [{ to: "MDR-PAY", amount: 120_000_000 }] }, true),
+      { kind: "cbt", date: day(9, 3), purpose: "TTP_SH_IN", cashBank: "BCA-USD", currency: "USD", rate: 16_150, partner: "PT Adib Food", note: "Titipan dana impor bahan baku dari PT Adib Food", lines: [{ budget: "titipanadib", amount: 30_000 }] },
+      // Adib asks for a third of it in rupiah. The dollars are sold out of a
+      // layer bought before its Titipan arrived, and both legs go at 16.250 —
+      // one Selisih Kurs line for the gap between the two carrying rates.
+      { kind: "conversion", date: day(9, 10), spec: { date: day(9, 10), from: "BCA-USD", layerBy: day(9, 2), book: "Titipan", partner: "PT Adib Food", rate: 16_250, note: "Pencairan sebagian titipan PT Adib Food ke rupiah", lines: [{ to: "BCA-OPS", amount: 10_000 }] } },
     ],
   };
 }
@@ -1728,7 +1850,7 @@ async function runCbt(e: CbtEvent, budgets: Map<string, number>, actor: number) 
     date: e.date,
     note: e.note,
     layerId: layer?.id ?? null,
-    rate: layer?.rate,
+    rate: layer?.rate ?? e.rate,
     lines: e.lines.map((l) => {
       const budgetId = budgets.get(l.budget);
       if (!budgetId) throw new Error(`No Budget "${l.budget}" for "${e.note}".`);
@@ -1785,6 +1907,9 @@ async function runPlan(plan: YearPlan, actor: number) {
         break;
       case "note":
         await writeNote(e.spec, actor);
+        break;
+      case "conversion":
+        await postConversion(e.spec, actor);
         break;
     }
   }

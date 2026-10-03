@@ -1286,6 +1286,12 @@ const DOCUMENT_SCREENS: {
     routes: "src/app/(app)/finance/cash-bank-transfer",
   },
   {
+    name: "Pencairan Open Item",
+    form: "src/components/finance/item-conversion-form.tsx",
+    list: "src/components/finance/item-conversion-list.tsx",
+    routes: "src/app/(app)/finance/pencairan-open-item",
+  },
+  {
     name: "Debit / Credit Note",
     form: "src/components/finance/dncn-form.tsx",
     list: "src/components/finance/dncn-list.tsx",
@@ -1499,6 +1505,7 @@ describe("a Post confirmation shows the journal it will write", () => {
   const POSTING_FORMS = [
     "src/components/finance/transaction-form.tsx",
     "src/components/finance/transfer-form.tsx",
+    "src/components/finance/item-conversion-form.tsx",
     "src/components/finance/dncn-form.tsx",
   ];
   for (const rel of POSTING_FORMS) {

@@ -176,6 +176,14 @@ export const MODULES: NavModule[] = [
             permission: "CASH_BANK_TRANSFER_VIEW",
           },
           {
+            key: "fin_item_conversion",
+            slug: "pencairan-open-item",
+            name: "Pencairan Open Item",
+            icon: "down",
+            desc: "Pencairan valuta asing atas dana Partner: valuta dijual dan open item Partner dikonversi ke Rupiah pada kurs yang sama, dengan satu selisih pencairan.",
+            permission: "ITEM_CONVERSION_VIEW",
+          },
+          {
             key: "fin_funding_request",
             slug: "funding-request",
             name: "Funding Request",

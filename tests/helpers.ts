@@ -445,6 +445,16 @@ export async function cleanupFixtures(): Promise<void> {
     await prisma.finCashBankTransfer.deleteMany({
       where: { from_cash_bank_id: { in: ids } },
     });
+    // A Pencairan Open Item names a resource on both sides too; its lines and
+    // items cascade with it.
+    await prisma.finItemConversion.deleteMany({
+      where: {
+        OR: [
+          { from_cash_bank_id: { in: ids } },
+          { lines: { some: { to_cash_bank_id: { in: ids } } } },
+        ],
+      },
+    });
     await prisma.cashBankLayer.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.cashBankLedger.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.cashBankBalance.deleteMany({ where: { cash_bank_id: { in: ids } } });
@@ -480,6 +490,8 @@ export async function cleanupFixtures(): Promise<void> {
     });
     await prisma.finDncn.deleteMany({ where: { id: { in: notes } } });
   }
+  // A Pencairan Open Item names its Partner as well.
+  await prisma.finItemConversion.deleteMany({ where: fixturePartners });
   // Entries first: each names the open item it moved.
   await prisma.subLedger.deleteMany({ where: fixturePartners });
   await prisma.subLedgerBalance.deleteMany({ where: fixturePartners });

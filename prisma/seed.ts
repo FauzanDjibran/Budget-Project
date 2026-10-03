@@ -149,6 +149,9 @@ const DOC_TYPES: [label: string, table: string][] = [
   // A Debit / Credit Note writes a subject-book entry and a journal, and both
   // name the note as their source.
   ["Debit / Credit Note", "fin_dncn"],
+  // A Pencairan Open Item writes both books, the subject book and a journal,
+  // and every one of them names the document as its source.
+  ["Pencairan Open Item", "fin_item_conversion"],
 ];
 
 /**

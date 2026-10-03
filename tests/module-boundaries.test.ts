@@ -87,6 +87,18 @@ const TABLE_OWNERS: Record<string, string[]> = {
     "src/lib/siba/transfer.ts",
     "src/app/actions/transfer.ts",
   ],
+  finItemConversion: [
+    "src/lib/siba/item-conversion.ts",
+    "src/app/actions/item-conversion.ts",
+  ],
+  finItemConversionLine: [
+    "src/lib/siba/item-conversion.ts",
+    "src/app/actions/item-conversion.ts",
+  ],
+  finItemConversionLineItem: [
+    "src/lib/siba/item-conversion.ts",
+    "src/app/actions/item-conversion.ts",
+  ],
   finDncn: ["src/lib/siba/dncn.ts", "src/app/actions/dncn.ts"],
   finDncnLine: ["src/lib/siba/dncn.ts", "src/app/actions/dncn.ts"],
   finFundingRequest: ["src/lib/siba/funding.ts", "src/app/actions/funding.ts"],

@@ -35,6 +35,7 @@ export function OpenItemSelect({
   currencyLabel,
   direction,
   cashRate,
+  fxNote,
   invalid,
   onChange,
 }: {
@@ -45,6 +46,12 @@ export function OpenItemSelect({
   direction: "In" | "Out";
   /** What one unit of the document's currency costs on the cash side, where known. */
   cashRate: number | null;
+  /**
+   * What the estimate under the table says once the kurs is known. A
+   * Realisasi journals every item's difference on its own line; a Pencairan
+   * Open Item folds them into the document's one line, and says so.
+   */
+  fxNote?: string;
   invalid?: boolean;
   onChange: (value: ItemAllocation[]) => void;
 }) {
@@ -253,7 +260,8 @@ export function OpenItemSelect({
           <p className="fnote" style={{ marginTop: 10 }}>
             {cashRate == null
               ? "Selisih kurs tampil setelah kurs dokumen diisi."
-              : `Perkiraan pada kurs kas ${formatRate(cashRate)}; setiap item dijurnal sendiri. Angka pastinya tampil pada konfirmasi Post.`}
+              : (fxNote ??
+                `Perkiraan pada kurs kas ${formatRate(cashRate)}; setiap item dijurnal sendiri. Angka pastinya tampil pada konfirmasi Post.`)}
           </p>
         )}
       </Dialog>

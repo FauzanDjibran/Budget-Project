@@ -41,7 +41,7 @@ import {
 /** A Prisma client or an interactive transaction — every write here takes one. */
 type Db = Prisma.TransactionClient | typeof prisma;
 
-export type SubledgerEntryType = "Opening" | "Transaction" | "Adjustment";
+export type SubledgerEntryType = "Opening" | "Transaction" | "Adjustment" | "Conversion";
 
 export type NewSubledgerEntry = {
   /**
@@ -883,6 +883,27 @@ export async function openSubledgerItems(
         partner_id: s.partnerId,
         currency_id: s.currencyId,
       })),
+    },
+    orderBy: [{ opened_date: "asc" }, { id: "asc" }],
+  });
+  return rows.map(toItem);
+}
+
+/**
+ * Every item still open for these Partners in these currencies, across every
+ * book, oldest first — what a form offering a choice of book and Partner reads
+ * in one query rather than one per combination.
+ */
+export async function openSubledgerItemsFor(
+  partnerIds: number[],
+  currencyIds: number[]
+): Promise<SubledgerItem[]> {
+  if (!partnerIds.length || !currencyIds.length) return [];
+  const rows = await prisma.subLedgerBalance.findMany({
+    where: {
+      status: "Open",
+      partner_id: { in: partnerIds },
+      currency_id: { in: currencyIds },
     },
     orderBy: [{ opened_date: "asc" }, { id: "asc" }],
   });

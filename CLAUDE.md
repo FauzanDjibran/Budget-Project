@@ -60,6 +60,8 @@ or invariants that assume a particular row exists.
   its own, foreign resources hold rate layers, and a settlement recognises its FX
   difference), the **Cash Bank Transfer** — moving the Company's own money between
   its own resources, including selling and buying foreign currency — the
+  **Pencairan Open Item**, which sells foreign currency on a Partner's behalf and
+  converts its open items to Rupiah at the same kurs — the
   **Debit / Credit Note**, which adjusts a Partner's standing position in a
   subject book without cash — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
@@ -92,13 +94,14 @@ or invariants that assume a particular row exists.
 | Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
 | Debit / Credit Note | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget. A Debit Note debits the Partner's account and a Credit Note credits it, so the book's own `raises` decides whether the position rises or falls and one document serves every book. Which books may be adjusted is `allows_dncn` on the Budget Category (Titipan, Hutang, Piutang). Post writes one `Adjustment` entry and one balanced journal against the Company's Debit Note or Credit Note System Default, under a lock on the position; nothing may go below zero, and a negative position is not adjustable yet |
+| Pencairan Open Item | Done — foreign currency sold out of the Company's own Cash & Bank, and one Partner's open items in that currency converted to Rupiah **at the same kurs**, in one document (`POI-`). One book, one Partner and one layer per document. Each line's amount is the sum of the items it converts. Post writes both cash books, a `Conversion` entry releasing each foreign item at its own kurs, one new IDR item per line in the same book, and one balanced journal with **one** Selisih Kurs line for the whole document (§10 rules 109–112). Its own module, not a Transfer purpose |
 | Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Currency, Company and Realisasi Cash & Bank defaults, with the base currency shown read-only. A new Budget needs only its amount and description; a new Realisasi starts on the default Company, its Cash & Bank and the base currency |
 | Mapping Account System | Done — `/accounting/system-account`, one Company at a time; `acc_system_account`, one row per Company and key. The intercompany bridge, Selisih Kurs, the two Laba/Rugi equity accounts, and the Debit / Credit Note counter accounts |
-| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
+| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Pencairan Open Item, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
 
@@ -207,6 +210,9 @@ of its own.
 | Transfer valuation | `src/lib/siba/transfer-valuation.ts` | What one transfer line is worth on each side — pure, so the form previews exactly what the posting computes; client-safe |
 | Transfer lifecycle | `src/lib/siba/transfer-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Transfer data | `src/lib/siba/transfer.ts` | Header and destination enforcement, `applyTransfer`, `TRF-` numbering; `server-only` |
+| Pencairan Open Item valuation | `src/lib/siba/item-conversion-valuation.ts` | What one line is worth on both legs and its part of the one Selisih line. Pure, built on `valueTransferLine`, so the form previews exactly what Post computes; client-safe |
+| Pencairan Open Item lifecycle | `src/lib/siba/item-conversion-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
+| Pencairan Open Item data | `src/lib/siba/item-conversion.ts` | Header, line and item enforcement, `applyConversion` (and its dry run), `POI-` numbering. Reaches the books only through what they export, and imports nothing from `transfer.ts`; `server-only` |
 | DN/CN lifecycle | `src/lib/siba/dncn-workflow.ts` | Draft → Post / Cancel, the two note types, and `dncnDirection` — the cash direction a note moves the position like; client-safe |
 | DN/CN data | `src/lib/siba/dncn.ts` | Header, line and zero-rule enforcement, `applyDncn`, `DN-` / `CN-` numbering; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
@@ -238,6 +244,7 @@ source scan and needs no database.
 | Funding | `fin_funding_request` | `lib/siba/funding.ts`, `app/actions/funding.ts` |
 | Transfer | `fin_cash_bank_transfer(_line)` | `lib/siba/transfer.ts`, `app/actions/transfer.ts` |
 | Debit / Credit Note | `fin_dncn(_line)` | `lib/siba/dncn.ts`, `app/actions/dncn.ts` |
+| Pencairan Open Item | `fin_item_conversion(_line, _line_item)` | `lib/siba/item-conversion.ts`, `app/actions/item-conversion.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` (+ `subledger-data.ts`, which reads the Budget Categories the books are) |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22); the manual journal's rules sit above it in `lib/siba/manual-journal.ts` + `app/actions/journal.ts` |
@@ -404,6 +411,7 @@ src/
                          components/finance/realization-pages.tsx
       finance/realisasi-pengeluaran/  The same, Out
       finance/cash-bank-transfer/  Bespoke: list, /new, /[id], /[id]/edit
+      finance/pencairan-open-item/  Bespoke: list, /new, /[id], /[id]/edit
       finance/debit-credit-note/  Bespoke: list, /new, /[id], /[id]/edit
       finance/funding-request/  The induk's queue: list and /[id] (confirm)
       finance/report/[report]/  Every Report View, driven by `reports.ts`
@@ -419,6 +427,7 @@ src/
       finance.ts         Realisasi Budget writes, plus Post
       funding.ts         Ajukan Dana, withdraw, and Confirm Funding
       transfer.ts        Cash Bank Transfer writes, plus Post
+      item-conversion.ts Pencairan Open Item writes, plus Post
       dncn.ts            Debit / Credit Note writes, plus Post
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
       journal.ts         Manual journal writes: create, edit, Post / Batalkan
@@ -443,6 +452,7 @@ src/
                          line's Rincian),
                          FundingList, FundingDetail,
                          TransferList, TransferForm,
+                         ItemConversionList, ItemConversionForm,
                          DncnList, DncnForm
     report/              ReportView chrome, ReportSummary, its three filter
                          bars (ReportParams for one subject, SubjectParams for
@@ -1574,6 +1584,37 @@ the rules that follow from it.
     user's choice, after IAS 21 / PSAK 10 (the difference arises per monetary
     item settled) and SAP and Odoo (per cleared item). One Selisih Kurs account,
     not a gain / loss pair, also on the user's choice; its side says which.
+
+**Pencairan Open Item** — selling foreign currency on a Partner's behalf.
+
+109. **A Partner's foreign open items are converted to base currency only by
+    selling the currency, at the same kurs.** Pencairan Open Item sells dollars
+    out of the Company's own Cash & Bank and converts one Partner's items in one
+    book at the kurs the bank paid, in one document. The cash leg is a Pencairan;
+    the Partner leg releases each chosen foreign item at its own kurs and opens
+    one base-currency item per line, in the same book, for exactly what the line's
+    sale produced. The user's case: a stakeholder's dollar Titipan cashed into
+    rupiah. Done as a Pencairan plus a revaluation, each leg would recognise its
+    own difference against a different rate.
+110. **One Selisih Kurs line per document, and it is a difference of the sale.**
+    One kurs values both legs, so the only difference left is the gap between
+    what the cash layer and the items were carried at: for a book money arriving
+    raises (Titipan, Hutang) it is `Σ released − Σ layer base`. The cash
+    difference and every item's difference are **netted** into that one line, on
+    the user's instruction. That is a deliberate exception to rule 107, for this
+    document only. Each half is still stored per line and per item.
+111. **A line is worth exactly the items it converts.** The money sold is the
+    Partner's, so a line never mixes in the Company's own. The items are chosen
+    and their amounts stated, never distributed (rule 105). The line has no
+    amount field. One book, one Partner and one layer per document. Every
+    partner-bearing book may be converted, Investasi and Hasil Investasi
+    included; the user tells their people not to.
+112. **Each side is decided by the book's `raises`, as for a cash posting.** For a
+    book money arriving raises, the release is a debit and the new item a credit.
+    For one money leaving raises (a Piutang) it is the mirror, and the item side
+    of the difference reverses with it. Both currencies post to the one mapped
+    account (Company × Budget Category × Partner Category); there is no currency
+    dimension on a mapping.
 
 Specified in the concept doc, **not yet implemented** (see §13):
 
@@ -3926,6 +3967,44 @@ below in outline because the half of it that still holds is easy to lose.**
   import Funding to close a request.
 - **Status:** Frozen, current.
 
+### Pencairan Open Item sells a Partner's currency and converts its items at one kurs (FROZEN)
+- **Decision:** Its own module (`fin_item_conversion(_line, _line_item)`,
+  `POI-` series, `ITEM_CONVERSION_*` permissions, Finance › Eksekusi ›
+  Pencairan Open Item, beside Cash Bank Transfer). The header names the foreign
+  source, its one layer, one book and one Partner. Each line names a Rupiah
+  destination, the kurs, and the items it converts. Post writes the cash legs,
+  a `Conversion` subject-book entry releasing each foreign item at its own
+  kurs, one new IDR item per line in the same book, and one journal with
+  **one** Selisih Kurs line. §10 rules 109–112 state it.
+- **Reason:** the user's, from the job: a stakeholder's dollar Titipan cashed
+  into rupiah. Their worked example is $100.000 drawn from a layer at 17.100
+  against an item at 17.150, sold at 17.300. It journals BCA USD Kr
+  1.710.000.000 · BCA IDR Db 1.730.000.000 · Titipan Db 1.715.000.000 ·
+  Titipan Kr 1.730.000.000 · Selisih Kr 5.000.000.
+  `tests/item-conversion.test.ts` posts exactly that. Revaluing the Titipan
+  separately would recognise a second difference against a second rate; one
+  kurs for both legs leaves only the gap between the two carrying rates.
+- **Its own module, not a fourth Transfer purpose** — the user's choice after
+  weighing both. A transfer names no Partner and writes no subject book (rule
+  84), and making this a purpose would have put an "unless" through every
+  Transfer rule. Converting what the Company owes or is owed by a third party
+  is also a different authority from moving its own money. Rules 84, 85 and 87
+  are therefore **unchanged**. The cash arithmetic is shared rather than
+  copied: `item-conversion-valuation.ts` is built on `valueTransferLine`, and
+  nothing imports `transfer.ts`.
+- **One Partner per document is a starting point**, on the user's instruction.
+  One bank sale for several owners is the natural next step: move the Partner
+  down to the line, as a Realisasi line carries its Budget, and let one
+  destination appear on several lines. Not built.
+- **Every partner-bearing book may be converted**, Investasi and Hasil
+  Investasi included. The user's rule: a book is what matters, not a flag. The
+  user will tell their people not to convert the accumulating books.
+- **Do not change unless:** explicitly instructed. **Never split the netted
+  Selisih back into a line per item or a cash line and an item line, never let
+  a line carry more than its items, never convert at a kurs other than the
+  line's, and never fold this into Cash Bank Transfer.**
+- **Status:** Frozen, current.
+
 ### A Debit / Credit Note adjusts a position, in one rule for every book (FROZEN)
 - **Decision:** DN/CN is its own module (`fin_dncn(_line)`, `DN-` / `CN-`
   series, `DNCN_*` permissions, Finance › Penyesuaian › Debit / Credit Note,
@@ -4467,6 +4546,10 @@ process allowed to restate positions, and it is not built.
   names a Currency and reaches money through Funding Request (§10 rule 38, §12).
 - Do **not** add a rejection, a partial funding, or a second open request for one
   document. The induk confirms; the requester may withdraw (§12).
+- Do **not** convert a Partner's foreign items at a kurs other than the one the
+  currency was sold at, or split a Pencairan Open Item's Selisih into more than
+  one line. Do **not** let a line carry more than its items, and do **not** fold
+  the document into Cash Bank Transfer (§10 rules 109–112, §12).
 - Do **not** let `finance.ts` import `funding.ts`, and do **not** close a Funding
   Request from Finance's own action — Funding depends on Finance, never the reverse
   (§3, §12).
