@@ -39,6 +39,10 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+  // Nested `include`s load in one SQL statement (LATERAL joins) instead of one
+  // query per relation level. On the deployed Neon database every query is a
+  // network round trip (shared KB engineering/code-conventions §6).
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {

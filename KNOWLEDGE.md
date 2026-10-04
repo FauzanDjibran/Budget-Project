@@ -28,7 +28,7 @@ in **Note** to stay on an older version on purpose.
 | foundations/working-method | 1.0 | guideline-file=CLAUDE.md | — | CLAUDE.md §1–§19 |
 | foundations/document-lifecycle | 1.0 | core | — | §2, §10 rules 35–37, 63–65, 108 |
 | engineering/app-architecture | 1.1 | tenancy=fixed-two-company | — | §3, §10 rule 1 |
-| engineering/code-conventions | 2.1 | core | — | §7. **Known gap:** §6 rules 1–2 not applied yet (no `vercel.json` region, no `relationJoins`); KB SYNC-PLAN 2B.7 |
+| engineering/code-conventions | 2.1 | core | — | §7; §6 applied 04/10/2026 (vercel.json sin1, relationJoins) |
 | engineering/data-conventions | 1.0 | doc-numbering=prefix-seq | — | §9 |
 | engineering/security-rbac | 1.0 | core | — | §10 rules 9–13, §11 |
 | accounting/books-and-posting | 2.0 | core | — | §10 rules 22, 47–51 |
