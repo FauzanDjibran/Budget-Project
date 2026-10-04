@@ -114,7 +114,16 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
           <div className="cblock" key={a.id}>
             <div
               className="cbh"
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
               onClick={() => toggle(a.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggle(a.id);
+                }
+              }}
               style={{ cursor: "pointer" }}
             >
               <span className={`chev${isOpen ? " o" : ""}`}>

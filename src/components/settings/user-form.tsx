@@ -259,9 +259,9 @@ export function UserForm({
             <FormBody>
             <FormSection title="Identitas">
               <FormRow>
-                <Field label="Email" span={4} required={editing} error={errors.email} help={editing ? "dipakai sebagai identitas masuk" : undefined}>
+                <Field htmlFor="user-email" label="Email" span={4} required={editing} error={errors.email} help={editing ? "dipakai sebagai identitas masuk" : undefined}>
                   {editing ? (
-                    <input
+                    <input id="user-email"
                       className={`inp${errors.email ? " bad" : ""}`}
                       type="email"
                       value={values.email}
@@ -274,9 +274,9 @@ export function UserForm({
                   )}
                 </Field>
 
-                <Field label="Nama" span={4} required={editing} error={errors.name}>
+                <Field htmlFor="user-name" label="Nama" span={4} required={editing} error={errors.name}>
                   {editing ? (
-                    <input
+                    <input id="user-name"
                       className={`inp${errors.name ? " bad" : ""}`}
                       value={values.name}
                       onChange={(e) => set("name", e.target.value)}
@@ -288,9 +288,9 @@ export function UserForm({
                   )}
                 </Field>
 
-                <Field label="Inisial" span={4} required={editing} error={errors.initials} help={editing ? "maksimal 3 karakter, tampil pada avatar" : undefined}>
+                <Field htmlFor="user-initials" label="Inisial" span={4} required={editing} error={errors.initials} help={editing ? "maksimal 3 karakter, tampil pada avatar" : undefined}>
                   {editing ? (
-                    <input
+                    <input id="user-initials"
                       className={`inp idf${errors.initials ? " bad" : ""}`}
                       value={values.initials}
                       onChange={(e) => set("initials", e.target.value)}
@@ -306,14 +306,14 @@ export function UserForm({
                 </Field>
 
                 {mode === "new" && (
-                  <Field
+                  <Field htmlFor="user-password"
                     label="Password Awal"
                     span={4}
                     required
                     error={errors.password}
                     help="minimal 8 karakter, sampaikan lewat jalur aman"
                   >
-                    <input
+                    <input id="user-password"
                       className={`inp${errors.password ? " bad" : ""}`}
                       type="password"
                       value={values.password}
@@ -406,8 +406,8 @@ export function UserForm({
           setNewPassword("");
         }}
       >
-        <Field label="Password Baru" span={12} help="minimal 8 karakter">
-          <input
+        <Field htmlFor="user-reset-password" label="Password Baru" span={12} help="minimal 8 karakter">
+          <input id="user-reset-password"
             className="inp"
             type="password"
             value={newPassword}

@@ -100,7 +100,10 @@ export function SubledgerBalanceReport({
             </div>
 
             <div className="tw">
-              <table className="grid stm" style={{ tableLayout: "fixed" }}>
+              <table
+                className="grid stm"
+                style={{ tableLayout: "fixed", minWidth: foreign ? 1000 : 850 }}
+              >
                 <thead>
                   <tr>
                     <th>Partner</th>

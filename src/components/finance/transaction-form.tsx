@@ -909,12 +909,12 @@ export function TransactionForm({
                   </>
                 )}
 
-                  <Field
+                  <Field htmlFor="transaction-notes"
                     label="Catatan"
                     span={kursSource === "layer" ? 12 : kursSource === "entered" ? 4 : 8}
                   >
                     {editing ? (
-                      <textarea
+                      <textarea id="transaction-notes"
                         className="ta"
                         rows={2}
                         value={values.note}
@@ -1004,7 +1004,7 @@ export function TransactionForm({
 
             {rows.length ? (
               <div className="tw">
-                <table className="grid ltab">
+                <table className="grid ltab" style={{ minWidth: showItems ? 860 : 680 }}>
                   <thead>
                     <tr>
                       <th style={{ width: 34 }}>No</th>

@@ -111,6 +111,60 @@ describe("the page header cannot leak onto a placeholder", () => {
   });
 });
 
+describe("nothing is clipped or crushed at a narrower width", () => {
+  /** The declarations of the first rule whose selector list is exactly `selector`. */
+  const rule = (selector: string) => {
+    const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const [, sel, body] of stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (sel.replace(/\s+/g, " ").trim() === selector) return body;
+    }
+    return null;
+  };
+
+  /**
+   * `table-layout:fixed` hands the one column without a width whatever is
+   * left. On a laptop the fixed columns of the Journal, Transfer and Budget
+   * picker were already wider than their card, so the description column was
+   * 0px and its input spilled over the next cell.
+   */
+  test("every fixed-layout line or picker table states a minimum width", () => {
+    const bad = files.filter((f) =>
+      [...code(f.text).matchAll(/<table\s+className="grid (?:ltab|pkt2)"([^>]*)>/g)].some(
+        ([, rest]) => !/minWidth/.test(rest)
+      )
+    );
+    assert.deepEqual(
+      bad.map((f) => f.rel),
+      [],
+      "Give the table `style={{ minWidth }}` — its fixed columns plus room for the flexible one — so it scrolls rather than collapsing a column."
+    );
+  });
+
+  test("a boxed table keeps its horizontal scroll", () => {
+    assert.doesNotMatch(
+      rule(".tw.boxed") ?? "",
+      /overflow\s*:\s*hidden/,
+      "`.tw.boxed{overflow:hidden}` cut the Kredit column off the journal preview in a narrow dialog."
+    );
+  });
+
+  test("the icon rail does not clip its own tooltips", () => {
+    assert.doesNotMatch(
+      rule(".rail-mid") ?? "",
+      /overflow-y\s*:\s*auto/,
+      "`overflow-y:auto` computes `overflow-x` to auto as well, which clipped every `.ri-tip`."
+    );
+  });
+
+  test("a total in a <tfoot> is padded like the rows above it", () => {
+    assert.match(
+      rule("table.grid tfoot td") ?? "",
+      /padding/,
+      "Without it a total sits 10px left of the column it totals."
+    );
+  });
+});
+
 describe("one way to do each thing", () => {
   test("only `ui/search-field.tsx` builds a list's search box", () => {
     const bad = files.filter(

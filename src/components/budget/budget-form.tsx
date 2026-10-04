@@ -446,13 +446,13 @@ export function BudgetForm({
                       />
                     </Field>
 
-                    <Field
+                    <Field htmlFor="budget-description"
                       label="Deskripsi"
                       span={4}
                       required
                       error={errors.description}
                     >
-                      <textarea
+                      <textarea id="budget-description"
                         className={`ta${errors.description ? " bad" : ""}`}
                         rows={2}
                         value={values.description}

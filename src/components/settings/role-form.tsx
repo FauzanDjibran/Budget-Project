@@ -249,7 +249,7 @@ export function RoleForm({
         <FormBody>
         <FormSection title="Identitas Role">
           <FormRow>
-            <Field
+            <Field htmlFor="role-label"
               label="Label"
               span={4}
               required={editing}
@@ -258,7 +258,7 @@ export function RoleForm({
               error={errors.role_label}
             >
               {editing && !role?.is_system ? (
-                <input
+                <input id="role-label"
                   className={`inp idf${errors.role_label ? " bad" : ""}`}
                   value={values.role_label}
                   onChange={(e) => set("role_label", e.target.value.toUpperCase())}
@@ -272,14 +272,14 @@ export function RoleForm({
               )}
             </Field>
 
-            <Field
+            <Field htmlFor="role-name"
               label="Nama Role"
               span={4}
               required={editing}
               error={errors.role_name}
             >
               {editing ? (
-                <input
+                <input id="role-name"
                   className={`inp${errors.role_name ? " bad" : ""}`}
                   value={values.role_name}
                   onChange={(e) => set("role_name", e.target.value)}
@@ -291,9 +291,9 @@ export function RoleForm({
               )}
             </Field>
 
-            <Field label="Catatan" span={4}>
+            <Field htmlFor="role-notes" label="Catatan" span={4}>
               {editing ? (
-                <textarea
+                <textarea id="role-notes"
                   className="ta"
                   rows={2}
                   value={values.note ?? ""}

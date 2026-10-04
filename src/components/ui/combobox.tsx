@@ -3,6 +3,7 @@
 import { useId, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { AnchoredPopup } from "@/components/ui/anchored-popup";
+import { useFieldLabelId } from "@/components/ui/field-label";
 import { startIndex, useListNav } from "@/components/ui/list-nav";
 import type { RefOption } from "@/lib/siba/records";
 
@@ -80,6 +81,7 @@ export function Combobox({
   const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
   const listId = useId();
+  const labelledBy = useFieldLabelId();
 
   const selected = options.find((o) => o.id === value) ?? null;
 
@@ -134,6 +136,7 @@ export function Combobox({
         aria-expanded={open}
         aria-controls={listId}
         aria-haspopup="listbox"
+        aria-labelledby={labelledBy}
         tabIndex={open ? -1 : 0}
         className={`cbx${size === "sm" ? " sm" : ""}${invalid ? " bad" : ""}${open ? " open" : ""}`}
         onMouseDown={(e) => {
@@ -164,6 +167,7 @@ export function Combobox({
           <input
             className="cbq"
             autoFocus
+            aria-labelledby={labelledBy}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             // The value that is already set, as the prompt: the field still

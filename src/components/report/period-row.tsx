@@ -24,11 +24,11 @@ export function PeriodRow({
     <div className="rrow">
       <span className="rl">Periode</span>
       <div className="rf date">
-        <DateInput value={start} invalid={invalid} onChange={onStart} />
+        <DateInput value={start} invalid={invalid} onChange={onStart} ariaLabel="Periode dari" />
       </div>
       <span className="rl">s/d</span>
       <div className="rf date">
-        <DateInput value={end} invalid={invalid} onChange={onEnd} />
+        <DateInput value={end} invalid={invalid} onChange={onEnd} ariaLabel="Periode sampai" />
       </div>
       {invalid && (
         <span className="err">

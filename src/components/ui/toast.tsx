@@ -26,7 +26,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={push}>
       {children}
-      <div id="toasts">
+      {/* A live region, so a result that only ever appears here — saved,
+          refused — is read out rather than seen or missed. */}
+      <div id="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.kind ?? ""}`}>
             <div className="t">

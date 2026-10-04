@@ -52,8 +52,15 @@ export function AppShell({
     const onDown = (e: MouseEvent) => {
       if (!userRef.current?.contains(e.target as Node)) setUserOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setUserOpen(false);
+    };
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [userOpen]);
 
   // The submenu shows only the leaves this user may reach; a module whose
@@ -141,7 +148,10 @@ export function AppShell({
       </header>
 
       <div className="body">
-        <nav className="rail">
+        {/* A drawer that is off screen, or a submenu collapsed to nothing, must
+            not keep its links in the tab order: Tab would land on controls
+            nobody can see. */}
+        <nav className="rail" inert={narrow && !navOpen}>
           <div className="rail-mid" style={{ paddingTop: 7 }}>
             {/* The rail is how a hidden submenu comes back. There is nowhere else
                 to press: the collapse button leaves with the panel it sits in,
@@ -171,6 +181,7 @@ export function AppShell({
 
         <nav
           className="sub"
+          inert={narrow ? !navOpen || !hasSub : !showSub}
           style={
             showSub || narrow
               ? undefined

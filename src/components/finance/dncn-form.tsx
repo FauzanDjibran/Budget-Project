@@ -468,9 +468,9 @@ export function DncnForm({
                     )}
                   </Field>
 
-                  <Field label="Referensi" span={3} help={editing ? "nomor dokumen pihak lain" : undefined}>
+                  <Field htmlFor="dncn-reference" label="Referensi" span={3} help={editing ? "nomor dokumen pihak lain" : undefined}>
                     {editing ? (
-                      <input
+                      <input id="dncn-reference"
                         className="inp"
                         type="text"
                         autoComplete="off"
@@ -509,9 +509,9 @@ export function DncnForm({
                 </FormRow>
 
                 <FormRow>
-                  <Field label="Catatan" span={12}>
+                  <Field htmlFor="dncn-notes" label="Catatan" span={12}>
                     {editing ? (
-                      <textarea
+                      <textarea id="dncn-notes"
                         className="ta"
                         rows={2}
                         value={values.note}
@@ -573,7 +573,7 @@ export function DncnForm({
             )}
 
             <div className="tw">
-              <table className="grid ltab">
+              <table className="grid ltab" style={{ minWidth: 520 }}>
                 <thead>
                   <tr>
                     <th style={{ width: 34 }}>No</th>

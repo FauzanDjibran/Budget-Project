@@ -3,6 +3,7 @@
 import { Fragment, useId, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { AnchoredPopup } from "@/components/ui/anchored-popup";
+import { useFieldLabelId } from "@/components/ui/field-label";
 import { startIndex, useListNav } from "@/components/ui/list-nav";
 
 /**
@@ -133,6 +134,7 @@ export function Select({
   const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
   const listId = useId();
+  const fieldLabel = useFieldLabelId();
 
   const waiting = Boolean(waitingFor);
   // Waiting is a kind of disabled, so everything that asks "is this control
@@ -197,6 +199,8 @@ export function Select({
     <input
       className="cbq"
       autoFocus
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabel ? undefined : fieldLabel}
       value={query}
       onChange={(e) => setQuery(e.target.value)}
       placeholder={selected?.label ?? prompt}
@@ -227,6 +231,7 @@ export function Select({
         className={cls}
         title={title}
         aria-label={ariaLabel}
+        aria-labelledby={ariaLabel ? undefined : fieldLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}

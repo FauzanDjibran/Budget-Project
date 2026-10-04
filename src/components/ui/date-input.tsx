@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
+import { useFieldLabelId } from "@/components/ui/field-label";
 import { AnchoredPopup } from "@/components/ui/anchored-popup";
 import { MONTHS_LONG, formatDate, toDisplayDate, toIsoDate } from "@/lib/format";
 
@@ -23,6 +24,7 @@ export function DateInput({
   invalid,
   disabled,
   placeholder = "dd/mm/yyyy",
+  ariaLabel,
 }: {
   /** `yyyy-mm-dd`, or empty. */
   value: string;
@@ -30,6 +32,8 @@ export function DateInput({
   invalid?: boolean;
   disabled?: boolean;
   placeholder?: string;
+  /** For a date standing outside a `Field`, which would otherwise name it. */
+  ariaLabel?: string;
 }) {
   /**
    * What is in the box while it is being typed in, and `null` the rest of the
@@ -38,6 +42,7 @@ export function DateInput({
    * from the calendar — without an effect trying to sync two copies of the same
    * thing.
    */
+  const labelledBy = useFieldLabelId();
   const [draft, setDraft] = useState<string | null>(null);
   const text = draft ?? toDisplayDate(value);
 
@@ -85,6 +90,8 @@ export function DateInput({
         disabled={disabled}
         inputMode="numeric"
         autoComplete="off"
+        aria-label={ariaLabel}
+        aria-labelledby={ariaLabel ? undefined : labelledBy}
         // The calendar is the point of the field, so reaching the field opens
         // it. Typing still works over the top: the calendar sits below the box
         // and follows what is typed rather than competing with it.
@@ -206,6 +213,8 @@ function Calendar({
               type="button"
               key={iso}
               className={`cal-c${iso === selected ? " sel" : ""}${iso === today ? " now" : ""}`}
+              aria-label={formatDate(iso)}
+              aria-current={iso === today ? "date" : undefined}
               onClick={() => onPick(iso)}
             >
               {Number(iso.slice(8, 10))}

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Icon, type IconName } from "@/components/icon";
+import { useDialogFocus } from "./use-dialog-focus";
 
 /**
  * Centred confirm dialog: tinted icon, a subject chip
@@ -45,14 +46,20 @@ export function ConfirmDialog({
   /** Extra input the confirmation itself needs, e.g. a replacement password. */
   children?: React.ReactNode;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialogFocus(open, boxRef);
+
+  // While the confirmed action runs, Batal is disabled; Escape and the
+  // backdrop must not be a second way out of a question already answered.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape" && !busy) onCancel();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+  }, [open, busy, onCancel]);
 
   if (!open) return null;
 
@@ -63,14 +70,21 @@ export function ConfirmDialog({
     <div
       className="ovl"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onCancel();
+        if (e.target === e.currentTarget && !busy) onCancel();
       }}
     >
-      <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
+      <div
+        ref={boxRef}
+        className={`modal${wide ? " wide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
         <div className={`mi ${toneClass}`}>
           <Icon name={icon} size={21} />
         </div>
-        <h3>{title}</h3>
+        <h3 id={titleId}>{title}</h3>
         {subject && <div className="subj">{subject}</div>}
         <p>{body}</p>
         {children && <div className="mbody">{children}</div>}

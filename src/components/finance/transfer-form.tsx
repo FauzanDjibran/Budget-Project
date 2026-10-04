@@ -687,9 +687,9 @@ export function TransferForm({
                     )}
                   </Field>
 
-                  <Field label="Catatan" span={drawsLayer ? 4 : 8}>
+                  <Field htmlFor="transfer-notes" label="Catatan" span={drawsLayer ? 4 : 8}>
                     {editing ? (
-                      <textarea
+                      <textarea id="transfer-notes"
                         className="ta"
                         rows={2}
                         value={values.note}
@@ -762,7 +762,7 @@ export function TransferForm({
 
             {(editing ? draftLines.length : lines.length) ? (
               <div className="tw">
-                <table className="grid ltab">
+                <table className="grid ltab" style={{ minWidth: 920 }}>
                   <thead>
                     <tr>
                       <th style={{ width: 34 }}>No</th>

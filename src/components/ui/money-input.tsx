@@ -1,6 +1,7 @@
 "use client";
 
 import { formatNumber } from "@/lib/format";
+import { useFieldLabelId } from "@/components/ui/field-label";
 
 /**
  * The application's numeric field — every amount, and every kurs.
@@ -72,6 +73,7 @@ export function MoneyInput({
   placeholder?: string;
   ariaLabel?: string;
 }) {
+  const labelledBy = useFieldLabelId();
   const wrap = [
     "mwrap",
     size === "sm" ? "sm" : "",
@@ -92,6 +94,7 @@ export function MoneyInput({
         inputMode={decimals > 0 ? "decimal" : "numeric"}
         autoComplete="off"
         aria-label={ariaLabel}
+        aria-labelledby={ariaLabel ? undefined : labelledBy}
         onChange={(e) => onChange(parseAmount(e.target.value, decimals))}
       />
     </span>

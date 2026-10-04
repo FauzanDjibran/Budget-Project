@@ -148,7 +148,7 @@ export function OpenItemSelect({
         }
       >
         <div className="tw boxed">
-          <table className="grid pkt2">
+          <table className="grid pkt2" style={{ minWidth: foreign ? 1000 : 750 }}>
             <thead>
               <tr>
                 <th className="pkchk" style={{ width: 34 }}>

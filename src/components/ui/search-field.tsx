@@ -33,6 +33,7 @@ export function SearchField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        aria-label={placeholder.replace(/…$/, "")}
         autoComplete="off"
       />
       <button className="x" onClick={() => onChange("")} aria-label="Bersihkan">

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Icon, type IconName } from "@/components/icon";
+import { useDialogFocus } from "./use-dialog-focus";
 
 export type DialogTone = "ok" | "bad" | "brand" | "warn";
 
@@ -46,6 +47,10 @@ export function Dialog({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialogFocus(open, boxRef);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -65,9 +70,12 @@ export function Dialog({
       }}
     >
       <div
+        ref={boxRef}
         className="modal modal-flex"
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         style={{ width: `min(${width}px, 95vw)` }}
       >
         <div className="rp-head">
@@ -75,11 +83,11 @@ export function Dialog({
             <Icon name={icon} size={16} />
           </span>
           <div className="t">
-            <h3>{title}</h3>
+            <h3 id={titleId}>{title}</h3>
             {subtitle && <p>{subtitle}</p>}
           </div>
           {headExtra}
-          <button className="btn ico" onClick={onClose} title="Tutup">
+          <button className="btn ico" onClick={onClose} title="Tutup" aria-label="Tutup">
             <Icon name="block" size={15} />
           </button>
         </div>

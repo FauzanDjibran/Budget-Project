@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Icon } from "@/components/icon";
+import { FieldLabelProvider } from "./field-label";
 
 /**
  * The form primitives.
@@ -81,10 +82,14 @@ export function Field({
   error?: string;
   children: ReactNode;
 }) {
+  const labelId = useId();
   return (
     <div className={`fld f-${span}${span === 12 ? " full" : ""}`}>
       <label htmlFor={htmlFor}>
-        <span className="lt">{label}</span>
+        {/* The name alone, not the star, the lock chip or the help beside it. */}
+        <span className="lt" id={labelId}>
+          {label}
+        </span>
         {required && <span className="req">*</span>}
         {locked && <span className="lockb">Terkunci</span>}
         {/* An error replaces the help rather than stacking under it: the form
@@ -95,7 +100,7 @@ export function Field({
           </span>
         )}
       </label>
-      {children}
+      <FieldLabelProvider value={labelId}>{children}</FieldLabelProvider>
       {error && (
         <div className="err">
           <Icon name="warn" size={11} />

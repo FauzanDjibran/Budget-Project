@@ -571,9 +571,9 @@ export function ItemConversionForm({
                     )}
                   </Field>
 
-                  <Field label="Catatan" span={4}>
+                  <Field htmlFor="conversion-notes" label="Catatan" span={4}>
                     {editing ? (
-                      <textarea
+                      <textarea id="conversion-notes"
                         className="ta"
                         rows={2}
                         value={values.note}
@@ -644,7 +644,7 @@ export function ItemConversionForm({
 
             {(editing ? draftLines.length : lines.length) ? (
               <div className="tw">
-                <table className="grid ltab">
+                <table className="grid ltab" style={{ minWidth: 960 }}>
                   <thead>
                     <tr>
                       <th style={{ width: 34 }}>No</th>

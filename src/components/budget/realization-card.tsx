@@ -49,7 +49,7 @@ export function RealizationCard({
 
       {realizations.length ? (
         <div className="tw">
-          <table className="grid ltab">
+          <table className="grid ltab" style={{ minWidth: 680 }}>
             <thead>
               <tr>
                 <th style={{ width: 34 }}>No</th>

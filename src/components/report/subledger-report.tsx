@@ -94,7 +94,16 @@ export function SubledgerReport({ report }: { report: Report }) {
           <div className="cblock" key={key}>
             <div
               className="cbh"
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
               onClick={() => toggle(key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggle(key);
+                }
+              }}
               style={{ cursor: "pointer" }}
             >
               <span className={`chev${isOpen ? " o" : ""}`}>

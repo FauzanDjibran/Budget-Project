@@ -146,7 +146,7 @@ export function BudgetPicker({
 
           {shown.length ? (
             <div className="tw">
-              <table className="grid pkt2">
+              <table className="grid pkt2" style={{ minWidth: 1050 }}>
                 <thead>
                   <tr>
                     <th className="pkchk" style={{ width: 34 }}>

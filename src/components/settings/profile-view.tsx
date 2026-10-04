@@ -101,8 +101,8 @@ export function ProfileView({ profile }: { profile: Profile }) {
                   <div className="ro">{profile.email}</div>
                 </Field>
 
-                <Field label="Nama" span={4} required error={identityErrors.name}>
-                  <input
+                <Field htmlFor="profile-name" label="Nama" span={4} required error={identityErrors.name}>
+                  <input id="profile-name"
                     className={`inp${identityErrors.name ? " bad" : ""}`}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
@@ -110,8 +110,8 @@ export function ProfileView({ profile }: { profile: Profile }) {
                   />
                 </Field>
 
-                <Field label="Inisial" span={4} required error={identityErrors.initials}>
-                  <input
+                <Field htmlFor="profile-initials" label="Inisial" span={4} required error={identityErrors.initials}>
+                  <input id="profile-initials"
                     className={`inp idf${identityErrors.initials ? " bad" : ""}`}
                     value={initials}
                     onChange={(e) => setInitials(e.target.value)}
@@ -157,8 +157,8 @@ export function ProfileView({ profile }: { profile: Profile }) {
               hint="Mengubah password mengakhiri sesi Anda di perangkat lain"
             >
               <FormRow>
-                <Field label="Password Saat Ini" span={4} required error={pwErrors.current}>
-                  <input
+                <Field htmlFor="profile-current-password" label="Password Saat Ini" span={4} required error={pwErrors.current}>
+                  <input id="profile-current-password"
                     className={`inp${pwErrors.current ? " bad" : ""}`}
                     type="password"
                     value={current}
@@ -167,14 +167,14 @@ export function ProfileView({ profile }: { profile: Profile }) {
                   />
                 </Field>
 
-                <Field
+                <Field htmlFor="profile-new-password"
                   label="Password Baru"
                   span={4}
                   required
                   help="minimal 8 karakter"
                   error={pwErrors.next}
                 >
-                  <input
+                  <input id="profile-new-password"
                     className={`inp${pwErrors.next ? " bad" : ""}`}
                     type="password"
                     value={next}
@@ -183,13 +183,13 @@ export function ProfileView({ profile }: { profile: Profile }) {
                   />
                 </Field>
 
-                <Field
+                <Field htmlFor="profile-confirm-password"
                   label="Konfirmasi Password Baru"
                   span={4}
                   required
                   error={pwErrors.confirm}
                 >
-                  <input
+                  <input id="profile-confirm-password"
                     className={`inp${pwErrors.confirm ? " bad" : ""}`}
                     type="password"
                     value={confirm}

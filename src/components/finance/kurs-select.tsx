@@ -107,7 +107,7 @@ export function KursSelect({
         {/* The same picker table a Budget selection uses, so a row that can be
             chosen looks the same wherever one is offered. */}
         <div className="tw boxed">
-          <table className="grid pkt2">
+          <table className="grid pkt2" style={{ minWidth: 620 }}>
             <thead>
               <tr>
                 <th style={{ width: 110 }}>Tanggal</th>
