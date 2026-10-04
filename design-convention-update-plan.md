@@ -1,7 +1,8 @@
 # SIBA 3.0 — Design Convention Update Plan
 
 > **What this is.** A plan to bring SIBA's UI in line with the shared design
-> convention (`D:\Claude Code\Good Concept\design-convention.md`, §13.1,
+> convention (`knowledge/design-convention.md`, the adopted copy of the shared knowledge base's
+> `ui/design-convention`; §13.1,
 > decisions D1–D22, approved 24 September 2026). SIBA is that convention's
 > reference implementation, and today it breaks 20 of the 22 decisions.
 >
@@ -221,8 +222,9 @@ Every later work package uses these. This package changes no screen.
 ### WP7 — Documentation close-out
 - Apply the remaining CLAUDE.md touchpoints (§2) not already done by their work
   packages.
-- In `Good Concept/design-convention.md`, Appendix A: mark the reference as
-  conforming to D1–D20, and remove the pointer to this plan.
+- Through the knowledge base (PROTOCOL §3, a harvest): in `ui/design-convention`, Appendix A,
+  mark the reference as conforming to D1–D20 and remove the pointer to this plan; then
+  refresh `knowledge/design-convention.md` from it. Never edit the copy directly.
 - Delete this plan file, or mark it *Executed* with the commit list.
 
 ---

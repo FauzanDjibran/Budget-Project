@@ -35,6 +35,11 @@ material lives in `Initialization/` (committed, treated as read-only reference):
 | `SIBA Multi Currency Concept.md` | That model applied to SIBA's own flow: layers, kurs provenance, which books carry which measure |
 | `Template COA.xlsx` | The chart-of-accounts skeleton. **Sheet1 is the only visible sheet and the only authoritative one** (§12) |
 
+**The concept documents above are frozen originals.** The copies this app follows, kept in step
+with the shared knowledge base (§20), are in **`knowledge/`**: `CORE Multi Currency Concept.md`,
+`SIBA Multi Currency Concept.md`, `akui_proto_ui_reference.md`, and the shared
+`design-convention.md` that `design-convention-update-plan.md` brings the UI in line with.
+
 The two multi-currency documents arrived **after** the rest and deliberately
 supersede several decisions taken when the system held no rate at all. Where an
 older statement in this file and those documents disagree, the documents won —
@@ -144,7 +149,7 @@ Browser
   │
   └─ Client Components  ──► Server Actions (src/app/actions/*) ──► Prisma ──► PostgreSQL
        (interactivity: tables, forms, dialogs)          │
-                                                        └─ revalidatePath() + router.refresh()
+                                                        └─ revalidatePath() (re-renders the page in the action's own response)
 ```
 
 **There is no REST/GraphQL API layer, by design.** Reads go through Server Components;
@@ -297,7 +302,6 @@ page.tsx (server)
   → serialize()            // Decimal → number, Date → ISO string
   → <EntityList /> (client)
        → user edits → Server Action → validate → Prisma → audit → revalidatePath
-       → router.refresh()
 ```
 
 **Serialization boundary:** Prisma `Decimal` and `Date` do not survive the
@@ -695,7 +699,10 @@ identical means registry configs port verbatim. Do not "modernise" these to came
 - Pages that read the database set `export const dynamic = "force-dynamic"`.
 - Server Actions return a discriminated result (`{ ok: true, ... } | { ok: false, errors }`)
   rather than throwing for expected validation failures.
-- After a mutating action: `revalidatePath()` on the server, `router.refresh()` on the client.
+- After a mutating action: `revalidatePath()` on the server, and **no `router.refresh()`**. Revalidation
+  already re-renders the page inside the action's own response, and a client refresh on top is a
+  second full render, slow against the deployed database. The login form is the one exception: it
+  refreshes because who is signed in changed. (Shared KB `engineering/code-conventions` 2.0.)
 - Async params: Next 16 route params are Promises — `const { entity } = await params`.
 - Comments explain **why**, not what. Default to none.
 - Do not add error handling for cases the database or framework already prevents.
@@ -4795,3 +4802,44 @@ move it into §12 or §10 once the user confirms it.
   with this file, surface the conflict to the user first.
 - Keep it high-signal: prefer rules that change decisions over descriptions discoverable
   from the code.
+
+---
+
+## 20. Shared Knowledge Base
+
+This project adopts concepts from the central knowledge base at
+`D:\Claude Code\Knowledge-Base`, governed by its `PROTOCOL.md`. **What is
+adopted, at which version and with which choices, is listed in `KNOWLEDGE.md`**
+at the root of this repository.
+
+- **Check at the start of substantial work.** Run
+  `node "D:/Claude Code/Knowledge-Base/tools/kb-check.mjs" Budget-Project`.
+  If it reports anything other than `ok`, tell the user what changed before
+  starting (PROTOCOL §5).
+- **No access to `D:\Claude Code\Knowledge-Base`** (a cloud session, another
+  machine)? Do not skip:
+  - treat `KNOWLEDGE.md` and the copies in `knowledge/` as the adopted rules;
+  - still run the deviation check;
+  - queue every reusable decision, and every edit to a concept document, in
+    `KNOWLEDGE.md` → *Harvest queue* as `Queued from cloud`, in the same
+    commit (PROTOCOL §5a).
+- **Adopted concept copies live in `knowledge/`**, and that is the copy to
+  follow. `Initialization/` holds the frozen originals.
+- **Deviation check: never deviate silently.** Before recording a decision or
+  writing code that contradicts an adopted concept, or the choice recorded for
+  it, **stop**:
+  1. Quote the rule.
+  2. State the deviation.
+  3. Make the honest case for the existing rule.
+  4. Ask the user to choose: **A** follow the concept, **B** improve it for
+     every project, **C** create a second concept (option or variant), or
+     **D** keep a local exception.
+
+  For **C**, confirm once more that a second concept is really wanted. Build
+  nothing on it until answered (PROTOCOL §4).
+- **Harvest.** When a decision recorded here would hold in another project,
+  add it to `KNOWLEDGE.md` → *Harvest queue* and offer to fold it into the
+  knowledge base (PROTOCOL §3).
+- **Edit the KB from here through the protocol only.** Each change needs a
+  version bump, a changelog line, a `REGISTRY.md` update, and this project's
+  adoption row brought up to date.
