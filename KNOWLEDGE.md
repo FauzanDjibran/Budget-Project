@@ -31,7 +31,7 @@ in **Note** to stay on an older version on purpose.
 | engineering/code-conventions | 2.1 | core | — | §7; §6 applied 04/10/2026 (vercel.json sin1, relationJoins) |
 | engineering/data-conventions | 1.0 | doc-numbering=prefix-seq | — | §9 |
 | engineering/security-rbac | 1.0 | core | — | §10 rules 9–13, §11 |
-| accounting/books-and-posting | 2.0 | core | — | §10 rules 22, 47–51 |
+| accounting/books-and-posting | 2.1 | core | — | §10 rules 22, 47–51; §6 is `npm run db:reconcile` (origin) |
 | accounting/subject-books | 1.0 | core | — | §10 rules 52–56, 103–107; origin |
 | accounting/chart-of-accounts | 1.1 | control-account=derived | — | §10 rules 44–46, 77–80 |
 | accounting/fiscal-periods-and-statements | 1.0 | core | — | §12; Initialization/Opening & Closing Update Phase.md |
@@ -48,6 +48,7 @@ only (PROTOCOL §4, answer D).
 
 | Concept | Rule departed from | Project decision | Why |
 | --- | --- | --- | --- |
+| ui/design-convention | §5.3: lists have no row checkboxes, no select-all and no bulk bar | CLAUDE.md §12 "Approval and classification are two menus, each a work queue" (FROZEN, 30/09/2026) | The Budget module is its own convention: approver and classifier clear their queues in bulk, and status tabs make it safe. The user confirmed it as a local exception on 04/10/2026 (KB R7). |
 
 ## Harvest queue
 
@@ -56,5 +57,3 @@ Project decisions that look reusable and are waiting to be folded into the KB
 
 | Project decision | Target concept | Proposed change | Status |
 | --- | --- | --- | --- |
-| `4e2eba9` db:reconcile | accounting/books-and-posting | A read-only reconcile command: every book against its materialised balance, the journal and the GL account; runs in a `READ ONLY` transaction; each check selects only the disagreeing rows; each check proven by a planted fault | Awaiting user |
-| §12 work queues (`39c0a07`) | ui/design-convention §5.3 | Bulk selection in work queues: **contradicts the convention**, so it is a deviation check, REGISTRY R7 | Awaiting user (R7) |
