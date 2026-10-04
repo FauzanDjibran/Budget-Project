@@ -56,3 +56,5 @@ Project decisions that look reusable and are waiting to be folded into the KB
 
 | Project decision | Target concept | Proposed change | Status |
 | --- | --- | --- | --- |
+| `4e2eba9` db:reconcile | accounting/books-and-posting | A read-only reconcile command: every book against its materialised balance, the journal and the GL account; runs in a `READ ONLY` transaction; each check selects only the disagreeing rows; each check proven by a planted fault | Awaiting user |
+| §12 work queues (`39c0a07`) | ui/design-convention §5.3 | Bulk selection in work queues: **contradicts the convention**, so it is a deviation check, REGISTRY R7 | Awaiting user (R7) |
