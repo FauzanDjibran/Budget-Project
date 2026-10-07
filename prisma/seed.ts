@@ -114,6 +114,25 @@ const BASE_CURRENCY_NAME = process.env.SIBA_BASE_CURRENCY_NAME?.trim() || "Rupia
 const pad4 = (n: number) => String(n).padStart(4, "0");
 const code = (prefix: string, n: number) => `${prefix}.${pad4(n)}`;
 
+/**
+ * The next unused `<prefix>.<4 digits>` code among rows that already exist.
+ *
+ * Budget and Partner Categories are seeded *and* created through the GUI, so a
+ * code taken from a row's position in the declaration would collide with one a
+ * user created since: a category added to the list after the GUI made
+ * `bcat.0009` must not be given `bcat.0009` too. On a fresh database this is
+ * the same sequence the list would have produced.
+ */
+function nextFreeCode<T>(prefix: string, rows: T[], codeOf: (row: T) => string): string {
+  const pattern = new RegExp(`^${prefix}\\.(\\d+)$`);
+  let max = 0;
+  for (const row of rows) {
+    const m = pattern.exec(codeOf(row));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return code(prefix, max + 1);
+}
+
 /** Tally of what this run had to create, printed at the end. */
 const created: Record<string, number> = {};
 const tally = (what: string, n = 1) => {
@@ -152,10 +171,13 @@ const DOC_TYPES: [label: string, table: string][] = [
   // A Pencairan Open Item writes both books, the subject book and a journal,
   // and every one of them names the document as its source.
   ["Pencairan Open Item", "fin_item_conversion"],
+  // A Reklasifikasi Open Item writes two subject-book positions and a journal,
+  // and each names the document as its source.
+  ["Reklasifikasi Open Item", "fin_item_reclass"],
 ];
 
 /**
- * The eight Budget Categories and the rules each one carries: which directions
+ * The Budget Categories and the rules each one carries: which directions
  * are meaningful for it, whether it names a Partner at all, and which Partner
  * Categories it admits.
  *
@@ -211,12 +233,21 @@ const BUDGET_CATEGORIES: [
   ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null, false],
   ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran.", ["Out"], ["Cabang"], "Out", false],
   ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan.", ["In"], ["Cabang"], "In", false],
+  // The two holding books: money whose real place is not known yet waits here,
+  // each on its own open item, until a Reklasifikasi Open Item moves it to the
+  // book it belongs in. Two rather than one because a book runs one way and
+  // never goes below zero — a receipt held is something owed, a payment held
+  // something owed to the Company, and in one book they would cancel. Both
+  // directions, so held money can also be sent back through a Realisasi.
+  ["Penerimaan Belum Teridentifikasi", "Penerimaan yang belum diketahui peruntukannya, ditampung sampai direklasifikasi. Wajib Partner.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "In", false],
+  ["Pengeluaran Belum Teridentifikasi", "Pengeluaran yang belum diketahui peruntukannya, ditampung sampai direklasifikasi. Wajib Partner.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "Out", false],
 ];
 
 const PARTNER_CATEGORIES: [label: string, name: string, note: string][] = [
   ["Cabang", "Cabang / Entitas", "Entitas cabang atau investee di luar dua Company utama sistem."],
   ["Karyawan", "Karyawan", "Pegawai perusahaan. Hanya dipakai oleh Hutang dan Piutang."],
   ["Stakeholder", "Pemegang Saham", "Pemilik / pemegang saham. Dipakai oleh Titipan, Hutang, Piutang, dan Prive."],
+  ["Lainnya", "Lainnya", "Pihak di luar kategori lain, termasuk pengirim atau penerima dana yang belum teridentifikasi."],
 ];
 
 /**
@@ -680,13 +711,17 @@ async function ensureReferenceData(
     tally("document types", made);
   }
 
-  for (const [i, [label, note, directions, _partners, raises, allowsDncn]] of BUDGET_CATEGORIES.entries()) {
+  for (const [label, note, directions, _partners, raises, allowsDncn] of BUDGET_CATEGORIES) {
     const made = await create(
       () => prisma.sysBudgetCategory.findFirst({ where: { category_label: label } }),
-      () =>
+      async () =>
         prisma.sysBudgetCategory.create({
           data: {
-            category_code: code("bcat", i + 1),
+            category_code: await nextFreeCode(
+              "bcat",
+              await prisma.sysBudgetCategory.findMany({ select: { category_code: true } }),
+              (r) => r.category_code
+            ),
             category_label: label,
             category_name: label,
             allows_in: directions.includes("In"),
@@ -702,13 +737,17 @@ async function ensureReferenceData(
     tally("budget categories", made);
   }
 
-  for (const [i, [label, name, note]] of PARTNER_CATEGORIES.entries()) {
+  for (const [label, name, note] of PARTNER_CATEGORIES) {
     const made = await create(
       () => prisma.sysPartnerCategory.findFirst({ where: { category_label: label } }),
-      () =>
+      async () =>
         prisma.sysPartnerCategory.create({
           data: {
-            category_code: code("pcat", i + 1),
+            category_code: await nextFreeCode(
+              "pcat",
+              await prisma.sysPartnerCategory.findMany({ select: { category_code: true } }),
+              (r) => r.category_code
+            ),
             category_label: label,
             category_name: name,
             note,

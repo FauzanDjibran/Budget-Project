@@ -508,7 +508,9 @@ table sub_ledger {
   entry_date                  date [not null]
   // Conversion: a Pencairan Open Item — a foreign item released at its own
   // kurs, and the base-currency item it became, opened in the same book.
-  entry_type                  enum('Opening', 'Transaction', 'Adjustment', 'Conversion') [not null]
+  // Reclass: a Reklasifikasi Open Item — an item released out of one position,
+  // and the item it became or settled in another book or for another Partner.
+  entry_type                  enum('Opening', 'Transaction', 'Adjustment', 'Conversion', 'Reclass') [not null]
   direction                   enum('In', 'Out') [not null]
 
   amount                      decimal(18,2) [not null]
@@ -1349,6 +1351,157 @@ table fin_item_conversion_line_item {
   // its difference signed as a gain.
   settlement_base_amount      decimal(18,2) [not null, default: 0]
   converted_base_amount       decimal(18,2) [not null, default: 0]
+  fx_difference               decimal(18,2) [not null, default: 0]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (line_id, sub_ledger_balance_id) [unique]
+    (line_id, sequence_no) [unique]
+    sub_ledger_balance_id
+  }
+}
+
+// RECLASSIFICATION — REKLASIFIKASI OPEN ITEM: value moved out of one
+// subject-book position (book x Partner x currency) into another — another
+// book, another Partner, or both — with NO cash moving. Built to clear the two
+// Belum Teridentifikasi holding books once the money's place is known, and
+// open to any book to any book: a category that names a Partner is all a book
+// is. Each line names a target; the target is posted as if the original
+// movement had been classified into it. A target running the same way OPENS one
+// item per source item at that item's own kurs and base (no difference can
+// arise); one running the other way has items SETTLED, chosen by the user, and
+// each settled item states its own FX difference on its own journal line. It
+// reclassifies items in the books, never a Budget (rule 26).
+table fin_item_reclass {
+  id                          int [pk, increment, not null]
+
+  // RKL-0001.
+  reclass_no                  varchar(255) [not null, unique]
+  // Chosen on the draft, any day up to today; Post dates everything by it.
+  document_date               date
+  posting_date                timestamptz
+
+  // The source Partner's Company, derived rather than picked.
+  company_id                  int [not null, ref : > sys_company.id]
+  // The source position: one book (a Budget Category), one Partner, one
+  // currency. Every target is in the same currency.
+  budget_category_id          int [not null, ref : > sys_budget_category.id]
+  partner_id                  int [not null, ref : > m_partner.id]
+  currency_id                 int [not null, ref : > ref_currency.id]
+
+  // Sum of the lines.
+  reclass_amount              decimal(18,2) [not null]
+  // What the source items released, in base. Written at Post.
+  reclass_base_amount         decimal(18,2) [not null, default: 0]
+  // Sum of every settled target item's difference, signed as a gain.
+  // Informational — each is journalled on its own line. Written at Post.
+  fx_difference               decimal(18,2) [not null, default: 0]
+
+  note                        text
+
+  status                      enum('Draft', 'Pending', 'Posted', 'Cancelled') [not null, default: 'Draft']
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    company_id
+    partner_id
+    status
+  }
+}
+
+// One target, and the source items it takes. A source can be split across
+// lines — part Hutang, part Titipan.
+table fin_item_reclass_line {
+  id                          int [pk, increment, not null]
+
+  reclass_id                  int [not null, ref : > fin_item_reclass.id]
+  sequence_no                 int [not null]
+
+  // A category that keeps a book, and a Partner it admits. Never the source
+  // position itself.
+  target_budget_category_id   int [not null, ref : > sys_budget_category.id]
+  target_partner_id           int [not null, ref : > m_partner.id]
+
+  // Why the value moved; the note on what the line writes.
+  description                 text
+
+  // > 0 (CHECK); the sum of the line's source items.
+  amount                      decimal(18,2) [not null]
+  // Written at Post: what the source items released, and the sum of the
+  // settled target items' differences (zero where the target opens items).
+  released_base_amount        decimal(18,2) [not null, default: 0]
+  fx_difference               decimal(18,2) [not null, default: 0]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (reclass_id, sequence_no) [unique]
+    target_partner_id
+  }
+}
+
+// One source item a line moves, chosen and stated by the user.
+table fin_item_reclass_line_source {
+  id                          int [pk, increment, not null]
+
+  line_id                     int [not null, ref : > fin_item_reclass_line.id]
+  sequence_no                 int [not null]
+  // sub_ledger_balance.id — a plain id: the item is the subject book's.
+  sub_ledger_balance_id       int [not null]
+
+  // > 0 (CHECK), never more than the item holds across the document.
+  amount                      decimal(18,2) [not null]
+  // Written at Post: what the item released at its own kurs, and the target
+  // item it became where the target opens items — the clearing link from the
+  // held item to where it went (sub_ledger_balance.id, plain id).
+  released_base_amount        decimal(18,2) [not null, default: 0]
+  opened_item_id              int
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (line_id, sub_ledger_balance_id) [unique]
+    (line_id, sequence_no) [unique]
+    sub_ledger_balance_id
+    opened_item_id
+  }
+}
+
+// One target item a line settles, where the target book runs the other way.
+// A line's target amounts add up to its source amount exactly.
+table fin_item_reclass_line_target {
+  id                          int [pk, increment, not null]
+
+  line_id                     int [not null, ref : > fin_item_reclass_line.id]
+  sequence_no                 int [not null]
+  // sub_ledger_balance.id — a plain id.
+  sub_ledger_balance_id       int [not null]
+
+  // > 0 (CHECK), never more than the item holds across the document.
+  amount                      decimal(18,2) [not null]
+  // Written at Post: this item's share of what the line's source items
+  // released (a line's shares add up to its released_base_amount), what the
+  // item released at its own kurs, and the gap, signed as a gain.
+  allocated_base_amount       decimal(18,2) [not null, default: 0]
+  settlement_base_amount      decimal(18,2) [not null, default: 0]
   fx_difference               decimal(18,2) [not null, default: 0]
 
   created_by                  int [not null]

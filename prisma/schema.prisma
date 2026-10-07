@@ -365,6 +365,7 @@ model SysCompany {
   transfers    FinCashBankTransfer[]
   dncn_notes   FinDncn[]
   conversions  FinItemConversion[]
+  reclasses    FinItemReclass[]
 
   journals AccJournal[]
 
@@ -487,6 +488,8 @@ model SysBudgetCategory {
   partner_categories SysBudgetPartnerCategoryMapping[]
   dncn_notes         FinDncn[]
   conversions        FinItemConversion[]
+  reclasses          FinItemReclass[]     @relation("ReclassSource")
+  reclass_targets    FinItemReclassLine[] @relation("ReclassTarget")
 
   @@map("sys_budget_category")
 }
@@ -567,6 +570,7 @@ model RefCurrency {
   funding_requests   FinFundingRequest[]
   dncn_notes         FinDncn[]
   conversions        FinItemConversion[]
+  reclasses          FinItemReclass[]
 
   @@map("ref_currency")
 }
@@ -597,6 +601,8 @@ model MPartner {
   subledger_balances SubLedgerBalance[]
   dncn_notes         FinDncn[]
   conversions        FinItemConversion[]
+  reclasses          FinItemReclass[]     @relation("ReclassSource")
+  reclass_targets    FinItemReclassLine[] @relation("ReclassTarget")
 
   opening_balance_lines AccOpeningBalanceLine[]
 
@@ -839,6 +845,10 @@ enum SubLedgerEntryType {
   /// A Pencairan Open Item: a foreign item released at its own kurs, and the
   /// base-currency item it became, opened beside it in the same book.
   Conversion
+  /// A Reklasifikasi Open Item: an item released out of one book, and the item
+  /// it became — or the item it settled — in another book or for another
+  /// Partner. No cash moves.
+  Reclass
 }
 
 /// Whether an open item still holds anything.
@@ -1839,6 +1849,178 @@ model FinItemConversionLineItem {
   @@unique([line_id, sequence_no])
   @@index([sub_ledger_balance_id])
   @@map("fin_item_conversion_line_item")
+}
+
+// ---------------------------------------------------------------- reklasifikasi open item
+
+/// Reklasifikasi Open Item: value moved out of one subject-book position and
+/// into another — a different book, a different Partner, or both — with no
+/// cash moving. The case it exists for is clearing a *Belum Teridentifikasi*
+/// holding book once the money's real place is known; the mechanism is any
+/// book to any book, because a category that names a Partner is all a book is.
+///
+/// The header names the **source** position: one book, one Partner, one
+/// currency. Each line names a **target** — a category that keeps a book and a
+/// Partner it admits — and the source items it moves. The target is posted as
+/// if the original movement had been classified into it: a book running the
+/// same way **opens** one item per source item, at that item's own kurs and
+/// base, so no difference can arise; a book running the other way has items
+/// **settled**, chosen and stated by the user, and each settled item states its
+/// own FX difference on its own journal line.
+///
+/// It reclassifies **items in the books**, never a Budget: a Budget's
+/// classification is final (CLAUDE.md §10 rule 26), and this is what lets the
+/// money move on while the plan keeps saying what it said.
+model FinItemReclass {
+  id            Int       @id @default(autoincrement())
+  /// `RKL-0001`.
+  reclass_no    String    @unique
+  /// Chosen on the draft, any day up to today; Post dates everything by it.
+  document_date DateTime? @db.Date
+  posting_date  DateTime? @db.Timestamptz(6)
+
+  /// The source Partner's Company, derived rather than picked.
+  company_id         Int
+  /// The source book (a subject book is a Budget Category) and its Partner.
+  budget_category_id Int
+  partner_id         Int
+  /// The source position's currency, and every target's. A reclassification
+  /// never changes currency — that is a Pencairan Open Item.
+  currency_id        Int
+
+  /// Sum of the lines, in the document currency.
+  reclass_amount      Decimal @db.Decimal(18, 2)
+  /// What the source items released, in base. Written at Post.
+  reclass_base_amount Decimal @default(0) @db.Decimal(18, 2)
+  /// The sum of every settled target item's difference, signed as a gain.
+  /// Informational: the journal carries each on its own line. Written at Post.
+  fx_difference       Decimal @default(0) @db.Decimal(18, 2)
+
+  note   String?
+  status TransactionStatus @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company         SysCompany        @relation(fields: [company_id], references: [id])
+  budget_category SysBudgetCategory @relation("ReclassSource", fields: [budget_category_id], references: [id])
+  partner         MPartner          @relation("ReclassSource", fields: [partner_id], references: [id])
+  currency        RefCurrency       @relation(fields: [currency_id], references: [id])
+
+  lines FinItemReclassLine[]
+
+  @@index([company_id])
+  @@index([partner_id])
+  @@index([status])
+  @@map("fin_item_reclass")
+}
+
+/// One target: where a part of the source goes, and which source items it
+/// takes. A receipt can be split across lines — part Hutang, part Titipan.
+model FinItemReclassLine {
+  id          Int @id @default(autoincrement())
+  reclass_id  Int
+  sequence_no Int
+
+  /// The target book and the Partner whose position it moves. Never the
+  /// source position itself.
+  target_budget_category_id Int
+  target_partner_id         Int
+
+  /// Why the value moved, in the user's words. Becomes the note on what the
+  /// line writes; falls back to the source item's own note where empty.
+  description String?
+
+  /// The sum of the source items — the line has no amount of its own.
+  amount               Decimal @db.Decimal(18, 2)
+  /// What the source items released, in base. Written at Post.
+  released_base_amount Decimal @default(0) @db.Decimal(18, 2)
+  /// The sum of the line's settled target items' differences, signed as a
+  /// gain. Zero where the target opens items. Written at Post.
+  fx_difference        Decimal @default(0) @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  reclass         FinItemReclass    @relation(fields: [reclass_id], references: [id], onDelete: Cascade)
+  target_category SysBudgetCategory @relation("ReclassTarget", fields: [target_budget_category_id], references: [id])
+  target_partner  MPartner          @relation("ReclassTarget", fields: [target_partner_id], references: [id])
+  sources         FinItemReclassLineSource[]
+  targets         FinItemReclassLineTarget[]
+
+  @@unique([reclass_id, sequence_no])
+  @@index([target_partner_id])
+  @@map("fin_item_reclass_line")
+}
+
+/// One source item a line moves, and for how much — chosen and stated by the
+/// user, never distributed.
+model FinItemReclassLineSource {
+  id          Int @id @default(autoincrement())
+  line_id     Int
+  sequence_no Int
+  /// The source item (`sub_ledger_balance.id`). A plain id: the item belongs to
+  /// the subject-book module.
+  sub_ledger_balance_id Int
+
+  /// In the document currency; more than nil, never more than the item holds.
+  amount               Decimal @db.Decimal(18, 2)
+  /// What the item released at its own kurs. Written at Post.
+  released_base_amount Decimal @default(0) @db.Decimal(18, 2)
+  /// The target item this one became, where the target book opens items — the
+  /// clearing link a reader follows from the held item to where it went. Null
+  /// where the target's items are settled instead, and until Post.
+  opened_item_id       Int?
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  line FinItemReclassLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
+
+  @@unique([line_id, sub_ledger_balance_id])
+  @@unique([line_id, sequence_no])
+  @@index([sub_ledger_balance_id])
+  @@index([opened_item_id])
+  @@map("fin_item_reclass_line_source")
+}
+
+/// One target item a line settles, where the target book runs the other way
+/// from the source — chosen and stated by the user. A line's target amounts add
+/// up to its source amount exactly.
+model FinItemReclassLineTarget {
+  id          Int @id @default(autoincrement())
+  line_id     Int
+  sequence_no Int
+  /// The target item settled (`sub_ledger_balance.id`).
+  sub_ledger_balance_id Int
+
+  /// In the document currency; more than nil, never more than the item holds.
+  amount                 Decimal @db.Decimal(18, 2)
+  /// This item's share of what the line's source items released. A line's
+  /// shares add up to its `released_base_amount` exactly. Written at Post.
+  allocated_base_amount  Decimal @default(0) @db.Decimal(18, 2)
+  /// What the item released at its own kurs. Written at Post.
+  settlement_base_amount Decimal @default(0) @db.Decimal(18, 2)
+  /// Signed as a gain; journalled on a line of its own. Written at Post.
+  fx_difference          Decimal @default(0) @db.Decimal(18, 2)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  line FinItemReclassLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
+
+  @@unique([line_id, sub_ledger_balance_id])
+  @@unique([line_id, sequence_no])
+  @@index([sub_ledger_balance_id])
+  @@map("fin_item_reclass_line_target")
 }
 
 // ---------------------------------------------------------------- dn / cn

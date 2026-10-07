@@ -245,6 +245,23 @@ export const PERMISSIONS = [
   },
   { code: "ITEM_CONVERSION_CANCEL", name: "Batalkan Pencairan Open Item", module: "finance" },
 
+  // Reklasifikasi Open Item: moving value from one subject-book position to
+  // another with no cash — clearing a holding book once the money's place is
+  // known. Its own capabilities, because deciding where held money belongs is a
+  // review step, not something a cash clerk does by default.
+  { code: "ITEM_RECLASS_VIEW", name: "Lihat Reklasifikasi Open Item", module: "finance" },
+  { code: "ITEM_RECLASS_CREATE", name: "Tambah Reklasifikasi Open Item", module: "finance" },
+  { code: "ITEM_RECLASS_EDIT", name: "Ubah Reklasifikasi Open Item", module: "finance" },
+  {
+    code: "ITEM_RECLASS_POST",
+    name: "Post Reklasifikasi Open Item",
+    module: "finance",
+    description:
+      "Memindahkan nilai open item dari satu buku subjek ke buku atau Partner " +
+      "lain, dan mencatat Journal-nya. Tidak ada uang yang berpindah.",
+  },
+  { code: "ITEM_RECLASS_CANCEL", name: "Batalkan Reklasifikasi Open Item", module: "finance" },
+
   // Debit / Credit Note: adjusting a Partner's standing position without cash.
   // Its own capabilities, because writing a receivable down is an authority of
   // its own — the one a cash clerk should not hold by default.
