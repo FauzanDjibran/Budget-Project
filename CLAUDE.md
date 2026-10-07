@@ -68,7 +68,9 @@ or invariants that assume a particular row exists.
   **Pencairan Open Item**, which sells foreign currency on a Partner's behalf and
   converts its open items to Rupiah at the same kurs — the
   **Debit / Credit Note**, which adjusts a Partner's standing position in a
-  subject book without cash — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
+  subject book without cash — the **Reklasifikasi Open Item**, which moves an
+  open item's value to another book or Partner, the way money held in a
+  *Belum Teridentifikasi* book reaches the book it belongs in — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
   snapshot a close writes and the ledger reports then read their openings from.
 - **Not yet built** — report output (print and export), intercompany settlement (the
@@ -100,13 +102,14 @@ or invariants that assume a particular row exists.
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
 | Debit / Credit Note | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget. A Debit Note debits the Partner's account and a Credit Note credits it, so the book's own `raises` decides whether the position rises or falls and one document serves every book. Which books may be adjusted is `allows_dncn` on the Budget Category (Titipan, Hutang, Piutang). Post writes one `Adjustment` entry and one balanced journal against the Company's Debit Note or Credit Note System Default, under a lock on the position; nothing may go below zero, and a negative position is not adjustable yet |
 | Pencairan Open Item | Done — foreign currency sold out of the Company's own Cash & Bank, and one Partner's open items in that currency converted to Rupiah **at the same kurs**, in one document (`POI-`). One book, one Partner and one layer per document. Each line's amount is the sum of the items it converts. Post writes both cash books, a `Conversion` entry releasing each foreign item at its own kurs, one new IDR item per line in the same book, and one balanced journal with **one** Selisih Kurs line for the whole document (§10 rules 109–112). Its own module, not a Transfer purpose |
+| Reklasifikasi Open Item | Done — an open item's value moved to another book, another Partner, or both, with no cash (`RKL-`). The header is the source position (book × Partner × currency); each line a target book and Partner and the source items it takes. The target is posted as the original movement would have been: a book running the same way **opens** one item per source item at its kurs and base, one running the other way has chosen items **settled**, each with its own Selisih Kurs line. Any category that names a Partner qualifies — no flag. Two holding categories, *Penerimaan* and *Pengeluaran Belum Teridentifikasi*, and Partner Category *Lainnya*, are seeded for money nobody can place yet (§10 rules 113–117). A Budget keeps its classification; its Realisasi card shows where the money went |
 | Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Currency, Company and Realisasi Cash & Bank defaults, with the base currency shown read-only. A new Budget needs only its amount and description; a new Realisasi starts on the default Company, its Cash & Bank and the base currency |
 | Mapping Account System | Done — `/accounting/system-account`, one Company at a time; `acc_system_account`, one row per Company and key. The intercompany bridge, Selisih Kurs, the two Laba/Rugi equity accounts, and the Debit / Credit Note counter accounts |
-| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Pencairan Open Item, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
+| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Pencairan Open Item, Reklasifikasi Open Item, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
 
@@ -218,6 +221,9 @@ of its own.
 | Pencairan Open Item valuation | `src/lib/siba/item-conversion-valuation.ts` | What one line is worth on both legs and its part of the one Selisih line. Pure, built on `valueTransferLine`, so the form previews exactly what Post computes; client-safe |
 | Pencairan Open Item lifecycle | `src/lib/siba/item-conversion-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Pencairan Open Item data | `src/lib/siba/item-conversion.ts` | Header, line and item enforcement, `applyConversion` (and its dry run), `POI-` numbering. Reaches the books only through what they export, and imports nothing from `transfer.ts`; `server-only` |
+| Reklasifikasi valuation | `src/lib/siba/item-reclass-valuation.ts` | Whether a target opens or settles (`reclassEffect`), each side, and each settled item's share and difference. Pure, so the form previews exactly what Post computes; client-safe |
+| Reklasifikasi lifecycle | `src/lib/siba/item-reclass-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
+| Reklasifikasi data | `src/lib/siba/item-reclass.ts` | Header, line and item enforcement, `applyReclass` (and its dry run), `reclassTrail` (where an item's value went), `RKL-` numbering. Reaches the books only through what they export; `server-only` |
 | DN/CN lifecycle | `src/lib/siba/dncn-workflow.ts` | Draft → Post / Cancel, the two note types, and `dncnDirection` — the cash direction a note moves the position like; client-safe |
 | DN/CN data | `src/lib/siba/dncn.ts` | Header, line and zero-rule enforcement, `applyDncn`, `DN-` / `CN-` numbering; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
@@ -250,6 +256,7 @@ source scan and needs no database.
 | Transfer | `fin_cash_bank_transfer(_line)` | `lib/siba/transfer.ts`, `app/actions/transfer.ts` |
 | Debit / Credit Note | `fin_dncn(_line)` | `lib/siba/dncn.ts`, `app/actions/dncn.ts` |
 | Pencairan Open Item | `fin_item_conversion(_line, _line_item)` | `lib/siba/item-conversion.ts`, `app/actions/item-conversion.ts` |
+| Reklasifikasi Open Item | `fin_item_reclass(_line, _line_source, _line_target)` | `lib/siba/item-reclass.ts`, `app/actions/item-reclass.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` (+ `subledger-data.ts`, which reads the Budget Categories the books are) |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22); the manual journal's rules sit above it in `lib/siba/manual-journal.ts` + `app/actions/journal.ts` |
@@ -354,7 +361,7 @@ scripts/
                          what reconciles against the account for the second.
                          Idempotent, sets and clears. Run by hand, never by
                          install or CI
-  reconcile-books.ts     Read-only: sixteen checks that Budget realization,
+  reconcile-books.ts     Read-only: seventeen checks that Budget realization,
                          the Cash Bank Book, the subject books and their open
                          items, and the journals agree with each other and
                          with the General Ledger. Each selects only the rows
@@ -417,6 +424,7 @@ src/
       finance/cash-bank-transfer/  Bespoke: list, /new, /[id], /[id]/edit
       finance/pencairan-open-item/  Bespoke: list, /new, /[id], /[id]/edit
       finance/debit-credit-note/  Bespoke: list, /new, /[id], /[id]/edit
+      finance/reklasifikasi-open-item/  Bespoke: list, /new, /[id], /[id]/edit
       finance/funding-request/  The induk's queue: list and /[id] (confirm)
       finance/report/[report]/  Every Report View, driven by `reports.ts`
       settings/[entity]/ The registry pages again — the classification chain:
@@ -432,6 +440,7 @@ src/
       funding.ts         Ajukan Dana, withdraw, and Confirm Funding
       transfer.ts        Cash Bank Transfer writes, plus Post
       item-conversion.ts Pencairan Open Item writes, plus Post
+      item-reclass.ts    Reklasifikasi Open Item writes, plus Post
       dncn.ts            Debit / Credit Note writes, plus Post
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
       journal.ts         Manual journal writes: create, edit, Post / Batalkan
@@ -457,6 +466,7 @@ src/
                          FundingList, FundingDetail,
                          TransferList, TransferForm,
                          ItemConversionList, ItemConversionForm,
+                         ItemReclassList, ItemReclassForm,
                          DncnList, DncnForm
     report/              ReportView chrome, ReportSummary, its three filter
                          bars (ReportParams for one subject, SubjectParams for
@@ -1622,6 +1632,44 @@ the rules that follow from it.
     of the difference reverses with it. Both currencies post to the one mapped
     account (Company × Budget Category × Partner Category); there is no currency
     dimension on a mapping.
+
+**Reklasifikasi Open Item** — moving value between books.
+
+113. **Money nobody can place yet is held, in one of two books.** *Penerimaan
+    Belum Teridentifikasi* (raised by money arriving) and *Pengeluaran Belum
+    Teridentifikasi* (raised by money leaving) are ordinary Budget Categories
+    that name a Partner, allow both directions, and are seeded; Partner Category
+    *Lainnya* holds a sender or recipient not identified yet. Two and not one
+    because a book runs one way and never goes below zero: a receipt held is
+    owed, a payment held is owed to the Company, and in one book they would
+    cancel. Nothing marks them as holding books.
+114. **A reclassification moves an item's value, never a Budget's
+    classification.** The Budget stays classified as what it was approved into
+    (rule 26); the money moves on in the books. A Realisasi line records the
+    item it opened (`opened_item_id`), and the Budget's Realisasi card follows
+    it into any posted reclassification (`reclassTrail`, one step). Lines
+    posted before the column existed carry none and are not backfilled.
+115. **Any category that names a Partner may be a source or a target** — the
+    user's rule, with no eligibility flag. A target must allow the direction
+    that raised the source, admit the target Partner's category, and be in the
+    same Company and currency; it may not be the source position itself. A
+    category that names no Partner (Biaya, Asset) is not a target: clearing held
+    money into an expense or an asset is a later adjustment purpose.
+116. **The target is posted as the original movement would have been.** It
+    moves in the direction that raised the source, and the target book's own
+    `raises` decides the rest. The same way **opens** one item per source item,
+    at that item's own kurs and base — value carried, so no difference can
+    arise. The other way **settles** target items the user chose, each relieved
+    at its own kurs, and each states its own difference on its own Selisih Kurs
+    line (rule 107), signed as a gain from the source's side. The source is
+    journalled on the side that lowers it, the target on the other.
+117. **Chosen, stated, and atomic.** Every source and target item is ticked and
+    its amount typed — never preselected or distributed. A line is worth its
+    source items, and settled target items add up to the same figure. Post holds
+    the period, locks every position it lowers in one sorted order, and writes
+    both books and one journal together, refusing if any item moved since it
+    was valued. Held positions at a year end are not checked yet — out of scope
+    on the user's decision.
 
 Specified in the concept doc, **not yet implemented** (see §13):
 
@@ -3570,9 +3618,12 @@ below in outline because the half of it that still holds is easy to lose.**
   assertion in place of a `Status:` select. `ClassifyDialog` replaced the
   approval dialog. Finance's eligibility is unchanged — it already asked for
   `Open`, which an `Approved` Budget is not.
-- **Not built:** a *Belum Terklasifikasi* category with a suspense mapping, for
-  realizing before classification. It would need DN/CN to move items between
-  books once the real classification is known.
+- **Held money is classified, then reclassified in the books.** A Budget whose
+  place is unclear is classified into a *Belum Teridentifikasi* holding
+  category rather than realized before classification, and a Reklasifikasi
+  Open Item moves its item on once the place is known (§10 rules 113–117).
+  This replaces the earlier idea of a *Belum Terklasifikasi* category cleared
+  by DN/CN.
 - **Do not change unless:** explicitly instructed. **Never prefill a
   classification, never let a selection be half-moved, never offer a bulk
   action some selected row would refuse, and never reclassify.**
@@ -4010,6 +4061,31 @@ below in outline because the half of it that still holds is easy to lose.**
   Selisih back into a line per item or a cash line and an item line, never let
   a line carry more than its items, never convert at a kurs other than the
   line's, and never fold this into Cash Bank Transfer.**
+- **Status:** Frozen, current.
+
+### Reklasifikasi Open Item moves value between books, never a classification (FROZEN)
+- **Decision:** Its own module (`fin_item_reclass(_line, _line_source,
+  _line_target)`, `RKL-` series, `ITEM_RECLASS_*` permissions, Finance ›
+  Penyesuaian › Reklasifikasi Open Item, beside DN/CN). The header names the
+  source position; each line a target book and Partner, the source items it
+  moves and, where the target settles, the target items. Post writes `Reclass`
+  entries in both books and one balanced journal. §10 rules 113–117 state it.
+- **Reason:** the user's: a Budget whose place is unclear needs a temporary
+  book of its own and a way to move the balance on. Weighed against using
+  DN/CN, the user chose the standard concept — SAP's transfer posting with
+  clearing, Odoo's suspense account cleared by reconciliation, the Indonesian
+  *jurnal reklasifikasi* — so DN/CN stays the counterparty adjustment it is
+  (rules 97–102 unchanged). Its rule — post the target as the original movement
+  would have been — reuses `subledgerMovement`, so no book gains a special case.
+- **No eligibility flag**, on the user's instruction: whatever names a Partner
+  keeps a book, and whatever keeps a book may be reclassified. The holding
+  categories are not marked either.
+- **Not built, by decision:** clearing held money into a category with no
+  Partner (Biaya, Asset), and any year-end check on held positions.
+- **Do not change unless:** explicitly instructed. **Never reclassify a
+  Budget, never blend source items into one target item, never net two settled
+  items' differences, never preselect or distribute an item, and never add an
+  eligibility flag for reclassification.**
 - **Status:** Frozen, current.
 
 ### A Debit / Credit Note adjusts a position, in one rule for every book (FROZEN)
@@ -4557,6 +4633,14 @@ process allowed to restate positions, and it is not built.
   currency was sold at, or split a Pencairan Open Item's Selisih into more than
   one line. Do **not** let a line carry more than its items, and do **not** fold
   the document into Cash Bank Transfer (§10 rules 109–112, §12).
+- Do **not** reclassify a Budget to move its money. A Reklasifikasi Open Item
+  moves the item; the Budget keeps what it was classified as (§10 rule 114).
+- Do **not** open one target item for several source items, net two settled
+  items' differences, or let a reclassification change currency (§10 rules
+  115–116).
+- Do **not** add an eligibility flag for reclassification, or mark the holding
+  categories as special. A category that names a Partner is all a book is
+  (§10 rules 113, 115, §12).
 - Do **not** let `finance.ts` import `funding.ts`, and do **not** close a Funding
   Request from Finance's own action — Funding depends on Finance, never the reverse
   (§3, §12).
@@ -4736,6 +4820,9 @@ process allowed to restate positions, and it is not built.
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The subject books have no opening balance | A subledger entry is written by posting a Cash Bank Transaction or a Debit / Credit Note (`Adjustment`). `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated (§13). |
 | Funded route and DN/CN cannot lower a position | Open items arrived while both were being redesigned, and neither names the item it settles yet. A funded confirmation or a note that would lower a subject-book position is refused (the funded one as an unhandled error, tolerated on the user's instruction); raising one works. Nine tests are marked `todo` for it, and the showcase skips those notes. |
+| Held money cannot be cleared into an expense or an asset | A Reklasifikasi target must keep a book, so a held payment that turns out to be Biaya or Asset has nowhere to go yet. Out of scope on the user's decision; it is a later adjustment purpose (§10 rule 115). |
+| Older Realisasi lines name no opened item | `fin_cash_bank_transaction_line.opened_item_id` is written from its migration on. A line posted before it is null, so its Budget's Realisasi card cannot follow that money into a reclassification. Not backfilled: matching items to lines by note would be a guess. The funded route does not write it either, pending its redesign. |
+| A reclassification trail is one step | `reclassTrail` reads one move. An item reclassified twice shows its second move on the item it became, not on the Budget. |
 | A note's counter account is one per side, whichever book | One Debit Note and one Credit Note account per Company, so a Titipan adjustment and a Piutang adjustment land in the same P&L account. Fine for the three books the seed allows; a book needing its own counter account would need the account on the category. |
 | A transfer shows in the Cash Bank Book by number, not as a link | `sourceDocumentNumbers` in `cash-bank.ts` resolves only `fin_cash_bank_transaction`, which is already the baselined crossing this table records below. A transfer entry therefore carries `TRF-0001 — <Purpose>` in its note and has no drill-through. Extending that function to a second table would deepen the debt; the clean fix is to make labelling a `(doc_type_id, doc_id)` pair the caller's job, which is a decision in its own right. |
 | A subject book's report shows a document's note, not a link | An entry carries its source as the weak `(doc_type_id, doc_id)` pair and its document number inside `note`. Resolving that to a link would mean the book importing Finance, which is the boundary crossing `cash-bank.ts` already has and that has not been decided. |
