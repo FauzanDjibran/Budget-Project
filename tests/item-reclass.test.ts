@@ -8,6 +8,7 @@ import {
   checkReclassLines,
   nextReclassNo,
   previewReclass,
+  reclassTrail,
   type ReclassLineInput,
   type ResolvedReclassHeader,
 } from "../src/lib/siba/item-reclass";
@@ -366,6 +367,13 @@ describe("Post", () => {
     const doc = await prisma.finItemReclass.findUniqueOrThrow({ where: { id } });
     assert.equal(doc.status, "Posted");
     assert.equal(num(doc.reclass_base_amount), 15_000_000);
+
+    // Read forwards from the held item: where its value went.
+    const trail = await reclassTrail([source]);
+    assert.equal(trail.length, 1);
+    assert.equal(trail[0].reclassId, id);
+    assert.equal(trail[0].targetBook, hutang.name);
+    assert.equal(trail[0].openedItemNo, opened.item_no);
   });
 
   test("a held receipt applied to a Piutang settles it, with its own loss line", async () => {

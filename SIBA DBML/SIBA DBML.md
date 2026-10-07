@@ -1124,6 +1124,12 @@ table fin_cash_bank_transaction_line {
   // netted.
   fx_difference               decimal(18,2) [not null, default: 0]
 
+  // The open item the line opened where it raised a subject-book position
+  // (sub_ledger_balance.id, plain id) — how a Budget follows its money on, e.g.
+  // into a Reklasifikasi Open Item. Null where the line lowered a position,
+  // kept no book, or was posted before the column existed (not backfilled).
+  opened_item_id              int
+
   created_by                  int [not null]
   updated_by                  int
 
@@ -1133,6 +1139,7 @@ table fin_cash_bank_transaction_line {
   indexes {
     (transaction_id, sequence_no) [unique]
     (source_doc_type_id, source_doc_id)
+    opened_item_id
   }
 }
 

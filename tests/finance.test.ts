@@ -2389,6 +2389,34 @@ describe("a line lowering a position settles the open item it names", () => {
       orderBy: { id: "desc" },
     });
 
+  test("a line that raises a position names the item it opened", async () => {
+    // What lets a Budget follow its money on — into a reclassification, for
+    // one — once the item has left the book it was realized into.
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    const bank = await makeCashBank({ currencyId: otherCurrency });
+    const budget = await makeBudget({
+      categoryLabel: "Titipan",
+      type: "In",
+      partnerId: partner,
+      amount: 500,
+      currencyId: otherCurrency,
+    });
+    const doc = await makeDraft({
+      transaction_type: "In",
+      cashBankId: bank,
+      rate: 15_000,
+      lines: [{ budgetId: budget, amount: 500, outstanding: 500 }],
+    });
+    await post(doc);
+    const line = await prisma.finCashBankTransactionLine.findFirstOrThrow({
+      where: { transaction_id: doc },
+    });
+    assert.ok(line.opened_item_id, "the raising line records its item");
+    const item = await prisma.subLedgerBalance.findUniqueOrThrow({ where: { id: line.opened_item_id! } });
+    assert.equal(item.partner_id, partner);
+    assert.equal(item.balance.toNumber(), 500);
+  });
+
   test("two receipts are two items, and each return releases its own item's kurs", async () => {
     // The worked example: Titipan 1 at 15.000 and Titipan 2 at 13.000 into Bank
     // A, both returned out of Bank B's dollars bought at 14.000. Settling the

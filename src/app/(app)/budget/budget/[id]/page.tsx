@@ -11,6 +11,7 @@ import {
 } from "@/lib/siba/budget";
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
 import { budgetRealizations } from "@/lib/siba/finance";
+import { reclassTrail } from "@/lib/siba/item-reclass";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +35,11 @@ export default async function Page({
     // Only an Approved Budget is waiting for a classification to be chosen.
     budget.status === "Approved" ? classificationHints([budget]) : {},
   ]);
+  // A held item reclassified elsewhere: the Budget keeps its classification
+  // (§10 rule 26), and the trail says where the money went instead.
+  const moves = await reclassTrail(
+    realizations.flatMap((r) => (r.openedItemId ? [r.openedItemId] : []))
+  );
 
   return (
     <>
@@ -45,6 +51,7 @@ export default async function Page({
         month={month}
         can={budgetAbilities(actor.permissions)}
         realizations={realizations}
+        moves={moves}
         hint={(hints as Record<number, ClassificationHint>)[budget.id] ?? null}
       />
       <RecordHistoryCard entityKey="bud_budget" rowId={budget.id} />

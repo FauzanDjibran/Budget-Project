@@ -47,6 +47,7 @@ import {
 } from "@/lib/siba/header-actions";
 import type { budgetRealizations } from "@/lib/siba/finance";
 import { ClassifyDialog } from "./classify-dialog";
+import type { ReclassMove } from "@/lib/siba/item-reclass";
 import { RealizationCard } from "./realization-card";
 
 export type BudgetFormMode = "new" | "view" | "edit";
@@ -94,6 +95,7 @@ export function BudgetForm({
   defaultCurrencyId,
   defaultCompanyId,
   realizations,
+  moves,
   copyFrom,
   hint,
 }: {
@@ -114,6 +116,8 @@ export function BudgetForm({
   defaultCompanyId?: number | null;
   /** The documents behind `realized_amount` — view mode only. */
   realizations?: Awaited<ReturnType<typeof budgetRealizations>>;
+  /** Where the items those documents opened were reclassified to — view mode only. */
+  moves?: ReclassMove[];
   /** The Budget a new one is copied from — `new` mode only. */
   copyFrom?: BudgetRow | null;
   /** How a similar Budget was classified — an Approved Budget's view only. */
@@ -579,6 +583,7 @@ export function BudgetForm({
           {mode === "view" && realizations && (
             <RealizationCard
               realizations={realizations}
+              moves={moves ?? []}
               currencyLabel={currencyOf(refs, budget!.currency_id)}
             />
           )}

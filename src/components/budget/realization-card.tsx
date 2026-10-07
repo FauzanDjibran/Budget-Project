@@ -4,7 +4,9 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { formatDate, formatMoney } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
+import { documentHref } from "@/lib/siba/document-links";
 import type { budgetRealizations } from "@/lib/siba/finance";
+import type { ReclassMove } from "@/lib/siba/item-reclass";
 import { realizationHref, realizationOf } from "@/lib/siba/realization";
 
 type Realization = Awaited<ReturnType<typeof budgetRealizations>>[number];
@@ -20,9 +22,15 @@ type Realization = Awaited<ReturnType<typeof budgetRealizations>>[number];
  */
 export function RealizationCard({
   realizations,
+  moves,
   currencyLabel,
 }: {
   realizations: Realization[];
+  /**
+   * Where the open items these documents opened were reclassified to. The
+   * Budget keeps its own classification; this is where its money went.
+   */
+  moves: ReclassMove[];
   currencyLabel: string;
 }) {
   const posted = realizations.filter((r) => r.status === "Posted");
@@ -78,7 +86,20 @@ export function RealizationCard({
                       <span className="dash">belum diposting</span>
                     )}
                   </td>
-                  <td className="pri">{realizationOf(r.direction).title}</td>
+                  <td className="pri">
+                    {realizationOf(r.direction).title}
+                    {moves
+                      .filter((m) => m.itemId === r.openedItemId)
+                      .map((m) => (
+                        <span key={m.reclassId} className="rsub">
+                          {formatMoney(m.amount, currencyLabel)} direklasifikasi ke {m.targetBook} ·{" "}
+                          {m.targetPartnerLabel} lewat{" "}
+                          <Link href={documentHref("fin_item_reclass", m.reclassId) ?? "#"}>
+                            {m.reclassNo}
+                          </Link>
+                        </span>
+                      ))}
+                  </td>
                   <td>
                     <span className={`bdg ${STATUS_CLASS[r.status] ?? "s-mute"}`}>
                       {STATUS_TEXT[r.status] ?? r.status}

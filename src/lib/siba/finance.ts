@@ -283,6 +283,8 @@ export async function budgetRealizations(budgetId: number): Promise<
     status: TransactionStatus;
     direction: "In" | "Out";
     amount: number;
+    /** The open item the line opened, where it raised a subject-book position. */
+    openedItemId: number | null;
   }[]
 > {
   const docType = await budgetDocTypeId();
@@ -298,6 +300,7 @@ export async function budgetRealizations(budgetId: number): Promise<
     status: l.transaction.status as TransactionStatus,
     direction: l.transaction.transaction_type as "In" | "Out",
     amount: l.settlement_amount.toNumber(),
+    openedItemId: l.opened_item_id,
   }));
 }
 
@@ -2100,7 +2103,7 @@ export async function applyPosting(
             }))
           : [{ amount: line.amount, baseAmount: line.settlementBase, itemId: null }];
         for (const e of entries) {
-          await recordSubledgerEntry(tx, {
+          const written = await recordSubledgerEntry(tx, {
             book: line.book,
             partnerId: line.partnerId!,
             currencyId: doc.currency_id,
@@ -2121,6 +2124,14 @@ export async function applyPosting(
             note: line.description,
             actorId,
           });
+          // The item a raise opened, kept on the line so the Budget can follow
+          // its money on — into a reclassification, for one.
+          if (!e.itemId) {
+            await tx.finCashBankTransactionLine.update({
+              where: { id: line.lineId },
+              data: { opened_item_id: written.balance_id },
+            });
+          }
         }
       }
     }

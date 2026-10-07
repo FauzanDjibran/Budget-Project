@@ -1265,6 +1265,61 @@ export async function previewReclass(
   return { ok: true, lines: await describeJournalLines(result.journal ?? []) };
 }
 
+// -------------------------------------------------------------------- trail
+
+/** One posted move of an item: where its value went, and by which document. */
+export type ReclassMove = {
+  itemId: number;
+  reclassId: number;
+  reclassNo: string;
+  date: string | null;
+  amount: number;
+  targetBook: string;
+  targetPartnerLabel: string;
+  targetPartnerName: string;
+  /** The item it became, where the target opened one. */
+  openedItemNo: string | null;
+};
+
+/**
+ * Where these items' value went, by posted reclassification — the clearing
+ * link read forwards. A Budget whose money was held follows it from here to the
+ * book it ended up in. One step only: an item moved again is the next item's
+ * own trail.
+ */
+export async function reclassTrail(itemIds: number[]): Promise<ReclassMove[]> {
+  if (!itemIds.length) return [];
+  const rows = await prisma.finItemReclassLineSource.findMany({
+    where: { sub_ledger_balance_id: { in: itemIds }, line: { reclass: { status: "Posted" } } },
+    orderBy: { id: "asc" },
+    include: {
+      line: {
+        select: {
+          target_category: { select: { category_label: true } },
+          target_partner: { select: { partner_label: true, partner_name: true } },
+          reclass: { select: { id: true, reclass_no: true, document_date: true } },
+        },
+      },
+    },
+  });
+  const opened = new Map(
+    (await subledgerItemsByIds(rows.flatMap((r) => (r.opened_item_id ? [r.opened_item_id] : [])))).map(
+      (i) => [i.id, i.itemNo]
+    )
+  );
+  return rows.map((r) => ({
+    itemId: r.sub_ledger_balance_id,
+    reclassId: r.line.reclass.id,
+    reclassNo: r.line.reclass.reclass_no,
+    date: r.line.reclass.document_date ? day(r.line.reclass.document_date) : null,
+    amount: r.amount.toNumber(),
+    targetBook: `Buku ${r.line.target_category.category_label}`,
+    targetPartnerLabel: r.line.target_partner.partner_label,
+    targetPartnerName: r.line.target_partner.partner_name,
+    openedItemNo: r.opened_item_id ? opened.get(r.opened_item_id) ?? null : null,
+  }));
+}
+
 // ------------------------------------------------------------------ summary
 
 export type ReclassSummary = {

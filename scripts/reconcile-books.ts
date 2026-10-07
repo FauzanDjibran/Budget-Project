@@ -28,6 +28,8 @@
  *   15–16 a line settling open items is worth what its items add up to, and
  *         the items' shares of the cash and of what was released add up to
  *         the line's own figures
+ *   17    a reclassification carries value, never recomputes it: the item a
+ *         source item became holds exactly what the source released
  *
  * WHAT IT LEAVES OUT, ON PURPOSE
  *   An `Opening` Cash Bank Book entry writes no journal (CLAUDE.md §12), so
@@ -128,7 +130,7 @@ WHERE w.n <> COALESCE(g.n, 0) OR w.amount <> COALESCE(g.amount, 0)`,
     sql: `
 SELECT s.entry_no, s.book, s.direction::text, s.movement, c.raises::text
 FROM sub_ledger s JOIN book_cat c ON c.category_code = s.book
-WHERE s.entry_type = 'Transaction'
+WHERE s.entry_type IN ('Transaction', 'Reclass')
   AND SIGN(s.movement) <> CASE WHEN s.direction::text = c.raises::text THEN 1 ELSE -1 END`,
   },
   {
@@ -344,6 +346,23 @@ FULL JOIN gl ON gl.account_id = book.account_id
 JOIN acc_account ac ON ac.id = COALESCE(book.account_id, gl.account_id)
 LEFT JOIN m_partner p ON p.id = COALESCE(book.partner_id, gl.partner_id)
 WHERE COALESCE(book.amount, 0) <> COALESCE(gl.amount, 0)`,
+  },
+  {
+    no: 17,
+    name: "Reklasifikasi: open item baru bernilai tepat apa yang dilepas sumbernya",
+    sql: `
+SELECT r.reclass_no, src.item_no AS source_item, opened.item_no AS opened_item,
+       s.amount, s.released_base_amount, opened.original, opened.base_original,
+       src.rate AS source_rate, opened.rate AS opened_rate
+FROM fin_item_reclass_line_source s
+JOIN fin_item_reclass_line l ON l.id = s.line_id
+JOIN fin_item_reclass r ON r.id = l.reclass_id
+JOIN sub_ledger_balance src ON src.id = s.sub_ledger_balance_id
+JOIN sub_ledger_balance opened ON opened.id = s.opened_item_id
+WHERE r.status = 'Posted'
+  AND (opened.original <> s.amount
+       OR opened.base_original <> s.released_base_amount
+       OR opened.rate <> src.rate)`,
   },
 ];
 
