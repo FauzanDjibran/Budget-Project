@@ -1346,6 +1346,12 @@ const DOCUMENT_SCREENS: {
     routes: "src/app/(app)/finance/pencairan-open-item",
   },
   {
+    name: "Reklasifikasi Open Item",
+    form: "src/components/finance/item-reclass-form.tsx",
+    list: "src/components/finance/item-reclass-list.tsx",
+    routes: "src/app/(app)/finance/reklasifikasi-open-item",
+  },
+  {
     name: "Debit / Credit Note",
     form: "src/components/finance/dncn-form.tsx",
     list: "src/components/finance/dncn-list.tsx",
@@ -1560,6 +1566,7 @@ describe("a Post confirmation shows the journal it will write", () => {
     "src/components/finance/transaction-form.tsx",
     "src/components/finance/transfer-form.tsx",
     "src/components/finance/item-conversion-form.tsx",
+    "src/components/finance/item-reclass-form.tsx",
     "src/components/finance/dncn-form.tsx",
   ];
   for (const rel of POSTING_FORMS) {

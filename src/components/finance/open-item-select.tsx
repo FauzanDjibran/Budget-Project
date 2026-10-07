@@ -36,6 +36,10 @@ export function OpenItemSelect({
   direction,
   cashRate,
   fxNote,
+  title = "Pilih Open Item",
+  subtitle = "Centang setiap item yang diselesaikan dan nominalnya. Nominal baris adalah jumlah item yang dipilih.",
+  showFx = true,
+  amountLabel = "Diselesaikan",
   invalid,
   onChange,
 }: {
@@ -52,12 +56,23 @@ export function OpenItemSelect({
    * Open Item folds them into the document's one line, and says so.
    */
   fxNote?: string;
+  /** The dialog's heading, where one line picks items from two positions. */
+  title?: string;
+  subtitle?: string;
+  /**
+   * Whether a foreign item states its kurs gap. Off where nothing can arise —
+   * items moved whole into a new item carry their own kurs with them.
+   */
+  showFx?: boolean;
+  /** What the amount column calls the figure taken from each item. */
+  amountLabel?: string;
   invalid?: boolean;
   onChange: (value: ItemAllocation[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Record<number, number>>({});
   const foreign = !isBaseCurrency(currencyLabel);
+  const withFx = foreign && showFx;
 
   if (!items.length && !value.length) {
     return <span className="dash">tidak ada open item</span>;
@@ -116,9 +131,9 @@ export function OpenItemSelect({
       <Dialog
         open={open}
         icon="layers"
-        title="Pilih Open Item"
-        subtitle="Centang setiap item yang diselesaikan dan nominalnya. Nominal baris adalah jumlah item yang dipilih."
-        width={foreign ? 960 : 820}
+        title={title}
+        subtitle={subtitle}
+        width={withFx ? 960 : 820}
         onClose={() => setOpen(false)}
         foot={
           <>
@@ -148,7 +163,7 @@ export function OpenItemSelect({
         }
       >
         <div className="tw boxed">
-          <table className="grid pkt2" style={{ minWidth: foreign ? 1000 : 750 }}>
+          <table className="grid pkt2" style={{ minWidth: withFx ? 1000 : 750 }}>
             <thead>
               <tr>
                 <th className="pkchk" style={{ width: 34 }}>
@@ -179,9 +194,9 @@ export function OpenItemSelect({
                   Sisa
                 </th>
                 <th className="num" style={{ width: 164 }}>
-                  Diselesaikan
+                  {amountLabel}
                 </th>
-                {foreign && (
+                {withFx && (
                   <th className="num" style={{ width: 140 }}>
                     Selisih kurs
                   </th>
@@ -231,7 +246,7 @@ export function OpenItemSelect({
                         }
                       />
                     </td>
-                    {foreign && (
+                    {withFx && (
                       <td className="num">
                         {fx == null || !on ? (
                           <span className="dash">—</span>
@@ -256,7 +271,7 @@ export function OpenItemSelect({
             </tbody>
           </table>
         </div>
-        {foreign && (
+        {withFx && (
           <p className="fnote" style={{ marginTop: 10 }}>
             {cashRate == null
               ? "Selisih kurs tampil setelah kurs dokumen diisi."
