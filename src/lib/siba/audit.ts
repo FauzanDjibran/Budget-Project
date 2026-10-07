@@ -9,6 +9,7 @@ import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer";
 import { noteNumbersByIds } from "./dncn";
 import { conversionNumbersByIds } from "./item-conversion";
+import { reclassNumbersByIds } from "./item-reclass";
 import { fundingRequestNumbersByIds } from "./funding";
 import { fiscalClosingLabels } from "./fiscal";
 import { journalNumbersByIds } from "./journal";
@@ -92,6 +93,10 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
   fin_item_conversion: {
     label: "Pencairan Open Item",
     resolve: conversionNumbersByIds,
+  },
+  fin_item_reclass: {
+    label: "Reklasifikasi Open Item",
+    resolve: reclassNumbersByIds,
   },
   fin_funding_request: {
     label: "Funding Request",

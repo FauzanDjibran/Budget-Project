@@ -41,7 +41,12 @@ import {
 /** A Prisma client or an interactive transaction — every write here takes one. */
 type Db = Prisma.TransactionClient | typeof prisma;
 
-export type SubledgerEntryType = "Opening" | "Transaction" | "Adjustment" | "Conversion";
+export type SubledgerEntryType =
+  | "Opening"
+  | "Transaction"
+  | "Adjustment"
+  | "Conversion"
+  | "Reclass";
 
 export type NewSubledgerEntry = {
   /**

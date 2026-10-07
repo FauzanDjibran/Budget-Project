@@ -205,6 +205,14 @@ export const MODULES: NavModule[] = [
             desc: "Penyesuaian nilai posisi Partner pada buku subjek tanpa perpindahan uang. Debit Note mendebit account Partner, Credit Note mengkreditnya.",
             permission: "DNCN_VIEW",
           },
+          {
+            key: "fin_item_reclass",
+            slug: "reklasifikasi-open-item",
+            name: "Reklasifikasi Open Item",
+            icon: "tags",
+            desc: "Pemindahan nilai open item dari satu buku subjek ke buku atau Partner lain tanpa perpindahan uang — termasuk menuntaskan dana Belum Teridentifikasi.",
+            permission: "ITEM_RECLASS_VIEW",
+          },
         ],
       },
       {

@@ -492,6 +492,24 @@ export async function cleanupFixtures(): Promise<void> {
   }
   // A Pencairan Open Item names its Partner as well.
   await prisma.finItemConversion.deleteMany({ where: fixturePartners });
+  // A Reklasifikasi Open Item names one on its header and one on each line.
+  const reclasses = (
+    await prisma.finItemReclass.findMany({
+      where: {
+        OR: [
+          fixturePartners,
+          { lines: { some: { target_partner: { partner_label: { startsWith: FIXTURE_PREFIX } } } } },
+        ],
+      },
+      select: { id: true },
+    })
+  ).map((r) => r.id);
+  if (reclasses.length) {
+    await prisma.auditLog.deleteMany({
+      where: { entity_key: "fin_item_reclass", row_id: { in: reclasses } },
+    });
+    await prisma.finItemReclass.deleteMany({ where: { id: { in: reclasses } } });
+  }
   // Entries first: each names the open item it moved.
   await prisma.subLedger.deleteMany({ where: fixturePartners });
   await prisma.subLedgerBalance.deleteMany({ where: fixturePartners });
