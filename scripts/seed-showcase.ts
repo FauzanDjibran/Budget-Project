@@ -38,6 +38,12 @@ import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
 import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
 import { applyDncn, nextNoteNo } from "@/lib/siba/dncn";
 import { applyConversion, nextConversionNo } from "@/lib/siba/item-conversion";
+import {
+  applyReclass,
+  checkReclassHeader,
+  checkReclassLines,
+  nextReclassNo,
+} from "@/lib/siba/item-reclass";
 import { dncnDirection } from "@/lib/siba/dncn-workflow";
 import { subledgerForCategory, subledgerMovement } from "@/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
@@ -62,7 +68,7 @@ type AccountNode = {
    * account — its General Ledger balance is what the operational book for
    * that subject is reconciled against.
    */
-  partnerCategory?: "Cabang" | "Karyawan" | "Stakeholder";
+  partnerCategory?: "Cabang" | "Karyawan" | "Stakeholder" | "Lainnya";
   children?: AccountNode[];
 };
 
@@ -124,7 +130,11 @@ const CHART: Group[] = [
   {
     kelompok: "1.1.6",
     balance: "Debit",
-    accounts: [{ name: "Uang Muka Pembelian" }],
+    accounts: [
+      { name: "Uang Muka Pembelian" },
+      // The holding book for money that left before anybody knew what for.
+      { name: "Pengeluaran Belum Teridentifikasi", partnerCategory: "Lainnya" },
+    ],
   },
   {
     kelompok: "1.1.7",
@@ -200,6 +210,8 @@ const CHART: Group[] = [
       { name: "Hutang kepada Stakeholder", partnerCategory: "Stakeholder" },
       { name: "Titipan dari Cabang", partnerCategory: "Cabang" },
       { name: "Titipan dari Stakeholder", partnerCategory: "Stakeholder" },
+      // The holding book for money that arrived before anybody knew what for.
+      { name: "Penerimaan Belum Teridentifikasi", partnerCategory: "Lainnya" },
     ],
   },
   {
@@ -322,6 +334,8 @@ const PARTNERS: [label: string, name: string, category: string][] = [
   ["RDK", "Ratna Dewi Kusuma", "Stakeholder"],
   ["MAS", "PT Mitra Abadi Sentosa", "Stakeholder"],
   ["ADF", "PT Adib Food", "Stakeholder"],
+  // Whoever sent or received money nobody can place yet.
+  ["BTI", "Belum Teridentifikasi", "Lainnya"],
 ];
 
 /**
@@ -432,6 +446,9 @@ const MAPPINGS: [
 
   ["Investasi", "Cabang", "Investasi pada Cabang"],
   ["Hasil Investasi", "Cabang", "Hasil Investasi dari Cabang"],
+
+  ["Penerimaan Belum Teridentifikasi", "Lainnya", "Penerimaan Belum Teridentifikasi"],
+  ["Pengeluaran Belum Teridentifikasi", "Lainnya", "Pengeluaran Belum Teridentifikasi"],
 
   ["Asset", null, "Inventaris Kantor"],
   ["Biaya", null, "Biaya Umum Lain-lain"],
@@ -1239,6 +1256,115 @@ async function postConversion(spec: ConversionSpec, actor: number) {
 }
 
 
+// ------------------------------------------------------- the reclassifications
+//
+// Money realized into a Belum Teridentifikasi holding book, moved on once its
+// place is known. Checked by the module's own rules and posted through
+// `applyReclass`, so the showcase is a standing check on that path too.
+
+type ReclassSpec = {
+  date: string;
+  /** The source book and Partner, by label and name. */
+  book: string;
+  partner: string;
+  currency: "IDR" | "USD";
+  note: string;
+  lines: {
+    book: string;
+    partner: string;
+    description: string;
+    /** The Budget whose realization opened the source item. */
+    from: string;
+    amount: number;
+    /** Where the target settles: the Budget whose realization opened that item. */
+    settle?: string;
+  }[];
+};
+
+/** The item a Budget's realization opened — what a clerk would pick by name. */
+async function itemOpenedBy(budgetId: number): Promise<number> {
+  const line = await prisma.finCashBankTransactionLine.findFirst({
+    where: { source_doc_id: budgetId, opened_item_id: { not: null }, transaction: { status: "Posted" } },
+    select: { opened_item_id: true },
+  });
+  if (!line?.opened_item_id) throw new Error(`No open item was opened by Budget ${budgetId}.`);
+  return line.opened_item_id;
+}
+
+/** Drafts and posts one Reklasifikasi Open Item through `applyReclass`, refusing loudly. */
+async function postReclass(spec: ReclassSpec, budgets: Map<string, number>, actor: number) {
+  const already = await prisma.finItemReclass.findFirst({ where: { note: spec.note }, select: { id: true } });
+  if (already) return;
+
+  const categoryId = async (label: string) =>
+    (await prisma.sysBudgetCategory.findFirstOrThrow({ where: { category_label: label }, select: { id: true } })).id;
+  const partnerId = async (name: string) =>
+    (await prisma.mPartner.findFirstOrThrow({ where: { partner_name: name }, select: { id: true } })).id;
+  const budget = (key: string) => {
+    const id = budgets.get(key);
+    if (!id) throw new Error(`No Budget "${key}" for "${spec.note}".`);
+    return id;
+  };
+  const currency = await prisma.refCurrency.findFirstOrThrow({
+    where: { currency_label: spec.currency },
+    select: { id: true },
+  });
+  const companyIds = (await prisma.sysCompany.findMany({ select: { id: true } })).map((c) => c.id);
+
+  const header = await checkReclassHeader(
+    { budget_category_id: await categoryId(spec.book), partner_id: await partnerId(spec.partner), currency_id: currency.id },
+    companyIds
+  );
+  if (!header.ok) throw new Error(`Reklasifikasi "${spec.note}" refused: ${Object.values(header.errors).join(" ")}`);
+
+  const input = [];
+  for (const l of spec.lines) {
+    input.push({
+      target_budget_category_id: await categoryId(l.book),
+      target_partner_id: await partnerId(l.partner),
+      description: l.description,
+      sources: [{ item_id: await itemOpenedBy(budget(l.from)), amount: l.amount }],
+      targets: l.settle ? [{ item_id: await itemOpenedBy(budget(l.settle)), amount: l.amount }] : [],
+    });
+  }
+  const checked = await checkReclassLines(header, input);
+  if (!checked.ok) throw new Error(`Reklasifikasi "${spec.note}" refused: ${checked.errors._lines}`);
+
+  const row = await prisma.finItemReclass.create({
+    data: {
+      reclass_no: await nextReclassNo(),
+      document_date: new Date(`${spec.date}T00:00:00Z`),
+      company_id: header.companyId,
+      budget_category_id: header.book.categoryId,
+      partner_id: header.partnerId,
+      currency_id: header.currencyId,
+      reclass_amount: checked.total,
+      note: spec.note,
+      status: "Draft",
+      created_by: actor,
+      lines: {
+        create: checked.lines.map((l, i) => ({
+          sequence_no: i + 1,
+          target_budget_category_id: l.targetBook.categoryId,
+          target_partner_id: l.targetPartnerId,
+          description: l.description,
+          amount: l.amount,
+          created_by: actor,
+          sources: { create: l.sources.map((s, k) => ({ sequence_no: k + 1, sub_ledger_balance_id: s.itemId, amount: s.amount, created_by: actor })) },
+          targets: { create: l.targets.map((t, k) => ({ sequence_no: k + 1, sub_ledger_balance_id: t.itemId, amount: t.amount, created_by: actor })) },
+        })),
+      },
+    },
+    select: { id: true },
+  });
+  await audit("fin_item_reclass", row.id, actor);
+  const result = await applyReclass(row.id, actor);
+  if (!result.ok) {
+    throw new Error(`Reklasifikasi "${spec.note}" refused: ${Object.values(result.errors).join(" ")}`);
+  }
+  tally("reklasifikasi open item");
+}
+
 // ------------------------------------------------------- the funding requests
 //
 // The anak holds no Cash & Bank at all (§10 rule 38), so its documents name a
@@ -1570,13 +1696,15 @@ type Event =
     }
   | { kind: "journal"; date: string; spec: ManualSpec }
   | { kind: "note"; date: string; spec: NoteSpec }
-  | { kind: "conversion"; date: string; spec: ConversionSpec };
+  | { kind: "conversion"; date: string; spec: ConversionSpec }
+  | { kind: "reclass"; date: string; spec: ReclassSpec };
 
 type YearPlan = { year: number; budgets: BudgetSpec[]; events: Event[] };
 
 const transfer = (spec: TransferSpec, draft = false): Event => ({ kind: "transfer", date: spec.date, spec, draft });
 const journal = (spec: ManualSpec): Event => ({ kind: "journal", date: spec.date, spec });
 const note = (spec: NoteSpec): Event => ({ kind: "note", date: spec.date, spec });
+const reclass = (spec: ReclassSpec): Event => ({ kind: "reclass", date: spec.date, spec });
 
 type BudgetRow = Omit<BudgetSpec, "date"> & { date: [month: number, day: number] };
 const budgetsOf = (year: number, rows: BudgetRow[]): BudgetSpec[] =>
@@ -1763,6 +1891,11 @@ function currentYear(): YearPlan {
       // A stakeholder's dollar Titipan, part of which is later cashed into
       // rupiah by a Pencairan Open Item.
       { key: "titipanadib", company: "induk", date: day(9, 1), type: "In", category: "Titipan", partner: "PT Adib Food", currency: "USD", amount: 30_000, description: `Titipan dana impor bahan baku PT Adib Food ${YEAR}`, status: "Closed" },
+      // Money nobody could place when it moved, held until it could be.
+      { key: "terimabt", company: "induk", date: day(6, 4), type: "In", category: "Penerimaan Belum Teridentifikasi", partner: "Belum Teridentifikasi", amount: 50_000_000, description: "Transfer masuk BCA tanpa berita, menunggu identifikasi pengirim", status: "Closed" },
+      { key: "pinjamanadib", company: "induk", date: day(5, 19), type: "Out", category: "Piutang", partner: "PT Adib Food", currency: "USD", amount: 2_000, description: "Pinjaman dolar kepada PT Adib Food untuk uang muka impor", status: "Closed" },
+      { key: "terimabtusd", company: "induk", date: day(6, 15), type: "In", category: "Penerimaan Belum Teridentifikasi", partner: "Belum Teridentifikasi", currency: "USD", amount: 2_000, description: "Transfer masuk USD dari bank koresponden tanpa keterangan", status: "Closed" },
+      { key: "bayarbt", company: "induk", date: day(7, 1), type: "Out", category: "Pengeluaran Belum Teridentifikasi", partner: "Belum Teridentifikasi", amount: 12_500_000, description: "Debet rekening BCA tanpa dokumen pendukung", status: "Closed" },
     ],
     events: [
       journal(reversal(YEAR - 1, 8_100_000)),
@@ -1810,6 +1943,28 @@ function currentYear(): YearPlan {
       // layer bought before its Titipan arrived, and both legs go at 16.250 —
       // one Selisih Kurs line for the gap between the two carrying rates.
       { kind: "conversion", date: day(9, 10), spec: { date: day(9, 10), from: "BCA-USD", layerBy: day(9, 2), book: "Titipan", partner: "PT Adib Food", rate: 16_250, note: "Pencairan sebagian titipan PT Adib Food ke rupiah", lines: [{ to: "BCA-OPS", amount: 10_000 }] } },
+      // Held money, and where it turned out to belong. Rp 50 juta arrived
+      // with no berita; two weeks later it is identified as Rp 30 juta of
+      // H. Suryanto Halim's working capital and a Rp 15 juta deposit from
+      // Cabang Surabaya — the last Rp 5 juta is still held.
+      { kind: "cbt", date: day(6, 5), purpose: "PBT_IN", cashBank: "BCA-OPS", partner: "Belum Teridentifikasi", note: "Transfer masuk tanpa berita, ditampung sampai pengirim teridentifikasi", lines: [{ budget: "terimabt", amount: 50_000_000 }] },
+      reclass({ date: day(6, 19), book: "Penerimaan Belum Teridentifikasi", partner: "Belum Teridentifikasi", currency: "IDR", note: "Identifikasi transfer masuk 5 Juni berdasarkan konfirmasi pengirim", lines: [
+        { book: "Hutang", partner: "H. Suryanto Halim", description: "Tambahan setoran modal kerja H. Suryanto Halim", from: "terimabt", amount: 30_000_000 },
+        { book: "Titipan", partner: "Cabang Surabaya", description: "Titipan dana pembelian armada Cabang Surabaya", from: "terimabt", amount: 15_000_000 },
+      ] }),
+      // A dollar loan to Adib, and an unexplained dollar receipt that turns
+      // out to be its repayment: the held receipt settles the Piutang, and the
+      // gap between the two kurs is a realized difference of its own.
+      { kind: "cbt", date: day(5, 20), purpose: "PTG_SH_OUT", cashBank: "BCA-USD", currency: "USD", partner: "PT Adib Food", note: "Pinjaman dolar PT Adib Food untuk uang muka impor", lines: [{ budget: "pinjamanadib", amount: 2_000 }] },
+      { kind: "cbt", date: day(6, 16), purpose: "PBT_IN", cashBank: "BCA-USD", currency: "USD", rate: 16_300, partner: "Belum Teridentifikasi", note: "Transfer masuk USD dari bank koresponden tanpa keterangan", lines: [{ budget: "terimabtusd", amount: 2_000 }] },
+      reclass({ date: day(6, 30), book: "Penerimaan Belum Teridentifikasi", partner: "Belum Teridentifikasi", currency: "USD", note: "Transfer USD 16 Juni teridentifikasi sebagai pelunasan pinjaman PT Adib Food", lines: [
+        { book: "Piutang", partner: "PT Adib Food", description: "Pelunasan pinjaman dolar PT Adib Food", from: "terimabtusd", amount: 2_000, settle: "pinjamanadib" },
+      ] }),
+      // A bank debit with no document, later owned up to as a staff advance.
+      { kind: "cbt", date: day(7, 2), purpose: "PeBT_OUT", cashBank: "BCA-OPS", partner: "Belum Teridentifikasi", note: "Debet rekening BCA tanpa dokumen pendukung, ditampung", lines: [{ budget: "bayarbt", amount: 12_500_000 }] },
+      reclass({ date: day(7, 21), book: "Pengeluaran Belum Teridentifikasi", partner: "Belum Teridentifikasi", currency: "IDR", note: "Debet BCA 2 Juli teridentifikasi sebagai kasbon Budi Santoso", lines: [
+        { book: "Piutang", partner: "Budi Santoso", description: "Kasbon Budi Santoso, dipotong dari gaji", from: "bayarbt", amount: 12_500_000 },
+      ] }),
     ],
   };
 }
@@ -1910,6 +2065,9 @@ async function runPlan(plan: YearPlan, actor: number) {
         break;
       case "conversion":
         await postConversion(e.spec, actor);
+        break;
+      case "reclass":
+        await postReclass(e.spec, budgets, actor);
         break;
     }
   }

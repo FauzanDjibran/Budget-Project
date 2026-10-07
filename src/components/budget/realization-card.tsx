@@ -90,13 +90,12 @@ export function RealizationCard({
                     {realizationOf(r.direction).title}
                     {moves
                       .filter((m) => m.itemId === r.openedItemId)
-                      .map((m) => (
-                        <span key={m.reclassId} className="rsub">
-                          {formatMoney(m.amount, currencyLabel)} direklasifikasi ke {m.targetBook} ·{" "}
-                          {m.targetPartnerLabel} lewat{" "}
-                          <Link href={documentHref("fin_item_reclass", m.reclassId) ?? "#"}>
-                            {m.reclassNo}
-                          </Link>
+                      // One document can move one item on several lines, so
+                      // the reclass id alone is not a key.
+                      .map((m, k) => (
+                        <span key={`${m.reclassId}-${k}`} className="rsub">
+                          {formatMoney(m.amount, currencyLabel)} → {m.targetBook} · {m.targetPartnerLabel} (
+                          <Link href={documentHref("fin_item_reclass", m.reclassId) ?? "#"}>{m.reclassNo}</Link>)
                         </span>
                       ))}
                   </td>
