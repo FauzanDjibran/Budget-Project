@@ -21,10 +21,10 @@ import { Select } from "@/components/ui/select";
  */
 export function BookFilter({
   books,
-  selectedKey,
+  selectedId,
 }: {
-  books: { key: string; name: string }[];
-  selectedKey: string;
+  books: { categoryId: number; name: string }[];
+  selectedId: number;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -44,11 +44,11 @@ export function BookFilter({
   return (
     <Select
       variant="toolbar"
-      value={selectedKey}
+      value={String(selectedId)}
       onChange={onChange}
       title="Buku subjek yang ditampilkan"
       ariaLabel="Buku"
-      options={books.map((b) => ({ value: b.key, label: b.name }))}
+      options={books.map((b) => ({ value: String(b.categoryId), label: b.name }))}
     />
   );
 }

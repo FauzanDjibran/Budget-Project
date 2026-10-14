@@ -299,7 +299,6 @@ export async function nextReclassNo(): Promise<string> {
 
 export type ReclassBookOption = {
   categoryId: number;
-  key: string;
   name: string;
   /** Which cash direction raises the position — decides every side. */
   raises: "In" | "Out";
@@ -325,7 +324,8 @@ export type ReclassCurrencyOption = { id: number; label: string };
 export type ReclassItemOption = {
   id: number;
   itemNo: string;
-  book: string;
+  /** The book's Budget Category id. */
+  bookId: number;
   partnerId: number;
   currencyId: number;
   date: string;
@@ -379,7 +379,6 @@ export async function reclassRefs(companyIds: number[]): Promise<ReclassRefs> {
       const rule = rules.get(b.categoryId);
       return {
         categoryId: b.categoryId,
-        key: b.key,
         name: b.name,
         raises: b.raises,
         allowsIn: rule?.allowsIn ?? false,
@@ -399,7 +398,7 @@ export async function reclassRefs(companyIds: number[]): Promise<ReclassRefs> {
     items: items.map((i) => ({
       id: i.id,
       itemNo: i.itemNo,
-      book: i.book,
+      bookId: i.bookId,
       partnerId: i.partnerId,
       currencyId: i.currencyId,
       date: i.date,
@@ -640,7 +639,7 @@ export async function checkReclassLines(
           `${partner.category.category_label} milik ${partner.partner_label}.`
       );
     }
-    if (targetBook.key === header.book.key && partner.id === header.partnerId) {
+    if (targetBook.categoryId === header.book.categoryId && partner.id === header.partnerId) {
       return lineRefusal(
         `${row}tujuan sama dengan posisi sumber. Pilih buku atau Partner lain.`
       );
@@ -653,7 +652,7 @@ export async function checkReclassLines(
       const item = items.get(a.item_id);
       if (
         !item ||
-        item.book !== header.book.key ||
+        item.bookId !== header.book.categoryId ||
         item.partnerId !== header.partnerId ||
         item.currencyId !== header.currencyId
       ) {
@@ -690,7 +689,7 @@ export async function checkReclassLines(
         const item = items.get(a.item_id);
         if (
           !item ||
-          item.book !== targetBook.key ||
+          item.bookId !== targetBook.categoryId ||
           item.partnerId !== partner.id ||
           item.currencyId !== header.currencyId
         ) {
@@ -940,12 +939,15 @@ export async function applyReclass(
   // Every position the document lowers: the source, and each target whose
   // items it settles. Sorted, so two documents touching the same pair of
   // positions always take their locks in the same order.
-  const lowered = new Map<string, { book: string; partnerId: number }>();
-  lowered.set(`${source.key}:${doc.partner_id}`, { book: source.key, partnerId: doc.partner_id });
+  const lowered = new Map<string, { bookId: number; partnerId: number }>();
+  lowered.set(`${source.categoryId}:${doc.partner_id}`, {
+    bookId: source.categoryId,
+    partnerId: doc.partner_id,
+  });
   for (const l of lineCheck.lines) {
     if (l.effect === "settle") {
-      lowered.set(`${l.targetBook.key}:${l.targetPartnerId}`, {
-        book: l.targetBook.key,
+      lowered.set(`${l.targetBook.categoryId}:${l.targetPartnerId}`, {
+        bookId: l.targetBook.categoryId,
         partnerId: l.targetPartnerId,
       });
     }
@@ -956,7 +958,7 @@ export async function applyReclass(
     await prisma.$transaction(async (tx) => {
       await holdPostingPeriod(tx, [doc.company_id], date);
       for (const p of locks) {
-        await lockSubledgerPosition(tx, p.book, p.partnerId, doc.currency_id);
+        await lockSubledgerPosition(tx, p.bookId, p.partnerId, doc.currency_id);
       }
 
       // Every item as it stands under the locks, tracked across lines so an

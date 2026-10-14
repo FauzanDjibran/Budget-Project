@@ -352,7 +352,7 @@ describe("Post", () => {
     });
     assert.ok(row.opened_item_id, "the clearing link names the item it became");
     const opened = await itemOf(row.opened_item_id!);
-    assert.equal(opened.book, hutang.key);
+    assert.equal(opened.budget_category_id, hutang.categoryId);
     assert.equal(opened.partner_id, owner);
     assert.equal(opened.currency_id, usd);
     assert.equal(num(opened.rate), 15_000, "the source item's kurs, carried");
@@ -459,14 +459,14 @@ describe("Post", () => {
     assert.equal(item.status, "Cleared");
     assert.equal(num(item.base_balance), 0, "released to nothing on both measures");
     const opened = await prisma.subLedgerBalance.findMany({
-      where: { source_doc_id: id, source_doc_type_id: { not: null }, book: { in: [hutang.key, titipan.key] } },
+      where: { source_doc_id: id, source_doc_type_id: { not: null }, budget_category_id: { in: [hutang.categoryId, titipan.categoryId] } },
       orderBy: { id: "asc" },
     });
     assert.deepEqual(
-      opened.map((o) => [o.book, num(o.base_balance)]),
+      opened.map((o) => [o.budget_category_id, num(o.base_balance)]),
       [
-        [hutang.key, 9_000_000],
-        [titipan.key, 6_000_000],
+        [hutang.categoryId, 9_000_000],
+        [titipan.categoryId, 6_000_000],
       ]
     );
   });

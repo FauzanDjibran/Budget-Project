@@ -7,7 +7,7 @@ import { nextDocumentNumber } from "./document-number";
 import { relieve, roundBase } from "./fx";
 import type { PeriodRange } from "./period";
 import {
-  subledgerByKey,
+  subledgerById,
   subledgerMovement,
   type SubledgerDef,
   type SubledgerNature,
@@ -158,7 +158,7 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
   }
   const movement = subledgerMovement(book, entry.direction, amount);
   const key = {
-    book: book.key,
+    budget_category_id: book.categoryId,
     partner_id: entry.partnerId,
     currency_id: entry.currencyId,
   };
@@ -228,7 +228,7 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
   const item = await db.subLedgerBalance.findUnique({ where: { id: entry.itemId } });
   if (
     !item ||
-    item.book !== key.book ||
+    item.budget_category_id !== key.budget_category_id ||
     item.partner_id !== key.partner_id ||
     item.currency_id !== key.currency_id
   ) {
@@ -329,12 +329,12 @@ export async function rebuildSubledgerItem(
  * add up to.
  */
 export async function rebuildSubledgerBalance(
-  book: string,
+  bookId: number,
   partnerId: number,
   currencyId: number
 ): Promise<{ balance: number; baseBalance: number }> {
   const items = await prisma.subLedgerBalance.findMany({
-    where: { book, partner_id: partnerId, currency_id: currencyId },
+    where: { budget_category_id: bookId, partner_id: partnerId, currency_id: currencyId },
     select: { id: true },
   });
   let balance = 0;
@@ -376,6 +376,7 @@ export type SubledgerEntryRow = {
   baseAmount: number;
   baseMovement: number;
   /** The open item the entry opened or settled. */
+  itemId: number;
   itemNo: string;
   note: string | null;
   sourceDocId: number | null;
@@ -440,18 +441,18 @@ export type SubledgerReport = {
  */
 export async function subledgerReport(
   books: SubledgerDef[],
-  bookKey: string,
+  bookId: number | string,
   range: PeriodRange,
   options: { partnerIds?: number[]; companyIds: number[] }
 ): Promise<SubledgerReport | null> {
-  const book = subledgerByKey(books, bookKey);
+  const book = subledgerById(books, bookId);
   if (!book) return null;
 
   const partnerWhere = {
     company_id: { in: options.companyIds },
     ...(options.partnerIds?.length ? { id: { in: options.partnerIds } } : {}),
   };
-  const scope = { book: book.key, partner: partnerWhere };
+  const scope = { budget_category_id: book.categoryId, partner: partnerWhere };
 
   const [before, within] = await Promise.all([
     prisma.subLedger.groupBy({
@@ -530,6 +531,7 @@ export async function subledgerReport(
       rate: e.rate.toNumber(),
       baseAmount: e.base_amount.toNumber(),
       baseMovement,
+      itemId: e.balance_id,
       itemNo: e.item.item_no,
       note: e.note,
       sourceDocId: e.source_doc_id,
@@ -557,13 +559,13 @@ export async function subledgerReport(
     prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
     prisma.subLedger.groupBy({
       by: ["partner_id", "currency_id"],
-      where: { book: book.key, OR: keys },
+      where: { budget_category_id: book.categoryId, OR: keys },
       _sum: { movement: true, base_movement: true },
     }),
     // The position is the sum of its open items.
     prisma.subLedgerBalance.groupBy({
       by: ["partner_id", "currency_id"],
-      where: { book: book.key, OR: keys },
+      where: { budget_category_id: book.categoryId, OR: keys },
       _sum: { balance: true, base_balance: true },
     }),
   ]);
@@ -642,14 +644,14 @@ export async function subledgerReport(
  */
 export async function subledgerSubjects(
   books: SubledgerDef[],
-  bookKey: string,
+  bookId: number | string,
   companyIds: number[]
 ): Promise<{ id: number; label: string; name: string; active: boolean }[]> {
-  const book = subledgerByKey(books, bookKey);
+  const book = subledgerById(books, bookId);
   if (!book) return [];
 
   const rows = await prisma.subLedgerBalance.findMany({
-    where: { book: book.key, partner: { company_id: { in: companyIds } } },
+    where: { budget_category_id: book.categoryId, partner: { company_id: { in: companyIds } } },
     select: {
       partner: {
         select: {
@@ -691,10 +693,13 @@ export async function subledgerSubjects(
  */
 export async function subledgerEntryCounts(
   books: SubledgerDef[]
-): Promise<Map<string, number>> {
-  const rows = await prisma.subLedger.groupBy({ by: ["book"], _count: { _all: true } });
-  const counts = new Map<string, number>(books.map((s) => [s.key, 0]));
-  for (const r of rows) counts.set(r.book, r._count._all);
+): Promise<Map<number, number>> {
+  const rows = await prisma.subLedger.groupBy({
+    by: ["budget_category_id"],
+    _count: { _all: true },
+  });
+  const counts = new Map<number, number>(books.map((s) => [s.categoryId, 0]));
+  for (const r of rows) counts.set(r.budget_category_id, r._count._all);
   return counts;
 }
 
@@ -711,7 +716,8 @@ export async function subledgerEntryCounts(
  * to one.
  */
 export type SubledgerPosition = {
-  key: string;
+  /** The book's Budget Category id. */
+  bookId: number;
   name: string;
   icon: SubledgerDef["icon"];
   nature: SubledgerNature;
@@ -728,7 +734,7 @@ export async function subledgerPositions(
   // One row per subject: a position is the sum of its open items.
   const grouped = companyIds.length
     ? await prisma.subLedgerBalance.groupBy({
-        by: ["book", "partner_id", "currency_id"],
+        by: ["budget_category_id", "partner_id", "currency_id"],
         where: { partner: { company_id: { in: companyIds } } },
         _sum: { balance: true },
       })
@@ -738,7 +744,7 @@ export async function subledgerPositions(
     : [];
   const labelOf = new Map(currencies.map((c) => [c.id, c.currency_label]));
   const balances = grouped.map((g) => ({
-    book: g.book,
+    bookId: g.budget_category_id,
     currency_id: g.currency_id,
     currency: { currency_label: labelOf.get(g.currency_id) ?? "" },
     balance: g._sum.balance ?? { toNumber: () => 0 },
@@ -746,10 +752,10 @@ export async function subledgerPositions(
 
   return books.map((def) => {
     const mine = balances.filter(
-      (b) => b.book === def.key && b.balance.toNumber() !== 0
+      (b) => b.bookId === def.categoryId && b.balance.toNumber() !== 0
     );
     return {
-      key: def.key,
+      bookId: def.categoryId,
       name: def.name,
       icon: def.icon,
       nature: def.nature,
@@ -779,13 +785,13 @@ export async function subledgerPositions(
  * exists to stop.
  */
 export async function subledgerPosition(
-  book: string,
+  bookId: number,
   partnerId: number,
   currencyId: number,
   db: Db = prisma
 ): Promise<{ foreign: number; base: number }> {
   const row = await db.subLedgerBalance.aggregate({
-    where: { book, partner_id: partnerId, currency_id: currencyId },
+    where: { budget_category_id: bookId, partner_id: partnerId, currency_id: currencyId },
     _sum: { balance: true, base_balance: true },
   });
   return {
@@ -799,7 +805,8 @@ export async function subledgerPosition(
 export type SubledgerItem = {
   id: number;
   itemNo: string;
-  book: string;
+  /** The book's Budget Category id. */
+  bookId: number;
   partnerId: number;
   currencyId: number;
   /** `YYYY-MM-DD` — when the item was raised. */
@@ -820,7 +827,7 @@ export type SubledgerItem = {
 type ItemRecord = {
   id: number;
   item_no: string;
-  book: string;
+  budget_category_id: number;
   partner_id: number;
   currency_id: number;
   opened_date: Date;
@@ -838,7 +845,7 @@ type ItemRecord = {
 const toItem = (r: ItemRecord): SubledgerItem => ({
   id: r.id,
   itemNo: r.item_no,
-  book: r.book,
+  bookId: r.budget_category_id,
   partnerId: r.partner_id,
   currencyId: r.currency_id,
   date: r.opened_date.toISOString().slice(0, 10),
@@ -877,14 +884,14 @@ export async function subledgerItemsByIds(ids: number[]): Promise<SubledgerItem[
  * chosen: which item a return settles decides the gain or loss it recognises.
  */
 export async function openSubledgerItems(
-  subjects: { book: string; partnerId: number; currencyId: number }[]
+  subjects: { bookId: number; partnerId: number; currencyId: number }[]
 ): Promise<SubledgerItem[]> {
   if (!subjects.length) return [];
   const rows = await prisma.subLedgerBalance.findMany({
     where: {
       status: "Open",
       OR: subjects.map((s) => ({
-        book: s.book,
+        budget_category_id: s.bookId,
         partner_id: s.partnerId,
         currency_id: s.currencyId,
       })),
@@ -915,24 +922,33 @@ export async function openSubledgerItemsFor(
   return rows.map(toItem);
 }
 
-/** One open item as it stood on a report's end date. */
-export type SubledgerItemAsOf = {
+/** One open item over a report's period — the Saldo Buku Subjek's detail row. */
+export type SubledgerItemPeriod = {
   id: number;
   itemNo: string;
   /** `YYYY-MM-DD` — when the item was raised. */
   date: string;
   rate: number;
   original: number;
-  /** What the entries dated on or before the end date left on the item. */
-  remaining: number;
-  baseRemaining: number;
+  /** What the entries dated before the period left on the item. */
+  opening: number;
+  raised: number;
+  lowered: number;
+  /** `opening + raised − lowered`: what remains on the period's last day. */
+  closing: number;
+  baseClosing: number;
   note: string | null;
 };
 
 /** One Partner and currency in the Saldo Buku Subjek. */
 export type SubledgerBalanceRow = Omit<SubledgerSubject, "entries"> & {
-  /** The items the closing position is made of, as of the period's end. */
-  items: SubledgerItemAsOf[];
+  /**
+   * Every item that stood or moved in the period, oldest first. Their four
+   * figures add up to the row's own, column by column — an item settled
+   * inside the period is listed at a closing of nil, because its Berkurang is
+   * part of the row's.
+   */
+  items: SubledgerItemPeriod[];
 };
 
 export type SubledgerBalanceGroup = {
@@ -955,18 +971,18 @@ export type SubledgerBalanceReport = {
 
 /**
  * Saldo Buku Subjek — every Partner's position in one book over a period, and
- * the open items each closing position is made of.
+ * the open items it is made of.
  *
- * The movement figures are the Buku Subjek's own (`subledgerReport`), so the
- * two reports cannot disagree about a Partner. The items are read **as of the
- * period's end**: each item's remainder is the sum of the entries that name it
- * dated on or before `to`, which makes the items add up to the closing
- * position by construction — the same entries, grouped by item instead of by
- * Partner. An item with nothing left on that date is not listed.
+ * The Partner figures are the Buku Subjek's own (`subledgerReport`), so the
+ * two reports cannot disagree about a Partner. Each item is the same entries
+ * regrouped by the item they name: its opening is what the entries before the
+ * period left on it, its movements are the period's entries that name it. The
+ * items therefore add up to their Partner in **every** column by
+ * construction, not only in the closing one.
  *
  * A Partner whose position was nil throughout the period and did not move is
- * left out: it has nothing to report, and listing every Partner that ever held
- * something would bury the ones that do.
+ * left out, and so is an item: listing every one that ever held something
+ * would bury the ones that do.
  *
  * Totals are per currency. Adding two Partners' Hutang is meaningful — it is
  * what the control account in the General Ledger should hold — while adding
@@ -974,11 +990,11 @@ export type SubledgerBalanceReport = {
  */
 export async function subledgerBalanceReport(
   books: SubledgerDef[],
-  bookKey: string,
+  bookId: number | string,
   range: PeriodRange,
   options: { partnerIds?: number[]; companyIds: number[] }
 ): Promise<SubledgerBalanceReport | null> {
-  const ledger = await subledgerReport(books, bookKey, range, options);
+  const ledger = await subledgerReport(books, bookId, range, options);
   if (!ledger) return null;
   const { book } = ledger;
 
@@ -987,27 +1003,60 @@ export async function subledgerBalanceReport(
   );
   if (!subjects.length) return { book, range, groups: [] };
 
-  const sums = await prisma.subLedger.groupBy({
+  type Acc = {
+    opening: number;
+    baseOpening: number;
+    raised: number;
+    lowered: number;
+    baseMoved: number;
+  };
+  const acc = new Map<number, Acc>();
+  const reach = (id: number): Acc => {
+    let a = acc.get(id);
+    if (!a) {
+      a = { opening: 0, baseOpening: 0, raised: 0, lowered: 0, baseMoved: 0 };
+      acc.set(id, a);
+    }
+    return a;
+  };
+
+  const before = await prisma.subLedger.groupBy({
     by: ["balance_id"],
     where: {
-      book: book.key,
-      entry_date: { lte: startOf(range.to) },
+      budget_category_id: book.categoryId,
+      entry_date: { lt: startOf(range.from) },
       OR: subjects.map((s) => ({ partner_id: s.partnerId, currency_id: s.currencyId })),
     },
     _sum: { movement: true, base_movement: true },
   });
-  const standing = sums.filter((s) => cents(s._sum.movement?.toNumber() ?? 0) !== 0);
-  const records = standing.length
+  for (const b of before) {
+    const opening = b._sum?.movement?.toNumber() ?? 0;
+    if (cents(opening) === 0) continue;
+    const a = reach(b.balance_id);
+    a.opening = opening;
+    a.baseOpening = b._sum?.base_movement?.toNumber() ?? 0;
+  }
+  // Signed exactly as `subledgerReport` signs its subjects, so the two sums
+  // cannot part company.
+  for (const s of subjects) {
+    for (const e of s.entries) {
+      const a = reach(e.itemId);
+      if (e.movement >= 0) a.raised += e.movement;
+      else a.lowered += -e.movement;
+      a.baseMoved += e.baseMovement;
+    }
+  }
+
+  const records = acc.size
     ? await prisma.subLedgerBalance.findMany({
-        where: { id: { in: standing.map((s) => s.balance_id) } },
+        where: { id: { in: [...acc.keys()] } },
         orderBy: [{ opened_date: "asc" }, { id: "asc" }],
       })
     : [];
-  const sumOf = new Map(standing.map((s) => [s.balance_id, s._sum]));
 
-  const itemsOf = new Map<string, SubledgerItemAsOf[]>();
+  const itemsOf = new Map<string, SubledgerItemPeriod[]>();
   for (const r of records) {
-    const s = sumOf.get(r.id)!;
+    const a = acc.get(r.id)!;
     const k = `${r.partner_id}:${r.currency_id}`;
     itemsOf.set(k, [
       ...(itemsOf.get(k) ?? []),
@@ -1017,8 +1066,11 @@ export async function subledgerBalanceReport(
         date: r.opened_date.toISOString().slice(0, 10),
         rate: r.rate.toNumber(),
         original: r.original.toNumber(),
-        remaining: s.movement?.toNumber() ?? 0,
-        baseRemaining: roundBase(s.base_movement?.toNumber() ?? 0),
+        opening: a.opening,
+        raised: a.raised,
+        lowered: a.lowered,
+        closing: a.opening + a.raised - a.lowered,
+        baseClosing: roundBase(a.baseOpening + a.baseMoved),
         note: r.note,
       },
     ]);
@@ -1081,11 +1133,11 @@ export async function subledgerBalanceReport(
  */
 export async function lockSubledgerPosition(
   db: Prisma.TransactionClient,
-  book: string,
+  bookId: number,
   partnerId: number,
   currencyId: number
 ): Promise<void> {
-  const key = `sub_ledger_balance:${book}:${partnerId}:${currencyId}`;
+  const key = `sub_ledger_balance:${bookId}:${partnerId}:${currencyId}`;
   await db.$queryRaw`SELECT 1 AS held FROM (SELECT pg_advisory_xact_lock(hashtext(${key}))) AS lock`;
 }
 
@@ -1095,20 +1147,20 @@ export async function lockSubledgerPosition(
  * nothing on both measures are left out.
  */
 export async function subledgerPositionsFor(
-  books: string[],
+  bookIds: number[],
   partnerIds: number[]
 ): Promise<
-  { book: string; partnerId: number; currencyId: number; foreign: number; base: number }[]
+  { bookId: number; partnerId: number; currencyId: number; foreign: number; base: number }[]
 > {
-  if (!books.length || !partnerIds.length) return [];
+  if (!bookIds.length || !partnerIds.length) return [];
   const rows = await prisma.subLedgerBalance.groupBy({
-    by: ["book", "partner_id", "currency_id"],
-    where: { book: { in: books }, partner_id: { in: partnerIds } },
+    by: ["budget_category_id", "partner_id", "currency_id"],
+    where: { budget_category_id: { in: bookIds }, partner_id: { in: partnerIds } },
     _sum: { balance: true, base_balance: true },
   });
   return rows
     .map((r) => ({
-      book: r.book,
+      bookId: r.budget_category_id,
       partnerId: r.partner_id,
       currencyId: r.currency_id,
       foreign: r._sum.balance?.toNumber() ?? 0,

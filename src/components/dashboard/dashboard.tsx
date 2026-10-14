@@ -200,9 +200,9 @@ export function Dashboard({ data }: { data: DashboardData }) {
                 </thead>
                 <tbody>
                   {books.map((b) => (
-                    <tr key={b.key}>
+                    <tr key={b.bookId}>
                       <td>
-                        <Link className="pri" href={reportHref("subledger", { book: b.key })}>
+                        <Link className="pri" href={reportHref("subledger", { book: b.bookId })}>
                           {b.name}
                         </Link>
                         <span className="rsub">{b.closingLabel}</span>

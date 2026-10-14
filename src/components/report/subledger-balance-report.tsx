@@ -1,41 +1,35 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { ExpandAll } from "@/components/ui/expand-all";
+import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatMoney, formatRate } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
-import { reportHref } from "@/lib/siba/reports";
 import type { SubledgerBalanceReport as Report } from "@/lib/siba/subledger";
 
 /**
- * Saldo Buku Subjek — the summary half of the subject-book pair, drawn the way
- * Saldo Kas & Bank is: one section per currency, one row per Partner with its
- * opening, what raised and lowered it, and its closing, totalled per currency.
+ * Saldo Buku Subjek — one block per Partner and currency, the shape Buku
+ * Subjek and the General Ledger give a subject: the block header names the
+ * Partner and the currency and states Saldo Awal, Bertambah, Berkurang and the
+ * closing as a summary strip; the block holds the open items that position is
+ * made of.
  *
- * Each Partner row folds open onto the **open items its closing is made of**,
- * as they stood on the period's last day, each at the kurs it was raised at —
- * which is the question the old Posisi Open Item answered on its own page,
- * with no way to see how the position got there. The Partner's name opens its
- * Buku Subjek for the same book and period: a summary figure should be one
- * click from the entries that produced it.
+ * Every item that stood or moved in the period is listed, at the kurs it was
+ * raised at, with its own Saldo Awal, Bertambah, Berkurang and closing, so the
+ * items add up to the header in every column — an item settled inside the
+ * period is listed at a closing of nil. One level folds: the block, by its
+ * header. Blocks open expanded, and Buka / Tutup Semua fold all of them.
  *
- * The tree reuses the statements' fold (`table.grid.stm`), so the chevron,
- * the indentation and Buka / Tutup Semua read as they do on the Laba Rugi.
+ * Nothing is added across currencies: a Partner holding in two currencies has
+ * two blocks.
  */
-export function SubledgerBalanceReport({
-  report,
-  companyId,
-}: {
-  report: Report;
-  companyId: number;
-}) {
-  const [open, setOpen] = useState<Set<string>>(new Set());
+export function SubledgerBalanceReport({ report }: { report: Report }) {
   const keyOf = (r: { partnerId: number; currencyId: number }) =>
     `${r.partnerId}:${r.currencyId}`;
-
   const rows = report.groups.flatMap((g) => g.rows);
+  const [open, setOpen] = useState<Set<string>>(() => new Set(rows.map(keyOf)));
+
   if (!rows.length) {
     return (
       <div className="empty sm">
@@ -51,7 +45,6 @@ export function SubledgerBalanceReport({
     );
   }
 
-  const foldable = rows.filter((r) => r.items.length > 0);
   const toggle = (k: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -60,219 +53,171 @@ export function SubledgerBalanceReport({
       return next;
     });
 
-  const bookHref = (partnerId: number) =>
-    reportHref("subledger", {
-      company: companyId,
-      book: report.book.key,
-      partners: partnerId,
-      from: report.range.from,
-      to: report.range.to,
-    });
+  // A book that only accumulates — Investasi, Hasil Investasi — keeps its
+  // items as a record of where the money went; nothing settles them, so they
+  // are not called open items.
+  const noun = report.book.nature === "cumulative" ? "rincian" : "open item";
 
   return (
     <>
       <div className="rhead">
         <span className="count">
-          <b>{rows.length}</b> Partner · {formatDate(report.range.from)} –{" "}
+          <b>{rows.length}</b> subjek · {formatDate(report.range.from)} –{" "}
           {formatDate(report.range.to)} · {report.book.closingLabel} bertambah saat{" "}
           {report.book.raises === "In" ? "penerimaan uang" : "pengeluaran uang"}
         </span>
         <div className="tspace" />
-        {foldable.length > 0 && (
+        {rows.length > 1 && (
           <ExpandAll
-            onExpand={() => setOpen(new Set(foldable.map(keyOf)))}
+            onExpand={() => setOpen(new Set(rows.map(keyOf)))}
             onCollapse={() => setOpen(new Set())}
-            allOpen={open.size === foldable.length}
+            allOpen={open.size === rows.length}
             allClosed={open.size === 0}
           />
         )}
       </div>
 
-      {report.groups.map((g) => {
-        const money = (n: number) => formatMoney(n, g.currencyLabel);
-        const foreign = !isBaseCurrency(g.currencyLabel);
+      {rows.map((r) => {
+        const key = keyOf(r);
+        const isOpen = open.has(key);
+        const money = (n: number) => formatMoney(n, r.currencyLabel);
         const base = (n: number) => formatMoney(n, BASE_CURRENCY_LABEL);
+        const foreign = !isBaseCurrency(r.currencyLabel);
+        const figure = (n: number) => (
+          <span className={`mny${n ? "" : " z"}${n < 0 ? " neg" : ""}`}>{money(n)}</span>
+        );
         return (
-          <div className="cblock" key={g.currencyId}>
-            <div className="cbh">
-              <b>{g.currencyLabel}</b>
-              <span className="cbn">{g.rows.length} Partner</span>
+          <div className="cblock" key={key}>
+            <div
+              className="cbh"
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
+              onClick={() => toggle(key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggle(key);
+                }
+              }}
+              style={{ cursor: "pointer" }}
+            >
+              <span className={`chev${isOpen ? " o" : ""}`}>
+                <Icon name="chev" size={12} />
+              </span>
+              <b>{r.label}</b>
+              <span className="cbn">
+                {r.name} · {r.categoryLabel} · {r.currencyLabel} · {r.items.length}{" "}
+                {noun}
+                {r.active ? "" : " · non-aktif"}
+              </span>
+              <ReportSummary
+                figures={[
+                  { label: "Saldo Awal", value: money(r.opening), zero: !r.opening },
+                  { label: "Bertambah", value: money(r.raised), zero: !r.raised },
+                  { label: "Berkurang", value: money(r.lowered), zero: !r.lowered },
+                  {
+                    label: report.book.closingLabel,
+                    value: money(r.closing),
+                    key: true,
+                    negative: r.closing < 0,
+                  },
+                  ...(foreign
+                    ? [
+                        {
+                          label: `Nilai ${BASE_CURRENCY_LABEL}`,
+                          value: base(r.baseClosing),
+                          zero: !r.baseClosing,
+                        },
+                      ]
+                    : []),
+                ]}
+              />
             </div>
 
-            <div className="tw">
-              <table
-                className="grid stm"
-                style={{ tableLayout: "fixed", minWidth: foreign ? 1000 : 850 }}
-              >
-                <thead>
-                  <tr>
-                    <th>Partner</th>
-                    <th className="num" style={{ width: 140 }}>
-                      Saldo Awal
-                    </th>
-                    <th className="num" style={{ width: 140 }}>
-                      Bertambah
-                    </th>
-                    <th className="num" style={{ width: 140 }}>
-                      Berkurang
-                    </th>
-                    <th className="num" style={{ width: 172 }}>
-                      {report.book.closingLabel}
-                    </th>
-                    {foreign && (
-                      <th className="num" style={{ width: 150 }}>
-                        Nilai {BASE_CURRENCY_LABEL}
+            {!r.reconciles && (
+              <p className="rwarn">
+                <Icon name="warn" size={12} />
+                Posisi tersimpan tidak sama dengan jumlah seluruh entri buku
+                ini. Buku ini bersifat append-only, jadi selisih menandakan
+                gangguan sistem — laporkan sebelum angka ini dipakai.
+              </p>
+            )}
+
+            {isOpen && (
+              <div className="tw">
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 92 }}>Tanggal</th>
+                      <th style={{ width: 106 }}>
+                        {noun === "rincian" ? "Rincian" : "Open Item"}
                       </th>
+                      <th>Keterangan</th>
+                      <th className="num" style={{ width: 126 }}>
+                        Saldo Awal
+                      </th>
+                      <th className="num" style={{ width: 126 }}>
+                        Bertambah
+                      </th>
+                      <th className="num" style={{ width: 126 }}>
+                        Berkurang
+                      </th>
+                      <th className="num" style={{ width: 134 }}>
+                        Saldo
+                      </th>
+                      {foreign && (
+                        <th className="num" style={{ width: 134 }}>
+                          Nilai {BASE_CURRENCY_LABEL}
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {r.items.map((i) => (
+                      <tr key={i.id}>
+                        <td className="mono mut" style={{ fontSize: "11.5px" }}>
+                          {formatDate(i.date)}
+                        </td>
+                        <td>
+                          <span className="lab">{i.itemNo}</span>
+                        </td>
+                        <td className="pri wrapok">
+                          {i.note ?? "—"}
+                          {foreign && <span className="rsub">@ {formatRate(i.rate)}</span>}
+                        </td>
+                        <td className="num">{figure(i.opening)}</td>
+                        <td className="num">{figure(i.raised)}</td>
+                        <td className="num">{figure(i.lowered)}</td>
+                        <td className="num">{figure(i.closing)}</td>
+                        {foreign && (
+                          <td className="num">
+                            <span className={`mny${i.baseClosing ? "" : " z"}`}>
+                              {base(i.baseClosing)}
+                            </span>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+
+                    {r.items.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={foreign ? 8 : 7}
+                          className="mut"
+                          style={{ textAlign: "center" }}
+                        >
+                          Tidak ada {noun} pada periode ini.
+                        </td>
+                      </tr>
                     )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {g.rows.map((r) => {
-                    const k = keyOf(r);
-                    const isOpen = open.has(k);
-                    return (
-                      <PartnerRows
-                        key={k}
-                        isOpen={isOpen}
-                        onToggle={() => toggle(k)}
-                        row={r}
-                        href={bookHref(r.partnerId)}
-                        foreign={foreign}
-                        money={money}
-                        base={base}
-                        noun={report.book.nature === "cumulative" ? "rincian" : "open item"}
-                      />
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="totrow">
-                    <td style={{ textAlign: "right" }}>Total {g.currencyLabel}</td>
-                    <td className="num">{money(g.opening)}</td>
-                    <td className="num">{money(g.raised)}</td>
-                    <td className="num">{money(g.lowered)}</td>
-                    <td className="num">
-                      <b>{money(g.closing)}</b>
-                    </td>
-                    {foreign && (
-                      <td className="num">
-                        <b>{base(g.baseClosing)}</b>
-                      </td>
-                    )}
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         );
       })}
-    </>
-  );
-}
-
-function PartnerRows({
-  row: r,
-  isOpen,
-  onToggle,
-  href,
-  foreign,
-  money,
-  base,
-  noun,
-}: {
-  row: Report["groups"][number]["rows"][number];
-  isOpen: boolean;
-  onToggle: () => void;
-  href: string;
-  foreign: boolean;
-  money: (n: number) => string;
-  base: (n: number) => string;
-  /**
-   * What a row unfolds into. A book that only accumulates — Investasi, Hasil
-   * Investasi — keeps its items as a record of where the money went or came
-   * from; nothing ever settles them, so they are not called open items.
-   */
-  noun: string;
-}) {
-  const figure = (n: number, strong = false) => (
-    <span className={`mny${n ? "" : " z"}${n < 0 ? " neg" : ""}`}>
-      {strong ? <b>{money(n)}</b> : money(n)}
-    </span>
-  );
-  return (
-    <>
-      <tr>
-        <td className="stn">
-          <div className="stc">
-            {r.items.length ? (
-              <button
-                className="tgl"
-                onClick={onToggle}
-                title={isOpen ? `Tutup ${noun}` : `Buka ${noun}`}
-              >
-                <span className={`chev${isOpen ? " o" : ""}`}>
-                  <Icon name="chev" size={11} />
-                </span>
-              </button>
-            ) : (
-              <span className="tgl" />
-            )}
-            <Link className="lab" href={href} title="Buka Buku Subjek Partner ini">
-              {r.label}
-            </Link>
-            <span className="nm">{r.name}</span>
-            {!r.active && <span className="bdg s-bad">Non Aktif</span>}
-            {!r.reconciles && (
-              <span
-                className="bdg s-warn"
-                title="Posisi tersimpan tidak sama dengan jumlah entri buku — gangguan sistem"
-              >
-                selisih
-              </span>
-            )}
-            {r.items.length > 0 && (
-              <span className="cd">
-                {r.items.length} {noun}
-              </span>
-            )}
-          </div>
-        </td>
-        <td className="num">{figure(r.opening)}</td>
-        <td className="num">{figure(r.raised)}</td>
-        <td className="num">{figure(r.lowered)}</td>
-        <td className="num">{figure(r.closing, true)}</td>
-        {foreign && (
-          <td className="num">
-            <span className={`mny${r.baseClosing ? "" : " z"}`}>
-              {base(r.baseClosing)}
-            </span>
-          </td>
-        )}
-      </tr>
-      {isOpen &&
-        r.items.map((i) => (
-          <tr key={i.id} className="st-par">
-            <td className="stn d2">
-              <div className="stc">
-                <span className="cd">{i.itemNo}</span>
-                <span className="cd">{formatDate(i.date)}</span>
-                {foreign && <span className="cd">@ {formatRate(i.rate)}</span>}
-                <span className="nm">{i.note ?? "—"}</span>
-              </div>
-            </td>
-            <td className="num" colSpan={3}>
-              <span className="mny z">awal {money(i.original)}</span>
-            </td>
-            <td className="num">
-              <span className="mny">{money(i.remaining)}</span>
-            </td>
-            {foreign && (
-              <td className="num">
-                <span className="mny">{base(i.baseRemaining)}</span>
-              </td>
-            )}
-          </tr>
-        ))}
     </>
   );
 }

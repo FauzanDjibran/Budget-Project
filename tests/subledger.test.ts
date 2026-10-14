@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import {
   type SubledgerDef,
-  subledgerByKey,
+  subledgerById,
   subledgerForCategory,
   subledgerMovement,
 } from "../src/lib/siba/subledger-catalogue";
@@ -148,21 +148,17 @@ describe("a category keeps a book exactly when it names a Partner", () => {
     }
   });
 
-  test("a book is identified by its category, on both keys", () => {
-    const keys = new Set<string>();
+  test("a book is identified by its category id, and by nothing else", () => {
     const ids = new Set<number>();
     for (const book of books) {
-      assert.ok(!keys.has(book.key), `duplicate book key ${book.key}`);
       assert.ok(!ids.has(book.categoryId), `duplicate category id ${book.categoryId}`);
-      keys.add(book.key);
       ids.add(book.categoryId);
-
-      // The stored key is the category's immutable code, which is what makes a
-      // rename unable to orphan a book.
-      assert.match(book.key, /^bcat\./);
-      assert.equal(subledgerByKey(books, book.key)?.key, book.key);
-      assert.equal(subledgerForCategory(books, book.categoryId)?.key, book.key);
+      // The report URL carries the id as text; both forms find the same book.
+      assert.equal(subledgerById(books, book.categoryId)?.categoryId, book.categoryId);
+      assert.equal(subledgerById(books, String(book.categoryId))?.categoryId, book.categoryId);
+      assert.equal(subledgerForCategory(books, book.categoryId)?.categoryId, book.categoryId);
     }
+    assert.equal(subledgerById(books, "bcat.0002"), null, "a code is no longer a way in");
   });
 
   test("one Report View covers every book, and one menu entry reaches it", () => {
@@ -307,12 +303,12 @@ describe("the book is append-only, and its total is derived", () => {
     assert.equal(repaid.balance_after.toNumber(), 6_000_000, "and that item is what moves");
     assert.notEqual(third.balance_id, first.balance_id, "a new borrowing is a new item");
     assert.equal(
-      (await subledgerPosition(bookOf("Hutang").key, partner, currency)).foreign,
+      (await subledgerPosition(bookOf("Hutang").categoryId, partner, currency)).foreign,
       7_500_000,
       "10.000.000 borrowed, 4.000.000 repaid, 1.500.000 borrowed again"
     );
     assert.equal(
-      (await rebuildSubledgerBalance(bookOf("Hutang").key, partner, currency)).balance,
+      (await rebuildSubledgerBalance(bookOf("Hutang").categoryId, partner, currency)).balance,
       7_500_000,
       "and recomputing every item from its entries agrees with the stored total"
     );
@@ -373,7 +369,7 @@ describe("the book is append-only, and its total is derived", () => {
 
       const report = await subledgerReport(
         books,
-        bookOf("Titipan").key,
+        bookOf("Titipan").categoryId,
         { from: "2026-01-01", to: "2026-12-31" },
         { partnerIds: [partner], companyIds: [induk] }
       );
@@ -428,7 +424,7 @@ describe("a subledger report reconciles on its own page", () => {
   const january = { from: "2026-01-01", to: "2026-01-31" };
 
   test("opening + naik − turun = closing", async () => {
-    const report = await subledgerReport(books, bookOf("Prive").key, january, {
+    const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -445,7 +441,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("both ends of the range are inside it, and earlier rows are not listed", async () => {
-    const report = await subledgerReport(books, bookOf("Prive").key, january, {
+    const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -454,7 +450,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("the stored running balance agrees with the report's arithmetic", async () => {
-    const report = await subledgerReport(books, bookOf("Prive").key, january, {
+    const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -464,7 +460,7 @@ describe("a subledger report reconciles on its own page", () => {
   test("a period with no movement still reports its position", async () => {
     const report = await subledgerReport(
       books,
-      bookOf("Prive").key,
+      bookOf("Prive").categoryId,
       { from: "2026-06-01", to: "2026-06-30" },
       { partnerIds: [partner], companyIds: [induk] }
     );
@@ -479,7 +475,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("a Company the reader may not see is not reported", async () => {
-    const report = await subledgerReport(books, bookOf("Prive").key, january, {
+    const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
       partnerIds: [partner],
       companyIds: [-1],
     });
@@ -487,12 +483,12 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("the filter offers only subjects the book actually holds", async () => {
-    const subjects = await subledgerSubjects(books, bookOf("Prive").key, [induk]);
+    const subjects = await subledgerSubjects(books, bookOf("Prive").categoryId, [induk]);
     assert.ok(
       subjects.some((s) => s.id === partner),
       "a Partner with entries is offered"
     );
-    const hutang = await subledgerSubjects(books, bookOf("Hutang").key, [induk]);
+    const hutang = await subledgerSubjects(books, bookOf("Hutang").categoryId, [induk]);
     assert.ok(
       !hutang.some((s) => s.id === partner),
       "and is not offered by a book it never moved in"
@@ -508,7 +504,7 @@ describe("a subledger report reconciles on its own page", () => {
       [{ from: "2025-12-01", to: "2025-12-31" }, 2_000_000, [2_000_000]],
       [{ from: "2026-06-01", to: "2026-06-30" }, 4_199_999, [1_600_000, 1_000_000, 600_000, 999_999]],
     ] as const) {
-      const report = await subledgerBalanceReport(books, bookOf("Prive").key, range, {
+      const report = await subledgerBalanceReport(books, bookOf("Prive").categoryId, range, {
         partnerIds: [partner],
         companyIds: [induk],
       });
@@ -516,21 +512,31 @@ describe("a subledger report reconciles on its own page", () => {
       assert.equal(row.closing, closing);
       assert.equal(row.closing, row.opening + row.raised - row.lowered);
       assert.deepEqual(
-        row.items.map((i) => i.remaining),
+        row.items.filter((i) => i.closing !== 0).map((i) => i.closing),
         [...remaining],
-        `items as of ${range.to}, oldest first`
+        `items standing at ${range.to}, oldest first`
       );
-      assert.equal(
-        Math.round(row.items.reduce((t, i) => t + i.remaining, 0) * 100),
-        Math.round(row.closing * 100),
-        "the open items are the closing position, entry for entry"
-      );
+      // The Partner row is its items' subtotal in every column, not only the
+      // closing one — an item settled inside the period is listed at nil.
+      const total = (pick: (i: (typeof row.items)[number]) => number) =>
+        Math.round(row.items.reduce((t, i) => t + pick(i), 0) * 100);
+      for (const [name, pick, expected] of [
+        ["opening", (i) => i.opening, row.opening],
+        ["raised", (i) => i.raised, row.raised],
+        ["lowered", (i) => i.lowered, row.lowered],
+        ["closing", (i) => i.closing, row.closing],
+      ] as const satisfies readonly (readonly [string, (i: (typeof row.items)[number]) => number, number])[]) {
+        assert.equal(total(pick), Math.round(expected * 100), `items add up to the ${name}`);
+      }
+      for (const i of row.items) {
+        assert.equal(i.closing, i.opening + i.raised - i.lowered, `${i.itemNo} reconciles`);
+      }
       assert.equal(report!.groups[0].closing, row.closing, "totalled per currency");
     }
   });
 
   test("Saldo Buku Subjek respects the Company scope", async () => {
-    const report = await subledgerBalanceReport(books, bookOf("Prive").key, january, {
+    const report = await subledgerBalanceReport(books, bookOf("Prive").categoryId, january, {
       partnerIds: [partner],
       companyIds: [-1],
     });
@@ -539,10 +545,10 @@ describe("a subledger report reconciles on its own page", () => {
 
   test("an unknown book answers with nothing rather than guessing", async () => {
     assert.equal(
-      await subledgerReport(books, "bcat.9999", january, { companyIds: [induk] }),
+      await subledgerReport(books, 999999, january, { companyIds: [induk] }),
       null
     );
-    assert.deepEqual(await subledgerSubjects(books, "bcat.9999", [induk]), []);
+    assert.deepEqual(await subledgerSubjects(books, 999999, [induk]), []);
   });
 });
 
@@ -591,7 +597,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
       })
     );
     const raised = await prisma.subLedger.findFirstOrThrow({
-      where: { book: bookOf("Hutang").key, partner_id: partner },
+      where: { budget_category_id: bookOf("Hutang").categoryId, partner_id: partner },
     });
     assert.equal(raised.movement.toNumber(), 1_000);
     assert.equal(raised.base_movement.toNumber(), 15_000_000);
@@ -611,7 +617,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
       })
     );
     const lowered = await prisma.subLedger.findFirstOrThrow({
-      where: { book: bookOf("Hutang").key, partner_id: partner, direction: "Out" },
+      where: { budget_category_id: bookOf("Hutang").categoryId, partner_id: partner, direction: "Out" },
     });
     assert.equal(lowered.movement.toNumber(), -400);
     assert.equal(lowered.base_movement.toNumber(), -6_000_000);
@@ -621,7 +627,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
       "the amount itself stays positive on both measures"
     );
 
-    const rebuilt = await rebuildSubledgerBalance(bookOf("Hutang").key, partner, currency);
+    const rebuilt = await rebuildSubledgerBalance(bookOf("Hutang").categoryId, partner, currency);
     assert.deepEqual(rebuilt, { balance: 600, baseBalance: 9_000_000 });
   });
 
@@ -650,7 +656,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
     }
 
     const march = { from: "2026-03-01", to: "2026-03-31" };
-    const report = await subledgerReport(books, bookOf("Hutang").key, march, {
+    const report = await subledgerReport(books, bookOf("Hutang").categoryId, march, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -663,7 +669,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
     // Settle both items to nothing, each at its own rate. The position then has
     // no rate at all.
     const items = await prisma.subLedgerBalance.findMany({
-      where: { book: bookOf("Hutang").key, partner_id: partner },
+      where: { budget_category_id: bookOf("Hutang").categoryId, partner_id: partner },
       orderBy: { id: "asc" },
     });
     for (const item of items) {
@@ -682,7 +688,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
         })
       );
     }
-    const cleared = await subledgerReport(books, bookOf("Hutang").key, march, {
+    const cleared = await subledgerReport(books, bookOf("Hutang").categoryId, march, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -724,7 +730,7 @@ describe("a position carries a rate, and it is derived from what built it", () =
 
     // February only, so January folds into the opening on both measures.
     const february = { from: "2026-02-01", to: "2026-02-28" };
-    const report = await subledgerReport(books, bookOf("Hutang").key, february, {
+    const report = await subledgerReport(books, bookOf("Hutang").categoryId, february, {
       partnerIds: [partner],
       companyIds: [induk],
     });

@@ -116,7 +116,7 @@ export function DncnForm({
   const standing =
     book && partner && currency
       ? refs.positions.find(
-          (p) => p.book === book.key && p.partnerId === partner.id && p.currencyId === currency.id
+          (p) => p.bookId === book.categoryId && p.partnerId === partner.id && p.currencyId === currency.id
         ) ?? { foreign: 0, base: 0 }
       : null;
 

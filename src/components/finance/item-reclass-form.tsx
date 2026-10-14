@@ -131,7 +131,7 @@ export function ItemReclassForm({
 
   /** The source position's open items — what a line may move. */
   const sourceItems = refs.items.filter(
-    (i) => book && i.book === book.key && i.partnerId === partnerId && i.currencyId === currencyId
+    (i) => book && i.bookId === book.categoryId && i.partnerId === partnerId && i.currencyId === currencyId
   );
 
   const headerReady = Boolean(book && partnerId && currencyId);
@@ -195,7 +195,7 @@ export function ItemReclassForm({
   // ------------------------------------------------------------- narrowing
 
   /** Partners holding an open item in the chosen book, in any currency. */
-  const holders = new Set(refs.items.filter((i) => book && i.book === book.key).map((i) => i.partnerId));
+  const holders = new Set(refs.items.filter((i) => book && i.bookId === book.categoryId).map((i) => i.partnerId));
   const partnerOptions = refs.partners
     .filter((p) => (p.active && holders.has(p.id)) || p.id === partnerId)
     .map((p) => ({ id: p.id, label: p.label, name: p.name, active: p.active }));
@@ -205,7 +205,7 @@ export function ItemReclassForm({
     .filter(
       (c) =>
         c.id === currencyId ||
-        refs.items.some((i) => book && i.book === book.key && i.partnerId === partnerId && i.currencyId === c.id)
+        refs.items.some((i) => book && i.bookId === book.categoryId && i.partnerId === partnerId && i.currencyId === c.id)
     )
     .map((c) => ({ value: String(c.id), label: c.label }));
 
@@ -221,14 +221,14 @@ export function ItemReclassForm({
       ? refs.partners
           .filter((p) => p.companyId === partner.companyId)
           .filter((p) => target.partnerCategories.includes(p.categoryLabel))
-          .filter((p) => !(target.key === book?.key && p.id === partnerId))
+          .filter((p) => !(target.categoryId === book?.categoryId && p.id === partnerId))
           .filter((p) => p.active || p.id === chosen)
           .map((p) => ({ id: p.id, label: p.label, name: p.name, active: p.active }))
       : [];
 
   const targetItemsFor = (target: ReclassBookOption | null, targetPartner: number | null) =>
     refs.items.filter(
-      (i) => target && i.book === target.key && i.partnerId === targetPartner && i.currencyId === currencyId
+      (i) => target && i.bookId === target.categoryId && i.partnerId === targetPartner && i.currencyId === currencyId
     );
 
   // ------------------------------------------------------------- valuation

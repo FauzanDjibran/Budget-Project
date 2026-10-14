@@ -729,14 +729,14 @@ export async function eligibleBudgets(
   // settle. Asked of the book's own direction, so a Titipan returned and a
   // Piutang collected both read as lowering whatever the cash direction is.
   const books = await loadSubledgers();
-  const lowering = new Map<number, string>();
+  const lowering = new Map<number, number>();
   const opening = new Set<number>();
   const accumulating = new Set<number>();
   for (const { row } of outstanding) {
     const book = subledgerForCategory(books, row.category_id);
     if (book && row.partner_id != null) {
       if (subledgerMovement(book, header.transaction_type, 1) < 0) {
-        lowering.set(row.id, book.key);
+        lowering.set(row.id, book.categoryId);
       } else {
         opening.add(row.id);
         if (book.nature === "cumulative") accumulating.add(row.id);
@@ -747,7 +747,7 @@ export async function eligibleBudgets(
     outstanding
       .filter(({ row }) => lowering.has(row.id))
       .map(({ row }) => ({
-        book: lowering.get(row.id)!,
+        bookId: lowering.get(row.id)!,
         partnerId: row.partner_id!,
         currencyId: context.currencyId,
       }))
@@ -761,7 +761,7 @@ export async function eligibleBudgets(
       ? openItems
           .filter(
             (i) =>
-              i.book === lowering.get(row.id) &&
+              i.bookId === lowering.get(row.id) &&
               i.partnerId === row.partner_id &&
               i.currencyId === context.currencyId
           )
@@ -1647,7 +1647,7 @@ async function planPosting(
         );
         if (
           !item ||
-          item.book !== book.key ||
+          item.bookId !== book.categoryId ||
           item.partnerId !== budget.partner_id ||
           item.currencyId !== doc.currency_id
         ) {
@@ -2013,12 +2013,12 @@ export async function applyPosting(
       ...new Set(
         plan.lines
           .filter((l) => l.items.length && l.book)
-          .map((l) => `${l.book!.key}|${l.partnerId}`)
+          .map((l) => `${l.book!.categoryId}|${l.partnerId}`)
       ),
     ].sort();
     for (const k of held) {
-      const [bookKey, partnerId] = k.split("|");
-      await lockSubledgerPosition(tx, bookKey, Number(partnerId), doc.currency_id);
+      const [bookId, partnerId] = k.split("|");
+      await lockSubledgerPosition(tx, Number(bookId), Number(partnerId), doc.currency_id);
     }
 
     const direction = doc.transaction_type as "In" | "Out";

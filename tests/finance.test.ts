@@ -32,7 +32,7 @@ import { checkTransactionDate, lockFiscalPeriod } from "../src/lib/siba/fiscal";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
   FIXTURE_PREFIX,
-  bookKey,
+  bookId,
   budgetCategoryId,
   childCompanyId,
   cleanupFiscalYear,
@@ -234,9 +234,9 @@ async function makeDraft(options: {
 }
 
 /** The oldest open item of one subject — what a clerk settling it would pick. */
-async function openItem(book: string, partnerId: number, currencyId: number): Promise<number> {
+async function openItem(book: number, partnerId: number, currencyId: number): Promise<number> {
   const item = await prisma.subLedgerBalance.findFirstOrThrow({
-    where: { book, partner_id: partnerId, currency_id: currencyId, status: "Open" },
+    where: { budget_category_id: book, partner_id: partnerId, currency_id: currencyId, status: "Open" },
     orderBy: [{ opened_date: "asc" }, { id: "asc" }],
     select: { id: true },
   });
@@ -1415,7 +1415,7 @@ describe("posting writes the subject book alongside the cash book", () => {
     await post(doc);
 
     const entries = await prisma.subLedger.findMany({
-      where: { source_doc_id: doc, book: await bookKey("Hutang") },
+      where: { source_doc_id: doc, budget_category_id: await bookId("Hutang") },
     });
     assert.equal(entries.length, 1, "one document, one entry in its subject book");
     assert.equal(entries[0].partner_id, partner);
@@ -1428,7 +1428,7 @@ describe("posting writes the subject book alongside the cash book", () => {
 
     // The receipt opened one open item, and the entry names it.
     const items = await prisma.subLedgerBalance.findMany({
-      where: { book: await bookKey("Hutang"), partner_id: partner, currency_id: currency },
+      where: { budget_category_id: await bookId("Hutang"), partner_id: partner, currency_id: currency },
     });
     assert.equal(items.length, 1, "a raising line opens exactly one open item");
     assert.equal(items[0].balance.toNumber(), 3_000_000);
@@ -1454,7 +1454,7 @@ describe("posting writes the subject book alongside the cash book", () => {
     await post(doc);
 
     const entry = await prisma.subLedger.findFirstOrThrow({
-      where: { source_doc_id: doc, book: await bookKey("Piutang") },
+      where: { source_doc_id: doc, budget_category_id: await bookId("Piutang") },
     });
     assert.equal(entry.direction, "Out", "the money left");
     assert.equal(
@@ -1685,7 +1685,7 @@ describe("a foreign document is valued rather than refused", () => {
       })
     );
 
-    const position = await subledgerPosition(await bookKey("Hutang"), partner, otherCurrency);
+    const position = await subledgerPosition(await bookId("Hutang"), partner, otherCurrency);
     assert.deepEqual(position, { foreign: 1_000, base: 15_000_000 });
 
     // Repay from a layer that cost more.
@@ -1725,7 +1725,7 @@ describe("a foreign document is valued rather than refused", () => {
           budgetId: repayment,
           amount: 1_000,
           outstanding: 1_000,
-          itemId: await openItem(await bookKey("Hutang"), partner, otherCurrency),
+          itemId: await openItem(await bookId("Hutang"), partner, otherCurrency),
         },
       ],
     });
@@ -1733,7 +1733,7 @@ describe("a foreign document is valued rather than refused", () => {
 
     // The book released what it was carrying, not what the cash cost.
     const relief = await prisma.subLedger.findFirstOrThrow({
-      where: { book: await bookKey("Hutang"), partner_id: partner, direction: "Out" },
+      where: { budget_category_id: await bookId("Hutang"), partner_id: partner, direction: "Out" },
       orderBy: { id: "desc" },
     });
     assert.equal(relief.amount.toNumber(), 1_000);
@@ -1741,7 +1741,7 @@ describe("a foreign document is valued rather than refused", () => {
     assert.equal(relief.rate.toNumber(), 15_000);
 
     // And the position closes at nothing on both measures.
-    assert.deepEqual(await subledgerPosition(await bookKey("Hutang"), partner, otherCurrency), {
+    assert.deepEqual(await subledgerPosition(await bookId("Hutang"), partner, otherCurrency), {
       foreign: 0,
       base: 0,
     });
@@ -1906,7 +1906,7 @@ describe("one document realizes Budgets of several categories and partners", () 
     // The subject book: two Piutang entries for the same Partner, never one
     // summed entry, each under its own Budget's description.
     const book = await prisma.subLedger.findMany({
-      where: { source_doc_id: doc, book: await bookKey("Piutang") },
+      where: { source_doc_id: doc, budget_category_id: await bookId("Piutang") },
       orderBy: { id: "asc" },
     });
     assert.equal(book.length, 2, "two Budgets against one Partner are two entries");
@@ -1918,7 +1918,7 @@ describe("one document realizes Budgets of several categories and partners", () 
       ]
     );
     assert.deepEqual(
-      await subledgerPosition(await bookKey("Piutang"), karyawan, currency),
+      await subledgerPosition(await bookId("Piutang"), karyawan, currency),
       { foreign: 400_000, base: 400_000 }
     );
 
@@ -2015,13 +2015,13 @@ describe("one document realizes Budgets of several categories and partners", () 
           budgetId: repayLender,
           amount: 1_000,
           outstanding: 1_000,
-          itemId: await openItem(await bookKey("Hutang"), lender, otherCurrency),
+          itemId: await openItem(await bookId("Hutang"), lender, otherCurrency),
         },
         {
           budgetId: repayOther,
           amount: 1_000,
           outstanding: 1_000,
-          itemId: await openItem(await bookKey("Hutang"), other, otherCurrency),
+          itemId: await openItem(await bookId("Hutang"), other, otherCurrency),
         },
       ],
     });
@@ -2427,9 +2427,9 @@ describe("a line lowering a position settles the open item it names", () => {
     await receive(partner, bankA, 1_000, 15_000);
     await receive(partner, bankA, 1_000, 13_000);
 
-    const titipan = await bookKey("Titipan");
+    const titipan = await bookId("Titipan");
     const items = await prisma.subLedgerBalance.findMany({
-      where: { book: titipan, partner_id: partner, currency_id: otherCurrency },
+      where: { budget_category_id: titipan, partner_id: partner, currency_id: otherCurrency },
       orderBy: { id: "asc" },
     });
     assert.deepEqual(
@@ -2517,9 +2517,9 @@ describe("a line lowering a position settles the open item it names", () => {
         })
       );
     }
-    const piutang = await bookKey("Piutang");
+    const piutang = await bookId("Piutang");
     const items = await prisma.subLedgerBalance.findMany({
-      where: { book: piutang, partner_id: partner, currency_id: otherCurrency },
+      where: { budget_category_id: piutang, partner_id: partner, currency_id: otherCurrency },
       orderBy: { id: "asc" },
     });
 
@@ -2577,9 +2577,9 @@ describe("a line lowering a position settles the open item it names", () => {
     const bankA = await makeCashBank({ currencyId: otherCurrency });
     await receive(partner, bankA, 1_000, 15_000);
     await receive(partner, bankA, 1_000, 13_000);
-    const titipan = await bookKey("Titipan");
+    const titipan = await bookId("Titipan");
     const [i15, i13] = await prisma.subLedgerBalance.findMany({
-      where: { book: titipan, partner_id: partner, currency_id: otherCurrency },
+      where: { budget_category_id: titipan, partner_id: partner, currency_id: otherCurrency },
       orderBy: { id: "asc" },
     });
 
@@ -2629,7 +2629,7 @@ describe("a line lowering a position settles the open item it names", () => {
     );
 
     const entries = await prisma.subLedger.findMany({
-      where: { source_doc_id: doc, book: titipan },
+      where: { source_doc_id: doc, budget_category_id: titipan },
       orderBy: { id: "asc" },
     });
     assert.deepEqual(
@@ -2685,9 +2685,9 @@ describe("a line lowering a position settles the open item it names", () => {
         })
       );
     }
-    const piutang = await bookKey("Piutang");
+    const piutang = await bookId("Piutang");
     const [i15, i18] = await prisma.subLedgerBalance.findMany({
-      where: { book: piutang, partner_id: partner, currency_id: otherCurrency },
+      where: { budget_category_id: piutang, partner_id: partner, currency_id: otherCurrency },
       orderBy: { id: "asc" },
     });
     const collected = await makeBudget({
@@ -2746,7 +2746,7 @@ describe("a line lowering a position settles the open item it names", () => {
         lines: [{ budgetId: advance, amount: 400_000, outstanding: 400_000 }],
       })
     );
-    const item = await openItem(await bookKey("Piutang"), partner, currency);
+    const item = await openItem(await bookId("Piutang"), partner, currency);
     const header = {
       transaction_type: "In" as const,
       company_id: induk,
@@ -2785,7 +2785,7 @@ describe("a line lowering a position settles the open item it names", () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
     const bankA = await makeCashBank({ currencyId: otherCurrency });
     await receive(partner, bankA, 1_000, 15_000);
-    const item = await openItem(await bookKey("Titipan"), partner, otherCurrency);
+    const item = await openItem(await bookId("Titipan"), partner, otherCurrency);
 
     const bankB = await foreignCash(14_000, 500);
     const budget = await makeBudget({
@@ -2831,7 +2831,7 @@ describe("a line lowering a position settles the open item it names", () => {
     await post(doc);
 
     const items = await prisma.subLedgerBalance.findMany({
-      where: { book: await bookKey("Piutang"), partner_id: partner },
+      where: { budget_category_id: await bookId("Piutang"), partner_id: partner },
       orderBy: { id: "asc" },
     });
     assert.deepEqual(
@@ -2858,7 +2858,7 @@ describe("a line lowering a position settles the open item it names", () => {
         })
       );
     }
-    const piutang = await bookKey("Piutang");
+    const piutang = await bookId("Piutang");
     const mine = await openItem(piutang, partner, currency);
     const theirs = await openItem(piutang, stranger, currency);
 
@@ -2908,7 +2908,7 @@ describe("a line lowering a position settles the open item it names", () => {
         lines: [{ budgetId: advance, amount: 400_000, outstanding: 400_000 }],
       })
     );
-    const item = await openItem(await bookKey("Piutang"), partner, currency);
+    const item = await openItem(await bookId("Piutang"), partner, currency);
 
     const drafts: number[] = [];
     for (let i = 0; i < 2; i++) {

@@ -983,8 +983,8 @@ Implemented and enforced:
    whether a book exists; `raises` decides which cash direction raises the
    subject's position, and without it the category has a **setup gap** rather
    than no book — a book running the wrong way is worse than none, so it is
-   never guessed. A book's key is the category's immutable code, its lookup is
-   the category's row id, and a label is never a way in. There
+   never guessed. A book is named by the category's row id —
+   `sub_ledger.budget_category_id`, a foreign key — and a label is never a way in. There
    is **one** Report View over all of them with the book as a parameter, so a
    category created through the GUI is readable immediately. Superseded wording
    below, kept because the reasoning still holds:
@@ -2385,7 +2385,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   table (`sub_ledger_balance`), one writer (`recordSubledgerEntry`), one reader
   (`subledgerReport`), one report body — and **one Report View, one permission
   and one menu entry for all of them**. A book *is* a Budget Category that names
-  a Partner. Which book you are reading is a parameter (`?book=bcat.0002`), not
+  a Partner. Which book you are reading is a parameter (`?book=12`, the id), not
   a report of its own.
 - **This supersedes the six-entry catalogue.** `subledger-catalogue.ts` used to
   declare six books, each with its own key, slug, permission, nav entry and
@@ -2405,14 +2405,17 @@ Specified in the concept doc, **not yet implemented** (see §13):
   category without a book: the list says `arah belum diatur` rather than a dash,
   because the two are different things somebody would act on differently. A book
   running the wrong way is worse than no book, so it is not guessed.
-- **The key is the category's code, and the lookup is by its id.**
-  `sub_ledger.book` holds `bcat.0002` — the code, because it is
-  system-generated and never edited, so renaming "Hutang" cannot orphan a book,
-  which is exactly what keying on the label used to risk. It stays a **string,
-  not a foreign key**: `sub_ledger` is an independent store that must stay
-  liftable, and a book declaring a relation to the table classifying it would
-  invite being derived from it. In code, `subledgerForCategory` takes the
-  category's **row id**, which is what every caller already holds.
+- **The book is the category's id, held as a foreign key.**
+  `sub_ledger.budget_category_id` and `sub_ledger_balance.budget_category_id`
+  reference `sys_budget_category`, on the user's instruction; they replaced a
+  text column holding the category's code (migration
+  `20261013120000_subledger_book_category_id`, which carried every row across).
+  A Budget Category is reference data like the Partner and the Currency beside
+  it, so the reference is the module contract's ordinary master-data foreign
+  key — it lets the book name its category, never derive anything from it.
+  The report URL carries the same id, `subledgerById` reads it, and
+  `subledgerForCategory` takes it from a Budget's `category_id`. `SubledgerDef`
+  has no other key.
 - **A label is not a way in.** The **category** owns the book, and a
   realization line finds it through its Budget's `category_id` — never through a
   copy of the category's label, which is the mistake this rule exists to
@@ -2455,7 +2458,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   item. A Realisasi line lowering a position names the item it settles
   (`fin_cash_bank_transaction_line.sub_ledger_balance_id`, a plain id like
   `cash_bank_layer_id`) and relieves it at that item's kurs. §10 rules 103–106
-  are the statement of it; **Saldo Buku Subjek** under Finance › Laporan reads it, each Partner's closing unfolding into its open items.
+  are the statement of it; **Saldo Buku Subjek** under Finance › Laporan reads it, one block per Partner and currency holding its open items.
 - **Reason:** the user's, from a real case. A Titipan received at 15.000 into one
   bank and returned from another bank's dollars bought at 13.000 recognised a
   difference against the **average** of every receipt, so the result depended on
@@ -2539,20 +2542,26 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Decision:** Finance › Laporan carries **Buku Subjek** (the entries) and
   **Saldo Buku Subjek** (`report/subledger-balance`), the way it carries Buku
   Kas & Bank and Saldo Kas & Bank. Both take the same filter — Company · Buku ·
-  Partner · Periode — and the same permission. Saldo Buku Subjek is one section
-  per currency, one row per Partner: Saldo Awal · Bertambah · Berkurang ·
-  closing, plus Nilai IDR on a foreign section, **totalled per currency**. A
-  row folds open onto the **open items its closing is made of, as of the
-  period's last day**, each at the kurs it was raised at; the Partner's code
-  drills to its Buku Subjek for the same period.
+  Partner · Periode — and the same permission. **Saldo Buku Subjek is drawn
+  the way Buku Subjek and the General Ledger draw a subject**: one navy block
+  per Partner and currency, its header stating code, name · category ·
+  currency · how many open items, and the summary strip Saldo Awal ·
+  Bertambah · Berkurang · closing (plus Nilai IDR on a foreign block). The
+  block holds the **open items** — every item that stood or moved in the
+  period, each at the kurs it was raised at, with its own Saldo Awal,
+  Bertambah, Berkurang and closing, so the items add up to the header in
+  every column and an item settled inside the period is listed at nil. **One
+  level folds**: the block, by its header. Blocks open **expanded**, and Buka
+  / Tutup Semua fold all of them.
 - **Reason:** The user's, reviewing Finance after the open-item change: Buku
   Subjek and the dateless Posisi Open Item read as two unrelated reports, one
   saying how a position moved and the other what it was made of now, with no
   path between them. Posisi Open Item is gone.
 - **Why the items reconcile.** An item's remainder on a date is the sum of
   the entries that name it dated on or before it (`subledgerBalanceReport` in
-  `subledger.ts`), so the items are the closing position regrouped — equal by
-  construction, including for an item settled by a document dated before it
+  `subledger.ts`): each item's opening is the entries before the period, its
+  movements the period's entries that name it, so the items are the
+  position regrouped — equal in every column by construction, including for an item settled by a document dated before it
   opened (§10 rule 106). The movement figures come from `subledgerReport`
   itself, so the two reports cannot disagree about a Partner.
   `tests/subledger.test.ts` holds it at three dates.
@@ -2565,13 +2574,18 @@ Specified in the concept doc, **not yet implemented** (see §13):
   row into *rincian* and a Realisasi line for them shows no Open Item column.
   Keyed on the book's derived `nature` (`cumulative`), never on a label.
   Prive is a two-way book on purpose: the user treats it like a Piutang.
-- **The per-currency total is a reversal, on the user's approval.** Buku
-  Subjek's rule was that nothing is totalled across subjects. Two Partners'
-  Hutang in one currency do add up to something a reader acts on — what the
-  control account in the General Ledger should hold — so the summary states
-  it. Currencies are still never added together.
+- **The layout follows its siblings, on the user's instruction (2026-10-13).**
+  A redesign was tried — one plain table per currency, a global Ringkas / Rinci
+  switch, a reshaped Buku Subjek — and rejected as a change to the general
+  design. Any further change to a report keeps the shape of the reports of
+  its kind; something none of them has (a new control, a frozen row, a new
+  band) is decided for the whole family. The previous per-currency version is
+  kept on branch `snapshot/report-2026-10-13`. The per-currency total and the Partner's
+  link into its Buku Subjek went with the per-currency layout — Buku Subjek
+  has neither.
 - **Do not change unless:** explicitly instructed. **Do not bring back a
-  separate open-item report, do not total across currencies, and do not read
+  separate open-item report, do not give it a second fold level or a control
+  its sibling reports lack, do not total across currencies, and do not read
   an item's remainder as of a date from its stored balance** — that is today's
   figure.
 - **Status:** Frozen, current.

@@ -231,8 +231,8 @@ table sys_budget_category {
   // nothing else in the row predicts; null means no book yet. The other two are
   // presentation and fall back, so a book works without them.
   //
-  // The book's own key is this row's `category_code`, which is what
-  // `sub_ledger.book` holds. Its name, its subject line and whether its closing
+  // The book's identity is this row's id, which is what
+  // `sub_ledger.budget_category_id` holds. Its name, its subject line and whether its closing
   // figure is a position or a running total are all derived — see
   // `src/lib/siba/subledger-catalogue.ts`.
   raises                      enum('In', 'Out')
@@ -500,7 +500,9 @@ table sub_ledger {
 
   entry_no                    varchar(255) [not null, unique]
 
-  book                        varchar(255) [not null]
+  // The book: the Budget Category that keeps it. Was the category's code as
+  // text until 20261013120000_subledger_book_category_id.
+  budget_category_id          int [not null, ref : > sys_budget_category.id]
 
   partner_id                  int [not null, ref : > m_partner.id]
   currency_id                 int [not null, ref : > ref_currency.id]
@@ -539,7 +541,7 @@ table sub_ledger {
   created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 
   indexes {
-    (book, partner_id, entry_date)
+    (budget_category_id, partner_id, entry_date)
     balance_id
     (source_doc_type_id, source_doc_id)
   }
@@ -559,7 +561,8 @@ table sub_ledger_balance {
   // SBI-0001 — how pickers and reports name an item.
   item_no                     varchar(255) [not null, unique]
 
-  book                        varchar(255) [not null]
+  // The book: the Budget Category that keeps it.
+  budget_category_id          int [not null, ref : > sys_budget_category.id]
 
   partner_id                  int [not null, ref : > m_partner.id]
   currency_id                 int [not null, ref : > ref_currency.id]
@@ -590,7 +593,7 @@ table sub_ledger_balance {
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 
   indexes {
-    (book, partner_id, currency_id, status)
+    (budget_category_id, partner_id, currency_id, status)
   }
 }
 

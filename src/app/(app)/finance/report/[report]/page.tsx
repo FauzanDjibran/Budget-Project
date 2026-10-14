@@ -238,7 +238,7 @@ async function subledgerPage({
   // An unknown or absent book falls back to the first rather than 404ing: a
   // bookmark that outlived its category should still answer with something, the
   // same way an unreadable `?company=` falls back inside what is permitted.
-  const book = books.find((b) => b.key === bookKey) ?? books[0];
+  const book = books.find((b) => String(b.categoryId) === bookKey) ?? books[0];
 
   const lead = (
     <>
@@ -247,7 +247,7 @@ async function subledgerPage({
         <>
           <span className="rl">Buku</span>
           <div className="rf">
-            <BookFilter books={books} selectedKey={book.key} />
+            <BookFilter books={books} selectedId={book.categoryId} />
           </div>
         </>
       )}
@@ -258,8 +258,8 @@ async function subledgerPage({
   // open items its closing is made of — Saldo Kas & Bank's counterpart.
   if (report.key === "subledger_balance") {
     const [subjects, data] = await Promise.all([
-      subledgerSubjects(books, book.key, companyIds),
-      subledgerBalanceReport(books, book.key, range, { companyIds, partnerIds }),
+      subledgerSubjects(books, book.categoryId, companyIds),
+      subledgerBalanceReport(books, book.categoryId, range, { companyIds, partnerIds }),
     ]);
     if (!data) notFound();
     return (
@@ -269,7 +269,7 @@ async function subledgerPage({
           <SubjectParams
             lead={lead}
             slug={slug}
-            extraParams={{ book: book.key }}
+            extraParams={{ book: book.categoryId }}
             subjects={subjects}
             selectedIds={partnerIds}
             from={range.from}
@@ -292,14 +292,14 @@ async function subledgerPage({
           </>
         }
       >
-        <SubledgerBalanceReport report={data} companyId={company.id} />
+        <SubledgerBalanceReport report={data} />
       </ReportView>
     );
   }
 
   const [subjects, data] = await Promise.all([
-    subledgerSubjects(books, book.key, companyIds),
-    subledgerReport(books, book.key, range, { partnerIds, companyIds }),
+    subledgerSubjects(books, book.categoryId, companyIds),
+    subledgerReport(books, book.categoryId, range, { partnerIds, companyIds }),
   ]);
   if (!data) notFound();
 
@@ -311,7 +311,7 @@ async function subledgerPage({
           <SubjectParams
             lead={lead}
             slug={slug}
-            extraParams={{ book: book.key }}
+            extraParams={{ book: book.categoryId }}
             subjects={subjects}
             selectedIds={partnerIds}
             from={range.from}

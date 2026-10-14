@@ -113,7 +113,7 @@ async function validate(actor: Actor, values: DncnValues, lines: DncnLineValues[
     return { ok: false as const, errors: { document_date: dated.message } };
   }
 
-  const position = await subledgerPosition(header.book.key, header.partnerId, header.currencyId);
+  const position = await subledgerPosition(header.book.categoryId, header.partnerId, header.currencyId);
   const refusal = positionRefusal(position, header.raises, settled.total, header.currencyLabel);
   if (refusal) return { ok: false as const, errors: { _lines: refusal } };
 

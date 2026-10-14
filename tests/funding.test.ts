@@ -20,7 +20,7 @@ import {
 } from "../src/lib/siba/system-account-data";
 import {
   FIXTURE_PREFIX,
-  bookKey,
+  bookId,
   budgetCategoryId,
   childCompanyId,
   cleanupFiscalYear,
@@ -210,10 +210,10 @@ const bookBalance = async (cashBankId: number) =>
     })
   )?.balance.toNumber() ?? 0;
 
-const subledgerBalance = async (book: string, partnerId: number) =>
+const subledgerBalance = async (book: number, partnerId: number) =>
   (
     await prisma.subLedgerBalance.aggregate({
-      where: { book, partner_id: partnerId, currency_id: currency },
+      where: { budget_category_id: book, partner_id: partnerId, currency_id: currency },
       _sum: { balance: true },
     })
   )._sum.balance?.toNumber() ?? 0;
@@ -599,7 +599,7 @@ describe("confirmation posts both Companies, at once", () => {
     //    positions against each other are accounts, not subjects, so the
     //    confirmation writes exactly one subject-book entry.
     assert.equal(
-      await subledgerBalance(await bookKey("Hutang"), supplier),
+      await subledgerBalance(await bookId("Hutang"), supplier),
       -300_000,
       "paying a supplier lowers what the anak owes it"
     );
@@ -771,7 +771,7 @@ describe("confirmation posts both Companies, at once", () => {
 
     assert.equal(await bookBalance(cashBank), 250_000, "the induk holds it now");
     assert.equal(
-      await subledgerBalance(await bookKey("Piutang"), debtor),
+      await subledgerBalance(await bookId("Piutang"), debtor),
       -200_000,
       "being repaid lowers what the debtor owes the anak"
     );

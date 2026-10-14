@@ -178,12 +178,12 @@ export async function budgetCategoryId(label: string): Promise<number> {
  * Budget Categories themselves, so a test that asserts against a book has to ask
  * which key that category holds rather than spelling one.
  */
-export async function bookKey(categoryLabel: string): Promise<string> {
+export async function bookId(categoryLabel: string): Promise<number> {
   const row = await prisma.sysBudgetCategory.findFirstOrThrow({
     where: { category_label: categoryLabel },
-    select: { category_code: true },
+    select: { id: true },
   });
-  return row.category_code;
+  return row.id;
 }
 
 export async function partnerCategoryId(label: string): Promise<number> {

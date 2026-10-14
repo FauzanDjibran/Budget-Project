@@ -128,8 +128,8 @@ WHERE w.n <> COALESCE(g.n, 0) OR w.amount <> COALESCE(g.amount, 0)`,
     no: 5,
     name: "Entri Buku Subjek bergerak ke arah bukunya sendiri",
     sql: `
-SELECT s.entry_no, s.book, s.direction::text, s.movement, c.raises::text
-FROM sub_ledger s JOIN book_cat c ON c.category_code = s.book
+SELECT s.entry_no, c.category_label AS book, s.direction::text, s.movement, c.raises::text
+FROM sub_ledger s JOIN book_cat c ON c.id = s.budget_category_id
 WHERE s.entry_type IN ('Transaction', 'Reclass')
   AND SIGN(s.movement) <> CASE WHEN s.direction::text = c.raises::text THEN 1 ELSE -1 END`,
   },
@@ -320,7 +320,7 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
 ), book AS (
   SELECT m.account_id, s.partner_id, SUM(s.base_movement) AS amount
   FROM sub_ledger s
-  JOIN book_cat c ON c.category_code = s.book
+  JOIN book_cat c ON c.id = s.budget_category_id
   JOIN m_partner p ON p.id = s.partner_id
   JOIN acc_budget_category_account m
     ON m.company_id = p.company_id AND m.budget_category_id = c.id

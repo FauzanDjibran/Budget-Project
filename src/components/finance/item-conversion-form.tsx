@@ -129,7 +129,7 @@ export function ItemConversionForm({
     (i) =>
       book &&
       source &&
-      i.book === book.key &&
+      i.bookId === book.categoryId &&
       i.partnerId === partnerId &&
       i.currencyId === source.currencyId
   );
@@ -199,7 +199,7 @@ export function ItemConversionForm({
   /** Partners of the source's Company holding an open item in this book and currency. */
   const holders = new Set(
     refs.items
-      .filter((i) => book && source && i.book === book.key && i.currencyId === source.currencyId)
+      .filter((i) => book && source && i.bookId === book.categoryId && i.currencyId === source.currencyId)
       .map((i) => i.partnerId)
   );
   const partnerOptions = refs.partners

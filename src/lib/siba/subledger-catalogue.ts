@@ -51,23 +51,11 @@ export type SubledgerNature = "position" | "cumulative";
 
 export type SubledgerDef = {
   /**
-   * Stored on every entry, and the one identifier a book has.
-   *
-   * It is the owning category's **code** (`bcat.0002`), not its label and not
-   * its row id. The code because it is system-generated and never edited, so
-   * renaming "Hutang" cannot orphan a book — which is precisely what keying on
-   * the label used to risk. A string rather than a foreign key because
-   * `sub_ledger` is an independent store that must stay liftable: a book that
-   * declared a relation to the table classifying it could not be taken out on
-   * its own, and would invite being derived from it.
-   */
-  key: string;
-  /**
-   * The owning Budget Category's row id — how the rest of the application finds
-   * its book, because that is the identifier already at hand everywhere: a
-   * Budget carries `category_id`, an account mapping carries
-   * `budget_category_id`. The stored `key` stays the code, which is what makes
-   * an entry readable without a join.
+   * The owning Budget Category's row id — the one identifier a book has. It is
+   * what `sub_ledger.budget_category_id` stores, what the report URL carries
+   * (`?book=12`), and what every caller already holds: a Budget carries
+   * `category_id`, an account mapping `budget_category_id`. Never the label,
+   * which the user may rename.
    */
   categoryId: number;
   /** What the owning category is currently called. Display only. */
@@ -123,7 +111,6 @@ export function bookFor(row: BookSource): SubledgerDef | null {
     row.allows_in && row.allows_out ? "position" : "cumulative";
 
   return {
-    key: row.category_code,
     categoryId: row.id,
     budgetCategory: row.category_label,
     name,
@@ -141,11 +128,15 @@ export function booksFrom(rows: BookSource[]): SubledgerDef[] {
   return rows.map(bookFor).filter((b): b is SubledgerDef => b !== null);
 }
 
-export function subledgerByKey(
+/** The book a report URL names — `?book=` carries the category's id. */
+export function subledgerById(
   books: SubledgerDef[],
-  key: string | null | undefined
+  id: number | string | null | undefined
 ): SubledgerDef | null {
-  return key ? books.find((b) => b.key === key) ?? null : null;
+  const n = Number(id);
+  return id != null && id !== "" && Number.isInteger(n)
+    ? books.find((b) => b.categoryId === n) ?? null
+    : null;
 }
 
 /**

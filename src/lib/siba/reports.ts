@@ -61,7 +61,7 @@ export type ReportDef = {
   subjectRequired: boolean;
   /**
    * Whether this report reads a subject book. Which book is a **parameter**
-   * (`?book=bcat.0002`), not a property of the report: there is one Buku Subjek
+   * (`?book=12`, the category's id), not a property of the report: there is one Buku Subjek
    * report and the books come from the Budget Categories, so a new category
    * appears in its toggle without a report, a permission or a menu entry being
    * written for it.

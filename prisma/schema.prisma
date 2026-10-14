@@ -37,8 +37,8 @@
 //   Funding Request is the intercompany identifier (CLAUDE.md §12).
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
   // Nested `include`s load in one SQL statement (LATERAL joins) instead of one
   // query per relation level. On the deployed Neon database every query is a
   // network round trip (shared KB engineering/code-conventions §6).
@@ -377,13 +377,13 @@ model SysCompany {
 }
 
 model SysAccountType {
-  id         Int            @id @default(autoincrement())
-  type_code  String         @unique
-  type_label String         @unique
-  type_name  String
+  id             Int            @id @default(autoincrement())
+  type_code      String         @unique
+  type_label     String         @unique
+  type_name      String
   /// Neraca or Laba Rugi. Seeded, never edited, never offered on a form: which
   /// statement a type belongs to is not a judgement call.
-  section    AccountSection
+  section        AccountSection
   /// Which side the type's own total reads positive on — AKTIVA and BIAYA
   /// debit, PASIVA, EKUITAS and PENDAPATAN credit. The Neraca signs every row
   /// under a type by it, which is what prints Akumulasi Penyusutan (a Kredit
@@ -391,7 +391,7 @@ model SysAccountType {
   /// form; stored rather than read off the type's number for the reason
   /// `section` is.
   normal_balance NormalBalance
-  note       String?
+  note           String?
 
   created_by Int
   updated_by Int?
@@ -488,8 +488,10 @@ model SysBudgetCategory {
   partner_categories SysBudgetPartnerCategoryMapping[]
   dncn_notes         FinDncn[]
   conversions        FinItemConversion[]
-  reclasses          FinItemReclass[]     @relation("ReclassSource")
-  reclass_targets    FinItemReclassLine[] @relation("ReclassTarget")
+  reclasses          FinItemReclass[]                  @relation("ReclassSource")
+  reclass_targets    FinItemReclassLine[]              @relation("ReclassTarget")
+  sub_ledger_entries SubLedger[]
+  sub_ledger_items   SubLedgerBalance[]
 
   @@map("sys_budget_category")
 }
@@ -876,21 +878,21 @@ enum SubLedgerItemStatus {
 /// would be six copies of one shape, and adding the seventh would be a
 /// migration instead of a line of config.
 ///
-/// `book` is a catalogue key (`hutang`), not a foreign key to
-/// `sys_budget_category`. The book is meant to be liftable, and its own subject
-/// is the Partner; tying every row to a reference table it does not otherwise
-/// need would make it depend on the classification module to be read.
+/// The book is named by `budget_category_id`, a foreign key to the Budget
+/// Category that keeps it — reference data, like the Partner and the Currency
+/// beside it (CLAUDE.md §3, cross-module references). It used to be the
+/// category's code as text; an id cannot drift from the row it names.
 model SubLedger {
-  id          Int                @id @default(autoincrement())
-  entry_no    String             @unique
-  /// Catalogue key from `lib/siba/subledger-catalogue.ts`.
-  book        String
-  partner_id  Int
-  currency_id Int
-  entry_date  DateTime           @db.Date
-  entry_type  SubLedgerEntryType
+  id                 Int                @id @default(autoincrement())
+  entry_no           String             @unique
+  /// The Budget Category whose book this entry belongs to.
+  budget_category_id Int
+  partner_id         Int
+  currency_id        Int
+  entry_date         DateTime           @db.Date
+  entry_type         SubLedgerEntryType
   /// The direction the **money** moved, exactly as the document recorded it.
-  direction   FlowDirection
+  direction          FlowDirection
 
   /// Always positive; `direction` and the book's own nature carry the sign.
   amount        Decimal @db.Decimal(18, 2)
@@ -936,12 +938,13 @@ model SubLedger {
   created_by Int
   created_at DateTime @default(now()) @db.Timestamptz(6)
 
-  partner         MPartner         @relation(fields: [partner_id], references: [id])
-  currency        RefCurrency      @relation(fields: [currency_id], references: [id])
-  source_doc_type SysDocType?      @relation(fields: [source_doc_type_id], references: [id])
-  item            SubLedgerBalance @relation(fields: [balance_id], references: [id])
+  budget_category SysBudgetCategory @relation(fields: [budget_category_id], references: [id])
+  partner         MPartner          @relation(fields: [partner_id], references: [id])
+  currency        RefCurrency       @relation(fields: [currency_id], references: [id])
+  source_doc_type SysDocType?       @relation(fields: [source_doc_type_id], references: [id])
+  item            SubLedgerBalance  @relation(fields: [balance_id], references: [id])
 
-  @@index([book, partner_id, entry_date])
+  @@index([budget_category_id, partner_id, entry_date])
   @@index([balance_id])
   @@index([source_doc_type_id, source_doc_id])
   @@map("sub_ledger")
@@ -965,23 +968,24 @@ model SubLedger {
 ///
 /// Nothing may take an item below nothing, so no position can go negative.
 model SubLedgerBalance {
-  id          Int    @id @default(autoincrement())
+  id                 Int    @id @default(autoincrement())
   /// `SBI-0001`. How the picker and the reports name an item — a rate names
   /// several items at once and a date names every item raised that day.
-  item_no     String @unique
-  book        String
-  partner_id  Int
-  currency_id Int
+  item_no            String @unique
+  /// The Budget Category whose book this item belongs to.
+  budget_category_id Int
+  partner_id         Int
+  currency_id        Int
 
   /// When the item was raised: the document date of the entry that opened it.
-  opened_date DateTime @db.Date
+  opened_date   DateTime @db.Date
   /// The rate the item was raised at — a fact of the movement that raised it,
   /// in the same sense as a rate layer's. Relief releases base in proportion to
   /// what is left, so `base_balance ÷ balance` equals it for the item's life.
-  rate          Decimal @db.Decimal(18, 6)
+  rate          Decimal  @db.Decimal(18, 6)
   /// What the item was raised by, on both measures. Never changes.
-  original      Decimal @db.Decimal(18, 2)
-  base_original Decimal @db.Decimal(18, 2)
+  original      Decimal  @db.Decimal(18, 2)
+  base_original Decimal  @db.Decimal(18, 2)
 
   /// What remains of the item, in its own currency.
   balance         Decimal             @default(0) @db.Decimal(18, 2)
@@ -1000,24 +1004,25 @@ model SubLedgerBalance {
 
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  partner  MPartner    @relation(fields: [partner_id], references: [id])
-  currency RefCurrency @relation(fields: [currency_id], references: [id])
-  entries  SubLedger[]
+  budget_category SysBudgetCategory @relation(fields: [budget_category_id], references: [id])
+  partner         MPartner          @relation(fields: [partner_id], references: [id])
+  currency        RefCurrency       @relation(fields: [currency_id], references: [id])
+  entries         SubLedger[]
 
-  @@index([book, partner_id, currency_id, status])
+  @@index([budget_category_id, partner_id, currency_id, status])
   @@map("sub_ledger_balance")
 }
 
 // ---------------------------------------------------------------- accounting
 
 model AccAccountCategory {
-  id              Int          @id @default(autoincrement())
+  id              Int              @id @default(autoincrement())
   account_type_id Int
-  category_code   String       @unique
+  category_code   String           @unique
   /// The category's place in the chart of accounts: its account type's code
   /// plus one segment, e.g. `1.1` under type `1`. Not in the DBML, which
   /// carried no numbering scheme — see lib/siba/account-code.ts.
-  category_label  String       @unique
+  category_label  String           @unique
   category_name   String
   /// The Laba Rugi step this category belongs to. Set exactly when the
   /// category's type is `ProfitLoss`, null on every Neraca category. Seeded
@@ -1025,7 +1030,7 @@ model AccAccountCategory {
   /// its step through subcategory -> category, so a new account needs no setup.
   pl_group        ProfitLossGroup?
   note            String?
-  status          ActiveStatus @default(Active)
+  status          ActiveStatus     @default(Active)
 
   created_by Int
   updated_by Int?
@@ -1448,15 +1453,15 @@ model FinCashBankTransactionLine {
   /// money past its own realization — a held receipt reclassified to the book
   /// it belongs in is found from here. Null where the line lowered a position,
   /// kept no book, or was posted before the column existed.
-  opened_item_id          Int?
+  opened_item_id Int?
 
   created_by Int
   updated_by Int?
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  transaction     FinCashBankTransaction         @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
-  source_doc_type SysDocType                     @relation(fields: [source_doc_type_id], references: [id])
+  transaction     FinCashBankTransaction           @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  source_doc_type SysDocType                       @relation(fields: [source_doc_type_id], references: [id])
   /// The open items a line lowering a subject-book position settles, each for
   /// an amount the user chose. Empty where the line raises a position or its
   /// Budget Category keeps no book.
@@ -1481,9 +1486,9 @@ model FinCashBankTransactionLine {
 /// them would hide both (IAS 21 / PSAK 10 recognise the difference per
 /// monetary item settled, and SAP and Odoo keep it per cleared item).
 model FinCashBankTransactionLineItem {
-  id          Int @id @default(autoincrement())
-  line_id     Int
-  sequence_no Int
+  id                    Int @id @default(autoincrement())
+  line_id               Int
+  sequence_no           Int
   /// The item settled (`sub_ledger_balance.id`). A plain id rather than a
   /// relation, like `cash_bank_layer_id`: the item belongs to the subject-book
   /// module.
@@ -1829,9 +1834,9 @@ model FinItemConversionLine {
 /// One foreign open item a line converts, and for how much — chosen and
 /// stated by the user, never distributed.
 model FinItemConversionLineItem {
-  id          Int @id @default(autoincrement())
-  line_id     Int
-  sequence_no Int
+  id                    Int @id @default(autoincrement())
+  line_id               Int
+  sequence_no           Int
   /// The item converted (`sub_ledger_balance.id`). A plain id: the item
   /// belongs to the subject-book module.
   sub_ledger_balance_id Int
@@ -1954,9 +1959,9 @@ model FinItemReclassLine {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  reclass         FinItemReclass    @relation(fields: [reclass_id], references: [id], onDelete: Cascade)
-  target_category SysBudgetCategory @relation("ReclassTarget", fields: [target_budget_category_id], references: [id])
-  target_partner  MPartner          @relation("ReclassTarget", fields: [target_partner_id], references: [id])
+  reclass         FinItemReclass             @relation(fields: [reclass_id], references: [id], onDelete: Cascade)
+  target_category SysBudgetCategory          @relation("ReclassTarget", fields: [target_budget_category_id], references: [id])
+  target_partner  MPartner                   @relation("ReclassTarget", fields: [target_partner_id], references: [id])
   sources         FinItemReclassLineSource[]
   targets         FinItemReclassLineTarget[]
 
@@ -1968,9 +1973,9 @@ model FinItemReclassLine {
 /// One source item a line moves, and for how much — chosen and stated by the
 /// user, never distributed.
 model FinItemReclassLineSource {
-  id          Int @id @default(autoincrement())
-  line_id     Int
-  sequence_no Int
+  id                    Int @id @default(autoincrement())
+  line_id               Int
+  sequence_no           Int
   /// The source item (`sub_ledger_balance.id`). A plain id: the item belongs to
   /// the subject-book module.
   sub_ledger_balance_id Int
@@ -2002,9 +2007,9 @@ model FinItemReclassLineSource {
 /// from the source — chosen and stated by the user. A line's target amounts add
 /// up to its source amount exactly.
 model FinItemReclassLineTarget {
-  id          Int @id @default(autoincrement())
-  line_id     Int
-  sequence_no Int
+  id                    Int @id @default(autoincrement())
+  line_id               Int
+  sequence_no           Int
   /// The target item settled (`sub_ledger_balance.id`).
   sub_ledger_balance_id Int
 

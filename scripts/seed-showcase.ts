@@ -974,7 +974,7 @@ async function itemsFor(
     }
     const items = await prisma.subLedgerBalance.findMany({
       where: {
-        book: book.key,
+        budget_category_id: book.categoryId,
         partner_id: budget.partner_id,
         currency_id: currencyId,
         status: "Open",
@@ -1195,7 +1195,7 @@ async function postConversion(spec: ConversionSpec, actor: number) {
   // line's amount by the document's date.
   const items = await prisma.subLedgerBalance.findMany({
     where: {
-      book: book.key,
+      budget_category_id: book.categoryId,
       partner_id: partner.id,
       currency_id: from.currency_id,
       status: "Open",

@@ -399,7 +399,7 @@ describe("Post writes the journal of the worked example", () => {
     const opened = await prisma.subLedgerBalance.findUniqueOrThrow({
       where: { id: line.opened_item_id! },
     });
-    assert.equal(opened.book, titipan.key, "the same book");
+    assert.equal(opened.budget_category_id, titipan.categoryId, "the same book");
     assert.equal(opened.partner_id, s.partnerId);
     assert.equal(opened.currency_id, idr);
     assert.equal(num(opened.balance), 1_730_000_000);

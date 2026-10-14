@@ -160,7 +160,7 @@ async function makeNote(options: {
 }
 
 const position = (book: SubledgerDef, partnerId: number, currencyId = idr) =>
-  subledgerPosition(book.key, partnerId, currencyId);
+  subledgerPosition(book.categoryId, partnerId, currencyId);
 
 const journalOf = (noteId: number) =>
   prisma.accJournal.findFirstOrThrow({
@@ -404,7 +404,7 @@ describe("nothing below zero", () => {
     // check, and both writes land.
     const holder = prisma.$transaction(
       async (tx) => {
-        await lockSubledgerPosition(tx, piutang.key, partner, idr);
+        await lockSubledgerPosition(tx, piutang.categoryId, partner, idr);
         await new Promise((r) => setTimeout(r, 500));
         await recordSubledgerEntry(tx, {
           book: piutang,

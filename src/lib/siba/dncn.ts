@@ -257,7 +257,6 @@ export async function nextNoteNo(type: DncnType, db: Db = prisma): Promise<strin
 
 export type DncnBookOption = {
   categoryId: number;
-  key: string;
   label: string;
   name: string;
   /** Which cash direction raises the position — how the form previews a note. */
@@ -275,7 +274,7 @@ export type DncnPartnerOption = {
 };
 
 export type DncnPositionOption = {
-  book: string;
+  bookId: number;
   partnerId: number;
   currencyId: number;
   foreign: number;
@@ -357,14 +356,13 @@ export async function dncnRefs(companyIds: number[]): Promise<DncnRefs> {
   ]);
 
   const positions: DncnPositionOption[] = await subledgerPositionsFor(
-    books.map((b) => b.def.key),
+    books.map((b) => b.def.categoryId),
     partners.map((p) => p.id)
   );
 
   return {
     books: books.map((b) => ({
       categoryId: b.def.categoryId,
-      key: b.def.key,
       label: b.def.budgetCategory,
       name: b.def.name,
       raises: b.def.raises,
@@ -754,9 +752,9 @@ export async function applyDncn(
 
       // Held until the transaction ends. A second note on the same position
       // waits here, and its read below sees what this one left.
-      await lockSubledgerPosition(tx, header.book.key, doc.partner_id, doc.currency_id);
+      await lockSubledgerPosition(tx, header.book.categoryId, doc.partner_id, doc.currency_id);
       const position = await subledgerPosition(
-        header.book.key,
+        header.book.categoryId,
         doc.partner_id,
         doc.currency_id,
         tx

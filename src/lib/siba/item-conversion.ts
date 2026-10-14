@@ -302,7 +302,6 @@ export type ConversionCashBankOption = {
 
 export type ConversionBookOption = {
   categoryId: number;
-  key: string;
   name: string;
   /** Which cash direction raises the position — decides every side. */
   raises: "In" | "Out";
@@ -320,7 +319,8 @@ export type ConversionPartnerOption = {
 export type ConversionItemOption = {
   id: number;
   itemNo: string;
-  book: string;
+  /** The book's Budget Category id. */
+  bookId: number;
   partnerId: number;
   currencyId: number;
   date: string;
@@ -403,7 +403,6 @@ export async function conversionRefs(companyIds: number[]): Promise<ConversionRe
     })),
     books: books.map((b) => ({
       categoryId: b.categoryId,
-      key: b.key,
       name: b.name,
       raises: b.raises,
     })),
@@ -417,7 +416,7 @@ export async function conversionRefs(companyIds: number[]): Promise<ConversionRe
     items: items.map((i) => ({
       id: i.id,
       itemNo: i.itemNo,
-      book: i.book,
+      bookId: i.bookId,
       partnerId: i.partnerId,
       currencyId: i.currencyId,
       date: i.date,
@@ -681,7 +680,7 @@ export async function checkConversionLines(
       const item = items.get(a.item_id);
       if (
         !item ||
-        item.book !== header.book.key ||
+        item.bookId !== header.book.categoryId ||
         item.partnerId !== header.partnerId ||
         item.currencyId !== header.currencyId
       ) {
@@ -912,7 +911,7 @@ export async function applyConversion(
       // Held until the transaction ends: a second document converting or
       // settling this Partner's foreign items waits here, and reads what this
       // one left.
-      await lockSubledgerPosition(tx, book.key, doc.partner_id, doc.currency_id);
+      await lockSubledgerPosition(tx, book.categoryId, doc.partner_id, doc.currency_id);
 
       // The items as they stand under the lock, tracked across lines so an
       // item split between two lines relieves its second part from what the
