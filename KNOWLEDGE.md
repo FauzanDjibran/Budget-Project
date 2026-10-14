@@ -30,8 +30,8 @@ in **Note** to stay on an older version on purpose.
 | engineering/app-architecture | 1.1 | tenancy=fixed-two-company | — | §3, §10 rule 1 |
 | engineering/code-conventions | 2.1 | core | — | §7; §6 applied 04/10/2026 (vercel.json sin1, relationJoins) |
 | engineering/data-conventions | 1.0 | doc-numbering=prefix-seq | — | §9 |
-| engineering/security-rbac | 1.0 | core | — | §10 rules 9–13, §11 |
-| accounting/books-and-posting | 2.1 | core | — | §10 rules 22, 47–51; §6 is `npm run db:reconcile` (origin) |
+| engineering/security-rbac | 1.0 | core | — | §10 rules 9–13, §11. pinned: 2.0 (SSO, decided 05/10/2026) is adopted when the Portal identity provider exists; plan: AKUI-Project-Example/SSO-Portal-Plan.md |
+| accounting/books-and-posting | 3.0 | core | — | §10 rules 22, 47–51; §6 is `npm run db:reconcile`; 3.0 §1.3 signed movement is CLAUDE.md §9 (origin) |
 | accounting/subject-books | 1.0 | core | — | §10 rules 52–56, 103–107; origin |
 | accounting/chart-of-accounts | 1.1 | control-account=derived | — | §10 rules 44–46, 77–80 |
 | accounting/fiscal-periods-and-statements | 1.0 | core | — | §12; Initialization/Opening & Closing Update Phase.md |
@@ -57,3 +57,6 @@ Project decisions that look reusable and are waiting to be folded into the KB
 
 | Project decision | Target concept | Proposed change | Status |
 | --- | --- | --- | --- |
+| Reklasifikasi Open Item (§10 rules 113–118, §12) | accounting/subject-books | New section: moving value between books. The target is posted as the original movement would have been — the same way opens one item per source item at its own kurs and base (value carried, no difference), the other way settles chosen items, each with its own FX line. Any category that names a Partner qualifies, no flag. It reclassifies items, never the plan. Also closes §5's "paths that lower without naming an item" for this path | Offered 07/10/2026 |
+| Holding books come in pairs (§10 rule 113) | accounting/subject-books | A suspense book for unidentified money is two categories, one per direction: a book runs one way and never goes below zero, so receipts and payments held in one would cancel | Offered 07/10/2026 |
+| A funded realization is a Realisasi without its cash (§10 rule 59, §12) | budgeting/plan-to-realization | §4: the child's document chooses its lines and open items exactly as the parent's; submitting checks the lines; the parent's confirmation states only the cash side (resource, layer or rate) and previews both journals; the bridge lines carry the cash line's own figures; every FX difference is the child's | Offered 14/10/2026 |

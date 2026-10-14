@@ -414,14 +414,14 @@ table cash_bank_ledger {
 
   entry_date                  date [not null]
   entry_type                  enum('Opening', 'Transaction', 'Adjustment') [not null]
-  direction                   enum('In', 'Out') [not null]
 
-  amount                      decimal(18,2) [not null]
+  // Signed: positive money in, negative money out. The sign is the direction —
+  // direction, amount and base_amount were dropped in
+  // 20261014114914_ledger_signed_movement, so the two can never disagree.
   movement                    decimal(18,2) [not null]
   balance_after               decimal(18,2) [not null]
 
   rate                        decimal(18,6) [not null]
-  base_amount                 decimal(18,2) [not null]
   base_movement               decimal(18,2) [not null]
   base_balance_after          decimal(18,2) [not null]
 
@@ -513,16 +513,17 @@ table sub_ledger {
   // Reclass: a Reklasifikasi Open Item — an item released out of one position,
   // and the item it became or settled in another book or for another Partner.
   entry_type                  enum('Opening', 'Transaction', 'Adjustment', 'Conversion', 'Reclass') [not null]
-  direction                   enum('In', 'Out') [not null]
 
-  amount                      decimal(18,2) [not null]
+  // Signed in the book's own direction: positive raises the position. The cash
+  // direction behind it is the sign read with the category's raises, which is
+  // fixed once the book has an entry. direction, amount and base_amount were
+  // dropped in 20261014114914_ledger_signed_movement.
   movement                    decimal(18,2) [not null]
   // The open item's remaining amount after this entry — the item, not the
   // whole position, which is the sum of its items.
   balance_after               decimal(18,2) [not null]
 
   rate                        decimal(18,6) [not null]
-  base_amount                 decimal(18,2) [not null]
   base_movement               decimal(18,2) [not null]
   base_balance_after          decimal(18,2) [not null]
 
@@ -1541,6 +1542,10 @@ table fin_funding_request {
   request_amount              decimal(18,2) [not null]
 
   provider_cash_bank_id       int [ref : >? m_cash_bank.id]
+  // The rate layer the confirmation drew on, where foreign currency left a
+  // foreign resource. A plain id like fin_cash_bank_transaction.cash_bank_layer_id:
+  // the layer is mutable, so the document that consumed it keeps which one.
+  provider_cash_bank_layer_id int
 
   status                      enum('Open', 'Closed', 'Cancelled') [not null, default: 'Open']
 

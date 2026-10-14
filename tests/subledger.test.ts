@@ -617,15 +617,10 @@ describe("a position carries a rate, and it is derived from what built it", () =
       })
     );
     const lowered = await prisma.subLedger.findFirstOrThrow({
-      where: { budget_category_id: bookOf("Hutang").categoryId, partner_id: partner, direction: "Out" },
+      where: { budget_category_id: bookOf("Hutang").categoryId, partner_id: partner, movement: { lt: 0 } },
     });
     assert.equal(lowered.movement.toNumber(), -400);
     assert.equal(lowered.base_movement.toNumber(), -6_000_000);
-    assert.equal(
-      lowered.base_amount.toNumber(),
-      6_000_000,
-      "the amount itself stays positive on both measures"
-    );
 
     const rebuilt = await rebuildSubledgerBalance(bookOf("Hutang").categoryId, partner, currency);
     assert.deepEqual(rebuilt, { balance: 600, baseBalance: 9_000_000 });

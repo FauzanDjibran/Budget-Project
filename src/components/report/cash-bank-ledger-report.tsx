@@ -103,7 +103,7 @@ export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
               </tr>
 
               {report.entries.map((e) => {
-                const inn = e.direction === "In";
+                const inn = e.movement > 0;
                 const linked =
                   e.sourceDocNo &&
                   e.sourceDocTable === "fin_cash_bank_transaction";
@@ -137,14 +137,14 @@ export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
                     </td>
                     <td className="num">
                       {inn ? (
-                        <span className="mny in">{money(e.amount)}</span>
+                        <span className="mny in">{money(Math.abs(e.movement))}</span>
                       ) : (
                         <span className="dash">–</span>
                       )}
                     </td>
                     <td className="num">
                       {!inn ? (
-                        <span className="mny">{money(e.amount)}</span>
+                        <span className="mny">{money(Math.abs(e.movement))}</span>
                       ) : (
                         <span className="dash">–</span>
                       )}

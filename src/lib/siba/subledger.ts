@@ -199,12 +199,9 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
         balance_id: item.id,
         entry_date: asDate(entry.date),
         entry_type: entry.type,
-        direction: entry.direction,
-        amount,
         movement,
         balance_after: amount,
         rate: entry.rate,
-        base_amount: base,
         base_movement: base,
         base_balance_after: base,
         source_doc_type_id: entry.sourceDocTypeId ?? null,
@@ -262,13 +259,10 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
       balance_id: item.id,
       entry_date: asDate(entry.date),
       entry_type: entry.type,
-      direction: entry.direction,
-      amount,
       movement,
       balance_after: after.foreign,
       // The item's own rate: relief keeps `base ÷ foreign` on it.
       rate: item.rate,
-      base_amount: relief.base,
       base_movement: -relief.base,
       base_balance_after: after.base,
       source_doc_type_id: entry.sourceDocTypeId ?? null,
@@ -289,6 +283,20 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
     },
   });
   return created;
+}
+
+/**
+ * Whether a book has any entry at all. Once it does, the way it runs
+ * (`raises`) is fixed: an entry stores only its signed movement, and the cash
+ * direction behind it is read back from that sign and `raises` — flipping
+ * `raises` would turn every entry already written around.
+ */
+export async function bookHasEntries(budgetCategoryId: number): Promise<boolean> {
+  const row = await prisma.subLedger.findFirst({
+    where: { budget_category_id: budgetCategoryId },
+    select: { id: true },
+  });
+  return row != null;
 }
 
 /**
@@ -367,13 +375,10 @@ export type SubledgerEntryRow = {
   entryNo: string;
   date: string;
   type: string;
-  direction: string;
-  amount: number;
   /** Signed in the book's direction: positive raises the position. */
   movement: number;
   /** This book's own settlement rate for the entry. */
   rate: number;
-  baseAmount: number;
   baseMovement: number;
   /** The open item the entry opened or settled. */
   itemId: number;
@@ -525,11 +530,8 @@ export async function subledgerReport(
       entryNo: e.entry_no,
       date: e.entry_date.toISOString().slice(0, 10),
       type: e.entry_type,
-      direction: e.direction,
-      amount: e.amount.toNumber(),
       movement,
       rate: e.rate.toNumber(),
-      baseAmount: e.base_amount.toNumber(),
       baseMovement,
       itemId: e.balance_id,
       itemNo: e.item.item_no,

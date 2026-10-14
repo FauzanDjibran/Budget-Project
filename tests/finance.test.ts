@@ -956,9 +956,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
       where: { cash_bank_id: cashBank, entry_type: "Transaction" },
     });
     assert.equal(entries.length, 1);
-    assert.equal(entries[0].direction, "Out");
-    assert.equal(entries[0].amount.toNumber(), 400_000);
-    assert.equal(entries[0].movement.toNumber(), -400_000);
+    assert.equal(entries[0].movement.toNumber(), -400_000, "money out");
     assert.equal(entries[0].balance_after.toNumber(), 4_600_000);
 
     const balance = await prisma.cashBankBalance.findUniqueOrThrow({
@@ -1419,7 +1417,6 @@ describe("posting writes the subject book alongside the cash book", () => {
     });
     assert.equal(entries.length, 1, "one document, one entry in its subject book");
     assert.equal(entries[0].partner_id, partner);
-    assert.equal(entries[0].direction, "In");
     assert.equal(
       entries[0].movement.toNumber(),
       3_000_000,
@@ -1456,7 +1453,6 @@ describe("posting writes the subject book alongside the cash book", () => {
     const entry = await prisma.subLedger.findFirstOrThrow({
       where: { source_doc_id: doc, budget_category_id: await bookId("Piutang") },
     });
-    assert.equal(entry.direction, "Out", "the money left");
     assert.equal(
       entry.movement.toNumber(),
       2_000_000,
@@ -1567,9 +1563,9 @@ describe("a foreign document is valued rather than refused", () => {
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
       where: { cash_bank_id: cashBank, entry_type: "Transaction" },
     });
-    assert.equal(entry.amount.toNumber(), 400, "the resource gave up 400");
+    assert.equal(entry.movement.toNumber(), -400, "the resource gave up 400");
     assert.equal(entry.rate.toNumber(), 15_500, "at the layer's own kurs");
-    assert.equal(entry.base_amount.toNumber(), 6_200_000);
+    assert.equal(entry.base_movement.toNumber(), -6_200_000);
 
     // The layer is drawn down by exactly what left it.
     const after = await prisma.cashBankLayer.findUniqueOrThrow({
@@ -1610,9 +1606,9 @@ describe("a foreign document is valued rather than refused", () => {
       where: { cash_bank_id: rupiah, entry_type: "Transaction" },
     });
     // What left the bank is rupiah, because that is what the bank holds.
-    assert.equal(entry.amount.toNumber(), 8_000_000, "500 at 16.000");
+    assert.equal(entry.movement.toNumber(), -8_000_000, "500 at 16.000");
     assert.equal(entry.rate.toNumber(), 1, "a rupiah account is worth its face");
-    assert.equal(entry.base_amount.toNumber(), 8_000_000);
+    assert.equal(entry.base_movement.toNumber(), -8_000_000);
 
     // And the journal holds two currencies at once, balancing only in base.
     const journal = await prisma.accJournal.findFirstOrThrow({
@@ -1733,11 +1729,11 @@ describe("a foreign document is valued rather than refused", () => {
 
     // The book released what it was carrying, not what the cash cost.
     const relief = await prisma.subLedger.findFirstOrThrow({
-      where: { budget_category_id: await bookId("Hutang"), partner_id: partner, direction: "Out" },
+      where: { budget_category_id: await bookId("Hutang"), partner_id: partner, movement: { lt: 0 } },
       orderBy: { id: "desc" },
     });
-    assert.equal(relief.amount.toNumber(), 1_000);
-    assert.equal(relief.base_amount.toNumber(), 15_000_000, "at 15.000");
+    assert.equal(relief.movement.toNumber(), -1_000);
+    assert.equal(relief.base_movement.toNumber(), -15_000_000, "at 15.000");
     assert.equal(relief.rate.toNumber(), 15_000);
 
     // And the position closes at nothing on both measures.
@@ -1822,7 +1818,6 @@ describe("a foreign document is valued rather than refused", () => {
       where: { cash_bank_id: cashBank, entry_type: "Transaction" },
     });
     assert.equal(entry.rate.toNumber(), 1, "base currency, so the rate is 1");
-    assert.equal(entry.base_amount.toNumber(), entry.amount.toNumber());
     assert.equal(entry.base_movement.toNumber(), entry.movement.toNumber());
     assert.equal(
       entry.base_balance_after.toNumber(),
@@ -1891,7 +1886,7 @@ describe("one document realizes Budgets of several categories and partners", () 
     });
     assert.equal(cash.length, 3, "one Cash Bank Book entry per Budget");
     assert.deepEqual(
-      cash.map((e) => [e.amount.toNumber(), e.note]),
+      cash.map((e) => [-e.movement.toNumber(), e.note]),
       [
         [400_000, descriptions.get(expense)],
         [250_000, descriptions.get(firstAdvance)],
@@ -2067,7 +2062,7 @@ describe("one document realizes Budgets of several categories and partners", () 
     });
     assert.equal(cash.length, 2);
     assert.deepEqual(
-      cash.map((e) => e.base_amount.toNumber()),
+      cash.map((e) => -e.base_movement.toNumber()),
       [16_000_000, 16_000_000]
     );
     const spent = await prisma.cashBankLayer.findUniqueOrThrow({ where: { id: layer.id } });

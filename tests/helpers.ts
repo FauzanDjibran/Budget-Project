@@ -372,7 +372,18 @@ export async function cleanupFixtures(): Promise<void> {
     ...new Set(
       (
         await prisma.accJournalLine.findMany({
-          where: { account: { account_code: { startsWith: FIXTURE_PREFIX } } },
+          // A fixture account, or a fixture Partner on a real account: on a
+          // database holding the showcase, `makeMapping` reuses the real
+          // mapping, so a suite's journal lands on a real account. Left
+          // behind, its lines lose their Partner when the fixture Partner is
+          // deleted (an optional relation nulls), and the reconcile reads
+          // them as a subject book disagreeing with the General Ledger.
+          where: {
+            OR: [
+              { account: { account_code: { startsWith: FIXTURE_PREFIX } } },
+              { partner: { partner_label: { startsWith: FIXTURE_PREFIX } } },
+            ],
+          },
           select: { journal_id: true },
         })
       ).map((l) => l.journal_id)

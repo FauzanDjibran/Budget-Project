@@ -1577,14 +1577,29 @@ async function planPosting(
     number,
     { id: number; budget_no: string; description: string; category_id: number | null; partner_id: number | null }
   >,
-  options: { induk: boolean }
+  options: {
+    /** Whose Selisih Kurs account a difference lands on. */
+    induk: boolean;
+    /**
+     * A cash side valued already, in place of the document's own. Only the
+     * Ajukan Dana check passes one: the anak's request has no cash yet, and
+     * what it asks is whether the lines themselves could be posted.
+     */
+    valuation?: Valuation;
+    /** False skips resolving the Selisih Kurs account — the same check. */
+    resolveFx?: boolean;
+  }
 ): Promise<
   { ok: true; plan: PostingPlan } | { ok: false; errors: Record<string, string> }
 > {
   const amounts = doc.lines.map((l) => l.settlement_amount.toNumber());
-  const resolved = await resolveValuation({ ...doc, amounts });
-  if (!resolved.ok) return resolved;
-  const valuation = resolved.valuation;
+  let valuation: Valuation;
+  if (options.valuation) valuation = options.valuation;
+  else {
+    const resolved = await resolveValuation({ ...doc, amounts });
+    if (!resolved.ok) return resolved;
+    valuation = resolved.valuation;
+  }
 
   const lineBudgets = doc.lines.map((l) => budgets.get(l.source_doc_id)!);
   const mapped = await lineAccountIds(doc.company_id, lineBudgets);
@@ -1727,6 +1742,7 @@ async function planPosting(
   // on another can sum to nil on the line and still be two journal lines.
   let fxAccountId: number | null = null;
   if (
+    options.resolveFx !== false &&
     lines.some(
       (l) => l.fxDifference !== 0 || l.items.some((it) => it.fxDifference !== 0)
     )
@@ -1784,30 +1800,61 @@ async function journalEntries(
   | { ok: true; lines: JournalLineInput[] }
   | { ok: false; errors: Record<string, string> }
 > {
-  const cashBank = await prisma.mCashBank.findUnique({
-    where: { id: doc.cash_bank_id! },
-    select: { account_id: true, currency_id: true, cash_bank_label: true },
-  });
-  if (!cashBank) {
+  const cash = await cashJournalLine(doc.cash_bank_id!, doc.transaction_type, plan);
+  if (!cash) {
     return { ok: false, errors: { _form: "Cash & Bank dokumen tidak ditemukan." } };
   }
+  return {
+    ok: true,
+    lines: [
+      { ...cash, description: `${doc.transaction_no} — ${cash.description}` },
+      ...(await counterJournalLines(doc, plan)),
+    ],
+  };
+}
 
-  const incoming = doc.transaction_type === "In";
+/**
+ * The cash side of a realization's journal: one line for the whole document,
+ * in the resource's own currency and at its own rate. The funded route writes
+ * it into the induk's journal, and the same figures, on the bridge account,
+ * into the anak's — which is what makes the two Companies' positions against
+ * each other equal on both measures.
+ */
+async function cashJournalLine(
+  cashBankId: number,
+  transactionType: string,
+  plan: PostingPlan
+): Promise<JournalLineInput | null> {
+  const cashBank = await prisma.mCashBank.findUnique({
+    where: { id: cashBankId },
+    select: { account_id: true, currency_id: true, cash_bank_label: true },
+  });
+  if (!cashBank) return null;
+  const incoming = transactionType === "In";
   const accountAmount = plan.lines.reduce((t, l) => t + l.accountAmount, 0);
-  const baseCurrency = await baseCurrencyId();
+  return {
+    accountId: cashBank.account_id,
+    currencyId: cashBank.currency_id,
+    rate: plan.accountRate,
+    debit: incoming ? accountAmount : 0,
+    credit: incoming ? 0 : accountAmount,
+    baseAmount: plan.base,
+    description: cashBank.cash_bank_label,
+  };
+}
 
-  const lines: JournalLineInput[] = [
-    {
-      // The cash side, in the resource's own currency and at its own rate.
-      accountId: cashBank.account_id,
-      currencyId: cashBank.currency_id,
-      rate: plan.accountRate,
-      debit: incoming ? accountAmount : 0,
-      credit: incoming ? 0 : accountAmount,
-      baseAmount: plan.base,
-      description: `${doc.transaction_no} — ${cashBank.cash_bank_label}`,
-    },
-  ];
+/**
+ * Per Budget: its counter line on its own mapped account and Partner, and its
+ * own FX lines where its two base values disagree. The same on both routes —
+ * the funded one writes them into the anak's journal.
+ */
+async function counterJournalLines(
+  doc: { currency_id: number; transaction_type: string },
+  plan: PostingPlan
+): Promise<JournalLineInput[]> {
+  const incoming = doc.transaction_type === "In";
+  const baseCurrency = await baseCurrencyId();
+  const lines: JournalLineInput[] = [];
 
   for (const l of plan.lines) {
     // The counter side, in the document's currency and at the rate this
@@ -1851,7 +1898,7 @@ async function journalEntries(
     }
   }
 
-  return { ok: true, lines };
+  return lines;
 }
 
 /** The base currency's row id, for the lines that have no foreign face. */
@@ -2005,136 +2052,18 @@ export async function applyPosting(
     // transaction and re-asked under the hold: the check above was before it.
     await holdPostingPeriod(tx, [doc.company_id], date);
 
-    // Every position this document lowers, held for the rest of the
-    // transaction so two documents settling one open item cannot both pass
-    // against the same remaining figure. Taken after the period lock and in one
-    // fixed order, so nothing waits in a circle.
-    const held = [
-      ...new Set(
-        plan.lines
-          .filter((l) => l.items.length && l.book)
-          .map((l) => `${l.book!.categoryId}|${l.partnerId}`)
-      ),
-    ].sort();
-    for (const k of held) {
-      const [bookId, partnerId] = k.split("|");
-      await lockSubledgerPosition(tx, Number(bookId), Number(partnerId), doc.currency_id);
-    }
-
-    const direction = doc.transaction_type as "In" | "Out";
-    const opensLayer = createsLayer(
-      direction,
-      doc.currency.currency_label,
-      doc.cash_bank?.currency.currency_label ?? ""
-    );
-
-    for (const line of plan.lines) {
-      // The layer the payment drew on, taken down by exactly what this line
-      // took from it. Drawn before the line's book entry so an exhausted layer
-      // refuses before anything else is written — `drawFromLayer` throws, and
-      // a throw in here takes the posting down. A layer another document has
-      // moved since the plan was made would value the line differently from
-      // the journal already composed, so that refuses too.
-      if (plan.layerId) {
-        const drawn = await drawFromLayer(tx, {
-          layerId: plan.layerId,
-          cashBankId: doc.cash_bank_id!,
-          foreign: line.accountAmount,
-          actorId,
-        });
-        if (drawn.base !== line.transactionBase) {
-          throw new LayerNotAvailable(
-            "Layer kurs berubah sejak dokumen divaluasi. Ulangi Post."
-          );
-        }
-      }
-
-      // One Cash Bank Book entry per Budget, reading that Budget's own words,
-      // so the book traces back to each plan it paid rather than to a total.
-      await recordCashBankEntry(tx, {
-        cashBankId: doc.cash_bank_id!,
-        date,
-        type: "Transaction",
-        direction,
-        // In the **resource's** own currency, which is the line's amount
-        // unless the bank did the converting.
-        amount: line.accountAmount,
-        rate: plan.accountRate,
-        baseAmount: line.transactionBase,
-        sourceDocTypeId: docTypeId,
-        sourceDocId: doc.id,
-        note: line.description,
-        actorId,
-      });
-
-      // Money arriving into a foreign resource is currency acquired, and each
-      // line acquires a layer of its own at the rate it was bought in at —
-      // one per book entry, never merged with an existing one.
-      if (opensLayer) {
-        await openLayer(tx, {
-          cashBankId: doc.cash_bank_id!,
-          date,
-          rate: plan.accountRate,
-          foreign: line.accountAmount,
-          baseAmount: line.transactionBase,
-          sourceDocTypeId: docTypeId,
-          sourceDocId: doc.id,
-          note: line.description,
-          actorId,
-        });
-      }
-
-      // The subject book this line's Budget Category keeps, where it keeps
-      // one — one entry per Budget, never summed per Partner, so a Partner
-      // settling six plans shows six movements. Written straight from the
-      // document like the Cash Bank Book, never derived from the journal.
-      //
-      // A line lowering a position writes one entry per item it settles —
-      // an entry names exactly one item — each at that item's own rate and
-      // reading the Budget's description, so the book still traces every
-      // movement to the plan it settled. A raising line writes one entry,
-      // which opens its item.
-      if (line.book) {
-        const entries = line.items.length
-          ? line.items.map((it) => ({
-              amount: it.amount,
-              baseAmount: it.settlementBase,
-              itemId: it.itemId as number | null,
-            }))
-          : [{ amount: line.amount, baseAmount: line.settlementBase, itemId: null }];
-        for (const e of entries) {
-          const written = await recordSubledgerEntry(tx, {
-            book: line.book,
-            partnerId: line.partnerId!,
-            currencyId: doc.currency_id,
-            date,
-            type: "Transaction",
-            direction,
-            amount: e.amount,
-            // **This book's own rate**, not the cash side's. A relief releases
-            // what the item was carried at; the gap to what the cash cost is
-            // the item's FX difference, and it lives in the journal.
-            rate: e.amount ? e.baseAmount / e.amount : plan.rate,
-            baseAmount: e.baseAmount,
-            // Null raises a new open item; an id settles the one chosen, and
-            // the book refuses if it has moved since the plan valued it.
-            itemId: e.itemId,
-            sourceDocTypeId: docTypeId,
-            sourceDocId: doc.id,
-            note: line.description,
-            actorId,
-          });
-          // The item a raise opened, kept on the line so the Budget can follow
-          // its money on — into a reclassification, for one.
-          if (!e.itemId) {
-            await tx.finCashBankTransactionLine.update({
-              where: { id: line.lineId },
-              data: { opened_item_id: written.balance_id },
-            });
-          }
-        }
-      }
-    }
+    await lockPlanPositions(tx, plan, doc.currency_id);
+    await writeRealizationLines(tx, plan, {
+      cashBankId: doc.cash_bank_id!,
+      direction: doc.transaction_type as "In" | "Out",
+      documentCurrencyLabel: doc.currency.currency_label,
+      resourceCurrencyLabel: doc.cash_bank?.currency.currency_label ?? "",
+      currencyId: doc.currency_id,
+      docTypeId,
+      docId: doc.id,
+      date,
+      actorId,
+    });
 
     // Realization is Budget's to write, not Finance's — same transaction, but
     // `bud_budget` is only ever touched by the module that owns it. Closing
@@ -2163,35 +2092,6 @@ export async function applyPosting(
       actorId,
     });
 
-    // What the document was worth, and what each line's share of that was —
-    // written at Post rather than at Draft, because a Draft has no kurs it can
-    // rely on and nothing to be worth anything against.
-    for (const share of plan.lines) {
-      await tx.finCashBankTransactionLine.update({
-        where: { id: share.lineId },
-        data: {
-          settlement_base_amount: share.settlementBase,
-          settlement_exchange_rate: share.amount
-            ? share.settlementBase / share.amount
-            : plan.rate,
-          transaction_base_amount: share.transactionBase,
-          fx_difference: share.fxDifference,
-          updated_by: actorId,
-        },
-      });
-      for (const it of share.items) {
-        await tx.finCashBankTransactionLineItem.update({
-          where: { id: it.allocationId },
-          data: {
-            settlement_base_amount: it.settlementBase,
-            transaction_base_amount: it.transactionBase,
-            fx_difference: it.fxDifference,
-            updated_by: actorId,
-          },
-        });
-      }
-    }
-
     await tx.finCashBankTransaction.update({
       where: { id: transactionId },
       data: {
@@ -2205,21 +2105,209 @@ export async function applyPosting(
     });
   });
   } catch (error) {
-    if (
-      error instanceof PeriodShut ||
-      error instanceof LayerNotAvailable ||
-      error instanceof SubledgerItemUnavailable ||
-      // A payment larger than the resource holds is a refusal the user can
-      // act on, not a fault: it used to escape as an exception and land on
-      // the generic error screen.
-      error instanceof InsufficientFunds
-    ) {
+    if (isPostingRefusal(error)) {
       return { ok: false, errors: { _form: error.message } };
     }
     throw error;
   }
 
   return { ok: true, closed };
+}
+
+/**
+ * Every position a plan lowers, held for the rest of the transaction so two
+ * documents settling one open item cannot both pass against the same remaining
+ * figure. Taken after the period lock and in one fixed order, so nothing waits
+ * in a circle. Both routes take it.
+ */
+async function lockPlanPositions(
+  tx: Prisma.TransactionClient,
+  plan: PostingPlan,
+  currencyId: number
+): Promise<void> {
+  const held = [
+    ...new Set(
+      plan.lines
+        .filter((l) => l.items.length && l.book)
+        .map((l) => `${l.book!.categoryId}|${l.partnerId}`)
+    ),
+  ].sort();
+  for (const k of held) {
+    const [bookId, partnerId] = k.split("|");
+    await lockSubledgerPosition(tx, Number(bookId), Number(partnerId), currencyId);
+  }
+}
+
+/**
+ * What one realization writes into the books, per Budget line — shared by
+ * the direct route and the funded one, which differ only in whose resource
+ * the cash moves through and whose journal carries it.
+ *
+ * Per line: the layer drawn on (or one opened), one Cash Bank Book entry, and
+ * the subject-book entries its category keeps — opening an item or settling
+ * the ones the user chose. Then each line's and each item's base figures on
+ * the document. The journal and the realization are the caller's.
+ */
+async function writeRealizationLines(
+  tx: Prisma.TransactionClient,
+  plan: PostingPlan,
+  ctx: {
+    /** The resource the money moves through — the induk's on the funded route. */
+    cashBankId: number;
+    direction: "In" | "Out";
+    documentCurrencyLabel: string;
+    resourceCurrencyLabel: string;
+    /** The document's currency, which the subject books are kept in. */
+    currencyId: number;
+    docTypeId: number;
+    docId: number;
+    date: string;
+    actorId: number;
+  }
+): Promise<void> {
+  const direction = ctx.direction;
+  const opensLayer = createsLayer(
+    direction,
+    ctx.documentCurrencyLabel,
+    ctx.resourceCurrencyLabel
+  );
+
+  for (const line of plan.lines) {
+    // The layer the payment drew on, taken down by exactly what this line
+    // took from it. Drawn before the line's book entry so an exhausted layer
+    // refuses before anything else is written — `drawFromLayer` throws, and
+    // a throw in here takes the posting down. A layer another document has
+    // moved since the plan was made would value the line differently from
+    // the journal already composed, so that refuses too.
+    if (plan.layerId) {
+      const drawn = await drawFromLayer(tx, {
+        layerId: plan.layerId,
+        cashBankId: ctx.cashBankId,
+        foreign: line.accountAmount,
+        actorId: ctx.actorId,
+      });
+      if (drawn.base !== line.transactionBase) {
+        throw new LayerNotAvailable(
+          "Layer kurs berubah sejak dokumen divaluasi. Ulangi Post."
+        );
+      }
+    }
+
+    // One Cash Bank Book entry per Budget, reading that Budget's own words,
+    // so the book traces back to each plan it paid rather than to a total.
+    await recordCashBankEntry(tx, {
+      cashBankId: ctx.cashBankId,
+      date: ctx.date,
+      type: "Transaction",
+      direction,
+      // In the **resource's** own currency, which is the line's amount
+      // unless the bank did the converting.
+      amount: line.accountAmount,
+      rate: plan.accountRate,
+      baseAmount: line.transactionBase,
+      sourceDocTypeId: ctx.docTypeId,
+      sourceDocId: ctx.docId,
+      note: line.description,
+      actorId: ctx.actorId,
+    });
+
+    // Money arriving into a foreign resource is currency acquired, and each
+    // line acquires a layer of its own at the rate it was bought in at —
+    // one per book entry, never merged with an existing one.
+    if (opensLayer) {
+      await openLayer(tx, {
+        cashBankId: ctx.cashBankId,
+        date: ctx.date,
+        rate: plan.accountRate,
+        foreign: line.accountAmount,
+        baseAmount: line.transactionBase,
+        sourceDocTypeId: ctx.docTypeId,
+        sourceDocId: ctx.docId,
+        note: line.description,
+        actorId: ctx.actorId,
+      });
+    }
+
+    // The subject book this line's Budget Category keeps, where it keeps
+    // one — one entry per Budget, never summed per Partner, so a Partner
+    // settling six plans shows six movements. Written straight from the
+    // document like the Cash Bank Book, never derived from the journal.
+    //
+    // A line lowering a position writes one entry per item it settles —
+    // an entry names exactly one item — each at that item's own rate and
+    // reading the Budget's description, so the book still traces every
+    // movement to the plan it settled. A raising line writes one entry,
+    // which opens its item.
+    if (line.book) {
+      const entries = line.items.length
+        ? line.items.map((it) => ({
+            amount: it.amount,
+            baseAmount: it.settlementBase,
+            itemId: it.itemId as number | null,
+          }))
+        : [{ amount: line.amount, baseAmount: line.settlementBase, itemId: null }];
+      for (const e of entries) {
+        const written = await recordSubledgerEntry(tx, {
+          book: line.book,
+          partnerId: line.partnerId!,
+          currencyId: ctx.currencyId,
+          date: ctx.date,
+          type: "Transaction",
+          direction,
+          amount: e.amount,
+          // **This book's own rate**, not the cash side's. A relief releases
+          // what the item was carried at; the gap to what the cash cost is
+          // the item's FX difference, and it lives in the journal.
+          rate: e.amount ? e.baseAmount / e.amount : plan.rate,
+          baseAmount: e.baseAmount,
+          // Null raises a new open item; an id settles the one chosen, and
+          // the book refuses if it has moved since the plan valued it.
+          itemId: e.itemId,
+          sourceDocTypeId: ctx.docTypeId,
+          sourceDocId: ctx.docId,
+          note: line.description,
+          actorId: ctx.actorId,
+        });
+        // The item a raise opened, kept on the line so the Budget can follow
+        // its money on — into a reclassification, for one.
+        if (!e.itemId) {
+          await tx.finCashBankTransactionLine.update({
+            where: { id: line.lineId },
+            data: { opened_item_id: written.balance_id },
+          });
+        }
+      }
+    }
+  }
+
+  // What the document was worth, and what each line's share of that was —
+  // written at Post rather than at Draft, because a Draft has no kurs it can
+  // rely on and nothing to be worth anything against.
+  for (const share of plan.lines) {
+    await tx.finCashBankTransactionLine.update({
+      where: { id: share.lineId },
+      data: {
+        settlement_base_amount: share.settlementBase,
+        settlement_exchange_rate: share.amount
+          ? share.settlementBase / share.amount
+          : plan.rate,
+        transaction_base_amount: share.transactionBase,
+        fx_difference: share.fxDifference,
+        updated_by: ctx.actorId,
+      },
+    });
+    for (const it of share.items) {
+      await tx.finCashBankTransactionLineItem.update({
+        where: { id: it.allocationId },
+        data: {
+          settlement_base_amount: it.settlementBase,
+          transaction_base_amount: it.transactionBase,
+          fx_difference: it.fxDifference,
+          updated_by: ctx.actorId,
+        },
+      });
+    }
+  }
 }
 
 // ----------------------------------------------------- funded posting (anak)
@@ -2239,10 +2327,23 @@ export type BridgeSide = {
   apAccountId: number;
 };
 
+/**
+ * The cash side the induk chooses when it confirms: which of its resources,
+ * and — where that resource and the document differ, or the resource is
+ * foreign — the layer drawn on or the kurs the bank used. Exactly the three
+ * things a direct Realisasi carries on its own header.
+ */
+export type FundingCashSide = {
+  cashBankId: number;
+  /** The layer drawn on, where foreign currency leaves a foreign resource. */
+  layerId: number | null;
+  /** The kurs the bank used, where one is entered; ignored otherwise. */
+  rate: number | null;
+};
+
 export type FundedPostingInput = {
   transactionId: number;
-  /** The induk resource the money actually moves through. */
-  providerCashBankId: number;
+  cash: FundingCashSide;
   bridge: { induk: BridgeSide; anak: BridgeSide };
   /**
    * What the **provider's** journal records as its cause — the Funding Request.
@@ -2250,47 +2351,32 @@ export type FundedPostingInput = {
    * module that owns it, and Finance must not name its table.
    */
   providerSource: { docTypeId: number; docId: number };
-  /**
-   * The request's own number, as a **fact rather than a phrase**.
-   *
-   * It used to arrive as a note the caller had already composed — document
-   * number, purpose label and all — which left this module unable to tell what
-   * was inside it, and appending the label again produced a description that
-   * said it twice. Descriptions are composed here now, in one place, from parts
-   * that each mean one thing.
-   */
+  /** The request's own number, as a fact rather than a phrase. */
   requestNo: string;
 };
 
 export type FundedPostingPlan = {
   transactionId: number;
-  /** Everything below is resolved and checked; writing it cannot fail on rules. */
-  induk: {
-    companyId: number;
-    cashBankId: number;
-    cashAccountId: number;
-    bridgeAccountId: number;
-  };
-  anak: {
-    companyId: number;
-    purposeAccountId: number;
-    /** The subject book the Purpose itself keeps, where it keeps one. */
-    purposeBook: SubledgerDef | null;
-    purposePartnerId: number | null;
-    bridgeAccountId: number;
-  };
+  indukCompanyId: number;
+  anakCompanyId: number;
+  cashBankId: number;
   direction: "In" | "Out";
+  documentCurrencyLabel: string;
+  resourceCurrencyLabel: string;
   /** `YYYY-MM-DD` — the day both Companies' books are written for. */
   date: string;
   currencyId: number;
-  amount: number;
-  /** The kurs both Companies' books value this movement at. */
-  rate: number;
   transactionNo: string;
-  purposeLabel: string;
+  title: string;
   requestNo: string;
   providerSource: { docTypeId: number; docId: number };
   requesterSource: { docTypeId: number; docId: number };
+  /** Valued exactly as a direct Realisasi of the same lines would be. */
+  posting: PostingPlan;
+  /** Cash against the induk's bridge account. */
+  indukJournal: JournalLineInput[];
+  /** The anak's bridge account where the cash line would be, then every Budget. */
+  anakJournal: JournalLineInput[];
   lines: { budgetId: number; amount: number }[];
 };
 
@@ -2298,35 +2384,106 @@ export type FundedPostingCheck =
   | { ok: true; plan: FundedPostingPlan }
   | { ok: false; errors: Record<string, string> };
 
+/** The anak's document, read the way both checks below need it. */
+async function readFundedDocument(transactionId: number) {
+  return prisma.finCashBankTransaction.findUnique({
+    where: { id: transactionId },
+    include: {
+      lines: { include: { items: { orderBy: { sequence_no: "asc" } } } },
+      currency: { select: { currency_label: true } },
+    },
+  });
+}
+
+/**
+ * The Budgets a funded document realizes, re-read now: another document may
+ * have closed one since the request was raised.
+ */
+async function openBudgetsOf(doc: { lines: { source_doc_id: number }[] }) {
+  const budgets = await budgetsByIds(doc.lines.map((l) => l.source_doc_id));
+  const byId = new Map(budgets.map((b) => [b.id, b]));
+  const stale = doc.lines.filter((l) => byId.get(l.source_doc_id)?.status !== "Open");
+  return { byId, stale: stale.length };
+}
+
+/**
+ * Could this anak document be posted, cash aside? Asked at **Ajukan Dana**, so
+ * a request that no confirmation could ever answer — a Budget without a
+ * mapping, a line lowering a position with no open item, an item another
+ * document has since settled — is refused while the anak can still fix it,
+ * rather than frozen in front of the induk.
+ *
+ * The lines are valued as if the cash cost exactly what the obligation is
+ * worth in the document's own figures; what the cash actually costs is the
+ * induk's to decide, and is asked again, whole, at confirmation.
+ */
+export async function checkFundable(
+  transactionId: number
+): Promise<{ ok: true } | { ok: false; errors: Record<string, string> }> {
+  const doc = await readFundedDocument(transactionId);
+  if (!doc) return { ok: false, errors: { _form: "Dokumen tidak ditemukan." } };
+  const { byId, stale } = await openBudgetsOf(doc);
+  if (stale) {
+    return {
+      ok: false,
+      errors: {
+        _form:
+          `${stale} Budget pada dokumen ini sudah tidak berstatus Disetujui (Open). ` +
+          "Ubah dokumen dan keluarkan baris tersebut.",
+      },
+    };
+  }
+  const amounts = doc.lines.map((l) => l.settlement_amount.toNumber());
+  const planned = await planPosting(
+    { ...doc, cash_bank: null },
+    byId,
+    {
+      induk: false,
+      resolveFx: false,
+      valuation: {
+        rate: 1,
+        accountRate: 1,
+        layerId: null,
+        lines: amounts.map((a) => ({ accountAmount: a, base: a })),
+      },
+    }
+  );
+  return planned.ok ? { ok: true } : planned;
+}
+
 /**
  * Everything the funded posting needs, resolved and checked before anything is
  * written — the atomic intercompany posting of concept doc §30, in two halves.
  *
- * The split exists because the Funding Request's own closure belongs to the
- * module that owns it: `prepareFundedPosting` answers "may this be posted, and
- * with what", `writeFundedPosting` does it inside the caller's transaction, and
- * the caller closes its request in the same one. Either both Companies got
- * their books and the request is closed, or nothing happened at all.
+ * **The anak's document is an ordinary Realisasi that does not name its cash.**
+ * Its lines, its Budgets and the open items each line settles were all chosen
+ * on its draft, exactly as on the induk's; what the induk adds by confirming
+ * is the cash side — a resource, and its layer or kurs. From there the posting
+ * is `planPosting`, the same valuation a direct Realisasi runs: one Cash Bank
+ * Book entry per Budget, one subject-book entry per Budget or per settled item,
+ * one counter line per Budget on its own account and Partner, and one Selisih
+ * Kurs line per settled item.
  *
- * **Both directions are one mechanism.** Money leaving the induk for the anak's
- * expense debits the induk's receivable from the anak and credits the anak's
- * payable to the induk; money the anak receives into an induk resource does the
- * mirror (§34, §37). Only which side of each bridge is written flips.
+ * The two journals differ only in where the cash line goes. The induk's is
+ * cash against its bridge account; the anak's carries its bridge account
+ * where the cash line would be, then every Budget. Both bridge lines carry the
+ * **cash line's own figures** — the currency the induk actually moved, at the
+ * rate it moved at — so the two Companies' positions against each other are
+ * equal on both measures, and every FX difference lands in the anak's books,
+ * on the anak's Selisih Kurs account: the anak carried the obligation, and the
+ * induk's claim is what the cash cost.
  *
- * The position itself is carried by those two accounts and read through the
- * General Ledger — **no subject book entry is written for the intercompany
- * leg**, because its subject would have to be a Partner and the other Company
- * is not one. The anak's *own* subject book is untouched by that: the partner
- * it actually paid or was paid by still gets its entry, because that is the
- * business event and the funding is only how the cash reached it.
+ * Split from the write because the Funding Request's own closure belongs to
+ * the module that owns it: `prepareFundedPosting` answers "may this be
+ * posted, and with what", `writeFundedPosting` does it inside the caller's
+ * transaction, and the caller closes its request in the same one. Run alone,
+ * this is also the confirmation's preview — the journals it returns are the
+ * journals the write posts.
  */
 export async function prepareFundedPosting(
   input: FundedPostingInput
 ): Promise<FundedPostingCheck> {
-  const doc = await prisma.finCashBankTransaction.findUnique({
-    where: { id: input.transactionId },
-    include: { lines: true },
-  });
+  const doc = await readFundedDocument(input.transactionId);
   if (!doc) return { ok: false, errors: { _form: "Dokumen tidak ditemukan." } };
   if (doc.status !== "Pending") {
     return {
@@ -2363,13 +2520,9 @@ export async function prepareFundedPosting(
   }
 
   // One business event, two Companies' books — so the date is checked for
-  // both. The induk moves cash and journals the claim; the anak journals its
-  // own realization on its own chart. The day is the anak's document date,
-  // chosen when it was drafted and possibly earlier than today: the
-  // realization happened then, whenever the induk gets round to confirming it.
-  // Either Company having closed that year is enough to refuse, and the
-  // refusal names which one. A document raised before drafts carried a date
-  // posts as today.
+  // both. The day is the anak's document date, chosen when it was drafted and
+  // possibly earlier than today: the realization happened then, whenever the
+  // induk gets round to confirming it.
   const dated = await checkTransactionDate(doc.document_date ?? todayDay(), [
     induk.id,
     doc.company_id,
@@ -2377,12 +2530,11 @@ export async function prepareFundedPosting(
   if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
 
   const cashBank = await prisma.mCashBank.findUnique({
-    where: { id: input.providerCashBankId },
+    where: { id: input.cash.cashBankId },
     select: {
       company_id: true,
       status: true,
-      currency_id: true,
-      account_id: true,
+      currency: { select: { currency_label: true } },
     },
   });
   if (!cashBank) {
@@ -2391,125 +2543,124 @@ export async function prepareFundedPosting(
   if (cashBank.company_id !== induk.id) {
     return {
       ok: false,
-      errors: {
-        cash_bank_id: `Cash & Bank harus milik Company ${induk.label}.`,
-      },
+      errors: { cash_bank_id: `Cash & Bank harus milik Company ${induk.label}.` },
     };
   }
   if (cashBank.status !== "Active") {
     return {
       ok: false,
-      errors: {
-        cash_bank_id: "Cash & Bank tersebut non-aktif dan tidak dapat dipakai.",
-      },
+      errors: { cash_bank_id: "Cash & Bank tersebut non-aktif dan tidak dapat dipakai." },
     };
   }
-  if (cashBank.currency_id !== doc.currency_id) {
-    // There is no exchange rate in this system (CLAUDE.md §12), so a resource
-    // in another currency cannot answer this request without inventing one.
+  const documentCurrency = doc.currency.currency_label;
+  const resourceCurrency = cashBank.currency.currency_label;
+  const direction = doc.transaction_type as "In" | "Out";
+  const source = rateSource(direction, documentCurrency, resourceCurrency);
+  if (!source) {
     return {
       ok: false,
       errors: {
         cash_bank_id:
-          "Currency Cash & Bank harus sama dengan currency permintaan dana.",
+          settlementRefusal(documentCurrency, resourceCurrency) ??
+          "Cash & Bank tersebut tidak dapat menyelesaikan currency dokumen ini.",
       },
     };
   }
-
-  // Both Companies' books value this movement, so both are refused together
-  // when it cannot be valued at all.
-  //
-  // The funded route still values only base-currency documents. The whole
-  // machinery a foreign one needs — a kurs on the anak's draft, a layer chosen
-  // by the induk at confirmation, an FX difference in the anak's journal — is
-  // the next phase's, and a rate of `1` on a USD request would record that a
-  // dollar is a rupiah in two Companies' books at once.
-  const documentCurrency = await prisma.refCurrency.findUnique({
-    where: { id: doc.currency_id },
-    select: { currency_label: true },
-  });
-  if (!documentCurrency) {
-    return { ok: false, errors: { _form: "Currency dokumen tidak ditemukan." } };
+  // The layer must be this resource's own, and is asked for only where the
+  // kurs is read off one — the checks `checkHeader` makes on a direct header.
+  if (source === "layer" && input.cash.layerId) {
+    const layer = await prisma.cashBankLayer.findUnique({
+      where: { id: input.cash.layerId },
+      select: { cash_bank_id: true },
+    });
+    if (!layer || layer.cash_bank_id !== input.cash.cashBankId) {
+      return {
+        ok: false,
+        errors: {
+          cash_bank_layer_id: "Layer kurs tersebut bukan milik Cash & Bank yang dipilih.",
+        },
+      };
+    }
   }
-  if (!isBaseCurrency(documentCurrency.currency_label)) {
+
+  const { byId, stale } = await openBudgetsOf(doc);
+  if (stale) {
     return {
       ok: false,
       errors: {
         _form:
-          `Funding Request dalam ${documentCurrency.currency_label} belum dapat ` +
-          "dikonfirmasi: pemilihan kurs untuk rute intercompany belum tersedia.",
-      },
-    };
-  }
-  const valuation = { ok: true as const, rate: 1 };
-
-  // Re-read now, not trusted from when the request was raised: another document
-  // may have closed a Budget in the meantime, and funding a plan that is no
-  // longer Open would record a realization nothing authorised.
-  const budgets = await budgetsByIds(doc.lines.map((l) => l.source_doc_id));
-  const byId = new Map(budgets.map((b) => [b.id, b]));
-  const stale = doc.lines.filter(
-    (l) => byId.get(l.source_doc_id)?.status !== "Open"
-  );
-  if (stale.length) {
-    return {
-      ok: false,
-      errors: {
-        _form:
-          `${stale.length} Budget pada dokumen ini sudah tidak berstatus Disetujui (Open), ` +
+          `${stale} Budget pada dokumen ini sudah tidak berstatus Disetujui (Open), ` +
           "kemungkinan sudah ditutup dokumen lain. Funding tidak dapat dikonfirmasi.",
       },
     };
   }
 
-  // The anak journals its own side against its own chart of accounts.
-  //
-  // The funded route is frozen while it is redesigned: it still posts one
-  // counter line and one subject-book entry, resolved from the document's
-  // first Budget, as it did when a document named one Purpose.
-  const first = byId.get(doc.lines[0].source_doc_id)!;
-  const mapped = await lineAccountIds(doc.company_id, [first]);
-  if (!mapped.ok) return mapped;
+  // Valued as a direct Realisasi of the same lines would be, with the induk's
+  // cash side standing in for the header the anak's document does not carry.
+  const planned = await planPosting(
+    {
+      ...doc,
+      cash_bank: { currency: { currency_label: resourceCurrency } },
+      cash_bank_layer_id: source === "layer" ? input.cash.layerId : null,
+      exchange_rate: { toNumber: () => (source === "entered" ? input.cash.rate ?? 0 : 1) },
+    },
+    byId,
+    { induk: false }
+  );
+  if (!planned.ok) return planned;
+  const posting = planned.plan;
 
-  const outgoing = doc.transaction_type === "Out";
-  const subledger = subledgerForCategory(await loadSubledgers(), first.category_id);
+  const cash = await cashJournalLine(input.cash.cashBankId, doc.transaction_type, posting);
+  if (!cash) {
+    return { ok: false, errors: { cash_bank_id: "Cash & Bank tidak ditemukan." } };
+  }
+
+  const outgoing = direction === "Out";
+  const title = realizationOf(doc.transaction_type).title;
+  const funding = `${input.requestNo} — ${doc.transaction_no} — ${title}`;
+
+  // The induk: cash against its bridge. Money paid out for the anak is a claim
+  // on it; money taken in on the anak's behalf is money held for it.
+  const indukBridge: JournalLineInput = {
+    ...cash,
+    accountId: outgoing ? input.bridge.induk.arAccountId : input.bridge.induk.apAccountId,
+    debit: cash.credit,
+    credit: cash.debit,
+    description: funding,
+  };
+  const indukCash: JournalLineInput = {
+    ...cash,
+    description: `${funding} — ${cash.description}`,
+  };
+
+  // The anak: its own payable (or receivable) where its cash line would be,
+  // then each Budget exactly as a direct Realisasi journals it.
+  const anakBridge: JournalLineInput = {
+    ...cash,
+    accountId: outgoing ? input.bridge.anak.apAccountId : input.bridge.anak.arAccountId,
+    description: funding,
+  };
 
   return {
     ok: true,
     plan: {
       transactionId: doc.id,
-      induk: {
-        companyId: induk.id,
-        cashBankId: input.providerCashBankId,
-        cashAccountId: cashBank.account_id,
-        // Money paid out for the anak is a claim on it; money taken in on the
-        // anak's behalf is money held for it.
-        bridgeAccountId: outgoing
-          ? input.bridge.induk.arAccountId
-          : input.bridge.induk.apAccountId,
-      },
-      anak: {
-        companyId: doc.company_id,
-        purposeAccountId: mapped.accounts.get(first.id)!,
-        purposeBook: subledger ?? null,
-        purposePartnerId: first.partner_id,
-        bridgeAccountId: outgoing
-          ? input.bridge.anak.apAccountId
-          : input.bridge.anak.arAccountId,
-      },
-      direction: doc.transaction_type as "In" | "Out",
+      indukCompanyId: induk.id,
+      anakCompanyId: doc.company_id,
+      cashBankId: input.cash.cashBankId,
+      direction,
+      documentCurrencyLabel: documentCurrency,
+      resourceCurrencyLabel: resourceCurrency,
       date: dated.date,
       currencyId: doc.currency_id,
-      amount: doc.transaction_amount.toNumber(),
-      rate: valuation.rate,
       transactionNo: doc.transaction_no,
-      purposeLabel: realizationOf(doc.transaction_type).title,
+      title,
       requestNo: input.requestNo,
       providerSource: input.providerSource,
-      requesterSource: {
-        docTypeId: await transactionDocTypeId(),
-        docId: doc.id,
-      },
+      requesterSource: { docTypeId: await transactionDocTypeId(), docId: doc.id },
+      posting,
+      indukJournal: outgoing ? [indukBridge, indukCash] : [indukCash, indukBridge],
+      anakJournal: [anakBridge, ...(await counterJournalLines(doc, posting))],
       lines: doc.lines.map((l) => ({
         budgetId: l.source_doc_id,
         amount: l.settlement_amount.toNumber(),
@@ -2519,16 +2670,14 @@ export async function prepareFundedPosting(
 }
 
 /**
- * Writes both Companies' books, inside the caller's transaction.
+ * Writes both Companies' books, inside the caller's transaction — the same
+ * writes a direct Post makes, with the cash on the induk's resource and the
+ * journal split in two.
  *
- * One business event, five writes (§30): the induk's cash entry and its
- * balance, the anak's own subject book where its Purpose keeps one, every
- * Budget's realization, a journal each, and the document itself.
- * `postJournal` throws rather than returns, so an unbalanced journal takes the
- * whole confirmation down — the caller's request closure included.
- *
- * The two Companies' positions against each other are in those journals and
- * nowhere else: they are accounts, not subjects (see `BridgeSide`).
+ * `postJournal` throws rather than returns, and so do the layer, the cash book
+ * and the subject book when what the plan valued has moved; any of them takes
+ * the whole confirmation down, the caller's request closure included.
+ * `isPostingRefusal` tells the caller which throws are refusals.
  *
  * Neither journal derives from the other, and neither derives from a book: they
  * are two accounting representations of one business event, each pointing at
@@ -2539,123 +2688,48 @@ export async function writeFundedPosting(
   plan: FundedPostingPlan,
   actorId: number
 ): Promise<{ closed: number }> {
-  const { date, induk, anak } = plan;
+  const { date } = plan;
   const postingDate = new Date(`${date}T00:00:00Z`);
 
-  // Both Companies' years, held against a close and re-asked under the hold.
-  // Throws `PeriodShut`, which the caller's transaction turns into a refusal.
-  await holdPostingPeriod(tx, [induk.companyId, anak.companyId], date);
+  // Both Companies' years, held against a close and re-asked under the hold;
+  // then every position the anak's lines lower.
+  await holdPostingPeriod(tx, [plan.indukCompanyId, plan.anakCompanyId], date);
+  await lockPlanPositions(tx, plan.posting, plan.currencyId);
 
-  // The two things this posting can be named after, composed once.
-  //
-  // Which one a row carries follows §10 rule 60: each journal points at its own
-  // Company's document. The induk acted on a Funding Request, so its rows name
-  // the request, the realization it funded and what that was for; the anak
-  // performed an ordinary realization that happened to be funded, so its rows
-  // name only its own document. Neither is assembled anywhere else — the
-  // duplicated label this replaced came from one module composing a phrase and
-  // another appending to it without being able to see what was already there.
-  const funding = `${plan.requestNo} — ${plan.transactionNo} — ${plan.purposeLabel}`;
-  const realization = `${plan.transactionNo} — ${plan.purposeLabel}`;
-
-  await recordCashBankEntry(tx, {
-    cashBankId: induk.cashBankId,
-    date,
-    type: "Transaction",
+  await writeRealizationLines(tx, plan.posting, {
+    cashBankId: plan.cashBankId,
     direction: plan.direction,
-    amount: plan.amount,
-    rate: plan.rate,
-    // The realization is what caused the movement, so that is what the book
-    // names — the same weak pair the direct route writes.
-    sourceDocTypeId: plan.requesterSource.docTypeId,
-    sourceDocId: plan.requesterSource.docId,
-    note: funding,
+    documentCurrencyLabel: plan.documentCurrencyLabel,
+    resourceCurrencyLabel: plan.resourceCurrencyLabel,
+    currencyId: plan.currencyId,
+    docTypeId: plan.requesterSource.docTypeId,
+    docId: plan.requesterSource.docId,
+    date,
     actorId,
   });
 
-  // The anak's own subject book, where its Purpose keeps one — the partner it
-  // actually paid or was paid by. Unchanged from the direct route: that is the
-  // business event, and the funding is only how the cash reached it.
-  if (anak.purposeBook && anak.purposePartnerId) {
-    await recordSubledgerEntry(tx, {
-      book: anak.purposeBook,
-      partnerId: anak.purposePartnerId,
-      currencyId: plan.currencyId,
-      date,
-      type: "Transaction",
-      direction: plan.direction,
-      amount: plan.amount,
-      rate: plan.rate,
-      sourceDocTypeId: plan.requesterSource.docTypeId,
-      sourceDocId: plan.requesterSource.docId,
-      note: realization,
-      actorId,
-    });
-  }
-
   const { closed } = await realizeBudgets(tx, plan.lines, actorId);
-
-  const outgoing = plan.direction === "Out";
 
   // Journal A — the induk's. Its cause is the Funding Request it confirmed.
   await postJournal(tx, {
-    companyId: induk.companyId,
+    companyId: plan.indukCompanyId,
     postingDate,
-    description: funding,
+    description: `${plan.requestNo} — ${plan.transactionNo} — ${plan.title}`,
     sourceDocTypeId: plan.providerSource.docTypeId,
     sourceDocId: plan.providerSource.docId,
-    lines: [
-      {
-        accountId: induk.bridgeAccountId,
-        currencyId: plan.currencyId,
-        rate: plan.rate,
-        debit: outgoing ? plan.amount : 0,
-        credit: outgoing ? 0 : plan.amount,
-        description: funding,
-      },
-      {
-        accountId: induk.cashAccountId,
-        currencyId: plan.currencyId,
-        rate: plan.rate,
-        debit: outgoing ? 0 : plan.amount,
-        credit: outgoing ? plan.amount : 0,
-        description: funding,
-      },
-    ],
+    lines: plan.indukJournal,
     actorId,
   });
 
   // Journal B — the anak's. Its cause is its own realization, which is an
-  // ordinary Cash Bank Transaction that happened to be funded. One counter line
-  // per document line, as on the direct route, so a ledger entry reads back to
-  // the Budget it settled.
-  const purposeLines: JournalLineInput[] = plan.lines.map((l) => ({
-    accountId: anak.purposeAccountId,
-    partnerId: anak.purposePartnerId,
-    currencyId: plan.currencyId,
-    rate: plan.rate,
-    debit: outgoing ? l.amount : 0,
-    credit: outgoing ? 0 : l.amount,
-    description: `${plan.purposeLabel} — Budget #${l.budgetId}`,
-  }));
-  const bridgeLine: JournalLineInput = {
-    accountId: anak.bridgeAccountId,
-    currencyId: plan.currencyId,
-    rate: plan.rate,
-    debit: outgoing ? 0 : plan.amount,
-    credit: outgoing ? plan.amount : 0,
-    description: funding,
-  };
-
+  // ordinary Realisasi that happened to be funded (§10 rule 60).
   await postJournal(tx, {
-    companyId: anak.companyId,
+    companyId: plan.anakCompanyId,
     postingDate,
-    description: realization,
+    description: `${plan.transactionNo} — ${plan.title}`,
     sourceDocTypeId: plan.requesterSource.docTypeId,
     sourceDocId: plan.requesterSource.docId,
-    lines: outgoing
-      ? [...purposeLines, bridgeLine]
-      : [bridgeLine, ...purposeLines],
+    lines: plan.anakJournal,
     actorId,
   });
 
@@ -2665,6 +2739,8 @@ export async function writeFundedPosting(
       status: "Posted",
       document_date: postingDate,
       posting_date: new Date(),
+      exchange_rate: plan.posting.rate,
+      transaction_base_amount: plan.posting.base,
       updated_by: actorId,
     },
   });
@@ -2674,6 +2750,22 @@ export async function writeFundedPosting(
   await auditTransaction(tx, plan.transactionId, "post_funded", actorId);
 
   return { closed };
+}
+
+/**
+ * Whether a throw out of a posting transaction is a refusal the user can act
+ * on — a year closed meanwhile, a layer or an open item moved since the plan
+ * valued it, a resource that does not hold enough — rather than a fault. The
+ * funded route's caller lives in another module, so it asks here instead of
+ * naming every book's error class itself.
+ */
+export function isPostingRefusal(error: unknown): error is Error {
+  return (
+    error instanceof PeriodShut ||
+    error instanceof LayerNotAvailable ||
+    error instanceof SubledgerItemUnavailable ||
+    error instanceof InsufficientFunds
+  );
 }
 
 // -------------------------------------------------- status, for the funded route

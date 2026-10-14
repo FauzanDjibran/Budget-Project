@@ -9,6 +9,8 @@ import type { JournalPreviewLine } from "@/lib/siba/journal";
 
 export type JournalPreviewResult =
   | { ok: true; lines: JournalPreviewLine[] }
+  /** A posting that writes one journal per Company — a Funding confirmation. */
+  | { ok: true; journals: { title: string; lines: JournalPreviewLine[] }[] }
   | { ok: false; errors: Record<string, string> };
 
 /**
@@ -61,14 +63,34 @@ export function JournalPreview({
     );
   }
 
-  const debit = result.lines.reduce((t, l) => t + l.debit, 0);
-  const credit = result.lines.reduce((t, l) => t + l.credit, 0);
+  if ("journals" in result) {
+    return (
+      <>
+        {result.journals.map((j) => (
+          <JournalTable key={j.title} title={j.title} lines={j.lines} />
+        ))}
+      </>
+    );
+  }
+  return <JournalTable lines={result.lines} />;
+}
+
+/** One journal, as the Journal itself draws it; titled where there are two. */
+function JournalTable({
+  title,
+  lines,
+}: {
+  title?: string;
+  lines: JournalPreviewLine[];
+}) {
+  const debit = lines.reduce((t, l) => t + l.debit, 0);
+  const credit = lines.reduce((t, l) => t + l.credit, 0);
   return (
     <div className="tw boxed">
       <table className="grid">
         <thead>
           <tr>
-            <th>Account</th>
+            <th>{title ?? "Account"}</th>
             <th className="num" style={{ width: 136 }}>
               Debit
             </th>
@@ -78,7 +100,7 @@ export function JournalPreview({
           </tr>
         </thead>
         <tbody>
-          {result.lines.map((l, i) => (
+          {lines.map((l, i) => (
             <tr key={i}>
               <td>
                 <span className="idc">

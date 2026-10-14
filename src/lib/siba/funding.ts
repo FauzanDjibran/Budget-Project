@@ -5,17 +5,22 @@ import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { nextDocumentNumber } from "./document-number";
 import {
+  checkFundable,
   fundingRoute,
+  isPostingRefusal,
   markTransactionCancelled,
   markTransactionPending,
   prepareFundedPosting,
   transactingCompany,
   transactionsByIds,
   writeFundedPosting,
+  type FundedPostingCheck,
+  type FundingCashSide,
   type TransactionRow,
 } from "./finance";
-import { PeriodShut } from "./fiscal";
-import { InsufficientFunds } from "./cash-bank";
+import { openLayersFor, type LayerOption } from "./cash-bank-layers";
+import { isBaseCurrency, maySettle } from "./currency";
+import { describeJournalLines, type JournalPreviewLine } from "./journal";
 import { realizationOf } from "./realization";
 import { intercompanyBridge } from "./system-account-data";
 
@@ -287,6 +292,12 @@ export async function raiseFundingRequest(
     };
   }
 
+  // Whatever a confirmation would refuse that the anak can still fix — a
+  // missing mapping, a line with no open item, an item since settled — is
+  // refused now, before the document freezes in front of the induk.
+  const fundable = await checkFundable(transactionId);
+  if (!fundable.ok) return fundable;
+
   const today = new Date().toISOString().slice(0, 10);
 
   return prisma.$transaction(async (tx) => {
@@ -380,24 +391,18 @@ export type ConfirmResult =
   | { ok: false; errors: Record<string, string> };
 
 /**
- * Confirm: the actual boundary, for both Companies at once (§30).
- *
- * The induk names the resource the money moves through, and everything else is
- * already decided — there is no partial funding and no rejection, so the only
- * refusals here are mechanical: a request already answered, a bridge that has
- * not been set up, a resource in the wrong currency, a Budget that has closed
- * since. Each of them refuses before the transaction opens, so a refused
- * confirmation leaves nothing behind.
- *
- * The books and the request's own closure are written in **one** transaction:
- * a closed request whose journals were never written, or journals whose request
- * still reads Open, are both states this makes unreachable.
+ * Everything a confirmation needs from the request before Finance values it:
+ * that it is still open, that the bridge is set up, and what Finance should
+ * name as the cause of the induk's journal. Shared by the confirmation and its
+ * preview, so the two cannot disagree about what is being confirmed.
  */
-export async function confirmFundingRequest(
+async function planConfirmation(
   requestId: number,
-  providerCashBankId: number,
-  actorId: number
-): Promise<ConfirmResult> {
+  cash: FundingCashSide
+): Promise<
+  | { ok: true; request: { id: number }; prepared: Extract<FundedPostingCheck, { ok: true }> }
+  | { ok: false; errors: Record<string, string> }
+> {
   const request = await prisma.finFundingRequest.findUnique({
     where: { id: requestId },
   });
@@ -431,7 +436,7 @@ export async function confirmFundingRequest(
 
   const prepared = await prepareFundedPosting({
     transactionId: request.transaction_id,
-    providerCashBankId,
+    cash,
     bridge: { induk: bridge.induk, anak: bridge.anak },
     providerSource: {
       docTypeId: await fundingRequestDocTypeId(),
@@ -442,40 +447,71 @@ export async function confirmFundingRequest(
     // funding and which is about the realization.
     requestNo: request.funding_request_no,
   });
-  if (!prepared.ok) return { ok: false, errors: prepared.errors };
+  if (!prepared.ok) return prepared;
+  return { ok: true, request, prepared };
+}
+
+/**
+ * Confirm: the actual boundary, for both Companies at once (§30).
+ *
+ * The induk states the cash side — which resource, and its layer or kurs —
+ * and everything else was decided on the anak's draft: the Budgets, and the
+ * open items each line settles. There is no partial funding and no rejection,
+ * so the only refusals are mechanical, and each refuses before anything is
+ * written: a request already answered, a bridge not set up, a resource that
+ * cannot settle the document's currency, a Budget closed since, an open item
+ * another document has settled since — that last one the anak resolves by
+ * withdrawing and drafting again, because a pending document is frozen.
+ *
+ * The books and the request's own closure are written in **one** transaction:
+ * a closed request whose journals were never written, or journals whose request
+ * still reads Open, are both states this makes unreachable.
+ */
+export async function confirmFundingRequest(
+  requestId: number,
+  cash: FundingCashSide,
+  actorId: number
+): Promise<ConfirmResult> {
+  const planned = await planConfirmation(requestId, cash);
+  if (!planned.ok) return planned;
+  const { request, prepared } = planned;
 
   let closed: number;
   try {
-  ({ closed } = await prisma.$transaction(async (tx) => {
-    const result = await writeFundedPosting(tx, prepared.plan, actorId);
+    ({ closed } = await prisma.$transaction(async (tx) => {
+      const result = await writeFundedPosting(tx, prepared.plan, actorId);
 
-    await tx.finFundingRequest.update({
-      where: { id: request.id },
-      data: {
-        status: "Closed",
-        provider_cash_bank_id: providerCashBankId,
-        confirmed_at: new Date(),
-        confirmed_by: actorId,
-        updated_by: actorId,
-      },
-    });
+      await tx.finFundingRequest.update({
+        where: { id: request.id },
+        data: {
+          status: "Closed",
+          provider_cash_bank_id: prepared.plan.cashBankId,
+          // The layer the induk drew on, where it drew on one — the layer
+          // itself is mutable, so the document that consumed it keeps which.
+          provider_cash_bank_layer_id: prepared.plan.posting.layerId,
+          confirmed_at: new Date(),
+          confirmed_by: actorId,
+          updated_by: actorId,
+        },
+      });
 
-    await tx.auditLog.create({
-      data: {
-        entity_key: "fin_funding_request",
-        row_id: request.id,
-        action: "UPDATE",
-        event: "confirm",
-        by: actorId,
-      },
-    });
+      await tx.auditLog.create({
+        data: {
+          entity_key: "fin_funding_request",
+          row_id: request.id,
+          action: "UPDATE",
+          event: "confirm",
+          by: actorId,
+        },
+      });
 
-    return result;
-  }));
+      return result;
+    }));
   } catch (error) {
-    // A year that closed between the check and the write: nothing was
-    // written, and the request is still open to confirm on another date.
-    if (error instanceof PeriodShut || error instanceof InsufficientFunds) {
+    // Something moved between the plan and the write — a year closed, a
+    // layer or an item spent, a balance drawn down: nothing was written, and
+    // the request is still open.
+    if (isPostingRefusal(error)) {
       return { ok: false, errors: { _form: error.message } };
     }
     throw error;
@@ -485,44 +521,94 @@ export async function confirmFundingRequest(
 }
 
 /**
+ * The two journals a confirmation would write, named for a reader — or the
+ * refusal it would give. Writes nothing: it is the same preparation the
+ * confirmation runs, stopped before its transaction opens.
+ */
+export async function previewFundingConfirmation(
+  requestId: number,
+  cash: FundingCashSide
+): Promise<
+  | { ok: true; journals: { title: string; lines: JournalPreviewLine[] }[] }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const planned = await planConfirmation(requestId, cash);
+  if (!planned.ok) return planned;
+  const { plan } = planned.prepared;
+  const companies = await prisma.sysCompany.findMany({
+    where: { id: { in: [plan.indukCompanyId, plan.anakCompanyId] } },
+    select: { id: true, company_label: true },
+  });
+  const label = (id: number) => companies.find((c) => c.id === id)?.company_label ?? "";
+  return {
+    ok: true,
+    journals: [
+      {
+        title: `Journal ${label(plan.indukCompanyId)}`,
+        lines: await describeJournalLines(plan.indukJournal),
+      },
+      {
+        title: `Journal ${label(plan.anakCompanyId)}`,
+        lines: await describeJournalLines(plan.anakJournal),
+      },
+    ],
+  };
+}
+
+/** One induk resource a request may be answered from, with its open layers. */
+export type ProviderResource = {
+  id: number;
+  label: string;
+  name: string;
+  currencyLabel: string;
+  balance: number;
+  /** Empty for a base-currency resource, which is unlayered. */
+  layers: LayerOption[];
+};
+
+/**
  * The resources the induk may answer a request with.
  *
- * Narrowed to the request's own currency, because there is no exchange rate in
- * this system (CLAUDE.md §12): a resource in another currency cannot answer it
- * without inventing one. The picker shows exactly what `prepareFundedPosting`
+ * Any active induk resource that may settle the request's currency — its own
+ * currency, or rupiah (CLAUDE.md §10 rule 67) — exactly the set a direct
+ * Realisasi's header admits. The picker shows what `prepareFundedPosting`
  * will accept.
  */
-export async function providerCashBanks(currencyId: number): Promise<
-  {
-    id: number;
-    label: string;
-    name: string;
-    currencyLabel: string;
-    balance: number;
-  }[]
-> {
+export async function providerCashBanks(
+  currencyId: number
+): Promise<ProviderResource[]> {
   const induk = await transactingCompany();
   if (!induk) return [];
+  const currency = await prisma.refCurrency.findUnique({
+    where: { id: currencyId },
+    select: { currency_label: true },
+  });
+  if (!currency) return [];
 
   const rows = await prisma.mCashBank.findMany({
-    where: {
-      company_id: induk.id,
-      currency_id: currencyId,
-      status: "Active",
-    },
+    where: { company_id: induk.id, status: "Active" },
     orderBy: { id: "asc" },
     include: {
       currency: { select: { currency_label: true } },
       book_balance: { select: { balance: true } },
     },
   });
+  const usable = rows.filter((c) =>
+    maySettle(currency.currency_label, c.currency.currency_label)
+  );
+  const layersOf = await openLayersFor(
+    usable
+      .filter((c) => !isBaseCurrency(c.currency.currency_label))
+      .map((c) => c.id)
+  );
 
-  return rows.map((c) => ({
+  return usable.map((c) => ({
     id: c.id,
     label: c.cash_bank_label,
     name: c.cash_bank_name,
     currencyLabel: c.currency.currency_label,
     balance: c.book_balance?.balance.toNumber() ?? 0,
+    layers: layersOf.get(c.id) ?? [],
   }));
 }
 

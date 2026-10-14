@@ -84,7 +84,7 @@ WHERE (status = 'Open' AND budget_amount > 0 AND realized_amount >= budget_amoun
     name: "Satu entri Buku Kas & Bank per line, nilai dasar sama dengan dokumen",
     sql: `
 , cb AS (
-  SELECT source_doc_id AS id, COUNT(*) AS n, SUM(base_amount) AS base
+  SELECT source_doc_id AS id, COUNT(*) AS n, SUM(ABS(base_movement)) AS base
   FROM cash_bank_ledger WHERE source_doc_type_id = (SELECT tx FROM dt)
   GROUP BY source_doc_id
 )
@@ -93,7 +93,7 @@ SELECT t.transaction_no, COUNT(l.id) AS lines, COALESCE(cb.n, 0) AS entries,
 FROM fin_cash_bank_transaction t
 JOIN fin_cash_bank_transaction_line l ON l.transaction_id = t.id
 LEFT JOIN cb ON cb.id = t.id
-WHERE t.status = 'Posted' AND t.cash_bank_id IS NOT NULL
+WHERE t.status = 'Posted'
 GROUP BY t.id, cb.n, cb.base
 HAVING COUNT(l.id) <> COALESCE(cb.n, 0) OR t.transaction_base_amount <> COALESCE(cb.base, 0)`,
   },
@@ -115,7 +115,7 @@ HAVING COUNT(l.id) <> COALESCE(cb.n, 0) OR t.transaction_base_amount <> COALESCE
   WHERE t.status = 'Posted'
   GROUP BY t.id
 ), got AS (
-  SELECT source_doc_id AS id, COUNT(*) AS n, SUM(amount) AS amount
+  SELECT source_doc_id AS id, COUNT(*) AS n, SUM(ABS(movement)) AS amount
   FROM sub_ledger WHERE source_doc_type_id = (SELECT tx FROM dt)
   GROUP BY source_doc_id
 )
@@ -128,10 +128,14 @@ WHERE w.n <> COALESCE(g.n, 0) OR w.amount <> COALESCE(g.amount, 0)`,
     no: 5,
     name: "Entri Buku Subjek bergerak ke arah bukunya sendiri",
     sql: `
-SELECT s.entry_no, c.category_label AS book, s.direction::text, s.movement, c.raises::text
-FROM sub_ledger s JOIN book_cat c ON c.id = s.budget_category_id
-WHERE s.entry_type IN ('Transaction', 'Reclass')
-  AND SIGN(s.movement) <> CASE WHEN s.direction::text = c.raises::text THEN 1 ELSE -1 END`,
+SELECT s.entry_no, c.category_label AS book, t.transaction_type::text AS direction,
+       s.movement, c.raises::text
+FROM sub_ledger s
+JOIN book_cat c ON c.id = s.budget_category_id
+JOIN fin_cash_bank_transaction t
+  ON s.source_doc_type_id = (SELECT tx FROM dt) AND t.id = s.source_doc_id
+WHERE s.entry_type = 'Transaction'
+  AND SIGN(s.movement) <> CASE WHEN t.transaction_type::text = c.raises::text THEN 1 ELSE -1 END`,
   },
   {
     no: 6,

@@ -7,9 +7,12 @@ import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { realizationHref } from "@/lib/siba/realization";
 import {
   confirmFundingRequest,
+  previewFundingConfirmation,
   raiseFundingRequest,
   withdrawFundingRequest,
 } from "@/lib/siba/funding";
+import type { FundingCashSide } from "@/lib/siba/finance";
+import type { JournalPreviewLine } from "@/lib/siba/journal";
 
 /**
  * Funding Request writes — the intercompany bridge's one write path.
@@ -20,11 +23,13 @@ import {
  *     freezes at Pending and a request opens. Nothing moves.
  *  2. **`withdrawFunding`** — the anak takes it back while it is still open.
  *     Still nothing moves; the request closes as Cancelled with the document.
- *  3. **`confirmFunding`** — the induk names a resource and confirms. This is
- *     the actual boundary for **both** Companies (concept doc §30): one
- *     transaction writes the induk's cash entry, both Companies' subject books,
- *     a journal each, every Budget's realization, the document's own status,
- *     and the request's closure.
+ *  3. **`confirmFunding`** — the induk states the cash side (a resource, and
+ *     its layer or kurs) and confirms. This is the actual boundary for **both**
+ *     Companies (concept doc §30): one transaction writes what a direct
+ *     Realisasi Post writes — per Budget a Cash Bank Book entry on the induk's
+ *     resource and the anak's subject-book entries — plus a journal each,
+ *     every Budget's realization, the document's own status, and the
+ *     request's closure.
  *
  * There is no reject. The induk always complies (§29), so its action is a
  * confirmation and the only refusals are mechanical — a request already
@@ -87,22 +92,32 @@ export async function withdrawFunding(
   return { ok: true, message: "Dokumen dan Funding Request dibatalkan" };
 }
 
+/** The cash side as submitted, reduced to what the rules read. */
+function cashSide(input: FundingCashSide): FundingCashSide | null {
+  const cashBankId = Number(input?.cashBankId);
+  if (!Number.isInteger(cashBankId) || cashBankId <= 0) return null;
+  const layerId = Number(input.layerId);
+  const rate = Number(input.rate);
+  return {
+    cashBankId,
+    layerId: Number.isInteger(layerId) && layerId > 0 ? layerId : null,
+    rate: Number.isFinite(rate) && rate > 0 ? rate : null,
+  };
+}
+
 export async function confirmFunding(
   requestId: number,
-  cashBankId: number
+  input: FundingCashSide
 ): Promise<FundingActionResult> {
   const g = await authorize("FUNDING_REQUEST_CONFIRM");
   if (!g.ok) return g.denial;
 
-  if (!Number.isInteger(cashBankId) || cashBankId <= 0) {
+  const cash = cashSide(input);
+  if (!cash) {
     return { ok: false, errors: { cash_bank_id: "Cash & Bank wajib dipilih." } };
   }
 
-  const result = await confirmFundingRequest(
-    requestId,
-    cashBankId,
-    g.actor.user.id
-  );
+  const result = await confirmFundingRequest(requestId, cash, g.actor.user.id);
   if (!result.ok) return result;
 
   revalidateFunding(null);
@@ -113,6 +128,26 @@ export async function confirmFunding(
       ? `Funding dikonfirmasi · ${result.closed} Budget ditutup`
       : "Funding dikonfirmasi",
   };
+}
+
+/**
+ * The two journals a confirmation with this cash side would write — the same
+ * preparation the confirmation runs, stopped before anything is written.
+ */
+export async function previewFunding(
+  requestId: number,
+  input: FundingCashSide
+): Promise<
+  | { ok: true; journals: { title: string; lines: JournalPreviewLine[] }[] }
+  | { ok: false; errors: Record<string, string> }
+> {
+  const g = await authorize("FUNDING_REQUEST_CONFIRM");
+  if (!g.ok) return g.denial;
+  const cash = cashSide(input);
+  if (!cash) {
+    return { ok: false, errors: { _form: "Pilih Cash & Bank yang dipakai." } };
+  }
+  return previewFundingConfirmation(requestId, cash);
 }
 
 /**

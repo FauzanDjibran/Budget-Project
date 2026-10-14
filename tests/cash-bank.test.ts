@@ -102,7 +102,6 @@ describe("a resource always has a book", () => {
     });
     assert.equal(entries.length, 1);
     assert.equal(entries[0].entry_type, "Opening");
-    assert.equal(entries[0].direction, "In");
     assert.equal(entries[0].movement.toNumber(), 5_000_000);
     assert.equal(entries[0].balance_after.toNumber(), 5_000_000);
     assert.match(entries[0].entry_no, /^CBL-\d{4}$/);
@@ -217,13 +216,8 @@ describe("the balance never disagrees with the ledger", () => {
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
       where: { cash_bank_id: id, entry_type: "Transaction" },
     });
-    assert.equal(entry.amount.toNumber(), 125_000, "amount carries no sign");
-    assert.equal(entry.movement.toNumber(), -125_000, "direction carries the sign");
-    assert.equal(
-      entry.base_amount.toNumber(),
-      125_000,
-      "base carries no sign either"
-    );
+    // One signed figure per measure: the sign is the direction.
+    assert.equal(entry.movement.toNumber(), -125_000, "money out is negative");
     assert.equal(
       entry.base_movement.toNumber(),
       -125_000,
@@ -313,13 +307,13 @@ describe("every entry carries what it was worth in base currency", () => {
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
       where: { cash_bank_id: id, entry_type: "Transaction" },
     });
-    assert.equal(entry.amount.toNumber(), 300);
+    assert.equal(entry.movement.toNumber(), 300);
     assert.equal(entry.rate.toNumber(), 15_500);
-    assert.equal(entry.base_amount.toNumber(), 4_650_000);
+    assert.equal(entry.base_movement.toNumber(), 4_650_000);
     // The property that makes a book independently checkable: every row's own
     // arithmetic holds, without reference to any other book.
     assert.equal(
-      entry.base_amount.toNumber() / entry.amount.toNumber(),
+      entry.base_movement.toNumber() / entry.movement.toNumber(),
       entry.rate.toNumber(),
       "base / foreign equals the rate recorded on the row"
     );
@@ -343,8 +337,8 @@ describe("every entry carries what it was worth in base currency", () => {
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
       where: { cash_bank_id: id, entry_type: "Transaction" },
     });
-    assert.equal(entry.base_amount.toNumber(), 10_000);
-    assert.notEqual(entry.base_amount.toNumber(), 9_999.99);
+    assert.equal(Math.abs(entry.base_movement.toNumber()), 10_000);
+    assert.notEqual(Math.abs(entry.base_movement.toNumber()), 9_999.99);
   });
 
   test("both measures rebuild from their own column, and agree with the total", async () => {

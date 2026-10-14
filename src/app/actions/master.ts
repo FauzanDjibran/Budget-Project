@@ -18,6 +18,7 @@ import {
   parseSegment,
 } from "@/lib/siba/account-code";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
+import { bookHasEntries } from "@/lib/siba/subledger";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
 import { fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
 import {
@@ -873,6 +874,25 @@ export async function updateRecord(
   // Locked fields are immutable once the record exists.
   for (const field of entity.fields) {
     if (field.locked) delete data[field.name];
+  }
+
+  // A book that has entries keeps the way it runs: each entry stores only its
+  // signed movement, and which way the money went is read back from that sign
+  // and `raises`. Turning `raises` round would turn every entry round with it.
+  if (entity.key === "sys_budget_category") {
+    const stored = await prisma.sysBudgetCategory.findUnique({
+      where: { id },
+      select: { raises: true },
+    });
+    if (stored?.raises && (data.raises ?? null) !== stored.raises && (await bookHasEntries(id))) {
+      return {
+        ok: false,
+        errors: {
+          raises:
+            "Buku Category ini sudah memiliki entri, sehingga arah yang menaikkan posisinya tidak dapat diubah lagi.",
+        },
+      };
+    }
   }
 
   // Read before the write: repointing a Cash & Bank or a mapping has to

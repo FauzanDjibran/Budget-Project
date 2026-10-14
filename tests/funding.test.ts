@@ -6,6 +6,7 @@ import { budgetDocTypeId, fundingRoute } from "../src/lib/siba/finance";
 import {
   confirmFundingRequest,
   fundingRequestDocTypeId,
+  previewFundingConfirmation,
   raiseFundingRequest,
   withdrawFundingRequest,
 } from "../src/lib/siba/funding";
@@ -67,6 +68,9 @@ let actor = 0;
 let fiscalYear = 0;
 let currency = 0;
 let otherCurrency = 0;
+/** A foreign currency of the suite's own, for the funded FX cases. */
+let usd = 0;
+let anakFxAccount = 0;
 
 /** The bridge accounts, as this suite sets them up. */
 let indukArAccount = 0;
@@ -83,6 +87,8 @@ async function makeCashBank(options: {
   companyId?: number;
   currencyId?: number;
   opening?: number;
+  /** The kurs a foreign opening is valued at; it opens the first layer. */
+  rate?: number;
 }): Promise<number> {
   const companyId = options.companyId ?? induk;
   const account = await makeAccount({
@@ -106,9 +112,10 @@ async function makeCashBank(options: {
   await openCashBankBook(prisma, {
     cashBankId: row.id,
     openingBalance: options.opening ?? 0,
-    rate: 1,
+    rate: options.rate ?? 1,
     date: today,
     actorId: actor,
+    layered: options.rate != null,
   });
   cashBanks.push(row.id);
   return row.id;
@@ -157,7 +164,8 @@ async function makeAnakDraft(options: {
   purpose: string;
   partnerId?: number | null;
   currencyId?: number;
-  lines: { budgetId: number; amount: number }[];
+  /** A lowering line names the open items it settles, as the draft form does. */
+  lines: { budgetId: number; amount: number; items?: { itemId: number; amount: number }[] }[];
 }): Promise<number> {
   // `purpose` is the historical mnemonic; its suffix is the direction.
   const direction = options.purpose.endsWith("_IN") ? "In" : "Out";
@@ -186,6 +194,16 @@ async function makeAnakDraft(options: {
           transaction_amount: l.amount,
           transaction_base_amount: l.amount,
           created_by: actor,
+          items: l.items
+            ? {
+                create: l.items.map((it, k) => ({
+                  sequence_no: k + 1,
+                  sub_ledger_balance_id: it.itemId,
+                  amount: it.amount,
+                  created_by: actor,
+                })),
+              }
+            : undefined,
         })),
       },
     },
@@ -201,6 +219,28 @@ async function raise(transactionId: number) {
   if (result.ok) requests.push(result.id);
   return result;
 }
+
+/** Cash from one induk resource; the layer and kurs are the FX cases' own. */
+const viaCash = (cashBankId: number) => ({ cashBankId, layerId: null, rate: null });
+
+/** Raise and confirm in one go — for a position a later case settles. */
+async function fundAndConfirm(doc: number, cashBankId: number, rate: number | null = null) {
+  const raised = await raise(doc);
+  assert.ok(raised.ok, JSON.stringify(raised));
+  const result = await confirmFundingRequest(
+    raised.ok ? raised.id : 0,
+    { cashBankId, layerId: null, rate },
+    actor
+  );
+  assert.equal(result.ok, true, JSON.stringify(result));
+}
+
+/** A Partner's open items in one book, oldest first. */
+const openItems = (book: number, partnerId: number, currencyId = currency) =>
+  prisma.subLedgerBalance.findMany({
+    where: { budget_category_id: book, partner_id: partnerId, currency_id: currencyId, status: "Open" },
+    orderBy: { id: "asc" },
+  });
 
 const bookBalance = async (cashBankId: number) =>
   (
@@ -243,20 +283,24 @@ before(async () => {
     select: { id: true },
   });
   currency = currencies[0].id;
-  if (currencies.length > 1) {
-    otherCurrency = currencies[1].id;
-  } else {
-    const made = await prisma.refCurrency.create({
-      data: {
-        currency_code: `test.${FIXTURE_PREFIX}FCUR`,
-        currency_label: `${FIXTURE_PREFIX}Y`,
-        currency_name: "Fixture currency",
-        created_by: actor,
-      },
-      select: { id: true },
-    });
-    otherCurrency = made.id;
-  }
+  // The suite's own foreign currencies, never whichever row sits second in the
+  // table (§17). Upserted: nothing deletes a currency.
+  const fixtureCurrency = async (suffix: string) =>
+    (
+      await prisma.refCurrency.upsert({
+        where: { currency_code: `test.${FIXTURE_PREFIX}F${suffix}` },
+        update: { status: "Active" },
+        create: {
+          currency_code: `test.${FIXTURE_PREFIX}F${suffix}`,
+          currency_label: `${FIXTURE_PREFIX}${suffix}`,
+          currency_name: `Fixture currency ${suffix}`,
+          created_by: actor,
+        },
+        select: { id: true },
+      })
+    ).id;
+  otherCurrency = await fixtureCurrency("Y");
+  usd = await fixtureCurrency("U");
 
   // Posting journals both Companies, and the anak's side needs the mapping its
   // Purpose resolves to.
@@ -294,6 +338,10 @@ before(async () => {
     await makeAccount({ companyId: anak, subcategoryLabel: "1.1.3" })
   );
   await systemAccounts.set("anak", "bridge_ap", anakApAccount);
+
+  // A difference on the funded route is the anak's, on its own account.
+  anakFxAccount = await makeAccount({ companyId: anak, subcategoryLabel: "5.3.1" });
+  await systemAccounts.set("anak", "fx", anakFxAccount);
 });
 
 after(async () => {
@@ -326,6 +374,9 @@ after(async () => {
     await prisma.budBudget.deleteMany({ where: { id: { in: budgets } } });
   }
   if (cashBanks.length) {
+    await prisma.cashBankLayer.deleteMany({
+      where: { cash_bank_id: { in: cashBanks } },
+    });
     await prisma.cashBankLedger.deleteMany({
       where: { cash_bank_id: { in: cashBanks } },
     });
@@ -337,9 +388,6 @@ after(async () => {
 
   await cleanupFiscalYear();
   await cleanupFixtures();
-  await prisma.refCurrency.deleteMany({
-    where: { currency_label: { startsWith: FIXTURE_PREFIX } },
-  });
   await disconnect();
 });
 
@@ -555,134 +603,96 @@ describe("submitting raises a request and moves nothing", () => {
 
 // ------------------------------------------------------- confirming one
 
-describe("confirmation posts both Companies, at once", () => {
-  test("an anak expense: induk cash out, and a journal each carrying the position", { todo: "funded route is being redesigned: a funded line lowering a subject-book position has no open item to settle yet" }, async () => {
-    const supplier = await makePartner({
-      companyId: anak,
-      categoryLabel: "Stakeholder",
-    });
-    const budget = await makeBudget({
-      categoryLabel: "Hutang",
-      partnerId: supplier,
-      amount: 300_000,
-    });
+describe("confirmation writes what a Realisasi Post writes, for both Companies", () => {
+  test("an anak expense across categories: a cash entry and a counter line per Budget", async () => {
+    const supplier = await makePartner({ companyId: anak, categoryLabel: "Stakeholder" });
+    const cashBank = await makeCashBank({ opening: 2_000_000 });
+
+    // The anak first owes the supplier — a funded receipt raises the Hutang
+    // and opens its item, exactly as an induk receipt would.
+    const loan = await makeBudget({ categoryLabel: "Hutang", type: "In", partnerId: supplier, amount: 300_000 });
+    await fundAndConfirm(
+      await makeAnakDraft({ purpose: "HTG_SH_IN", lines: [{ budgetId: loan, amount: 300_000 }] }),
+      cashBank
+    );
+    const [item] = await openItems(await bookId("Hutang"), supplier);
+    assert.ok(item, "the receipt opened an item");
+
+    // Then one document settles that item and pays an expense beside it.
+    const expense = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
+    const repay = await makeBudget({ categoryLabel: "Hutang", partnerId: supplier, amount: 300_000 });
     const doc = await makeAnakDraft({
       purpose: "HTG_SH_OUT",
-      partnerId: supplier,
-      lines: [{ budgetId: budget, amount: 300_000 }],
+      lines: [
+        { budgetId: expense, amount: 100_000 },
+        { budgetId: repay, amount: 300_000, items: [{ itemId: item.id, amount: 300_000 }] },
+      ],
     });
     const raised = await raise(doc);
-    assert.ok(raised.ok);
-
-    const cashBank = await makeCashBank({ opening: 1_000_000 });
-    const result = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      cashBank,
-      actor
-    );
+    assert.ok(raised.ok, JSON.stringify(raised));
+    const result = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(cashBank), actor);
     assert.equal(result.ok, true, JSON.stringify(result));
 
-    // 1. the induk's cash actually moved, and only the induk's
-    assert.equal(await bookBalance(cashBank), 700_000);
+    // 1. one Cash Bank Book entry per Budget, on the induk's resource, each
+    //    reading its Budget's own description (§10 rule 54)
+    assert.equal(await bookBalance(cashBank), 2_000_000 + 300_000 - 400_000);
     const entries = await prisma.cashBankLedger.findMany({
-      where: {
-        source_doc_type_id: await transactionDocType(),
-        source_doc_id: doc,
-        entry_type: "Transaction",
-      },
+      where: { source_doc_type_id: await transactionDocType(), source_doc_id: doc },
+      orderBy: { id: "asc" },
     });
-    assert.equal(entries.length, 1);
-    assert.equal(entries[0].cash_bank_id, cashBank);
-    assert.equal(entries[0].direction, "Out");
+    assert.equal(entries.length, 2);
+    assert.ok(entries.every((e) => e.cash_bank_id === cashBank));
+    const descriptions = await prisma.budBudget.findMany({
+      where: { id: { in: [expense, repay] } },
+      orderBy: { id: "asc" },
+      select: { description: true },
+    });
+    assert.deepEqual(entries.map((e) => e.note), descriptions.map((d) => d.description));
 
-    // 2. the anak's own supplier position, and *only* that: the two Companies'
-    //    positions against each other are accounts, not subjects, so the
-    //    confirmation writes exactly one subject-book entry.
+    // 2. the chosen item is settled, by one entry that names it; Biaya keeps no book
+    const settled = await prisma.subLedgerBalance.findUniqueOrThrow({ where: { id: item.id } });
+    assert.equal(settled.balance.toNumber(), 0);
+    assert.equal(settled.status, "Cleared");
+    assert.equal(await subledgerEntries(doc), 1);
+
+    // 3. the anak's journal: its payable to the induk where the cash line would
+    //    be, then one counter line per Budget — on its own account and Partner
+    const [anakJournal] = await journalsFor(await transactionDocType(), doc);
+    assert.equal(anakJournal.company_id, anak);
+    const bridge = anakJournal.lines.find((l) => l.account_id === anakApAccount);
+    assert.equal(bridge?.kredit_amount.toNumber(), 400_000);
+    const counters = anakJournal.lines.filter((l) => l.debit_amount.toNumber() > 0);
+    assert.deepEqual(
+      counters.map((l) => [l.debit_amount.toNumber(), l.partner_id]),
+      [
+        [100_000, null],
+        [300_000, supplier],
+      ]
+    );
+
+    // 4. the induk's journal: its claim on the anak against its cash
+    const [indukJournal] = await journalsFor(await fundingRequestDocTypeId(), raised.ok ? raised.id : 0);
+    assert.equal(indukJournal.company_id, induk);
+    assert.equal(indukJournal.lines.length, 2);
     assert.equal(
-      await subledgerBalance(await bookId("Hutang"), supplier),
-      -300_000,
-      "paying a supplier lowers what the anak owes it"
-    );
-    assert.equal(
-      await subledgerEntries(doc),
-      1,
-      "no subject book entry is written for the intercompany leg"
+      indukJournal.lines.find((l) => l.account_id === indukArAccount)?.debit_amount.toNumber(),
+      400_000
     );
 
-    // 3. one journal each, each balanced, each pointing at its own Company's
-    //    document — neither is the source of the other (concept doc §31)
-    const anakJournals = await journalsFor(await transactionDocType(), doc);
-    assert.equal(anakJournals.length, 1);
-    assert.equal(anakJournals[0].company_id, anak);
-
-    const indukJournals = await journalsFor(
-      await fundingRequestDocTypeId(),
-      raised.ok ? raised.id : 0
-    );
-    assert.equal(indukJournals.length, 1);
-    assert.equal(indukJournals[0].company_id, induk);
-
-    for (const journal of [...anakJournals, ...indukJournals]) {
-      const debit = journal.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0);
-      const credit = journal.lines.reduce(
-        (t, l) => t + l.kredit_amount.toNumber(),
-        0
-      );
-      assert.equal(debit, credit, `${journal.journal_no} must balance`);
-      assert.equal(debit, 300_000);
+    // 5. both plans realized and closed, the document posted, the request shut
+    for (const id of [expense, repay]) {
+      const plan = await prisma.budBudget.findUniqueOrThrow({ where: { id }, select: { status: true } });
+      assert.equal(plan.status, "Closed");
     }
-
-    // 3b. the position itself: the induk's claim is debited, the anak's
-    //     obligation credited, and the two agree — which is the whole of what
-    //     concept doc §38 reconciles, read from the General Ledger.
-    const indukClaim = indukJournals[0].lines.find(
-      (l) => l.account_id === indukArAccount
-    );
-    const anakObligation = anakJournals[0].lines.find(
-      (l) => l.account_id === anakApAccount
-    );
-    assert.ok(indukClaim, "the induk journals its receivable from the anak");
-    assert.ok(anakObligation, "the anak journals its payable to the induk");
-    assert.equal(indukClaim!.debit_amount.toNumber(), 300_000);
-    assert.equal(anakObligation!.kredit_amount.toNumber(), 300_000);
-
-    // 4. the plan is realized and closed, the document posted, the request shut
-    const plan = await prisma.budBudget.findUniqueOrThrow({
-      where: { id: budget },
-      select: { realized_amount: true, status: true },
-    });
-    assert.equal(plan.realized_amount.toNumber(), 300_000);
-    assert.equal(plan.status, "Closed");
-
-    const after = await prisma.finCashBankTransaction.findUniqueOrThrow({
-      where: { id: doc },
-      select: { status: true, document_date: true, posting_date: true },
-    });
-    assert.equal(after.status, "Posted");
-    assert.ok(after.document_date);
-    assert.ok(after.posting_date);
-
-    const request = await prisma.finFundingRequest.findFirstOrThrow({
-      where: { transaction_id: doc },
-    });
+    const request = await prisma.finFundingRequest.findFirstOrThrow({ where: { transaction_id: doc } });
     assert.equal(request.status, "Closed");
     assert.equal(request.provider_cash_bank_id, cashBank);
-    assert.ok(request.confirmed_at);
   });
 
-  test("each journal names its own cause, and names each part once", { todo: "funded route is being redesigned: a funded line lowering a subject-book position has no open item to settle yet" }, async () => {
-    const supplier = await makePartner({
-      companyId: anak,
-      categoryLabel: "Stakeholder",
-    });
-    const budget = await makeBudget({
-      categoryLabel: "Hutang",
-      partnerId: supplier,
-      amount: 120_000,
-    });
+  test("each journal names its own cause, and names each part once", async () => {
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 120_000 });
     const doc = await makeAnakDraft({
-      purpose: "HTG_SH_OUT",
-      partnerId: supplier,
+      purpose: "BYA_OUT",
       lines: [{ budgetId: budget, amount: 120_000 }],
     });
     const raised = await raise(doc);
@@ -690,11 +700,7 @@ describe("confirmation posts both Companies, at once", () => {
     const requestNo = raised.ok ? raised.funding_request_no : "";
 
     const cashBank = await makeCashBank({ opening: 500_000 });
-    const result = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      cashBank,
-      actor
-    );
+    const result = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(cashBank), actor);
     assert.equal(result.ok, true, JSON.stringify(result));
 
     const { transaction_no } = await prisma.finCashBankTransaction.findUniqueOrThrow({
@@ -710,113 +716,271 @@ describe("confirmation posts both Companies, at once", () => {
 
     // The induk acted on a Funding Request, so its journal names the request,
     // the realization it funded, and what that was for — §10 rule 60.
-    const [indukJournal] = await journalsFor(
-      await fundingRequestDocTypeId(),
-      raised.ok ? raised.id : 0
-    );
-    assert.equal(
-      indukJournal.description,
-      `${requestNo} — ${transaction_no} — ${label}`
-    );
+    const [indukJournal] = await journalsFor(await fundingRequestDocTypeId(), raised.ok ? raised.id : 0);
+    assert.equal(indukJournal.description, `${requestNo} — ${transaction_no} — ${label}`);
 
-    // The property that actually broke, stated on its own: the description was
-    // accreted across two modules — Funding composed a phrase ending in the
-    // label, Finance appended the label again — so it read the purpose twice on
-    // the Journal register and in both ledger reports. Nothing errored, and the
-    // suite passed. Counting is what catches it.
-    assert.equal(
-      indukJournal.description!.split(label).length - 1,
-      1,
-      "the purpose is named once, not once per module that composed the string"
-    );
-
-    // And every line of both, for the same reason.
+    // Composed once: a description accreted across two modules used to name
+    // the purpose twice, and only counting catches it.
     for (const journal of [anakJournal, indukJournal]) {
+      assert.equal(journal.description!.split(label).length - 1, 1);
       for (const line of journal.lines) {
-        assert.equal(
+        assert.ok(
           (line.description ?? "").split(label).length - 1 <= 1,
-          true,
           `${journal.journal_no}: a line names the purpose at most once`
         );
       }
     }
   });
 
-  test("an anak receipt mirrors it: induk cash in, induk Hutang, anak Piutang", { todo: "funded route is being redesigned: a funded line lowering a subject-book position has no open item to settle yet" }, async () => {
-    const debtor = await makePartner({
-      companyId: anak,
-      categoryLabel: "Stakeholder",
-    });
-    const budget = await makeBudget({
-      categoryLabel: "Piutang",
-      type: "In",
-      partnerId: debtor,
-      amount: 200_000,
-    });
+  test("an anak receipt mirrors it: induk cash in, induk Hutang, anak Piutang", async () => {
+    const debtor = await makePartner({ companyId: anak, categoryLabel: "Stakeholder" });
+    const cashBank = await makeCashBank({ opening: 500_000 });
+
+    // Lent out first, through a funded payment: the Piutang opens an item.
+    const lend = await makeBudget({ categoryLabel: "Piutang", partnerId: debtor, amount: 200_000 });
+    await fundAndConfirm(
+      await makeAnakDraft({ purpose: "PTG_SH_OUT", lines: [{ budgetId: lend, amount: 200_000 }] }),
+      cashBank
+    );
+    const [item] = await openItems(await bookId("Piutang"), debtor);
+    assert.ok(item);
+
+    const budget = await makeBudget({ categoryLabel: "Piutang", type: "In", partnerId: debtor, amount: 200_000 });
     const doc = await makeAnakDraft({
       purpose: "PTG_SH_IN",
-      partnerId: debtor,
-      lines: [{ budgetId: budget, amount: 200_000 }],
+      lines: [{ budgetId: budget, amount: 200_000, items: [{ itemId: item.id, amount: 200_000 }] }],
     });
     const raised = await raise(doc);
-    assert.ok(raised.ok);
-
-    const cashBank = await makeCashBank({ opening: 50_000 });
-    const result = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      cashBank,
-      actor
-    );
+    assert.ok(raised.ok, JSON.stringify(raised));
+    const result = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(cashBank), actor);
     assert.equal(result.ok, true, JSON.stringify(result));
 
-    assert.equal(await bookBalance(cashBank), 250_000, "the induk holds it now");
-    assert.equal(
-      await subledgerBalance(await bookId("Piutang"), debtor),
-      -200_000,
-      "being repaid lowers what the debtor owes the anak"
-    );
+    assert.equal(await bookBalance(cashBank), 500_000, "out and back in again");
+    assert.equal(await subledgerBalance(await bookId("Piutang"), debtor), 0, "repaid in full");
 
-    // The mirror of the expense case, and it is the *other* side of each
-    // bridge: money taken in on the anak's behalf is owed to the anak, and the
-    // anak may claim it back.
-    const indukJournal = (await journalsFor(
-      await fundingRequestDocTypeId(),
-      raised.ok ? raised.id : 0
-    ))[0];
-    const anakJournal = (await journalsFor(await transactionDocType(), doc))[0];
-    assert.ok(
-      indukJournal.lines.some((l) => l.kredit_amount.toNumber() === 200_000),
-      "the induk credits what it now owes the anak"
-    );
-    assert.ok(
-      anakJournal.lines.some((l) => l.debit_amount.toNumber() === 200_000),
-      "the anak debits what it may claim from the induk"
-    );
+    // The mirror: money taken in on the anak's behalf is owed to the anak.
+    const [indukJournal] = await journalsFor(await fundingRequestDocTypeId(), raised.ok ? raised.id : 0);
+    const [anakJournal] = await journalsFor(await transactionDocType(), doc);
+    assert.ok(indukJournal.lines.some((l) => l.kredit_amount.toNumber() === 200_000));
+    assert.ok(anakJournal.lines.some((l) => l.debit_amount.toNumber() === 200_000));
   });
 
-  test("a Purpose with no Partner writes no subject book at all", async () => {
+  test("a raising line records the item it opened, as on the direct route", async () => {
+    const supplier = await makePartner({ companyId: anak, categoryLabel: "Stakeholder" });
+    const budget = await makeBudget({ categoryLabel: "Hutang", type: "In", partnerId: supplier, amount: 80_000 });
+    const doc = await makeAnakDraft({ purpose: "HTG_SH_IN", lines: [{ budgetId: budget, amount: 80_000 }] });
+    await fundAndConfirm(doc, await makeCashBank({ opening: 0 }));
+
+    const line = await prisma.finCashBankTransactionLine.findFirstOrThrow({
+      where: { transaction_id: doc },
+      select: { opened_item_id: true },
+    });
+    const [item] = await openItems(await bookId("Hutang"), supplier);
+    assert.equal(line.opened_item_id, item.id);
+  });
+
+  test("a category with no Partner writes no subject book at all", async () => {
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 40_000 });
     const doc = await makeAnakDraft({
       purpose: "BYA_OUT",
       lines: [{ budgetId: budget, amount: 40_000 }],
     });
+    await fundAndConfirm(doc, await makeCashBank({ opening: 100_000 }));
+    assert.equal(await subledgerEntries(doc), 0);
+  });
+
+  test("the preview is the two journals the confirmation writes, and writes nothing", async () => {
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 75_000 });
+    const doc = await makeAnakDraft({ purpose: "BYA_OUT", lines: [{ budgetId: budget, amount: 75_000 }] });
     const raised = await raise(doc);
     assert.ok(raised.ok);
-
+    const requestId = raised.ok ? raised.id : 0;
     const cashBank = await makeCashBank({ opening: 100_000 });
-    assert.equal(await subledgerEntries(doc), 0);
+
+    const preview = await previewFundingConfirmation(requestId, viaCash(cashBank));
+    assert.equal(preview.ok, true, JSON.stringify(preview));
+    assert.equal(await bookBalance(cashBank), 100_000, "a preview moves nothing");
+    assert.equal((await journalsFor(await transactionDocType(), doc)).length, 0);
+
+    const result = await confirmFundingRequest(requestId, viaCash(cashBank), actor);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const written = [
+      ...(await journalsFor(await fundingRequestDocTypeId(), requestId)),
+      ...(await journalsFor(await transactionDocType(), doc)),
+    ];
+    assert.deepEqual(
+      preview.ok ? preview.journals.map((j) => j.lines.map((l) => [l.debit, l.credit])) : [],
+      written.map((j) =>
+        j.lines
+          .sort((a, b) => a.sequence_no - b.sequence_no)
+          .map((l) => [l.debit_amount.toNumber(), l.kredit_amount.toNumber()])
+      )
+    );
+  });
+});
+
+describe("open items are chosen on the anak's draft", () => {
+  test("a line lowering a position with no item is refused at Ajukan Dana", async () => {
+    const supplier = await makePartner({ companyId: anak, categoryLabel: "Stakeholder" });
+    const budget = await makeBudget({ categoryLabel: "Hutang", partnerId: supplier, amount: 50_000 });
+    const doc = await makeAnakDraft({ purpose: "HTG_SH_OUT", lines: [{ budgetId: budget, amount: 50_000 }] });
+
+    const result = await raise(doc);
+    assert.equal(result.ok, false);
+    assert.match(result.ok === false ? result.errors._form : "", /open item/);
+    const after = await prisma.finCashBankTransaction.findUniqueOrThrow({
+      where: { id: doc },
+      select: { status: true },
+    });
+    assert.equal(after.status, "Draft", "still the anak's to fix");
+  });
+
+  test("an item settled by another document since the request refuses the confirmation", async () => {
+    const supplier = await makePartner({ companyId: anak, categoryLabel: "Stakeholder" });
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const loan = await makeBudget({ categoryLabel: "Hutang", type: "In", partnerId: supplier, amount: 90_000 });
+    await fundAndConfirm(
+      await makeAnakDraft({ purpose: "HTG_SH_IN", lines: [{ budgetId: loan, amount: 90_000 }] }),
+      cashBank
+    );
+    const [item] = await openItems(await bookId("Hutang"), supplier);
+
+    // Two requests, each settling the whole item. The first is confirmed.
+    const drafts = [];
+    for (let i = 0; i < 2; i++) {
+      const budget = await makeBudget({ categoryLabel: "Hutang", partnerId: supplier, amount: 90_000 });
+      const doc = await makeAnakDraft({
+        purpose: "HTG_SH_OUT",
+        lines: [{ budgetId: budget, amount: 90_000, items: [{ itemId: item.id, amount: 90_000 }] }],
+      });
+      const raised = await raise(doc);
+      assert.ok(raised.ok, JSON.stringify(raised));
+      drafts.push(raised.ok ? raised.id : 0);
+    }
+    const first = await confirmFundingRequest(drafts[0], viaCash(cashBank), actor);
+    assert.equal(first.ok, true, JSON.stringify(first));
+
+    const balance = await bookBalance(cashBank);
+    const second = await confirmFundingRequest(drafts[1], viaCash(cashBank), actor);
+    assert.equal(second.ok, false);
+    assert.match(second.ok === false ? second.errors._form : "", new RegExp(item.item_no));
+    assert.equal(await bookBalance(cashBank), balance, "nothing moved");
+  });
+});
+
+describe("foreign currency on the funded route", () => {
+  test("a USD request paid from a USD layer: both bridges carry what the layer gave up", async () => {
+    const usdBank = await makeCashBank({ currencyId: usd, opening: 10_000, rate: 15_000 });
+    const layer = await prisma.cashBankLayer.findFirstOrThrow({
+      where: { cash_bank_id: usdBank, status: "Open" },
+      select: { id: true },
+    });
+    const budget = await makeBudget({ categoryLabel: "Biaya", currencyId: usd, amount: 1_000 });
+    const doc = await makeAnakDraft({
+      purpose: "BYA_OUT",
+      currencyId: usd,
+      lines: [{ budgetId: budget, amount: 1_000 }],
+    });
+    const raised = await raise(doc);
+    assert.ok(raised.ok, JSON.stringify(raised));
+    const requestId = raised.ok ? raised.id : 0;
 
     const result = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      cashBank,
+      requestId,
+      { cashBankId: usdBank, layerId: layer.id, rate: null },
       actor
     );
     assert.equal(result.ok, true, JSON.stringify(result));
 
-    // None: Biaya names no Partner and keeps no book, and the intercompany
-    // position is journal rather than subject book. The Cash Bank Book and both
-    // journals still record the movement.
-    assert.equal(await subledgerEntries(doc), 0);
+    const [entry] = await prisma.cashBankLedger.findMany({
+      where: { source_doc_type_id: await transactionDocType(), source_doc_id: doc },
+    });
+    assert.equal(entry.base_movement.toNumber(), -15_000_000);
+
+    const [indukJournal] = await journalsFor(await fundingRequestDocTypeId(), requestId);
+    const [anakJournal] = await journalsFor(await transactionDocType(), doc);
+    const indukBridge = indukJournal.lines.find((l) => l.account_id === indukArAccount)!;
+    const anakBridge = anakJournal.lines.find((l) => l.account_id === anakApAccount)!;
+    for (const line of [indukBridge, anakBridge]) {
+      assert.equal(line.currency_id, usd, "the bridge is in the currency the induk moved");
+      assert.equal(line.trx_amount.toNumber(), 1_000);
+    }
+    assert.equal(indukBridge.debit_amount.toNumber(), 15_000_000);
+    assert.equal(anakBridge.kredit_amount.toNumber(), 15_000_000);
+    assert.equal(anakJournal.lines.length, 2, "an expense raises nothing, so no Selisih Kurs");
+
+    const request = await prisma.finFundingRequest.findUniqueOrThrow({ where: { id: requestId } });
+    assert.equal(request.provider_cash_bank_layer_id, layer.id);
+  });
+
+  test("a USD Hutang settled from rupiah at a new kurs: the difference is the anak's", async () => {
+    const supplier = await makePartner({ companyId: anak, categoryLabel: "Stakeholder" });
+    const idrBank = await makeCashBank({ opening: 100_000_000 });
+
+    // Borrowed at 15.000 — the rupiah the induk received is the item's base.
+    const loan = await makeBudget({ categoryLabel: "Hutang", type: "In", currencyId: usd, partnerId: supplier, amount: 1_000 });
+    await fundAndConfirm(
+      await makeAnakDraft({ purpose: "HTG_SH_IN", currencyId: usd, lines: [{ budgetId: loan, amount: 1_000 }] }),
+      idrBank,
+      15_000
+    );
+    const [item] = await openItems(await bookId("Hutang"), supplier, usd);
+    assert.equal(item.base_balance.toNumber(), 15_000_000);
+
+    // Repaid at 16.000: the cash cost a million more than the item released.
+    const repay = await makeBudget({ categoryLabel: "Hutang", currencyId: usd, partnerId: supplier, amount: 1_000 });
+    const doc = await makeAnakDraft({
+      purpose: "HTG_SH_OUT",
+      currencyId: usd,
+      lines: [{ budgetId: repay, amount: 1_000, items: [{ itemId: item.id, amount: 1_000 }] }],
+    });
+    const raised = await raise(doc);
+    assert.ok(raised.ok, JSON.stringify(raised));
+    const requestId = raised.ok ? raised.id : 0;
+    const result = await confirmFundingRequest(
+      requestId,
+      { cashBankId: idrBank, layerId: null, rate: 16_000 },
+      actor
+    );
+    assert.equal(result.ok, true, JSON.stringify(result));
+
+    const [anakJournal] = await journalsFor(await transactionDocType(), doc);
+    const fx = anakJournal.lines.filter((l) => l.account_id === anakFxAccount);
+    assert.equal(fx.length, 1, "one Selisih Kurs line, for the one item settled");
+    assert.equal(fx[0].debit_amount.toNumber(), 1_000_000, "a loss, on the debit side");
+    assert.equal(
+      anakJournal.lines.find((l) => l.account_id === anakApAccount)?.kredit_amount.toNumber(),
+      16_000_000,
+      "the anak owes the induk what the cash actually cost"
+    );
+
+    const [indukJournal] = await journalsFor(await fundingRequestDocTypeId(), requestId);
+    assert.equal(indukJournal.lines.length, 2, "the induk recognises no difference");
+    assert.equal(
+      indukJournal.lines.find((l) => l.account_id === indukArAccount)?.debit_amount.toNumber(),
+      16_000_000
+    );
+  });
+
+  test("a layer of another resource is refused", async () => {
+    const usdBank = await makeCashBank({ currencyId: usd, opening: 500, rate: 15_000 });
+    const otherBank = await makeCashBank({ currencyId: usd, opening: 500, rate: 15_500 });
+    const stranger = await prisma.cashBankLayer.findFirstOrThrow({
+      where: { cash_bank_id: otherBank },
+      select: { id: true },
+    });
+    const budget = await makeBudget({ categoryLabel: "Biaya", currencyId: usd, amount: 100 });
+    const raised = await raise(
+      await makeAnakDraft({ purpose: "BYA_OUT", currencyId: usd, lines: [{ budgetId: budget, amount: 100 }] })
+    );
+    assert.ok(raised.ok);
+    const result = await confirmFundingRequest(
+      raised.ok ? raised.id : 0,
+      { cashBankId: usdBank, layerId: stranger.id, rate: null },
+      actor
+    );
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.cash_bank_layer_id);
   });
 });
 
@@ -836,11 +1000,7 @@ describe("a refused confirmation leaves nothing behind", () => {
       currencyId: otherCurrency,
       opening: 900_000,
     });
-    const result = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      foreign,
-      actor
-    );
+    const result = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(foreign), actor);
     assert.equal(result.ok, false);
     assert.ok(result.ok === false && result.errors.cash_bank_id);
 
@@ -866,11 +1026,7 @@ describe("a refused confirmation leaves nothing behind", () => {
     // The anak is not supposed to have one at all; if a row exists anyway, the
     // money must still leave an induk resource.
     const stray = await makeCashBank({ companyId: anak, opening: 500_000 });
-    const result = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      stray,
-      actor
-    );
+    const result = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(stray), actor);
     assert.equal(result.ok, false);
     assert.ok(result.ok === false && result.errors.cash_bank_id);
     assert.equal(await bookBalance(stray), 500_000);
@@ -891,11 +1047,7 @@ describe("a refused confirmation leaves nothing behind", () => {
     });
 
     const cashBank = await makeCashBank({ opening: 400_000 });
-    const result = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      cashBank,
-      actor
-    );
+    const result = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(cashBank), actor);
     assert.equal(result.ok, false);
     assert.equal(await bookBalance(cashBank), 400_000);
     assert.equal(await subledgerEntries(doc), 0);
@@ -911,18 +1063,10 @@ describe("a refused confirmation leaves nothing behind", () => {
     assert.ok(raised.ok);
 
     const cashBank = await makeCashBank({ opening: 100_000 });
-    const first = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      cashBank,
-      actor
-    );
+    const first = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(cashBank), actor);
     assert.equal(first.ok, true, JSON.stringify(first));
 
-    const second = await confirmFundingRequest(
-      raised.ok ? raised.id : 0,
-      cashBank,
-      actor
-    );
+    const second = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(cashBank), actor);
     assert.equal(second.ok, false);
     assert.equal(
       await bookBalance(cashBank),
@@ -950,11 +1094,7 @@ describe("a refused confirmation leaves nothing behind", () => {
       );
 
       const cashBank = await makeCashBank({ opening: 100_000 });
-      const result = await confirmFundingRequest(
-        raised.ok ? raised.id : 0,
-        cashBank,
-        actor
-      );
+      const result = await confirmFundingRequest(raised.ok ? raised.id : 0, viaCash(cashBank), actor);
       assert.equal(result.ok, false);
       assert.ok(
         result.ok === false && /Account Piutang ke Anak/.test(result.errors._form)
@@ -1004,7 +1144,7 @@ describe("a confirmation is refused outside an open period", () => {
     for (const companyId of [anak, induk]) {
       const reopen = await closeYearFor(fiscalYear, companyId);
       try {
-        const refused = await confirmFundingRequest(requestId, cashBank, actor);
+        const refused = await confirmFundingRequest(requestId, viaCash(cashBank), actor);
         assert.equal(refused.ok, false, "a closed year on either side refuses");
         assert.match(
           refused.ok === false ? refused.errors._form ?? "" : "",
@@ -1028,7 +1168,7 @@ describe("a confirmation is refused outside an open period", () => {
       }
     }
 
-    const confirmed = await confirmFundingRequest(requestId, cashBank, actor);
+    const confirmed = await confirmFundingRequest(requestId, viaCash(cashBank), actor);
     assert.equal(confirmed.ok, true, JSON.stringify(confirmed));
   });
 });

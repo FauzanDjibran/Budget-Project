@@ -369,7 +369,7 @@ describe("Transfer moves money without changing what it is worth", () => {
       where: { cash_bank_id: from, entry_type: "Transaction" },
     });
     assert.equal(out.length, 1, "one withdrawal, not one per destination");
-    assert.equal(out[0].amount.toNumber(), 9_000_000);
+    assert.equal(out[0].movement.toNumber(), -9_000_000);
   });
 
   test("foreign to foreign: base is conserved and layers propagate one-for-one", async () => {

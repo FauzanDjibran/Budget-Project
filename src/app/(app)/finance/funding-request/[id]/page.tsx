@@ -7,7 +7,6 @@ import {
   getFundingRequest,
   providerCashBanks,
 } from "@/lib/siba/funding";
-import { realizationOf } from "@/lib/siba/realization";
 import { intercompanyBridge } from "@/lib/siba/system-account-data";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 
@@ -16,7 +15,8 @@ export const dynamic = "force-dynamic";
 /**
  * One Funding Request, with everything the induk needs to answer it.
  *
- * The resources offered are already narrowed to the request's own currency, and
+ * The resources offered are already narrowed to what may settle the request's
+ * currency, each with its open layers, and
  * the bridge settings are resolved here so the screen can say what is missing
  * *before* somebody presses the button — `confirmFundingRequest` refuses the
  * same request on its own, so this is the explanation rather than the
@@ -45,6 +45,16 @@ export default async function Page({
     intercompanyBridge(),
   ]);
 
+  // Each line's classification, named — the induk checks it before paying.
+  const lineLabels: Record<number, string> = {};
+  for (const l of lines) {
+    const category = refs.categories.find((c) => c.id === l.category_id);
+    const partner = refs.partners.find((p) => p.id === l.partner_id);
+    lineLabels[l.id] = [category?.name, partner ? `${partner.label} – ${partner.name}` : null]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
   const provider = request.provider_cash_bank_id
     ? refs.cashBanks.find((c) => c.id === request.provider_cash_bank_id) ?? null
     : null;
@@ -54,6 +64,7 @@ export default async function Page({
       <FundingDetail
         request={request}
         lines={lines}
+        lineLabels={lineLabels}
         resources={resources}
         companyLabel={
           refs.companies.find((c) => c.id === doc?.company_id)?.label ?? "anak"
@@ -61,8 +72,6 @@ export default async function Page({
         currencyLabel={
           refs.currencies.find((c) => c.id === request.currency_id)?.label ?? "IDR"
         }
-        purposeLabel={doc ? realizationOf(doc.transaction_type).title : "—"}
-        partnerLabel={null}
         providerLabel={provider ? `${provider.label} - ${provider.name}` : null}
         bridgeMissing={bridge.ok ? [] : bridge.missing}
         canConfirm={actorCan(actor, "FUNDING_REQUEST_CONFIRM")}

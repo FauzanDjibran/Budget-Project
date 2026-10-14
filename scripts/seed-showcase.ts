@@ -1411,7 +1411,11 @@ async function fund(spec: FundingSpec, actor: number) {
     where: { cash_bank_label: spec.confirmFrom },
     select: { id: true },
   });
-  const result = await confirmFundingRequest(raised.id, provider.id, actor);
+  const result = await confirmFundingRequest(
+    raised.id,
+    { cashBankId: provider.id, layerId: null, rate: null },
+    actor
+  );
   if (!result.ok) {
     throw new Error(`Confirming "${spec.note}" refused: ${Object.values(result.errors).join(" ")}`);
   }
@@ -1772,6 +1776,7 @@ function expansionYear(y: number): YearPlan {
       { key: "genset", company: "induk", date: [9, 16], type: "Out", category: "Asset", amount: 180_000_000, description: `Pembelian genset cadangan gudang ${y}`, status: "Cancelled" },
       { key: "anakops", company: "anak", date: [4, 2], type: "Out", category: "Biaya", amount: 120_000_000, description: `Biaya operasional gudang SBTC ${y}`, status: "Closed" },
       { key: "anakadv", company: "anak", date: [5, 2], type: "Out", category: "Piutang", partner: "Lina Setiawati", amount: 10_000_000, description: `Advance pengadaan perlengkapan SBTC ${y}`, status: "Closed" },
+      { key: "anakadvback", company: "anak", date: [6, 10], type: "In", category: "Piutang", partner: "Lina Setiawati", amount: 1_750_000, description: `Pengembalian sisa advance perlengkapan SBTC ${y}`, status: "Closed" },
     ]),
     events: [
       journal(reversal(y - 1, 6_200_000)),
@@ -1787,6 +1792,9 @@ function expansionYear(y: number): YearPlan {
       { kind: "cbt", date: d(4, 5), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: `Operasional gudang Cikarang semester I ${y}`, lines: [{ budget: "ops", amount: 150_000_000 }] },
       { kind: "funding", date: d(4, 18), purpose: "BYA_OUT", note: `Operasional gudang SBTC ${y}`, budget: "anakops", amount: 120_000_000, confirmFrom: "BCA-OPS" },
       { kind: "funding", date: d(5, 6), purpose: "PTG_KRY_OUT", partner: "Lina Setiawati", note: `Advance pengadaan perlengkapan SBTC ${y}`, budget: "anakadv", amount: 10_000_000, confirmFrom: "BCA-OPS" },
+      // A funded line lowering a position: the anak's receipt settles the open
+      // item the advance opened, exactly as an induk Realisasi would.
+      { kind: "funding", date: d(6, 14), purpose: "PTG_KRY_IN", partner: "Lina Setiawati", note: `Pengembalian sisa advance perlengkapan SBTC ${y}`, budget: "anakadvback", amount: 1_750_000, confirmFrom: "BCA-OPS" },
       { kind: "cbt", date: d(6, 18), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: `Pembayaran pemasok spare part Singapura, invoice SG-1874`, lines: [{ budget: "impor", amount: 12_000 }] },
       { kind: "cbt", date: d(6, 25), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan semester I ${y}`, lines: [{ budget: "gaji", amount: 100_000_000 }] },
       journal(depreciation(y, 2, 14_000_000)),

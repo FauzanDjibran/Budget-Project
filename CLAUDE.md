@@ -98,7 +98,7 @@ or invariants that assume a particular row exists.
 | Period control (lock, closing, Opening Balance) | Done — a posting is allowed only inside an Open year its Company has not closed, enforced on all four posting paths. **Fiscal Year Closing** moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, and stamps `acc_fiscal_closing`; the year itself reads Closed only once every Company has closed it. Any number of years may stand Open; each Company closes its own oldest first, and no year opens behind a close. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
 | Budget module | Done for create → approve → classify — two menus. **Pengajuan Budget**: Budget Month, the register with status tabs and checkbox selection, create/edit, and the Draft → Submit → Approve/Reject lifecycle, each transition one Budget or many at once. **Klasifikasi Budget**: the classifier's queue of Approved Budgets, grouped Company · Arah · Currency, one Category and Partner for a whole selection. Bulk actions are all-or-nothing. Bespoke, not registry-driven. |
 | Finance module — Realisasi Budget | Done for draft → post — two menus (**Realisasi Penerimaan** `RBM-`, **Realisasi Pengeluaran** `RBK-`) over one document and one table. The header is Company · Cash & Bank · Currency · kurs and nothing else: no Purpose, no Partner, so one document settles Budgets of every category and every Partner. Post writes **one Cash Bank Book entry and one subject-book entry per Budget**, each reading the Budget's own description, and one journal: a cash line, a counter line per Budget on its own mapped account and Partner, and an FX line per Budget where one arises. Bespoke, not registry-driven. |
-| Funding Request | Done — the anak has no Cash & Bank, so its document is submitted (`Pending`) rather than posted, raising an `Open` request. The induk confirms; one transaction writes its cash entry, every Budget's realization, a journal each — the two Companies' positions against one another live in those journals — the document's Posted status and the request's closure. No rejection and no partial funding. Intercompany settlement is not built |
+| Funding Request | Done — the anak's document is an ordinary Realisasi that does not name its cash: its Budgets and the open items each line settles are chosen on its draft, exactly as on the induk's. Ajukan Dana checks the lines (mapping, items) and freezes it at `Pending`, raising an `Open` request. The induk confirms by stating the cash side — resource, and its layer or kurs — and sees both journals first. One transaction then writes what a Realisasi Post writes (a Cash Bank Book entry per Budget on the induk's resource, the anak's subject-book entries per Budget or per settled item), a journal each — the bridge line carries the cash line's own figures, and every Selisih Kurs is the anak's — every Budget's realization, the Posted status and the request's closure. Foreign currency works as on the direct route. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
 | Debit / Credit Note | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget. A Debit Note debits the Partner's account and a Credit Note credits it, so the book's own `raises` decides whether the position rises or falls and one document serves every book. Which books may be adjusted is `allows_dncn` on the Budget Category (Titipan, Hutang, Piutang). Post writes one `Adjustment` entry and one balanced journal against the Company's Debit Note or Credit Note System Default, under a lock on the position; nothing may go below zero, and a negative position is not adjustable yet |
 | Pencairan Open Item | Done — foreign currency sold out of the Company's own Cash & Bank, and one Partner's open items in that currency converted to Rupiah **at the same kurs**, in one document (`POI-`). One book, one Partner and one layer per document. Each line's amount is the sum of the items it converts. Post writes both cash books, a `Conversion` entry releasing each foreign item at its own kurs, one new IDR item per line in the same book, and one balanced journal with **one** Selisih Kurs line for the whole document (§10 rules 109–112). Its own module, not a Transfer purpose |
@@ -835,8 +835,13 @@ proves the materialised total still matches. Never add an update or delete path 
 
 **Every book entry carries two measures.** The amount in the currency that
 actually moved, and what it was worth in base currency at the moment it moved —
-`amount` / `base_amount` on `cash_bank_ledger` and `sub_ledger`, `balance` /
-`base_balance` on both balance tables. Neither is derived from the other. The
+`movement` / `base_movement` on `cash_bank_ledger` and `sub_ledger`, `balance` /
+`base_balance` on both balance tables. **A book entry is one signed figure per
+measure**: the sign is the direction (positive money in on the Cash Bank Book;
+positive raises the position on a subject book), and there is no separate
+`direction` or unsigned `amount` column to disagree with it. A subject-book
+entry's cash direction is that sign read with the category's `raises`, which is
+why `raises` is locked once the book has an entry (`bookHasEntries`). Neither is derived from the other. The
 base figure is **history**, not a re-quotable conversion: re-deriving it at a
 later rate would destroy the only number that answers what the currency movement
 cost. See §12, "A rate is an input or an output, never both".
@@ -1310,11 +1315,19 @@ Implemented and enforced:
 58. **Pending is exactly as inert as Draft.** No cash entry, no subject book, no
     journal, no `realized_amount`. Confirmation is the actual
     boundary, for **both** Companies at once (§30).
-59. **One confirmation, one transaction, two Companies.** `writeFundedPosting` writes
-    the induk's cash entry and balance, the anak's own subject book where its Purpose
-    keeps one, every Budget's realization, a journal each and the document's Posted
-    status; `confirmFundingRequest` closes the request in the same transaction.
-    Either all of it happened or none of it did.
+59. **One confirmation, one transaction, two Companies — and it is a Realisasi
+    Post.** The anak's lines and the open items they settle were chosen on its
+    draft; the induk states only the cash side (resource, layer or kurs), and
+    `prepareFundedPosting` values the document with the same `planPosting` a direct
+    Post runs. `writeFundedPosting` then writes, through the same
+    `writeRealizationLines`, a Cash Bank Book entry per Budget on the induk's
+    resource and the anak's subject-book entries per Budget or per settled item,
+    then every Budget's realization, a journal each and the Posted status;
+    `confirmFundingRequest` closes the request in the same transaction. Either all
+    of it happened or none of it did. **Ajukan Dana runs the line half first**
+    (`checkFundable`), so a request no confirmation could answer is refused while
+    the anak can still fix it; an item another document settles while a request
+    waits refuses the confirmation by name, and the anak withdraws and redrafts.
 60. **Each journal points at its own Company's document.** The induk's names the
     Funding Request it confirmed; the anak's names its own Cash Bank Transaction,
     because that document is an ordinary realization that happened to be funded.
@@ -2476,12 +2489,12 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Impact:** a position can no longer go negative through a realization.
   `lockSubledgerPosition` is taken by `applyPosting` too. A line lowering a
   position settles the items the user chose, each for the amount the user
-  stated (§10 rules 105 and 107). **Two paths
-  were left behind on the user's instruction**: the funded route and DN/CN are
-  both being redesigned, both can still *raise* a position (opening an item), and
-  both are refused when they *lower* one, because neither names an item yet.
-  Their tests that lower a position are marked `todo` with that reason rather
-  than rewritten, and the showcase skips the DN/CN notes that lower a position.
+  stated (§10 rules 105 and 107). The funded route settles items exactly the
+  same way — the anak chooses them on its draft. **DN/CN was left behind on the
+  user's instruction** while it is redesigned: it can still *raise* a position
+  (opening an item) and is refused when it would *lower* one, because a note
+  names no item yet. Its tests that lower a position are marked `todo` with that
+  reason, and the showcase skips those notes.
 - **The migration is a reset**, like the Realisasi one before it: `balance_id`
   and the item columns are `NOT NULL`, so it applies to an empty subject book.
 - **Do not change unless:** explicitly instructed. **Never average a position's
@@ -3171,9 +3184,8 @@ they relate. Keep the table; keep it out of the UI's write path.
   carried over, on the user's instruction). `documentHref` points a realization at
   the Pengeluaran route, and a document opened under the other menu's route is
   redirected to its own. Transfer's three Purposes are its own catalogue and are
-  unaffected. **The funded route (Funding Request) is frozen** while it is
-  redesigned: it still posts one counter line and one subject-book entry resolved
-  from the document's first Budget, and is not held to the per-Budget rule yet.
+  unaffected. **The funded route is held to every rule here too**: it runs the
+  same `planPosting` and `writeRealizationLines` on the induk's cash side.
 - **Do not change unless:** explicitly instructed. **Never sum book entries across
   Budgets, never bring back a header Purpose or Partner, and never let a line post
   to any account but its own Budget's mapping.**
@@ -4025,9 +4037,10 @@ below in outline because the half of it that still holds is easy to lose.**
   and checked again by the Server Action), locked once the document exists.
   `Pending` joins the `TransactionStatus` enum and is exactly as inert as `Draft`.
 - **No rejection, ever.** The induk always complies (§29), so `Konfirmasi Funding`
-  asks one question — which resource — and every refusal is mechanical: an unfinished
-  bridge, a resource in the wrong currency or belonging to the wrong Company, a
-  request already answered, a Budget closed since. There is no `FUNDING_REQUEST_REJECT`
+  asks one question — the cash side: which resource, and its layer or kurs — and
+  every refusal is mechanical: an unfinished bridge, a resource that cannot settle
+  the currency or belongs to the wrong Company, a layer of another resource, a
+  request already answered, a Budget closed since, an open item settled since. There is no `FUNDING_REQUEST_REJECT`
   and there is no partial funding: request amount = document amount, always.
 - **Withdrawal is the requester's, not the provider's.** A Pending document may be
   cancelled by the Company that raised it, which closes its request with it. That is
@@ -4178,10 +4191,27 @@ below in outline because the half of it that still holds is easy to lose.**
 ### One confirmation, one transaction, two Companies (FROZEN)
 - **Decision:** `prepareFundedPosting` resolves and checks everything before anything
   is written; `writeFundedPosting` then writes, inside the transaction `funding.ts`
-  opens: the induk's cash entry and its balance, the anak's own subject book where its
-  Purpose keeps one, every Budget's realization, **one journal per Company**, and the
-  document's Posted status — with the request's closure alongside. Either all of it
-  happened or none of it did (concept doc §30).
+  opens, **what a direct Realisasi Post writes** — per Budget a Cash Bank Book entry
+  on the induk's resource and the layer drawn or opened, the anak's subject-book
+  entries settling the items its draft chose or opening one — plus every Budget's
+  realization, **one journal per Company**, and the document's Posted status, with the
+  request's closure alongside. Either all of it happened or none of it did (concept
+  doc §30). The two routes share `planPosting`, `lockPlanPositions` and
+  `writeRealizationLines`; they differ only in whose cash it is and where the cash
+  line goes.
+- **The anak's draft is a Realisasi that does not name its cash.** The user's rule:
+  Realisasi works the same for induk and anak, open items included, and Funding
+  Request is the cross-check. The induk's confirmation asks only the cash side —
+  resource, and its layer or kurs by `rateSource` — and shows **both journals** from
+  the same preparation before it is pressed (`previewFundingConfirmation`). The
+  resource is any active induk one `maySettle` admits, as on a direct header; the
+  layer the induk drew on is kept on the request (`provider_cash_bank_layer_id`).
+- **The bridge line carries the cash line's own figures**, in the currency the induk
+  actually moved and at the rate it moved at, in both Companies' journals — so the
+  two positions against each other are equal on both measures. **Every Selisih Kurs
+  is the anak's**, on the anak's FX account: the anak carried the obligation, and
+  its debt to the induk is what the cash cost. The induk's journal is cash against
+  bridge and can recognise no difference.
 - **The two Companies' positions against each other are journal, and only journal.**
   Each Company names one account for what it is owed and one for what it owes, and
   the confirmation debits one and credits the other. **No subject-book entry is
@@ -4401,7 +4431,7 @@ decisions now that foreclose them.
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
-| Open items for DN/CN and the funded route | Both are being redesigned. Both may raise a position (opening an item) and are refused when they lower one, because neither names an item yet. How a note or a funded line chooses the item it settles is part of their redesign |
+| Open items for DN/CN | Being redesigned. A note may raise a position (opening an item) and is refused when it lowers one, because it names no item yet. How a note chooses the item it settles is part of its redesign |
 | Restricting an item's clearing date | An item may be settled by a document dated before it was opened (§10 rule 106), on the user's instruction; they may revert it to restricted after seeing it |
 | DN/CN on a negative position | A position below zero (a cash overpayment) is refused today. Adjusting one needs a rule for its base, which no longer tracks its face |
 | DN/CN tax | A note carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
@@ -4833,9 +4863,9 @@ process allowed to restate positions, and it is not built.
 | An audit entry names a record by its current name | `audit_log` stores no snapshot, so a record renamed since it changed reads under the name it has now. Inventing a snapshot would be worse than saying nothing, but it does mean the panel is not a record of what a thing was called at the time. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The subject books have no opening balance | A subledger entry is written by posting a Cash Bank Transaction or a Debit / Credit Note (`Adjustment`). `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated (§13). |
-| Funded route and DN/CN cannot lower a position | Open items arrived while both were being redesigned, and neither names the item it settles yet. A funded confirmation or a note that would lower a subject-book position is refused (the funded one as an unhandled error, tolerated on the user's instruction); raising one works. Nine tests are marked `todo` for it, and the showcase skips those notes. |
+| DN/CN cannot lower a position | Open items arrived while DN/CN was being redesigned, and a note names no item yet. A note that would lower a subject-book position is refused; raising one works. Six tests are marked `todo` for it, and the showcase skips those notes. |
 | Held money cannot be cleared into an expense or an asset | A Reklasifikasi target must keep a book, so a held payment that turns out to be Biaya or Asset has nowhere to go yet. Out of scope on the user's decision; it is a later adjustment purpose (§10 rule 115). |
-| Older Realisasi lines name no opened item | `fin_cash_bank_transaction_line.opened_item_id` is written from its migration on. A line posted before it is null, so its Budget's Realisasi card cannot follow that money into a reclassification. Not backfilled: matching items to lines by note would be a guess. The funded route does not write it either, pending its redesign. |
+| Older Realisasi lines name no opened item | `fin_cash_bank_transaction_line.opened_item_id` is written from its migration on. A line posted before it is null, so its Budget's Realisasi card cannot follow that money into a reclassification. Not backfilled: matching items to lines by note would be a guess. |
 | A reclassification trail is one step | `reclassTrail` reads one move. An item reclassified twice shows its second move on the item it became, not on the Budget. |
 | A note's counter account is one per side, whichever book | One Debit Note and one Credit Note account per Company, so a Titipan adjustment and a Piutang adjustment land in the same P&L account. Fine for the three books the seed allows; a book needing its own counter account would need the account on the category. |
 | A transfer shows in the Cash Bank Book by number, not as a link | `sourceDocumentNumbers` in `cash-bank.ts` resolves only `fin_cash_bank_transaction`, which is already the baselined crossing this table records below. A transfer entry therefore carries `TRF-0001 — <Purpose>` in its note and has no drill-through. Extending that function to a second table would deepen the debt; the clean fix is to make labelling a `(doc_type_id, doc_id)` pair the caller's job, which is a decision in its own right. |
