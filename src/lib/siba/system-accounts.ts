@@ -23,10 +23,10 @@ export type SystemAccountKey =
   | "fx"
   | "accumulated_pl"
   | "current_pl"
-  | "debit_note"
-  | "credit_note";
+  | "adjustment_income"
+  | "adjustment_expense";
 
-export type SystemAccountGroupKey = "bridge" | "fx" | "equity_pl" | "dncn";
+export type SystemAccountGroupKey = "bridge" | "fx" | "equity_pl" | "adjustment";
 
 export type CompanySide = "induk" | "anak";
 
@@ -66,11 +66,12 @@ export const SYSTEM_ACCOUNT_GROUPS = [
     icon: "calc",
   },
   {
-    key: "dncn",
-    name: "Debit / Credit Note",
+    key: "adjustment",
+    name: "Penyesuaian Open Item",
     desc:
-      "Lawan posting nota. Debit Note selalu mengkredit account-nya, Credit Note " +
-      "selalu mendebit account-nya, apa pun buku subjek yang disesuaikan.",
+      "Lawan posting Penyesuaian Open Item. Pendapatan dikredit saat posisi " +
+      "Partner didebit, Beban didebit saat posisi Partner dikredit, apa pun buku " +
+      "subjek yang disesuaikan.",
     icon: "pen",
   },
 ] as const satisfies readonly SystemAccountGroup[];
@@ -130,18 +131,24 @@ export const SYSTEM_ACCOUNTS = [
     help: "baris penyajian Neraca, tidak pernah diposting",
   },
   {
-    key: "debit_note",
-    group: "dncn",
+    key: "adjustment_income",
+    group: "adjustment",
     icon: "pen",
-    name: { induk: "Account Debit Note — Induk", anak: "Account Debit Note — Anak" },
-    help: "dikredit setiap Debit Note diposting",
+    name: {
+      induk: "Account Pendapatan Penyesuaian — Induk",
+      anak: "Account Pendapatan Penyesuaian — Anak",
+    },
+    help: "dikredit saat penyesuaian mendebit Partner",
   },
   {
-    key: "credit_note",
-    group: "dncn",
+    key: "adjustment_expense",
+    group: "adjustment",
     icon: "pen",
-    name: { induk: "Account Credit Note — Induk", anak: "Account Credit Note — Anak" },
-    help: "didebit setiap Credit Note diposting",
+    name: {
+      induk: "Account Beban Penyesuaian — Induk",
+      anak: "Account Beban Penyesuaian — Anak",
+    },
+    help: "didebit saat penyesuaian mengkredit Partner",
   },
 ] as const satisfies readonly SystemAccountDef[];
 
@@ -154,8 +161,8 @@ export const EMPTY_SYSTEM_ACCOUNTS: SystemAccountValues = {
   fx: null,
   accumulated_pl: null,
   current_pl: null,
-  debit_note: null,
-  credit_note: null,
+  adjustment_income: null,
+  adjustment_expense: null,
 };
 
 export function isSystemAccountKey(key: string): key is SystemAccountKey {

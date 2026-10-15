@@ -14,7 +14,7 @@
  * something.
  *
  * **Anything posted goes through the real engine.** `applyPosting`,
- * `applyTransfer`, `confirmFundingRequest` and `applyDncn` write the Cash Bank Book, the
+ * `applyTransfer`, `confirmFundingRequest` and `applyItemAdjustment` write the Cash Bank Book, the
  * subject books, the journal and the rate layers together, inside one
  * transaction each. Inserting those rows directly would be faster and would
  * produce reports whose figures do not reconcile — which is worse than empty,
@@ -43,7 +43,14 @@ import { nextDocumentNumber } from "@/lib/siba/document-number";
 import { applyTransfer, nextTransferNo } from "@/lib/siba/transfer";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
 import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
-import { applyDncn, nextNoteNo } from "@/lib/siba/dncn";
+import {
+  applyItemAdjustment,
+  checkItemAdjustmentHeader,
+  checkItemAdjustmentLines,
+  nextItemAdjustmentNo,
+  valueItemAdjustmentDraft,
+} from "@/lib/siba/item-adjustment";
+import { openSubledgerItems } from "@/lib/siba/subledger";
 import { applyConversion, nextConversionNo } from "@/lib/siba/item-conversion";
 import {
   applyReclass,
@@ -51,7 +58,6 @@ import {
   checkReclassLines,
   nextReclassNo,
 } from "@/lib/siba/item-reclass";
-import { dncnDirection } from "@/lib/siba/dncn-workflow";
 import { subledgerForCategory, subledgerMovement } from "@/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { executeClosing } from "@/lib/siba/closing";
@@ -267,8 +273,8 @@ const CHART: Group[] = [
       { name: "Hasil Investasi dari Cabang", partnerCategory: "Cabang" },
       { name: "Pendapatan Bunga Bank" },
       { name: "Pendapatan Lain-lain" },
-      // Where a Debit Note's counter side lands, through its System Default.
-      { name: "Pendapatan Penyesuaian Nota Debit" },
+      // Where an adjustment's counter side lands when it is credited.
+      { name: "Pendapatan Penyesuaian" },
     ],
   },
   {
@@ -309,8 +315,8 @@ const CHART: Group[] = [
     accounts: [
       { name: "Biaya Bunga Pinjaman" },
       { name: "Selisih Kurs" },
-      // Where a Credit Note's counter side lands, through its System Default.
-      { name: "Beban Penyesuaian Nota Kredit" },
+      // Where an adjustment's counter side lands when it is debited.
+      { name: "Beban Penyesuaian" },
     ],
   },
 ];
@@ -523,8 +529,8 @@ async function ensureForeignCurrency(actor: number): Promise<number> {
 
 /**
  * The settings that **decide** rather than prefill: where a funded
- * confirmation journals, where an FX difference lands, and where a Debit /
- * Credit Note's counter side posts.
+ * confirmation journals, where an FX difference lands, and where a
+ * Penyesuaian Open Item's counter side posts.
  *
  * Without all four bridge accounts a Funding Request refuses by name, and
  * without the FX account a Pencairan does — so a showcase that skipped these
@@ -567,8 +573,8 @@ async function setDefaults(actor: number) {
         fx: await accountId(company.id, "Selisih Kurs"),
         accumulated_pl: await accountId(company.id, "Laba Ditahan"),
         current_pl: await accountId(company.id, "Laba Rugi Tahun Berjalan"),
-        debit_note: await accountId(company.id, "Pendapatan Penyesuaian Nota Debit"),
-        credit_note: await accountId(company.id, "Beban Penyesuaian Nota Kredit"),
+        adjustment_income: await accountId(company.id, "Pendapatan Penyesuaian"),
+        adjustment_expense: await accountId(company.id, "Beban Penyesuaian"),
       },
       actor
     );
@@ -1557,17 +1563,19 @@ async function writeManualJournal(spec: ManualSpec, actor: number) {
 }
 
 
-// ------------------------------------------------------ debit / credit notes
+// ------------------------------------------------ penyesuaian open item
 //
-// A note adjusts a Partner's standing position without cash (§10 rules 97–102),
-// so each one here lands on a position a document above already opened: Budi
-// Santoso's advance in Piutang, H. Suryanto Halim's setoran in Hutang. Both
-// posted notes go through `applyDncn`, which writes the subject-book entry and
-// the journal together; one Draft and one Cancelled put the other two statuses
-// on the register.
+// An adjustment moves a Partner's standing position without cash (§10 rules
+// 97–102), so each one here lands on a position a document above already
+// opened: Budi Santoso's advance in Piutang, H. Suryanto Halim's setoran in
+// Hutang, Cabang Surabaya's titipan. A Tambah opens a new open item; a Kurangi
+// settles the Partner's open items — the oldest first, which is the script
+// standing in for the user who would tick them. Posted ones go through
+// `applyItemAdjustment`, which writes the subject-book entries and the journal
+// together; a Draft and a Cancelled put the other two statuses on the register.
 
-type NoteSpec = {
-  type: "Debit" | "Credit";
+type AdjustmentSpec = {
+  effect: "Increase" | "Decrease";
   book: "Piutang" | "Hutang" | "Titipan";
   partner: string;
   amount: number;
@@ -1581,9 +1589,9 @@ type NoteSpec = {
 };
 
 
-/** One Debit / Credit Note, posted through `applyDncn` when its status says so. */
-async function writeNote(spec: NoteSpec, actor: number) {
-  const already = await prisma.finDncn.findFirst({
+/** One Penyesuaian Open Item, written as the form saves it and posted when its status says so. */
+async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
+  const already = await prisma.finItemAdjustment.findFirst({
     where: { note: spec.note },
     select: { id: true },
   });
@@ -1597,55 +1605,94 @@ async function writeNote(spec: NoteSpec, actor: number) {
     where: { category_label: spec.book },
     select: { id: true },
   });
-
-  // A note that lowers a position would have to settle an open item, and how
-  // a note chooses one is still being designed. Until then the showcase writes
-  // only the notes that raise a position.
-  const book = subledgerForCategory(await loadSubledgers(), category.id);
-  if (book && subledgerMovement(book, dncnDirection(spec.type), 1) < 0) {
-    console.log(`  skipped ${spec.type} note on ${spec.book}: lowers a position (DN/CN open items not designed yet)`);
-    return;
-  }
   const partner = await prisma.mPartner.findFirstOrThrow({
     where: { partner_name: spec.partner },
     select: { id: true, company_id: true },
   });
 
-  // Shaped the way `createDncn` writes a Draft: rupiah, so the rate is 1,
-  // and no base figure until Post decides one.
-  const row = await prisma.finDncn.create({
-    data: {
-      note_no: await nextNoteNo(spec.type),
-      note_type: spec.type,
-      document_date: new Date(`${spec.date}T00:00:00Z`),
-      company_id: partner.company_id,
+  const header = await checkItemAdjustmentHeader(
+    {
+      effect: spec.effect,
       budget_category_id: category.id,
       partner_id: partner.id,
       currency_id: idr.id,
-      exchange_rate: 1,
-      note_amount: spec.amount,
-      reference: spec.reference ?? null,
-      note: spec.note,
-      status: "Draft",
-      created_by: actor,
-      lines: {
-        create: [
-          { sequence_no: 1, description: spec.description, amount: spec.amount, created_by: actor },
-        ],
-      },
+      exchange_rate: null,
     },
-    select: { id: true, note_no: true },
+    [partner.company_id]
+  );
+  if (!header.ok) {
+    throw new Error(`Adjustment ${spec.note} refused: ${Object.values(header.errors).join(" ")}`);
+  }
+
+  // A Kurangi names the items it settles: the oldest first, for what each holds.
+  let items: { item_id: number; amount: number }[] = [];
+  if (spec.effect === "Decrease") {
+    let left = spec.amount;
+    for (const i of await openSubledgerItems([
+      { bookId: category.id, partnerId: partner.id, currencyId: idr.id },
+    ])) {
+      if (left <= 0) break;
+      const take = Math.min(left, i.remaining);
+      items.push({ item_id: i.id, amount: take });
+      left -= take;
+    }
+    if (left > 0) items = [];
+  }
+  const checked = await checkItemAdjustmentLines(header, [
+    { description: spec.description, amount: spec.amount, items },
+  ]);
+  if (!checked.ok) {
+    throw new Error(`Adjustment ${spec.note} refused: ${Object.values(checked.errors).join(" ")}`);
+  }
+
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.finItemAdjustment.create({
+      data: {
+        adjustment_no: await nextItemAdjustmentNo(tx),
+        effect: spec.effect,
+        document_date: new Date(`${spec.date}T00:00:00Z`),
+        company_id: partner.company_id,
+        budget_category_id: category.id,
+        partner_id: partner.id,
+        currency_id: idr.id,
+        exchange_rate: header.rate,
+        adjustment_amount: checked.total,
+        reference: spec.reference ?? null,
+        note: spec.note,
+        status: "Draft",
+        created_by: actor,
+        lines: {
+          create: checked.lines.map((l, n) => ({
+            sequence_no: n + 1,
+            description: l.description,
+            amount: l.amount,
+            created_by: actor,
+            items: {
+              create: l.items.map((it, k) => ({
+                sequence_no: k + 1,
+                sub_ledger_balance_id: it.itemId,
+                amount: it.amount,
+                created_by: actor,
+              })),
+            },
+          })),
+        },
+      },
+      select: { id: true, adjustment_no: true },
+    });
+    await valueItemAdjustmentDraft(tx, created.id, header, checked.lines, actor);
+    return created;
   });
-  await audit("fin_dncn", row.id, actor);
-  tally("debit / credit notes");
+  await audit("fin_item_adjustment", row.id, actor);
+  tally("penyesuaian open item");
 
   if (spec.status === "Posted") {
-    const posted = await applyDncn(row.id, actor);
+    const posted = await applyItemAdjustment(row.id, actor);
     if (!posted.ok) {
-      throw new Error(`Posting ${row.note_no} refused: ${Object.values(posted.errors).join(" ")}`);
+      throw new Error(`Posting ${row.adjustment_no} refused: ${Object.values(posted.errors).join(" ")}`);
     }
   } else if (spec.status === "Cancelled") {
-    await prisma.finDncn.update({
+    await prisma.finItemAdjustment.update({
       where: { id: row.id },
       data: { status: "Cancelled", updated_by: actor },
     });
@@ -1709,7 +1756,7 @@ type Event =
       confirmFrom?: string;
     }
   | { kind: "journal"; date: string; spec: ManualSpec }
-  | { kind: "note"; date: string; spec: NoteSpec }
+  | { kind: "adjustment"; date: string; spec: AdjustmentSpec }
   | { kind: "conversion"; date: string; spec: ConversionSpec }
   | { kind: "reclass"; date: string; spec: ReclassSpec };
 
@@ -1717,7 +1764,7 @@ type YearPlan = { year: number; budgets: BudgetSpec[]; events: Event[] };
 
 const transfer = (spec: TransferSpec, draft = false): Event => ({ kind: "transfer", date: spec.date, spec, draft });
 const journal = (spec: ManualSpec): Event => ({ kind: "journal", date: spec.date, spec });
-const note = (spec: NoteSpec): Event => ({ kind: "note", date: spec.date, spec });
+const adjustment = (spec: AdjustmentSpec): Event => ({ kind: "adjustment", date: spec.date, spec });
 const reclass = (spec: ReclassSpec): Event => ({ kind: "reclass", date: spec.date, spec });
 
 type BudgetRow = Omit<BudgetSpec, "date"> & { date: [month: number, day: number] };
@@ -1757,7 +1804,7 @@ function foundingYear(y: number): YearPlan {
       journal(depreciation(y, 3, 8_500_000)),
       transfer({ purpose: "PembelianValas", from: "BCA-OPS", currency: "USD", rate: 15_480, date: d(11, 14), note: `Pembelian valas pertama untuk rencana impor ${y + 1}`, lines: [{ to: "BCA-USD", amount: 25_000 }] }),
       { kind: "cbt", date: d(12, 22), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan semester II ${y}`, lines: [{ budget: "gaji", amount: 90_000_000 }] },
-      note({ type: "Credit", book: "Hutang", partner: "H. Suryanto Halim", amount: 12_000_000, description: `Imbal jasa atas setoran modal pendirian ${y}`, reference: `SK-SYH-12/${y}`, note: `Imbal jasa setoran modal pendirian ${y}`, date: d(12, 27), status: "Posted" }),
+      adjustment({ effect: "Increase", book: "Hutang", partner: "H. Suryanto Halim", amount: 12_000_000, description: `Imbal jasa atas setoran modal pendirian ${y}`, reference: `SK-SYH-12/${y}`, note: `Imbal jasa setoran modal pendirian ${y}`, date: d(12, 27), status: "Posted" }),
       journal(depreciation(y, 4, 8_500_000)),
       journal(accrual(y, 6_200_000)),
     ],
@@ -1792,7 +1839,7 @@ function expansionYear(y: number): YearPlan {
       journal(reversal(y - 1, 6_200_000)),
       { kind: "cbt", date: d(1, 8), purpose: "BYA_OUT", cashBank: "KAS-PST", note: `Pembayaran tagihan listrik dan telepon Desember ${y - 1}`, lines: [{ budget: "listrik", amount: 6_200_000 }] },
       { kind: "cbt", date: d(1, 10), purpose: "HTG_SH_IN", cashBank: "BCA-OPS", partner: "PT Mitra Abadi Sentosa", note: `Pencairan pinjaman pemegang saham PT Mitra Abadi Sentosa ${y}`, lines: [{ budget: "pinjaman", amount: 1_500_000_000 }] },
-      note({ type: "Credit", book: "Piutang", partner: "Budi Santoso", amount: 1_500_000, description: `Biaya transportasi survei Medan disetujui ${y}`, reference: `SPD-MDN-0107`, note: `Biaya transportasi survei Medan disetujui, mengurangi advance ${y}`, date: d(1, 12), status: "Posted" }),
+      adjustment({ effect: "Decrease", book: "Piutang", partner: "Budi Santoso", amount: 1_500_000, description: `Biaya transportasi survei Medan disetujui ${y}`, reference: `SPD-MDN-0107`, note: `Biaya transportasi survei Medan disetujui, mengurangi advance ${y}`, date: d(1, 12), status: "Posted" }),
       transfer({ purpose: "Transfer", from: "BCA-OPS", currency: "IDR", rate: 1, date: d(1, 15), note: `Pengisian kas dan rekening payroll ${y}`, lines: [{ to: "KAS-PST", amount: 30_000_000 }, { to: "MDR-PAY", amount: 220_000_000 }] }),
       { kind: "cbt", date: d(1, 22), purpose: "PTG_KRY_IN", cashBank: "BCA-OPS", partner: "Budi Santoso", note: `Pengembalian sisa advance survei Medan ${y}`, lines: [{ budget: "pelunasan", amount: 18_500_000 }] },
       { kind: "cbt", date: d(2, 7), purpose: "INV_CAB_OUT", cashBank: "BCA-OPS", partner: "Cabang Medan", note: `Setoran penyertaan modal Cabang Medan ${y}`, lines: [{ budget: "penyertaan", amount: 500_000_000 }] },
@@ -1861,7 +1908,7 @@ function importYear(y: number): YearPlan {
       journal(depreciation(y, 2, 21_000_000)),
       { kind: "cbt", date: d(7, 14), purpose: "HIN_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Bagi hasil semester I ${y} Cabang Surabaya diterima`, lines: [{ budget: "bagihasilsby", amount: 540_000_000 }] },
       { kind: "cbt", date: d(8, 20), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: `Pembayaran pemasok suku cadang Singapura, invoice SG-2188`, lines: [{ budget: "impor", amount: 10_000 }] },
-      note({ type: "Debit", book: "Titipan", partner: "Cabang Surabaya", amount: 2_500_000, description: `Koreksi selisih titipan dana armada ${y}`, reference: `BA-SBY-09/${y}`, note: `Koreksi selisih titipan dana armada Cabang Surabaya ${y}`, date: d(9, 2), status: "Posted" }),
+      adjustment({ effect: "Decrease", book: "Titipan", partner: "Cabang Surabaya", amount: 2_500_000, description: `Koreksi selisih titipan dana armada ${y}`, reference: `BA-SBY-09/${y}`, note: `Koreksi selisih titipan dana armada Cabang Surabaya ${y}`, date: d(9, 2), status: "Posted" }),
       { kind: "cbt", date: d(9, 8), purpose: "TTP_CAB_OUT", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Pengembalian titipan dana armada Cabang Surabaya ${y}`, lines: [{ budget: "titipan", amount: 72_500_000 }] },
       journal(depreciation(y, 3, 21_000_000)),
       { kind: "cbt", date: d(10, 6), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: `Operasional gudang Cikarang semester II ${y}`, lines: [{ budget: "ops", amount: 200_000_000 }] },
@@ -1922,10 +1969,10 @@ function currentYear(): YearPlan {
       transfer({ purpose: "Transfer", from: "BCA-OPS", currency: "IDR", rate: 1, date: day(1, 12), note: `Pengisian kas dan rekening payroll semester I ${YEAR}`, lines: [{ to: "KAS-PST", amount: 50_000_000 }, { to: "MDR-PAY", amount: 200_000_000 }] }),
       { kind: "cbt", date: day(1, 20), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: "Termin II sesuai berita acara serah terima", lines: [{ budget: "gudang", amount: 185_000_000 }] },
       { kind: "cbt", date: day(1, 22), purpose: "PTG_KRY_OUT", cashBank: "MDR-PAY", partner: "Budi Santoso", note: "Advance perjalanan dinas, dipertanggungjawabkan setelah kembali", lines: [{ budget: "advance", amount: 10_000_000 }] },
-      note({ type: "Debit", book: "Piutang", partner: "Budi Santoso", amount: 1_250_000, description: "Kelebihan klaim uang harian perjalanan dinas Surabaya", reference: "SPD-SBY-0142", note: "Kelebihan klaim uang harian perjalanan dinas Surabaya, dibebankan kembali", date: day(2, 3), status: "Posted" }),
+      adjustment({ effect: "Increase", book: "Piutang", partner: "Budi Santoso", amount: 1_250_000, description: "Kelebihan klaim uang harian perjalanan dinas Surabaya", reference: "SPD-SBY-0142", note: "Kelebihan klaim uang harian perjalanan dinas Surabaya, dibebankan kembali", date: day(2, 3), status: "Posted" }),
       // Taken back, so Cancelled is on the screen too.
       { kind: "cbt", date: day(2, 10), purpose: "AST_OUT", cashBank: "BCA-OPS", note: "Dibatalkan — unit tidak tersedia, pengadaan diulang", lines: [{ budget: "forklift", amount: 340_000_000 }], status: "Cancelled" },
-      note({ type: "Debit", book: "Hutang", partner: "H. Suryanto Halim", amount: 2_000_000, description: "Selisih pengembalian setoran modal kerja", note: "Dibatalkan — selisih sudah diselesaikan lewat transfer", date: day(2, 20), status: "Cancelled" }),
+      adjustment({ effect: "Decrease", book: "Hutang", partner: "H. Suryanto Halim", amount: 2_000_000, description: "Selisih pengembalian setoran modal kerja", note: "Dibatalkan — selisih sudah diselesaikan lewat transfer", date: day(2, 20), status: "Cancelled" }),
       // Still waiting, so the induk's queue is not empty.
       { kind: "funding", date: day(2, 27), purpose: "BYA_OUT", note: "Operasional gudang Februari, menunggu konfirmasi induk", budget: "operasional", amount: 65_000_000 },
       // Confirmed. The anak's Purpose keeps a subject book, so its own Piutang
@@ -1933,11 +1980,11 @@ function currentYear(): YearPlan {
       // Companies goes to the bridge accounts (§10 rule 61).
       { kind: "funding", date: day(3, 2), purpose: "PTG_KRY_OUT", partner: "Dedi Kurniawan", note: "Advance operasional cabang, dipertanggungjawabkan akhir bulan", budget: "advanceanak", amount: 15_000_000, confirmFrom: "BCA-OPS" },
       { kind: "cbt", date: day(3, 3), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: "Pembayaran pemasok Singapura, invoice SG-2291", lines: [{ budget: "sparepart", amount: 5_000 }] },
-      note({ type: "Credit", book: "Piutang", partner: "Budi Santoso", amount: 350_000, description: "Biaya tol dan parkir perjalanan dinas disetujui", note: "Biaya tol dan parkir disetujui, mengurangi advance", date: day(3, 10), status: "Draft" }),
+      adjustment({ effect: "Decrease", book: "Piutang", partner: "Budi Santoso", amount: 350_000, description: "Biaya tol dan parkir perjalanan dinas disetujui", note: "Biaya tol dan parkir disetujui, mengurangi advance", date: day(3, 10), status: "Draft" }),
       // A Draft, left as one: it has moved nothing, which is what Draft means.
       { kind: "cbt", date: day(3, 20), purpose: "PRV_SH_OUT", cashBank: "KAS-PST", partner: "H. Suryanto Halim", note: "Menunggu konfirmasi jadwal pencairan", lines: [{ budget: "prive", amount: 30_000_000 }], status: "Draft" },
       journal(depreciation(YEAR, 1, 24_000_000)),
-      note({ type: "Credit", book: "Hutang", partner: "H. Suryanto Halim", amount: 7_500_000, description: "Kompensasi atas setoran modal kerja kuartal I", reference: `SK-SYH-03/${YEAR}`, note: "Kompensasi atas setoran modal kerja kuartal I", date: day(3, 31), status: "Posted" }),
+      adjustment({ effect: "Increase", book: "Hutang", partner: "H. Suryanto Halim", amount: 7_500_000, description: "Kompensasi atas setoran modal kerja kuartal I", reference: `SK-SYH-03/${YEAR}`, note: "Kompensasi atas setoran modal kerja kuartal I", date: day(3, 31), status: "Posted" }),
       // Left as a Draft, because Draft is the one status only a manual journal
       // ever has — and the reports must be seen leaving it out.
       journal({
@@ -2078,8 +2125,8 @@ async function runPlan(plan: YearPlan, actor: number) {
       case "journal":
         await writeManualJournal(e.spec, actor);
         break;
-      case "note":
-        await writeNote(e.spec, actor);
+      case "adjustment":
+        await writeAdjustment(e.spec, actor);
         break;
       case "conversion":
         await postConversion(e.spec, actor);

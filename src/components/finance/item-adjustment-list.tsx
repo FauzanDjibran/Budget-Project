@@ -10,38 +10,38 @@ import { Select } from "@/components/ui/select";
 import { Pager } from "@/components/ui/pager";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
-import { transitionDncn } from "@/app/actions/dncn";
+import { transitionItemAdjustment } from "@/app/actions/item-adjustment";
 import { formatDate, formatMoney, formatTotals } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type { DncnRow, DncnSummary } from "@/lib/siba/dncn";
+import type { ItemAdjustmentRow, ItemAdjustmentSummary } from "@/lib/siba/item-adjustment";
 import {
-  DNCN_TRANSITIONS,
-  DNCN_TYPES,
-  availableDncnActions,
-  dncnIsEditable,
-  type DncnAbilities,
-  type DncnAction,
-  type DncnType,
-} from "@/lib/siba/dncn-workflow";
+  ITEM_ADJUSTMENT_TRANSITIONS,
+  ITEM_ADJUSTMENT_EFFECTS,
+  availableItemAdjustmentActions,
+  itemAdjustmentIsEditable,
+  type ItemAdjustmentAbilities,
+  type ItemAdjustmentAction,
+  type ItemAdjustmentEffect,
+} from "@/lib/siba/item-adjustment-workflow";
 import { menuButtonClass } from "@/lib/siba/header-actions";
 
 /**
- * The Debit / Credit Note register — both types in one list, told apart by
- * their number series and a type filter.
+ * The Penyesuaian Open Item register — Tambah and Kurangi in one list, told
+ * apart by a filter.
  *
  * `can` mirrors the caller's permissions so the row menu offers only what they
- * may use. It is presentation: `transitionDncn` re-checks both the permission
- * and whether the transition is legal from the note's current status.
+ * may use. It is presentation: `transitionItemAdjustment` re-checks both the
+ * permission and whether the transition is legal from the current status.
  */
-export function DncnList({
-  notes,
+export function ItemAdjustmentList({
+  rows,
   summary,
   can,
   initialStatus,
 }: {
-  notes: DncnRow[];
-  summary: DncnSummary;
-  can: DncnAbilities;
+  rows: ItemAdjustmentRow[];
+  summary: ItemAdjustmentSummary;
+  can: ItemAdjustmentAbilities;
   initialStatus?: string;
 }) {
   const router = useRouter();
@@ -52,25 +52,25 @@ export function DncnList({
   const [type, setType] = useState("");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
-  const [menuFor, setMenuFor] = useState<{ row: DncnRow; x: number; y: number } | null>(null);
-  const [confirm, setConfirm] = useState<{ row: DncnRow; action: DncnAction } | null>(null);
+  const [menuFor, setMenuFor] = useState<{ row: ItemAdjustmentRow; x: number; y: number } | null>(null);
+  const [confirm, setConfirm] = useState<{ row: ItemAdjustmentRow; action: ItemAdjustmentAction } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const filtered = useMemo(() => {
-    let out = notes.slice();
+    let out = rows.slice();
     if (status) out = out.filter((n) => n.status === status);
-    if (type) out = out.filter((n) => n.note_type === type);
+    if (type) out = out.filter((n) => n.effect === type);
     const q = query.trim().toLowerCase();
     if (q) {
       out = out.filter((n) =>
-        [n.note_no, n.book_name, n.partner_label, n.partner_name, n.reference ?? "", n.note ?? ""]
+        [n.adjustment_no, n.book_name, n.partner_label, n.partner_name, n.reference ?? "", n.note ?? ""]
           .join(" ")
           .toLowerCase()
           .includes(q)
       );
     }
     return out;
-  }, [notes, status, type, query]);
+  }, [rows, status, type, query]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / perPage));
   const current = Math.min(page, pages);
@@ -85,13 +85,13 @@ export function DncnList({
     setPage(1);
   };
 
-  const run = async (row: DncnRow, action: DncnAction) => {
+  const run = async (row: ItemAdjustmentRow, action: ItemAdjustmentAction) => {
     setBusy(true);
-    const result = await transitionDncn(row.id, action);
+    const result = await transitionItemAdjustment(row.id, action);
     setBusy(false);
     setConfirm(null);
     if (result.ok) {
-      toast(result.message, row.note_no, "ok");
+      toast(result.message, row.adjustment_no, "ok");
       return;
     }
     toast("Tidak dapat diproses", result.errors._form ?? Object.values(result.errors)[0], "err");
@@ -102,12 +102,12 @@ export function DncnList({
       <DocumentHeader
         module="Finance"
         icon="pen"
-        title="Debit / Credit Note"
+        title="Penyesuaian Open Item"
         sub="Penyesuaian nilai posisi Partner pada buku subjek, tanpa perpindahan uang."
       >
         {can.create && (
-          <Link className="btn primary" href="/finance/debit-credit-note/new">
-            <Icon name="plus" size={15} /> Buat Nota
+          <Link className="btn primary" href="/finance/penyesuaian-open-item/new">
+            <Icon name="plus" size={15} /> Buat Penyesuaian
           </Link>
         )}
       </DocumentHeader>
@@ -149,8 +149,8 @@ export function DncnList({
           <div className="d">
             {summary.posted
               ? [
-                  summary.debitTotals.length && `DN ${formatTotals(summary.debitTotals)}`,
-                  summary.creditTotals.length && `CN ${formatTotals(summary.creditTotals)}`,
+                  summary.increaseTotals.length && `Tambah ${formatTotals(summary.increaseTotals)}`,
+                  summary.decreaseTotals.length && `Kurangi ${formatTotals(summary.decreaseTotals)}`,
                 ]
                   .filter(Boolean)
                   .join(" · ")
@@ -181,7 +181,7 @@ export function DncnList({
         <div className="toolbar">
           <SearchField
             value={query}
-            placeholder="Cari nomor nota, buku, Partner, atau referensi…"
+            placeholder="Cari nomor, buku, Partner, atau referensi…"
             onChange={(v) => {
               setQuery(v);
               setPage(1);
@@ -192,12 +192,12 @@ export function DncnList({
             variant="toolbar"
             value={type}
             set={Boolean(type)}
-            ariaLabel="Filter jenis nota"
+            ariaLabel="Filter jenis penyesuaian"
             options={[
               { value: "", label: "Jenis: semua" },
-              ...(Object.keys(DNCN_TYPES) as DncnType[]).map((t) => ({
+              ...(Object.keys(ITEM_ADJUSTMENT_EFFECTS) as ItemAdjustmentEffect[]).map((t) => ({
                 value: t,
-                label: DNCN_TYPES[t].label,
+                label: ITEM_ADJUSTMENT_EFFECTS[t].label,
               })),
             ]}
             onChange={(v) => {
@@ -232,7 +232,7 @@ export function DncnList({
 
           <div className="tspace" />
           <span className="count">
-            <b>{filtered.length}</b> dari {notes.length} nota
+            <b>{filtered.length}</b> dari {rows.length} dokumen
           </span>
         </div>
 
@@ -255,14 +255,14 @@ export function DncnList({
                 </thead>
                 <tbody>
                   {pageRows.map((n, i) => {
-                    const actions = availableDncnActions(n.status, can);
-                    const href = `/finance/debit-credit-note/${n.id}`;
+                    const actions = availableItemAdjustmentActions(n.status, can);
+                    const href = `/finance/penyesuaian-open-item/${n.id}`;
                     return (
                       <tr key={n.id} onClick={() => router.push(href)}>
                         <td className="no">{from + i + 1}</td>
                         <td>
                           <Link href={href}>
-                            <span className="lab">{n.note_no}</span>
+                            <span className="lab">{n.adjustment_no}</span>
                           </Link>
                         </td>
                         <td>
@@ -279,13 +279,13 @@ export function DncnList({
                                 {n.partner_label} — {n.partner_name}
                               </span>
                               <span className="d2">
-                                {DNCN_TYPES[n.note_type].label} · {n.book_name}
+                                {ITEM_ADJUSTMENT_EFFECTS[n.effect].label} · {n.book_name}
                               </span>
                             </span>
                           </Link>
                         </td>
                         <td className="num">
-                          <span className="mny">{formatMoney(n.note_amount, n.currency_label)}</span>
+                          <span className="mny">{formatMoney(n.adjustment_amount, n.currency_label)}</span>
                         </td>
                         <td>
                           <span className={`bdg ${STATUS_CLASS[n.status] ?? "s-mute"}`}>
@@ -302,7 +302,7 @@ export function DncnList({
                             >
                               <Icon name="eye" size={15} />
                             </Link>
-                            {can.edit && dncnIsEditable(n.status) ? (
+                            {can.edit && itemAdjustmentIsEditable(n.status) ? (
                               <Link
                                 className="iact"
                                 href={`${href}/edit`}
@@ -353,23 +353,23 @@ export function DncnList({
         ) : (
           <div className="empty">
             <div className="ic">
-              <Icon name={notes.length ? "srch" : "pen"} size={20} />
+              <Icon name={rows.length ? "srch" : "pen"} size={20} />
             </div>
-            <h4>{notes.length ? "Tidak ada nota yang cocok" : "Belum ada nota"}</h4>
+            <h4>{rows.length ? "Tidak ada penyesuaian yang cocok" : "Belum ada penyesuaian"}</h4>
             <p>
-              {notes.length
+              {rows.length
                 ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
-                : "Debit / Credit Note menyesuaikan nilai hutang, piutang atau titipan seorang Partner tanpa perpindahan uang."}
+                : "Penyesuaian Open Item menambah atau mengurangi hutang, piutang atau titipan seorang Partner tanpa perpindahan uang."}
             </p>
             <div className="cta">
-              {notes.length ? (
+              {rows.length ? (
                 <button className="btn" onClick={clearAll}>
                   Bersihkan filter
                 </button>
               ) : (
                 can.create && (
-                  <Link className="btn primary" href="/finance/debit-credit-note/new">
-                    <Icon name="plus" size={15} /> Buat Nota
+                  <Link className="btn primary" href="/finance/penyesuaian-open-item/new">
+                    <Icon name="plus" size={15} /> Buat Penyesuaian
                   </Link>
                 )
               )}
@@ -379,8 +379,8 @@ export function DncnList({
       </div>
 
       <p className="foot-note">
-        Debit Note mendebit account Partner, Credit Note mengkreditnya — apakah posisi
-        naik atau turun ditentukan oleh buku subjeknya.
+        Tambah membuka open item baru, Kurangi menyelesaikan open item yang dipilih,
+        masing-masing pada kursnya sendiri.
       </p>
 
       {menuFor && (
@@ -400,17 +400,17 @@ export function DncnList({
       {confirm && (
         <ConfirmDialog
           open
-          icon={DNCN_TRANSITIONS[confirm.action].icon}
-          tone={DNCN_TRANSITIONS[confirm.action].tone === "danger" ? "danger" : "ok"}
-          title={DNCN_TRANSITIONS[confirm.action].title}
-          subject={`${confirm.row.note_no} – ${formatMoney(
-            confirm.row.note_amount,
+          icon={ITEM_ADJUSTMENT_TRANSITIONS[confirm.action].icon}
+          tone={ITEM_ADJUSTMENT_TRANSITIONS[confirm.action].tone === "danger" ? "danger" : "ok"}
+          title={ITEM_ADJUSTMENT_TRANSITIONS[confirm.action].title}
+          subject={`${confirm.row.adjustment_no} – ${formatMoney(
+            confirm.row.adjustment_amount,
             confirm.row.currency_label
           )}`}
-          body={DNCN_TRANSITIONS[confirm.action].body}
-          confirmLabel={DNCN_TRANSITIONS[confirm.action].confirmLabel}
+          body={ITEM_ADJUSTMENT_TRANSITIONS[confirm.action].body}
+          confirmLabel={ITEM_ADJUSTMENT_TRANSITIONS[confirm.action].confirmLabel}
           confirmTone={
-            DNCN_TRANSITIONS[confirm.action].tone === "danger" ? "solid-danger" : "primary"
+            ITEM_ADJUSTMENT_TRANSITIONS[confirm.action].tone === "danger" ? "solid-danger" : "primary"
           }
           busy={busy}
           onConfirm={() => run(confirm.row, confirm.action)}
@@ -430,11 +430,11 @@ function RowMenu({
   onPick,
   onClose,
 }: {
-  row: DncnRow;
+  row: ItemAdjustmentRow;
   x: number;
   y: number;
-  can: DncnAbilities;
-  onPick: (action: DncnAction) => void;
+  can: ItemAdjustmentAbilities;
+  onPick: (action: ItemAdjustmentAction) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -457,12 +457,12 @@ function RowMenu({
   return (
     <div className="menu" ref={ref} style={{ left: Math.max(8, x), top: y }}>
       <div className="hd">
-        <b>{row.note_no}</b>
+        <b>{row.adjustment_no}</b>
         <span>{STATUS_TEXT[row.status] ?? row.status}</span>
       </div>
       <div className="dv" />
-      {availableDncnActions(row.status, can).map((a) => {
-        const t = DNCN_TRANSITIONS[a];
+      {availableItemAdjustmentActions(row.status, can).map((a) => {
+        const t = ITEM_ADJUSTMENT_TRANSITIONS[a];
         return (
           <button key={a} className={menuButtonClass(t.tone)} onClick={() => onPick(a)}>
             <Icon name={t.icon} size={14} /> {t.label}

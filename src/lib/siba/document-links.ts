@@ -15,7 +15,7 @@ const ROUTES: Record<string, string> = {
   fin_cash_bank_transaction: "/finance/realisasi-pengeluaran",
   fin_funding_request: "/finance/funding-request",
   fin_cash_bank_transfer: "/finance/cash-bank-transfer",
-  fin_dncn: "/finance/debit-credit-note",
+  fin_item_adjustment: "/finance/penyesuaian-open-item",
   fin_item_conversion: "/finance/pencairan-open-item",
   fin_item_reclass: "/finance/reklasifikasi-open-item",
   acc_fiscal_year: "/accounting/fiscal-year",

@@ -165,9 +165,9 @@ const DOC_TYPES: [label: string, table: string][] = [
   // the `CLS-` entry names the year it closed as its source, which is what
   // lets a reader get from a journal line back to the close that wrote it.
   ["Fiscal Year", "acc_fiscal_year"],
-  // A Debit / Credit Note writes a subject-book entry and a journal, and both
-  // name the note as their source.
-  ["Debit / Credit Note", "fin_dncn"],
+  // A Penyesuaian Open Item writes subject-book entries and a journal, and
+  // each names the document as its source.
+  ["Penyesuaian Open Item", "fin_item_adjustment"],
   // A Pencairan Open Item writes both books, the subject book and a journal,
   // and every one of them names the document as its source.
   ["Pencairan Open Item", "fin_item_conversion"],
@@ -217,13 +217,13 @@ const BUDGET_CATEGORIES: [
    */
   raises: "In" | "Out" | null,
   /**
-   * Whether a Debit / Credit Note may adjust this category's book. On for the
+   * Whether a Penyesuaian Open Item may adjust this category's book. On for the
    * three books one Profit & Loss counter account fixes correctly — a deposit
    * held, a payable, a receivable — and off for Prive, Investasi and Hasil
    * Investasi, whose counter entry is not an income or an expense. Written on
    * create only: afterwards the flag is the category's own, set on its form.
    */
-  allowsDncn: boolean,
+  allowsItemAdjustment: boolean,
 ][] = [
   ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder.", ["In", "Out"], ["Cabang", "Stakeholder"], "In", true],
   ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "In", true],
@@ -711,7 +711,7 @@ async function ensureReferenceData(
     tally("document types", made);
   }
 
-  for (const [label, note, directions, _partners, raises, allowsDncn] of BUDGET_CATEGORIES) {
+  for (const [label, note, directions, _partners, raises, allowsItemAdjustment] of BUDGET_CATEGORIES) {
     const made = await create(
       () => prisma.sysBudgetCategory.findFirst({ where: { category_label: label } }),
       async () =>
@@ -728,7 +728,7 @@ async function ensureReferenceData(
             allows_out: directions.includes("Out"),
             require_partner: _partners.length > 0,
             raises,
-            allows_dncn: allowsDncn,
+            allows_item_adjustment: allowsItemAdjustment,
             note,
             ...audit,
           },

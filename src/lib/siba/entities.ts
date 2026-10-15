@@ -650,7 +650,7 @@ export const ENTITIES: Entity[] = [
         label: "Memakai Partner",
         type: "bool",
         span: 4,
-        resets: ["raises", "book_closing_label", "allows_dncn", "partner_category_ids"],
+        resets: ["raises", "book_closing_label", "allows_item_adjustment", "partner_category_ids"],
         help: "matikan bila kategori ini tidak punya subjek",
       },
       // Chosen here rather than on a menu of its own. A category that names a
@@ -702,18 +702,18 @@ export const ENTITIES: Entity[] = [
         placeholder: "Sisa hutang",
         help: "opsional, dipakai pada laporan Buku Subjek",
       },
-      // Whether a Debit / Credit Note may adjust this book. A note's counter
+      // Whether a Penyesuaian Open Item may adjust this book. Its counter
       // account is one Profit & Loss account per side, which fixes a deposit, a
       // payable or a receivable correctly and would book income or expense
       // against owner drawings or an investment's own return — so it is the
       // category's decision, stored here, never read off the account it maps to.
       {
-        name: "allows_dncn",
-        label: "Boleh Debit / Credit Note",
+        name: "allows_item_adjustment",
+        label: "Boleh Penyesuaian Open Item",
         type: "bool",
         visibleWhen: "accountRequiresPartner",
         span: 4,
-        help: "posisi dapat disesuaikan lewat nota",
+        help: "posisi dapat disesuaikan tanpa uang",
       },
       STATUS_FIELD,
       NOTE_FIELD,

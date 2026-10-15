@@ -103,8 +103,15 @@ const TABLE_OWNERS: Record<string, string[]> = {
   finItemReclassLine: ["src/lib/siba/item-reclass.ts", "src/app/actions/item-reclass.ts"],
   finItemReclassLineSource: ["src/lib/siba/item-reclass.ts", "src/app/actions/item-reclass.ts"],
   finItemReclassLineTarget: ["src/lib/siba/item-reclass.ts", "src/app/actions/item-reclass.ts"],
-  finDncn: ["src/lib/siba/dncn.ts", "src/app/actions/dncn.ts"],
-  finDncnLine: ["src/lib/siba/dncn.ts", "src/app/actions/dncn.ts"],
+  finItemAdjustment: ["src/lib/siba/item-adjustment.ts", "src/app/actions/item-adjustment.ts"],
+  finItemAdjustmentLine: [
+    "src/lib/siba/item-adjustment.ts",
+    "src/app/actions/item-adjustment.ts",
+  ],
+  finItemAdjustmentLineItem: [
+    "src/lib/siba/item-adjustment.ts",
+    "src/app/actions/item-adjustment.ts",
+  ],
   finFundingRequest: ["src/lib/siba/funding.ts", "src/app/actions/funding.ts"],
   cashBankLedger: ["src/lib/siba/cash-bank.ts"],
   cashBankBalance: ["src/lib/siba/cash-bank.ts"],

@@ -519,7 +519,7 @@ describe("a header's buttons sit where the user last left them", () => {
     for (const rel of [
       "src/components/budget/budget-form.tsx",
       "src/components/finance/transaction-form.tsx",
-      "src/components/finance/dncn-form.tsx",
+      "src/components/finance/item-adjustment-form.tsx",
     ]) {
       const text = code(files.find((f) => f.rel === rel)!.text);
       assert.ok(
@@ -737,7 +737,7 @@ describe("a form is laid out by one component", () => {
     for (const rel of [
       "src/components/budget/budget-form.tsx",
       "src/components/finance/transaction-form.tsx",
-      "src/components/finance/dncn-form.tsx",
+      "src/components/finance/item-adjustment-form.tsx",
       "src/components/finance/funding-detail.tsx",
       "src/components/accounting/journal-form.tsx",
       "src/components/accounting/opening-balance-detail.tsx",
@@ -1352,10 +1352,10 @@ const DOCUMENT_SCREENS: {
     routes: "src/app/(app)/finance/reklasifikasi-open-item",
   },
   {
-    name: "Debit / Credit Note",
-    form: "src/components/finance/dncn-form.tsx",
-    list: "src/components/finance/dncn-list.tsx",
-    routes: "src/app/(app)/finance/debit-credit-note",
+    name: "Penyesuaian Open Item",
+    form: "src/components/finance/item-adjustment-form.tsx",
+    list: "src/components/finance/item-adjustment-list.tsx",
+    routes: "src/app/(app)/finance/penyesuaian-open-item",
   },
   {
     name: "Funding Request",
@@ -1567,7 +1567,7 @@ describe("a Post confirmation shows the journal it will write", () => {
     "src/components/finance/transfer-form.tsx",
     "src/components/finance/item-conversion-form.tsx",
     "src/components/finance/item-reclass-form.tsx",
-    "src/components/finance/dncn-form.tsx",
+    "src/components/finance/item-adjustment-form.tsx",
   ];
   for (const rel of POSTING_FORMS) {
     test(`${rel} previews its journal in the Post confirmation`, () => {

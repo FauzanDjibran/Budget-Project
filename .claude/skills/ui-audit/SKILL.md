@@ -19,14 +19,14 @@ kind** — never with itself.
 
 | Changed screen | Reference |
 | --- | --- |
-| A document register | `/finance/debit-credit-note` |
-| A document, view | `/finance/debit-credit-note/<id>` (a Draft) |
-| A document, edit | `/finance/debit-credit-note/<id>/edit` |
-| A document, new | `/finance/debit-credit-note/new` |
+| A document register | `/finance/penyesuaian-open-item` |
+| A document, view | `/finance/penyesuaian-open-item/<id>` (a Draft) |
+| A document, edit | `/finance/penyesuaian-open-item/<id>/edit` |
+| A document, new | `/finance/penyesuaian-open-item/new` |
 | A master list / form | `/master/partner`, `/master/partner/<id>` |
 | A Report View | `/accounting/report/balance-sheet` for a statement, `/finance/report/cash-bank-ledger` for a book |
 
-Take real ids from the database (`psql … -c "select id, status from fin_dncn"`).
+Take real ids from the database (`psql … -c "select id, status from fin_item_adjustment"`).
 A screen with nothing on it cannot be judged, so the database needs the
 showcase (`npm run db:seed-showcase`) — never on data the user cares about.
 
@@ -37,8 +37,8 @@ then `npm start` — the `run-siba` skill). Then:
 
 ```bash
 node .claude/skills/ui-audit/audit.mjs <scratch-dir> \
-  /accounting/journal /finance/debit-credit-note \
-  /accounting/journal/213 /finance/debit-credit-note/19
+  /accounting/journal /finance/penyesuaian-open-item \
+  /accounting/journal/213 /finance/penyesuaian-open-item/19
 ```
 
 It needs `playwright` resolvable. Locally, `npx -y playwright@latest` provides

@@ -115,16 +115,16 @@ export async function checkSystemAccountValue(
   }
   if (!account.is_postable) return "Account tersebut bukan account postable.";
   if (!account.is_active) return "Account tersebut non-aktif.";
-  // A note's counter account must not be one a book already reconciles
-  // against: a Debit Note posted against a Piutang account would move the
+  // An adjustment's counter account must not be one a book already
+  // reconciles against: posted against a Piutang account it would move the
   // General Ledger with no subject-book entry beside it — exactly the
-  // discrepancy the note exists to avoid.
-  if (systemAccountDef(key).group === "dncn") {
+  // discrepancy the adjustment exists to avoid.
+  if (systemAccountDef(key).group === "adjustment") {
     const reasons = await controlAccountReasons(accountId);
     if (reasons.length) {
       return (
         `Account tersebut direkonsiliasi dengan ${reasons.join(", ")} dan tidak ` +
-        "dapat menjadi lawan posting Debit / Credit Note."
+        "dapat menjadi lawan posting Penyesuaian Open Item."
       );
     }
   }

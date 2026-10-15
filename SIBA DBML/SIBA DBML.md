@@ -239,14 +239,14 @@ table sys_budget_category {
   book_icon                   varchar(255)
   book_closing_label          varchar(255)
 
-  // Whether a Debit / Credit Note may adjust this category's subject book.
-  // Stored rather than inferred: a note's counter side is one Profit & Loss
-  // account per note type, which fixes a deposit, a payable or a receivable
+  // Whether a Penyesuaian Open Item may adjust this category's subject book.
+  // Stored rather than inferred: the counter side is one Profit & Loss account
+  // per journal side, which fixes a deposit, a payable or a receivable
   // correctly and would book income or expense against owner drawings or an
   // investment's own return. Seeded on for Titipan, Hutang and Piutang.
-  // CHECK sys_budget_category_dncn_needs_book: only a category that keeps a
-  // book (require_partner and raises set) may carry it.
-  allows_dncn                 boolean [not null, default: false]
+  // CHECK sys_budget_category_item_adjustment_needs_book: only a category that
+  // keeps a book (require_partner and raises set) may carry it.
+  allows_item_adjustment      boolean [not null, default: false]
 
   note                        text
 
@@ -704,8 +704,8 @@ table acc_account {
 
 // Mapping Account System: per Company, the account a posting engine posts a
 // role to — bridge_ar / bridge_ap (Funding Request), fx (Selisih Kurs),
-// accumulated_pl / current_pl (closing and the Neraca), debit_note /
-// credit_note (DN/CN counter side). Keys are declared in `system-accounts.ts`;
+// accumulated_pl / current_pl (closing and the Neraca), adjustment_income /
+// adjustment_expense (the Penyesuaian Open Item counter side). Keys are declared in `system-accounts.ts`;
 // a row with an unknown key is ignored. Moved out of sys_setting, where each
 // was a text key naming its Company, so the account is now a real foreign key.
 table acc_system_account {
@@ -1567,31 +1567,34 @@ table fin_funding_request {
 }
 
 //----------------------------------
-// Debit / Credit Note Table
+// Penyesuaian Open Item Table
 //----------------------------------
 
 // The adjustment document for a Partner's standing position in a subject book.
-// No cash moves: Post writes one Adjustment entry in sub_ledger and one
+// It replaced Debit / Credit Note (migration 20261015090000_item_adjustment
+// renamed fin_dncn in place); notes posted before keep their DN- / CN-
+// numbers. No cash moves: Post writes Adjustment entries in sub_ledger and one
 // balanced journal, in one transaction, and touches no Cash Bank Book, no rate
 // layer and no Budget.
 //
 // It adjusts a position (book x Partner x currency), not a document — SIBA
-// keeps no invoice to reference. A Debit Note debits the Partner's account and
-// a Credit Note credits it; whether that raises or lowers the position is the
-// book's own `raises`, exactly as for a cash posting. The counter side is the
-// Company's Debit Note or Credit Note System Default.
+// keeps no invoice to reference. Tambah (Increase) opens one open item per
+// line at the entered kurs; Kurangi (Decrease) settles the open items each
+// line names, each for the amount the user stated, at the item's own kurs, so
+// no FX difference arises. Which side of the journal that is follows from the
+// book's own `raises`. The counter side is the Company's Pendapatan
+// Penyesuaian account when credited, Beban Penyesuaian when debited.
 //
-// Nothing below zero: a note may not lower a position past nil, nor touch one
-// that is already negative. Post takes a transaction-scoped advisory lock on
-// the position before re-checking it.
+// Valued when the draft is saved and again at Post, under a transaction-scoped
+// advisory lock on the position.
 
-table fin_dncn {
+table fin_item_adjustment {
   id                          int [pk, increment, not null]
 
-  // DN-0001 or CN-0001: two series in one table.
-  note_no                     varchar(255) [not null, unique]
+  // PYO-0001; DN- / CN- for documents posted as Debit / Credit Notes.
+  adjustment_no               varchar(255) [not null, unique]
 
-  note_type                   enum('Debit', 'Credit') [not null]
+  effect                      enum('Increase', 'Decrease') [not null]
 
   // document_date is chosen on the draft, up to today, and dates what Post
   // writes; posting_date stays null until Post runs.
@@ -1601,7 +1604,7 @@ table fin_dncn {
   // The Partner's Company, derived rather than picked.
   company_id                  int [not null, ref : > sys_company.id]
 
-  // The book: a Budget Category carrying allows_dncn.
+  // The book: a Budget Category carrying allows_item_adjustment.
   budget_category_id          int [not null, ref : > sys_budget_category.id]
 
   partner_id                  int [not null, ref : > m_partner.id]
@@ -1609,14 +1612,13 @@ table fin_dncn {
   // The position's currency.
   currency_id                 int [not null, ref : > ref_currency.id]
 
-  // Only ever an input: entered where a note raises a foreign position, 1 for
-  // base currency, null where a note lowers a foreign position — that releases
-  // at the position's carrying rate, which is never stored on a document.
+  // Only ever an input: entered where a Tambah opens foreign items, 1 for base
+  // currency, null on a Kurangi — that releases each item at its own kurs.
   exchange_rate               decimal(18,6)
 
-  note_amount                 decimal(18,2) [not null]
-  // Written at Post.
-  note_base_amount            decimal(18,2) [not null, default: 0]
+  adjustment_amount           decimal(18,2) [not null]
+  // Valued when the draft is saved, and again at Post.
+  adjustment_base_amount      decimal(18,2) [not null, default: 0]
 
   // The counterparty's own document number, where there is one.
   reference                   varchar(255)
@@ -1638,20 +1640,53 @@ table fin_dncn {
   }
 }
 
-// One reason a note adjusts by. The journal writes one counter line per note
-// line, so the General Ledger reads back to the reason.
-table fin_dncn_line {
+// One reason, and by how much. The journal writes a Partner line and a counter
+// line per document line, so the General Ledger reads back to the reason. On a
+// Kurangi the amount is the sum of the line's items.
+table fin_item_adjustment_line {
   id                          int [pk, increment, not null]
 
-  note_id                     int [not null, ref : > fin_dncn.id]
+  adjustment_id               int [not null, ref : > fin_item_adjustment.id]
 
   sequence_no                 int [not null]
 
   description                 varchar(255) [not null]
 
   amount                      decimal(18,2) [not null]
-  // This line's share of note_base_amount, written at Post; the shares add
-  // back to the total exactly.
+  // Originated at the entered kurs on a Tambah, released at each item's own
+  // kurs on a Kurangi.
+  base_amount                 decimal(18,2) [not null, default: 0]
+
+  // The open item a Tambah line opened (sub_ledger_balance.id, a plain id),
+  // written at Post.
+  opened_item_id              int
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (adjustment_id, sequence_no) [unique]
+    opened_item_id
+  }
+}
+
+// One open item a Kurangi line settles, and for how much — chosen and stated
+// by the user, never distributed.
+table fin_item_adjustment_line_item {
+  id                          int [pk, increment, not null]
+
+  line_id                     int [not null, ref : > fin_item_adjustment_line.id]
+
+  sequence_no                 int [not null]
+
+  // A plain id: the item belongs to the subject-book module.
+  sub_ledger_balance_id       int [not null]
+
+  amount                      decimal(18,2) [not null]
+  // What the item releases at its own kurs.
   base_amount                 decimal(18,2) [not null, default: 0]
 
   created_by                  int [not null]
@@ -1661,7 +1696,9 @@ table fin_dncn_line {
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 
   indexes {
-    (note_id, sequence_no) [unique]
+    (line_id, sub_ledger_balance_id) [unique]
+    (line_id, sequence_no) [unique]
+    sub_ledger_balance_id
   }
 }
 

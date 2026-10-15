@@ -198,12 +198,12 @@ export const MODULES: NavModule[] = [
         name: "Penyesuaian",
         entities: [
           {
-            key: "fin_dncn",
-            slug: "debit-credit-note",
-            name: "Debit / Credit Note",
+            key: "fin_item_adjustment",
+            slug: "penyesuaian-open-item",
+            name: "Penyesuaian Open Item",
             icon: "pen",
-            desc: "Penyesuaian nilai posisi Partner pada buku subjek tanpa perpindahan uang. Debit Note mendebit account Partner, Credit Note mengkreditnya.",
-            permission: "DNCN_VIEW",
+            desc: "Penyesuaian nilai posisi Partner pada buku subjek tanpa perpindahan uang. Tambah membuka open item baru, Kurangi menyelesaikan open item yang dipilih.",
+            permission: "ITEM_ADJUSTMENT_VIEW",
           },
           {
             key: "fin_item_reclass",
@@ -309,7 +309,7 @@ export const MODULES: NavModule[] = [
             name: "Mapping Account System",
             single: "Mapping Account System",
             icon: "link",
-            desc: "Account tujuan posting otomatis per Company — bridge intercompany, selisih kurs, laba/rugi pada ekuitas, dan Debit / Credit Note.",
+            desc: "Account tujuan posting otomatis per Company — bridge intercompany, selisih kurs, laba/rugi pada ekuitas, dan Penyesuaian Open Item.",
             permission: "SYSTEM_ACCOUNT_VIEW",
           },
         ],

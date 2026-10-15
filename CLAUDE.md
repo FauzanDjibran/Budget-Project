@@ -67,8 +67,8 @@ or invariants that assume a particular row exists.
   its own resources, including selling and buying foreign currency — the
   **Pencairan Open Item**, which sells foreign currency on a Partner's behalf and
   converts its open items to Rupiah at the same kurs — the
-  **Debit / Credit Note**, which adjusts a Partner's standing position in a
-  subject book without cash — the **Reklasifikasi Open Item**, which moves an
+  **Penyesuaian Open Item**, which raises (Tambah) or lowers (Kurangi) a
+  Partner's standing position in a subject book without cash — the **Reklasifikasi Open Item**, which moves an
   open item's value to another book or Partner, the way money held in a
   *Belum Teridentifikasi* book reaches the book it belongs in — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
@@ -100,7 +100,7 @@ or invariants that assume a particular row exists.
 | Finance module — Realisasi Budget | Done for draft → post — two menus (**Realisasi Penerimaan** `RBM-`, **Realisasi Pengeluaran** `RBK-`) over one document and one table. The header is Company · Cash & Bank · Currency · kurs and nothing else: no Purpose, no Partner, so one document settles Budgets of every category and every Partner. Post writes **one Cash Bank Book entry and one subject-book entry per Budget**, each reading the Budget's own description, and one journal: a cash line, a counter line per Budget on its own mapped account and Partner, and an FX line per Budget where one arises. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak's document is an ordinary Realisasi that does not name its cash: its Budgets and the open items each line settles are chosen on its draft, exactly as on the induk's. Ajukan Dana checks the lines (mapping, items) and freezes it at `Pending`, raising an `Open` request. The induk confirms by stating the cash side — resource, and its layer or kurs — and sees both journals first. One transaction then writes what a Realisasi Post writes (a Cash Bank Book entry per Budget on the induk's resource, the anak's subject-book entries per Budget or per settled item), a journal each — the bridge line carries the cash line's own figures, and every Selisih Kurs is the anak's — every Budget's realization, the Posted status and the request's closure. Foreign currency works as on the direct route. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
-| Debit / Credit Note | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget. A Debit Note debits the Partner's account and a Credit Note credits it, so the book's own `raises` decides whether the position rises or falls and one document serves every book. Which books may be adjusted is `allows_dncn` on the Budget Category (Titipan, Hutang, Piutang). Post writes one `Adjustment` entry and one balanced journal against the Company's Debit Note or Credit Note System Default, under a lock on the position; nothing may go below zero, and a negative position is not adjustable yet |
+| Penyesuaian Open Item | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget (`PYO-`). It replaced Debit / Credit Note. **Tambah** opens one open item per line at the entered kurs; **Kurangi** settles the open items each line names, each for the amount the user states, at the item's own kurs. The book's own `raises` turns the effect into a journal side, so one document serves every book. Which books may be adjusted is `allows_item_adjustment` on the Budget Category (Titipan, Hutang, Piutang). Post writes the `Adjustment` entries and one balanced journal against the Company's Pendapatan or Beban Penyesuaian account, under a lock on the position; the draft is valued as Post will write it |
 | Pencairan Open Item | Done — foreign currency sold out of the Company's own Cash & Bank, and one Partner's open items in that currency converted to Rupiah **at the same kurs**, in one document (`POI-`). One book, one Partner and one layer per document. Each line's amount is the sum of the items it converts. Post writes both cash books, a `Conversion` entry releasing each foreign item at its own kurs, one new IDR item per line in the same book, and one balanced journal with **one** Selisih Kurs line for the whole document (§10 rules 109–112). Its own module, not a Transfer purpose |
 | Reklasifikasi Open Item | Done — an open item's value moved to another book, another Partner, or both, with no cash (`RKL-`). The header is the source position (book × Partner × currency); each line a target book and Partner and the source items it takes. The target is posted as the original movement would have been: a book running the same way **opens** one item per source item at its kurs and base, one running the other way has chosen items **settled**, each with its own Selisih Kurs line. Any category that names a Partner qualifies — no flag. Two holding categories, *Penerimaan* and *Pengeluaran Belum Teridentifikasi*, and Partner Category *Lainnya*, are seeded for money nobody can place yet (§10 rules 113–117). A Budget keeps its classification; its Realisasi card shows where the money went |
 | Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
@@ -108,7 +108,7 @@ or invariants that assume a particular row exists.
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Currency, Company and Realisasi Cash & Bank defaults, with the base currency shown read-only. A new Budget needs only its amount and description; a new Realisasi starts on the default Company, its Cash & Bank and the base currency |
-| Mapping Account System | Done — `/accounting/system-account`, one Company at a time; `acc_system_account`, one row per Company and key. The intercompany bridge, Selisih Kurs, the two Laba/Rugi equity accounts, and the Debit / Credit Note counter accounts |
+| Mapping Account System | Done — `/accounting/system-account`, one Company at a time; `acc_system_account`, one row per Company and key. The intercompany bridge, Selisih Kurs, the two Laba/Rugi equity accounts, and the Penyesuaian Open Item counter accounts (Pendapatan / Beban Penyesuaian) |
 | Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Pencairan Open Item, Reklasifikasi Open Item, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
@@ -200,7 +200,7 @@ of its own.
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
 | System Default store | `src/lib/siba/system-settings.ts` | Reads and writes `sys_setting`, resolves a default against its master (`defaultCurrencyId`, `defaultCompanyId`, `defaultRealizationCashBank`, `baseCurrencyId`); `server-only` |
 | Mapping Account System catalogue | `src/lib/siba/system-accounts.ts` | The posting-account keys, their groups and their per-Company names; client-safe |
-| Mapping Account System store | `src/lib/siba/system-account-data.ts` | Reads and writes `acc_system_account`, checks a value when stored, and resolves by name what closing, the Neraca, Funding, FX and DN/CN need; `server-only` |
+| Mapping Account System store | `src/lib/siba/system-account-data.ts` | Reads and writes `acc_system_account`, checks a value when stored, and resolves by name what closing, the Neraca, Funding, FX and Penyesuaian Open Item need; `server-only` |
 | Header button order | `src/lib/siba/header-actions.ts` | Where a button sits in `.ph-act` and how it is drawn — one tone, read by every lifecycle table; client-safe |
 | Budget lifecycle | `src/lib/siba/budget-workflow.ts` | The transition table — from-status, to-status, permission; client-safe |
 | Budget data | `src/lib/siba/budget.ts` | Month rollups, budget reads, classification enforcement, `BGT-` numbering; `server-only` |
@@ -224,8 +224,8 @@ of its own.
 | Reklasifikasi valuation | `src/lib/siba/item-reclass-valuation.ts` | Whether a target opens or settles (`reclassEffect`), each side, and each settled item's share and difference. Pure, so the form previews exactly what Post computes; client-safe |
 | Reklasifikasi lifecycle | `src/lib/siba/item-reclass-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Reklasifikasi data | `src/lib/siba/item-reclass.ts` | Header, line and item enforcement, `applyReclass` (and its dry run), `reclassTrail` (where an item's value went), `RKL-` numbering. Reaches the books only through what they export; `server-only` |
-| DN/CN lifecycle | `src/lib/siba/dncn-workflow.ts` | Draft → Post / Cancel, the two note types, and `dncnDirection` — the cash direction a note moves the position like; client-safe |
-| DN/CN data | `src/lib/siba/dncn.ts` | Header, line and zero-rule enforcement, `applyDncn`, `DN-` / `CN-` numbering; `server-only` |
+| Penyesuaian Open Item lifecycle | `src/lib/siba/item-adjustment-workflow.ts` | Draft → Post / Cancel, the two effects (Tambah / Kurangi), and `adjustmentDirection` — the cash direction an effect moves the book like; client-safe |
+| Penyesuaian Open Item data | `src/lib/siba/item-adjustment.ts` | Header, line and item enforcement, `valueItemAdjustment` (the draft's and Post's one valuation), `applyItemAdjustment` (and its dry run), `PYO-` numbering. Reaches the books only through what they export; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
 | Document links | `src/lib/siba/document-links.ts` | `documentHref` — a `(doc_table, doc_id)` pair to the page that shows it, so a journal can link its source without the book knowing any route; client-safe |
 | Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and the three builders — `buildProfitLoss`, `buildBalanceSheet` and `buildTrialBalance` over one shared tree — chart + figures to rows, pure; client-safe |
@@ -254,7 +254,7 @@ source scan and needs no database.
 | Finance | `fin_cash_bank_transaction(_line)` | `lib/siba/finance.ts`, `app/actions/finance.ts` |
 | Funding | `fin_funding_request` | `lib/siba/funding.ts`, `app/actions/funding.ts` |
 | Transfer | `fin_cash_bank_transfer(_line)` | `lib/siba/transfer.ts`, `app/actions/transfer.ts` |
-| Debit / Credit Note | `fin_dncn(_line)` | `lib/siba/dncn.ts`, `app/actions/dncn.ts` |
+| Penyesuaian Open Item | `fin_item_adjustment(_line, _line_item)` | `lib/siba/item-adjustment.ts`, `app/actions/item-adjustment.ts` |
 | Pencairan Open Item | `fin_item_conversion(_line, _line_item)` | `lib/siba/item-conversion.ts`, `app/actions/item-conversion.ts` |
 | Reklasifikasi Open Item | `fin_item_reclass(_line, _line_source, _line_target)` | `lib/siba/item-reclass.ts`, `app/actions/item-reclass.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
@@ -427,7 +427,7 @@ src/
       finance/realisasi-pengeluaran/  The same, Out
       finance/cash-bank-transfer/  Bespoke: list, /new, /[id], /[id]/edit
       finance/pencairan-open-item/  Bespoke: list, /new, /[id], /[id]/edit
-      finance/debit-credit-note/  Bespoke: list, /new, /[id], /[id]/edit
+      finance/penyesuaian-open-item/  Bespoke: list, /new, /[id], /[id]/edit
       finance/reklasifikasi-open-item/  Bespoke: list, /new, /[id], /[id]/edit
       finance/funding-request/  The induk's queue: list and /[id] (confirm)
       finance/report/[report]/  Every Report View, driven by `reports.ts`
@@ -445,7 +445,7 @@ src/
       transfer.ts        Cash Bank Transfer writes, plus Post
       item-conversion.ts Pencairan Open Item writes, plus Post
       item-reclass.ts    Reklasifikasi Open Item writes, plus Post
-      dncn.ts            Debit / Credit Note writes, plus Post
+      item-adjustment.ts Penyesuaian Open Item writes, plus Post
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
       journal.ts         Manual journal writes: create, edit, Post / Batalkan
       settings.ts        System Default writes
@@ -471,7 +471,7 @@ src/
                          TransferList, TransferForm,
                          ItemConversionList, ItemConversionForm,
                          ItemReclassList, ItemReclassForm,
-                         DncnList, DncnForm
+                         ItemAdjustmentList, ItemAdjustmentForm
     report/              ReportView chrome, ReportSummary, its three filter
                          bars (ReportParams for one subject, SubjectParams for
                          several, FiscalPeriodParams for a statement,
@@ -520,7 +520,7 @@ src/
                          subledger, subledger-catalogue, subledger-data,
                          finance, transaction-workflow, funding,
                          transfer, transfer-catalogue, transfer-valuation,
-                         transfer-workflow, dncn, dncn-workflow,
+                         transfer-workflow, item-adjustment, item-adjustment-workflow,
                          reports, statements,
                          statement-layout,
                          system-defaults, system-settings
@@ -1538,44 +1538,50 @@ the rules that follow from it.
     images. It also refuses a figure beyond safe integer precision rather than
     returning one that is merely nearby.
 
-**Debit / Credit Note** — the adjustment document for a subject book.
+**Penyesuaian Open Item** — the adjustment document for a subject book. It
+replaced Debit / Credit Note on the user's decision: the old names were read
+from the issuer's side, so a Credit Note a supplier sent had to be entered as a
+Debit Note here.
 
-97. **A note adjusts a position, never a transaction.** Book × Partner ×
-    currency — SIBA keeps no invoice for a note to reference, and what needs
-    fixing is the value that stands. No cash moves: a note writes no Cash Bank
-    Book entry, draws on no layer, realizes no Budget, and the anak posts its own
-    directly, with no Funding Request.
-98. **A Debit Note debits the Partner's account; a Credit Note credits it.**
-    That is the whole definition, and it is why one document serves every book:
-    on the Partner's side a Debit Note is what money leaving does and a Credit
-    Note what money arriving does, so `dncnDirection` hands the book that cash
-    direction and the book's own `raises` decides the sign — a Debit Note
-    raises a Piutang and lowers a Hutang. The counter side is one account per
-    note type and Company: the Debit Note account is always credited, the
-    Credit Note account always debited. Both are System Defaults, refused by
-    name while unset, and may not be an account a book reconciles against.
-99. **Which books a note may adjust is `allows_dncn`, on the Budget Category.**
-    Stored, never inferred (the user's rule). One Profit & Loss counter account
-    fixes a deposit, a payable or a receivable correctly and would book income
-    or expense against owner drawings or an investment's own return, so the
-    seed turns it on for Titipan, Hutang and Piutang only. Only a category that
-    keeps a book may carry it — the form hides it otherwise and a CHECK
-    refuses it.
-100. **Nothing below zero, and a negative position is not adjustable yet.** A
-    note may start a position from nil, may take one to nil, and may take none
-    past it. A position already below zero — which a cash overpayment can leave —
-    is refused outright: its base no longer tracks its face, and adjusting one
-    is the next scope. Checked at save and again at Post, where
-    `lockSubledgerPosition` holds the position for the transaction so two notes
-    cannot both pass the check against the same figure.
-101. **A note values like the kernel.** Raising a position originates value at
-    a kurs the user types (`1` for base currency); lowering one relieves it at
-    the carrying rate it already holds, so both journal sides carry the same base
-    and no FX difference can arise. The kurs field exists only where it is an
-    input — a note lowering a foreign position takes none.
-102. **A note is Draft → Post / Cancel, and a posted note is final.** Its type
-    is fixed once saved, because the number series (`DN-` / `CN-`) says it; a
-    posted note is corrected by a note of the opposite type.
+97. **An adjustment changes a position, never a transaction.** Book × Partner ×
+    currency — SIBA keeps no invoice to reference, and what needs fixing is the
+    value that stands. No cash moves: it writes no Cash Bank Book entry, draws
+    on no layer, realizes no Budget, and the anak posts its own directly, with
+    no Funding Request.
+98. **It is stated by its effect: Tambah raises the position, Kurangi lowers
+    it.** That is the whole definition, and it is why one document serves every
+    book: `adjustmentDirection` turns the effect into the cash direction that
+    moves the book that way, and the book's own `raises` decides the journal
+    side — the Partner line is debited exactly when that direction is money
+    leaving. The counter side is the Company's **Pendapatan Penyesuaian**
+    account when it is credited and its **Beban Penyesuaian** account when it
+    is debited (Mapping Account System `adjustment_income` /
+    `adjustment_expense`), refused by name while unset, and never an account a
+    book reconciles against. Named after the effect rather than a side, after
+    the knowledge base's open-item concept (direction INCREASE / DECREASE).
+99. **Which books may be adjusted is `allows_item_adjustment`, on the Budget
+    Category.** Stored, never inferred (the user's rule). One Profit & Loss
+    counter account per side fixes a deposit, a payable or a receivable
+    correctly and would book income or expense against owner drawings or an
+    investment's own return, so the seed turns it on for Titipan, Hutang and
+    Piutang only. Only a category that keeps a book may carry it — the form
+    hides it otherwise and a CHECK refuses it.
+100. **Tambah opens, Kurangi settles — nothing below zero.** A Tambah line opens
+    one open item at the entered kurs (`1` for base currency; rule 104). A
+    Kurangi line names the open items it settles, each for an amount the user
+    states, and is worth their sum (rule 105) — nothing is distributed. So no
+    position can go below zero. Checked at save and again at Post, where
+    `lockSubledgerPosition` holds the position and every item is re-read under
+    it.
+101. **It values like the kernel, and the draft says so.** A Tambah originates
+    value at the typed kurs; a Kurangi releases each item at its own kurs, so
+    both journal sides carry the same base and no FX difference can arise. The
+    kurs field exists only on a foreign Tambah. Every line and item is valued
+    when the draft is saved, by the same `valueItemAdjustment` Post runs.
+102. **Draft → Post / Cancel, and a posted one is final.** Its effect is fixed
+    once saved, because it decides what every line is; one series, `PYO-`.
+    Documents posted as Debit / Credit Notes keep their `DN-` / `CN-` numbers.
+    A posted adjustment is corrected by one of the opposite effect.
 
 **Open items** — how a subject book holds a position.
 
@@ -1772,7 +1778,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   and per year Budgets across the lifecycle and the documents that realize
   them — Cash Bank Transactions, Transfers of all three kinds, Funding
   Requests, quarterly depreciation and a year-end accrual with its January
-  reversal, and Debit / Credit Notes. The goal is that **no menu is empty**, so
+  reversal, and Penyesuaian Open Item. The goal is that **no menu is empty**, so
   a screen can be judged on what it shows rather than on an empty state — and,
   since backdating, that the multi-year concepts are demonstrable: all four
   years stand Open, the oldest is **closed by both Companies** through
@@ -1800,7 +1806,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   entries, editable through the GUI. It reuses anything already present rather
   than overwriting it, and deletes nothing.
 - **Everything it posts goes through the real engine.** `applyPosting`,
-  `applyTransfer`, `confirmFundingRequest`, `applyDncn`, `postManualJournal`
+  `applyTransfer`, `confirmFundingRequest`, `applyItemAdjustment`, `postManualJournal`
   and `executeClosing`, never a
   direct insert into a book. Inserting those rows would be faster and would
   produce reports whose figures do not reconcile — which is worse than an empty
@@ -1908,7 +1914,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   and an assertion can.
 - **Held per document.** `DOCUMENT_SCREENS` in `tests/design-system.test.ts`
   lists every document — Journal, Budget, Cash Bank Transaction, Cash Bank
-  Transfer, Debit / Credit Note, Funding Request and Opening Balance — and for
+  Transfer, Penyesuaian Open Item, Funding Request and Opening Balance — and for
   each asserts: `DocumentHeader` on the form and the register and no
   hand-drawn `.crumb` / `.ph-row`; the `[id]` and `[id]/edit` routes render the
   component the form file exports, and both carry `RecordHistoryCard`; a
@@ -2496,11 +2502,9 @@ Specified in the concept doc, **not yet implemented** (see §13):
   `lockSubledgerPosition` is taken by `applyPosting` too. A line lowering a
   position settles the items the user chose, each for the amount the user
   stated (§10 rules 105 and 107). The funded route settles items exactly the
-  same way — the anak chooses them on its draft. **DN/CN was left behind on the
-  user's instruction** while it is redesigned: it can still *raise* a position
-  (opening an item) and is refused when it would *lower* one, because a note
-  names no item yet. Its tests that lower a position are marked `todo` with that
-  reason, and the showcase skips those notes.
+  same way — the anak chooses them on its draft. So does Penyesuaian Open
+  Item's Kurangi, which was built for it (it replaced Debit / Credit Note, left
+  behind while open items arrived).
 - **The migration is a reset**, like the Realisasi one before it: `balance_id`
   and the item columns are `NOT NULL`, so it applies to an empty subject book.
 - **Do not change unless:** explicitly instructed. **Never average a position's
@@ -2610,20 +2614,20 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Status:** Frozen, current.
 
 ### A Post confirmation shows the journal it will write (FROZEN)
-- **Decision:** Realisasi, Cash Bank Transfer and Debit / Credit Note each
+- **Decision:** Realisasi, Cash Bank Transfer and Penyesuaian Open Item each
   show, inside their Post `ConfirmDialog` (`wide`), the journal Post is about
   to write — account, Partner, foreign face, debit and kredit in base, total.
-  `applyPosting`, `applyTransfer` and `applyDncn` take a `dryRun` flag:
+  `applyPosting`, `applyTransfer` and `applyItemAdjustment` take a `dryRun` flag:
   Realisasi stops once its journal is known, before its transaction opens;
-  Transfer and DN/CN run their whole transaction and roll it back, because
+  Transfer and Penyesuaian Open Item run their whole transaction and roll it back, because
   they draw layers and read positions under a lock inside it.
-  `previewPosting` / `previewTransfer` / `previewDncn` name the lines through
+  `previewPosting` / `previewTransfer` / `previewItemAdjustment` name the lines through
   `describeJournalLines`, and each Server Action asks the Post permission.
   **Ya, Post** stays disabled until the preview has loaded, and a Post that
   would be refused says why there, before the button is pressed.
 - **Reason:** ERP-Project's convention — *consequences before commitment* —
   which SIBA lacked: Realisasi alone showed an ad-hoc summary, and Transfer
-  and DN/CN showed nothing at all, though a Post is permanent. A preview built
+  and DN/CN (now Penyesuaian Open Item) showed nothing at all, though a Post is permanent. A preview built
   by a second calculation would be an estimate that can drift from what Post
   writes; a dry run of the real path cannot.
 - **Impact:** Numbering is max + 1 inside the transaction, so a rolled-back
@@ -3655,7 +3659,7 @@ below in outline because the half of it that still holds is easy to lose.**
   category rather than realized before classification, and a Reklasifikasi
   Open Item moves its item on once the place is known (§10 rules 113–117).
   This replaces the earlier idea of a *Belum Terklasifikasi* category cleared
-  by DN/CN.
+  by an adjustment.
 - **Do not change unless:** explicitly instructed. **Never prefill a
   classification, never let a selection be half-moved, never offer a bulk
   action some selected row would refuse, and never reclassify.**
@@ -3906,7 +3910,7 @@ below in outline because the half of it that still holds is easy to lose.**
 - **Status:** Frozen, current.
 ### A document may be backdated, never dated ahead (FROZEN)
 - **Decision:** Every posting document — Cash Bank Transaction, Cash Bank
-  Transfer, Debit / Credit Note and the manual journal — carries a **Tanggal
+  Transfer, Penyesuaian Open Item and the manual journal — carries a **Tanggal
   Dokumen** the user chooses while it is a Draft: any day up to today, starting
   on today (§10 rule 33). Post dates **everything it writes by that day**: the
   Cash Bank Book and subject-book entries, the rate layer it opens, and the
@@ -4112,7 +4116,7 @@ below in outline because the half of it that still holds is easy to lose.**
 ### Reklasifikasi Open Item moves value between books, never a classification (FROZEN)
 - **Decision:** Its own module (`fin_item_reclass(_line, _line_source,
   _line_target)`, `RKL-` series, `ITEM_RECLASS_*` permissions, Finance ›
-  Penyesuaian › Reklasifikasi Open Item, beside DN/CN). The header names the
+  Penyesuaian › Reklasifikasi Open Item, beside Penyesuaian Open Item). The header names the
   source position; each line a target book and Partner, the source items it
   moves and, where the target settles, the target items. Post writes `Reclass`
   entries in both books and one balanced journal. §10 rules 113–117 state it.
@@ -4120,7 +4124,8 @@ below in outline because the half of it that still holds is easy to lose.**
   book of its own and a way to move the balance on. Weighed against using
   DN/CN, the user chose the standard concept — SAP's transfer posting with
   clearing, Odoo's suspense account cleared by reconciliation, the Indonesian
-  *jurnal reklasifikasi* — so DN/CN stays the counterparty adjustment it is
+  *jurnal reklasifikasi* — so the adjustment document (now Penyesuaian Open
+  Item) stays the counterparty adjustment it is
   (rules 97–102 unchanged). Its rule — post the target as the original movement
   would have been — reuses `subledgerMovement`, so no book gains a special case.
 - **No eligibility flag**, on the user's instruction: whatever names a Partner
@@ -4134,41 +4139,52 @@ below in outline because the half of it that still holds is easy to lose.**
   eligibility flag for reclassification.**
 - **Status:** Frozen, current.
 
-### A Debit / Credit Note adjusts a position, in one rule for every book (FROZEN)
-- **Decision:** DN/CN is its own module (`fin_dncn(_line)`, `DN-` / `CN-`
-  series, `DNCN_*` permissions, Finance › Penyesuaian › Debit / Credit Note,
-  one register for both types). It is **the missing adjustment document** —
-  `SubLedgerEntryType.Adjustment` existed and nothing wrote it, and a manual
-  journal may not touch a control account, so until now nothing could change a
-  Partner's position without cash. A note names a book, a Partner and a
-  currency; Post writes one `Adjustment` entry and one balanced journal in one
-  transaction. §10 rules 97–102 are the statement of it.
-- **Reason:** the user's specification, settled across an analysis and a plan:
-  a commercial adjustment note, not a bank advice; it adjusts existing value
-  rather than correcting one transaction; DN and CN each have their own System
-  Default account; only real balances, never Budget; subject books first;
-  nothing below zero; the flag on the Budget Category rather than on the
-  Partner Category, because a Partner Category flag could not keep Prive closed
-  while Hutang stays open (Stakeholder is admitted by both); a lock on the
-  position; one Finance section with one list; active Partners only, because a
-  Partner is deactivated only once everything about it is finished.
-- **Deviations from best practice, deliberate.** A DN/CN normally references
-  an invoice; SIBA has none, so the note references the position and carries
-  the counterparty's number in `reference`. There is no tax: a note here is
-  not a PPN Nota Retur. There is no approval step: `DNCN_POST` is the control.
-- **The lock is advisory, not `FOR UPDATE`.** Agreed as a row lock; built as
-  `pg_advisory_xact_lock` keyed on the position, because the balance row does
-  not exist until a subject's first entry and a row lock on nothing locks
-  nothing. It serialises only writers that take it — cash posting does not yet
-  (§17). `tests/dncn.test.ts` holds it deterministically: a note posted while
-  another transaction holds the position must see it already spent, and that
-  test fails with the lock removed.
-- **Do not change unless:** explicitly instructed. **Never let a note move cash
-  or realize a Budget, never decide its sign per book, never infer
-  `allows_dncn` from an account, never let a position go below zero through a
-  note, never store a carrying rate on a note, and never add an edit, reversal
-  or delete for a posted one.**
-- **Status:** Frozen, current.
+### A Penyesuaian Open Item adjusts a position, in one rule for every book (FROZEN)
+- **Decision:** its own module (`fin_item_adjustment(_line, _line_item)`, one
+  `PYO-` series, `ITEM_ADJUSTMENT_*` permissions, Finance › Penyesuaian ›
+  Penyesuaian Open Item beside Reklasifikasi Open Item). It is **the
+  adjustment document** — the only way to change a Partner's position without
+  cash, since a manual journal may not touch a control account. A document
+  names a book, a Partner, a currency and its effect, **Tambah** or
+  **Kurangi**; a Tambah line opens one open item, a Kurangi line settles the
+  items it names. Post writes the `Adjustment` entries and one balanced journal
+  in one transaction. §10 rules 97–102 are the statement of it.
+- **It replaced Debit / Credit Note**, on the user's decision (2026-10-15),
+  after a review of mainstream naming. In SAP, Odoo and Accurate a DN/CN
+  adjusts an invoice, and its name is read from the **issuer's** side: a
+  supplier's Credit Note lowering our Hutang had to be entered here as a Debit
+  Note. SIBA's document adjusts a position, not an invoice, so it is named by
+  its job and its type by its effect — which also matches the knowledge base's
+  `accounting/open-items` concept (direction INCREASE / DECREASE). The pair now
+  reads: Penyesuaian Open Item changes **how much**, Reklasifikasi Open Item
+  changes **where**. Built together with the item picker DN/CN had been
+  waiting for, so Kurangi settles chosen items like every other lowering path.
+  Migration `20261015090000_item_adjustment` renamed the tables, columns,
+  permissions, document type, audit rows and Mapping Account System keys in
+  place, mapping each old note to its effect by its book's `raises`.
+- **Reason for the shape:** the user's specification for DN/CN, unchanged in
+  substance: it adjusts existing value rather than correcting one transaction;
+  only real balances, never Budget; nothing below zero; the flag on the Budget
+  Category rather than on the Partner Category, because a Partner Category flag
+  could not keep Prive closed while Hutang stays open (Stakeholder is admitted
+  by both); a lock on the position; active Partners only.
+- **Deviations from best practice, deliberate.** It references no invoice —
+  SIBA has none — so it carries the counterparty's number in `reference`.
+  There is no tax: it is not a PPN Nota Retur. There is no approval step:
+  `ITEM_ADJUSTMENT_POST` is the control.
+- **The lock is advisory, not `FOR UPDATE`.** Built as `pg_advisory_xact_lock`
+  keyed on the position, because a row lock on an item that does not exist yet
+  locks nothing. `tests/item-adjustment.test.ts` holds it deterministically:
+  an adjustment posted while another transaction holds the position must find
+  its item already spent.
+- **Do not change unless:** explicitly instructed. **Never let an adjustment
+  move cash or realize a Budget, never decide its sign per book, never infer
+  `allows_item_adjustment` from an account, never let a Kurangi settle an item
+  the user did not choose or for more than it holds, never store a carrying
+  rate on it, never add an edit, reversal or delete for a posted one, and do
+  not bring back the Debit / Credit names.**
+- **Status:** Frozen, current. Supersedes "A Debit / Credit Note adjusts a
+  position, in one rule for every book".
 
 ### A transfer is its own module, and it settles nothing (FROZEN)
 - **Decision:** Cash Bank Transfer moves the Company's own money between its own
@@ -4450,10 +4466,8 @@ decisions now that foreclose them.
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
-| Open items for DN/CN | Being redesigned. A note may raise a position (opening an item) and is refused when it lowers one, because it names no item yet. How a note chooses the item it settles is part of its redesign |
 | Restricting an item's clearing date | An item may be settled by a document dated before it was opened (§10 rule 106), on the user's instruction; they may revert it to restricted after seeing it |
-| DN/CN on a negative position | A position below zero (a cash overpayment) is refused today. Adjusting one needs a rule for its base, which no longer tracks its face |
-| DN/CN tax | A note carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
+| Penyesuaian Open Item tax | An adjustment carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
 | Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
 
 **Exchange rate — current state.** Built, and it is not a rate *source*. The system
@@ -4683,10 +4697,11 @@ process allowed to restate positions, and it is not built.
   always values the foreign side into base, in one multiplication (§10 rule 88).
 - Do **not** add a fourth transfer Purpose for one foreign currency to another.
   That is a Pencairan followed by a Pembelian Valas (§10 rule 85).
-- Do **not** let a Debit / Credit Note move cash, realize a Budget, or take a
-  position below zero, and do **not** sign it per book — `dncnDirection` and the
-  book's own `raises` decide (§10 rules 97–100, §12).
-- Do **not** infer which books allow a note. It is `allows_dncn` on the Budget
+- Do **not** let a Penyesuaian Open Item move cash, realize a Budget, or settle
+  an item the user did not choose, and do **not** sign it per book —
+  `adjustmentDirection` and the book's own `raises` decide (§10 rules 97–100,
+  §12). Do **not** bring back the Debit / Credit names.
+- Do **not** infer which books allow an adjustment. It is `allows_item_adjustment` on the Budget
   Category, set on its form (§10 rule 99).
 - Do **not** give the anak a Cash & Bank resource, or let its document name one. It
   names a Currency and reaches money through Funding Request (§10 rule 38, §12).
@@ -4881,12 +4896,11 @@ process allowed to restate positions, and it is not built.
 | Every subject book shares one permission | `REPORT_SUBLEDGER_VIEW` covers all of them, so whoever may read Hutang may also read Prive — the owners' drawings. It replaced six per-book permissions, which could not survive books being created through the GUI: a permission per book would be a permission created at runtime (§12). Nothing in the seeded roles relied on the distinction. If it is wanted back, the shape that fits is a `sensitive` flag on the category gated by one **further static** permission, which keeps a new category developer-free while re-fencing Prive. |
 | An audit entry names a record by its current name | `audit_log` stores no snapshot, so a record renamed since it changed reads under the name it has now. Inventing a snapshot would be worse than saying nothing, but it does mean the panel is not a record of what a thing was called at the time. |
 | Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
-| The subject books have no opening balance | A subledger entry is written by posting a Cash Bank Transaction or a Debit / Credit Note (`Adjustment`). `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated (§13). |
-| DN/CN cannot lower a position | Open items arrived while DN/CN was being redesigned, and a note names no item yet. A note that would lower a subject-book position is refused; raising one works. Six tests are marked `todo` for it, and the showcase skips those notes. |
+| The subject books have no opening balance | A subledger entry is written by posting a Cash Bank Transaction or a Penyesuaian Open Item (`Adjustment`). `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated (§13). |
 | Held money cannot be cleared into an expense or an asset | A Reklasifikasi target must keep a book, so a held payment that turns out to be Biaya or Asset has nowhere to go yet. Out of scope on the user's decision; it is a later adjustment purpose (§10 rule 115). |
 | Older Realisasi lines name no opened item | `fin_cash_bank_transaction_line.opened_item_id` is written from its migration on. A line posted before it is null, so its Budget's Realisasi card cannot follow that money into a reclassification. Not backfilled: matching items to lines by note would be a guess. |
 | A reclassification trail is one step | `reclassTrail` reads one move. An item reclassified twice shows its second move on the item it became, not on the Budget. |
-| A note's counter account is one per side, whichever book | One Debit Note and one Credit Note account per Company, so a Titipan adjustment and a Piutang adjustment land in the same P&L account. Fine for the three books the seed allows; a book needing its own counter account would need the account on the category. |
+| An adjustment's counter account is one per side, whichever book | One Pendapatan and one Beban Penyesuaian account per Company, so a Titipan adjustment and a Piutang adjustment land in the same P&L account. Fine for the three books the seed allows; a book needing its own counter account would need the account on the category. |
 | A transfer shows in the Cash Bank Book by number, not as a link | `sourceDocumentNumbers` in `cash-bank.ts` resolves only `fin_cash_bank_transaction`, which is already the baselined crossing this table records below. A transfer entry therefore carries `TRF-0001 — <Purpose>` in its note and has no drill-through. Extending that function to a second table would deepen the debt; the clean fix is to make labelling a `(doc_type_id, doc_id)` pair the caller's job, which is a decision in its own right. |
 | A subject book's report shows a document's note, not a link | An entry carries its source as the weak `(doc_type_id, doc_id)` pair and its document number inside `note`. Resolving that to a link would mean the book importing Finance, which is the boundary crossing `cash-bank.ts` already has and that has not been decided. |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
@@ -4905,12 +4919,12 @@ process allowed to restate positions, and it is not built.
 | `recentActivity()` has no caller | The cross-record audit *feed* is still off the dashboard, pending the user's own plan for where it belongs. The per-record history is a separate reader (`recordHistory`) and is now on every form; `recentActivity()` itself remains unused. |
 | A history says who and when, never what | `audit_log` stores no field-level snapshot, so the panel reports that a record was edited and by whom, and cannot say which field moved. Adding a diff means storing one, which is a much larger change than the `event` column was. |
 | Rows written before `event` existed read as a bare verb | Rows written before the migration carry `event = null` and report "Dibuat" or "Diubah". They are not backfilled, because nothing in the table records which transition they actually were — inferring one from a timestamp would be a guess presented as a fact. |
-| The suite leaves fixture currencies behind | `cleanupFixtures` removes accounts, partners, mappings and journals but never a `ref_currency` row, so `curr.TESTEUR`, `test.ZZTESTCUR` and the DN/CN suite's `curr.DNCA` persist in whatever database `npm test` last ran against. Harmless now that `otherCurrency` is always the suite's own row rather than `currencies[1]` — that opportunistic pick is what let the leftover become the fixture and silently disable the third-currency refusal test. Deleting them would mean hard-deleting master data, which the application itself never does. |
+| The suite leaves fixture currencies behind | `cleanupFixtures` removes accounts, partners, mappings and journals but never a `ref_currency` row, so `curr.TESTEUR`, `test.ZZTESTCUR` and the Penyesuaian Open Item suite's `curr.DNCA` persist in whatever database `npm test` last ran against. Harmless now that `otherCurrency` is always the suite's own row rather than `currencies[1]` — that opportunistic pick is what let the leftover become the fixture and silently disable the third-currency refusal test. Deleting them would mean hard-deleting master data, which the application itself never does. |
 | `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |
 | The intercompany position has no subject-book view | It is carried by the two bridge accounts and read through the General Ledger, which is a deliberate deviation from concept doc §34/§37/§38 (§12). The consequence is that the subject books answer "which Partner moved?" and not "what does the anak owe the induk?" — that question is an account balance, and the dashboard now states it from those two accounts so it is no longer reachable only by running the General Ledger for exactly the right one. If a book of it is ever wanted, it needs a subject that is a Company, which is a change to an append-only table. |
-| Tests cover security, Accounting, Budget, Finance, Funding, Debit / Credit Note, the books, the layers, the FX kernel, the reports, the fiscal calendar, closing and the snapshot-based opening | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
+| Tests cover security, Accounting, Budget, Finance, Funding, Penyesuaian Open Item, the books, the layers, the FX kernel, the reports, the fiscal calendar, closing and the snapshot-based opening | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
 | Two module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a third fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |

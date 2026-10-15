@@ -22,7 +22,7 @@
  */
 import type { IconName } from "@/components/icon";
 import { BUDGET_TRANSITIONS } from "./budget-workflow";
-import { DNCN_TRANSITIONS } from "./dncn-workflow";
+import { ITEM_ADJUSTMENT_TRANSITIONS } from "./item-adjustment-workflow";
 import { FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
 import type { ActionTone } from "./header-actions";
 import { CONVERSION_TRANSITIONS } from "./item-conversion-workflow";
@@ -137,11 +137,11 @@ const RECLASS_EVENTS: Record<string, AuditEventLabel> = {
   cancel: fromTransition(RECLASS_TRANSITIONS.cancel, "Dibatalkan"),
 };
 
-/** Debit / Credit Note: Draft → Posted, or Draft → Cancelled. */
-const DNCN_EVENTS: Record<string, AuditEventLabel> = {
+/** Penyesuaian Open Item: Draft → Posted, or Draft → Cancelled. */
+const ITEM_ADJUSTMENT_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
-  post: fromTransition(DNCN_TRANSITIONS.post, "Diposting"),
-  cancel: fromTransition(DNCN_TRANSITIONS.cancel, "Dibatalkan"),
+  post: fromTransition(ITEM_ADJUSTMENT_TRANSITIONS.post, "Diposting"),
+  cancel: fromTransition(ITEM_ADJUSTMENT_TRANSITIONS.cancel, "Dibatalkan"),
 };
 
 /** Funding Request: Open → Closed, or withdrawn by the requester. */
@@ -220,7 +220,7 @@ const BY_ENTITY: Record<string, Record<string, AuditEventLabel>> = {
   fin_cash_bank_transfer: TRANSFER_EVENTS,
   fin_item_conversion: CONVERSION_EVENTS,
   fin_item_reclass: RECLASS_EVENTS,
-  fin_dncn: DNCN_EVENTS,
+  fin_item_adjustment: ITEM_ADJUSTMENT_EVENTS,
   fin_funding_request: FUNDING_EVENTS,
   acc_fiscal_year: FISCAL_EVENTS,
   acc_fiscal_closing: FISCAL_CLOSING_EVENTS,

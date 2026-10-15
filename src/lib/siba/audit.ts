@@ -7,7 +7,7 @@ import { recordTitle } from "./record-title";
 import { budgetsByIds } from "./budget";
 import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer";
-import { noteNumbersByIds } from "./dncn";
+import { itemAdjustmentNumbersByIds } from "./item-adjustment";
 import { conversionNumbersByIds } from "./item-conversion";
 import { reclassNumbersByIds } from "./item-reclass";
 import { fundingRequestNumbersByIds } from "./funding";
@@ -86,9 +86,9 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
     label: "Cash Bank Transfer",
     resolve: transferNumbersByIds,
   },
-  fin_dncn: {
-    label: "Debit / Credit Note",
-    resolve: noteNumbersByIds,
+  fin_item_adjustment: {
+    label: "Penyesuaian Open Item",
+    resolve: itemAdjustmentNumbersByIds,
   },
   fin_item_conversion: {
     label: "Pencairan Open Item",

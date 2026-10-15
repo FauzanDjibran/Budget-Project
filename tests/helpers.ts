@@ -489,17 +489,17 @@ export async function cleanupFixtures(): Promise<void> {
   const fixturePartners = {
     partner: { partner_label: { startsWith: FIXTURE_PREFIX } },
   };
-  // A Debit / Credit Note names its Partner, so a note a suite left behind
+  // A Penyesuaian Open Item names its Partner, so one a suite left behind
   // would block the Partner's removal below.
-  const notes = (
-    await prisma.finDncn.findMany({ where: fixturePartners, select: { id: true } })
+  const adjustments = (
+    await prisma.finItemAdjustment.findMany({ where: fixturePartners, select: { id: true } })
   ).map((n) => n.id);
-  if (notes.length) {
-    await prisma.finDncnLine.deleteMany({ where: { note_id: { in: notes } } });
+  if (adjustments.length) {
+    await prisma.finItemAdjustmentLine.deleteMany({ where: { adjustment_id: { in: adjustments } } });
     await prisma.auditLog.deleteMany({
-      where: { entity_key: "fin_dncn", row_id: { in: notes } },
+      where: { entity_key: "fin_item_adjustment", row_id: { in: adjustments } },
     });
-    await prisma.finDncn.deleteMany({ where: { id: { in: notes } } });
+    await prisma.finItemAdjustment.deleteMany({ where: { id: { in: adjustments } } });
   }
   // A Pencairan Open Item names its Partner as well.
   await prisma.finItemConversion.deleteMany({ where: fixturePartners });

@@ -123,7 +123,7 @@ export const PERMISSIONS = [
     name: "Lihat Mapping Account System",
     module: "accounting",
     description:
-      "Account tujuan posting otomatis per Company: bridge intercompany, selisih kurs, laba/rugi ekuitas, Debit / Credit Note.",
+      "Account tujuan posting otomatis per Company: bridge intercompany, selisih kurs, laba/rugi ekuitas, Penyesuaian Open Item.",
   },
   {
     code: "SYSTEM_ACCOUNT_EDIT",
@@ -262,21 +262,21 @@ export const PERMISSIONS = [
   },
   { code: "ITEM_RECLASS_CANCEL", name: "Batalkan Reklasifikasi Open Item", module: "finance" },
 
-  // Debit / Credit Note: adjusting a Partner's standing position without cash.
-  // Its own capabilities, because writing a receivable down is an authority of
-  // its own — the one a cash clerk should not hold by default.
-  { code: "DNCN_VIEW", name: "Lihat Debit / Credit Note", module: "finance" },
-  { code: "DNCN_CREATE", name: "Tambah Debit / Credit Note", module: "finance" },
-  { code: "DNCN_EDIT", name: "Ubah Debit / Credit Note", module: "finance" },
+  // Penyesuaian Open Item: adjusting a Partner's standing position without
+  // cash. Its own capabilities, because writing a receivable down is an
+  // authority of its own — the one a cash clerk should not hold by default.
+  { code: "ITEM_ADJUSTMENT_VIEW", name: "Lihat Penyesuaian Open Item", module: "finance" },
+  { code: "ITEM_ADJUSTMENT_CREATE", name: "Tambah Penyesuaian Open Item", module: "finance" },
+  { code: "ITEM_ADJUSTMENT_EDIT", name: "Ubah Penyesuaian Open Item", module: "finance" },
   {
-    code: "DNCN_POST",
-    name: "Post Debit / Credit Note",
+    code: "ITEM_ADJUSTMENT_POST",
+    name: "Post Penyesuaian Open Item",
     module: "finance",
     description:
       "Menyesuaikan posisi Partner pada buku subjek dan mencatat Journal-nya. " +
       "Tidak ada uang yang berpindah.",
   },
-  { code: "DNCN_CANCEL", name: "Batalkan Debit / Credit Note", module: "finance" },
+  { code: "ITEM_ADJUSTMENT_CANCEL", name: "Batalkan Penyesuaian Open Item", module: "finance" },
 
   // Funding is the induk's side of the same business event, and a separate
   // capability on purpose: raising a request is the anak's clerk, confirming it

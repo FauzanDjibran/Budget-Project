@@ -36,7 +36,7 @@ export default async function SystemAccountPage({
   if (selected) {
     // Postable accounts of this Company; an inactive one only when it is the
     // one already stored, so a page opening on a stale value still says what
-    // it is. A note's counter account may not be one a book reconciles
+    // it is. An adjustment's counter account may not be one a book reconciles
     // against — the Server Action refuses it, so the picker does not offer it.
     const [rows, bookAccounts] = await Promise.all([
       prisma.accAccount.findMany({
@@ -49,7 +49,7 @@ export default async function SystemAccountPage({
       const chosen = values[def.key];
       options[def.key] = rows
         .filter((a) => a.is_active || a.id === chosen)
-        .filter((a) => def.group !== "dncn" || a.id === chosen || !bookAccounts.has(a.id))
+        .filter((a) => def.group !== "adjustment" || a.id === chosen || !bookAccounts.has(a.id))
         .map((a) => ({
           id: a.id,
           label: a.account_label,

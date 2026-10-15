@@ -356,8 +356,8 @@ export function settle(input: SettlementInput): Settlement {
  * actually booked — what left the bank, what a position released — rather than
  * to a sum of roundings nobody booked.
  *
- * A Debit / Credit Note splits its base across its reasons this way, and a
- * Realisasi line splits what its cash cost across the open items it settles.
+ * A Realisasi line splits what its cash cost across the open items it settles
+ * this way.
  */
 export function allocateBase(amounts: number[], total: number, base: number): number[] {
   let given = 0;
