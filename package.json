@@ -14,6 +14,8 @@
     "db:neon-seed": "node scripts/with-remote.mjs node --conditions=react-server --import tsx prisma/seed.ts",
     "db:seed-showcase": "node --env-file-if-exists=.env --conditions=react-server --import tsx scripts/seed-showcase.ts",
     "db:neon-seed-showcase": "node scripts/with-remote.mjs node --conditions=react-server --import tsx scripts/seed-showcase.ts",
+    "db:seed-master": "node --env-file-if-exists=.env --conditions=react-server --import tsx scripts/seed-showcase.ts --master-only",
+    "db:neon-seed-master": "node scripts/with-remote.mjs node --conditions=react-server --import tsx scripts/seed-showcase.ts --master-only",
     "db:backfill-account-flags": "node --env-file-if-exists=.env --conditions=react-server --import tsx scripts/backfill-account-flags.ts",
     "db:reconcile": "node --env-file-if-exists=.env --import tsx scripts/reconcile-books.ts",
     "db:truncate-transactions": "node --env-file-if-exists=.env --import tsx scripts/truncate-transactions.ts",

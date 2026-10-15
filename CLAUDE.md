@@ -382,7 +382,11 @@ scripts/
                          backdated in date order. **Not** the seeder —
                          ordinary inserts, run by hand, never by
                          install/migrate/reset/CI. Anything posted goes through
-                         the real engine, never a direct book insert
+                         the real engine, never a direct book insert.
+                         `--master-only` (`db:seed-master`) stops after the
+                         setup — Partners, charts, mappings, Mapping Account
+                         System, fiscal years, Cash & Bank at nil — and posts
+                         nothing
 src/
   proxy.ts               Optimistic redirect to /login (NOT a security boundary);
                          lets /login and /api/health through without a cookie
@@ -553,6 +557,7 @@ npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
                              # (runs under --conditions=react-server)
 npm run db:seed-showcase     # dev only: four believable years of business data (NOT the seeder)
+npm run db:seed-master       # dev only: the showcase's master data + CoA, no transactions
 npm run db:backfill-account-flags  # one-off: resync Postable + Control Account to the structure
 npm run db:reconcile         # read-only: do the books agree? exits 1 if not
 npm run db:truncate-transactions          # reports what it would delete, deletes nothing
@@ -567,6 +572,7 @@ npx prisma studio            # browse the database
 # connection from `.env.neon` through `scripts/with-remote.js`.
 npm run db:neon-seed         # sync system data on Neon; idempotent, destroys nothing
 npm run db:neon-seed-showcase  # dev/demo only: the same four years, on Neon
+npm run db:neon-seed-master  # dev/demo only: master data + CoA, no transactions, on Neon
 npm run db:neon-reset        # reports what it would destroy, destroys nothing
 npm run db:neon-reset -- --confirm  # DESTRUCTIVE: drops and re-migrates the deployed
                                     # database. Run db:neon-seed afterwards — reset

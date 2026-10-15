@@ -22,6 +22,13 @@
  *
  * Additive and idempotent: every step reuses what is already there and nothing
  * is ever deleted. Running it twice does not double anything.
+ *
+ * **`--master-only`** (`npm run db:seed-master`) stops once the setup is in:
+ * the Companies' names, the foreign currency, the Partners, both charts of
+ * accounts, the mappings, Mapping Account System and the System Defaults, the
+ * fiscal years and the Cash & Bank resources — at nil, so their books hold no
+ * entry. No Budget, no document, no journal. The full showcase run afterwards
+ * on the same database carries on from exactly there.
  */
 import "dotenv/config";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
@@ -453,6 +460,9 @@ const MAPPINGS: [
   ["Asset", null, "Inventaris Kantor"],
   ["Biaya", null, "Biaya Umum Lain-lain"],
 ];
+
+/** Stop after the master data and the chart: no Budget, no document, no journal. */
+const MASTER_ONLY = process.argv.includes("--master-only");
 
 const made: Record<string, number> = {};
 const tally = (what: string, n = 1) => {
@@ -2122,6 +2132,11 @@ async function main() {
   await ensureFiscalYears(actor);
   await insertCashBanks(induk.id, foreignId, actor);
 
+  if (MASTER_ONLY) {
+    report();
+    return;
+  }
+
   // The years in order, each posted through the real engine. The oldest is
   // closed by both Companies once its own events are in — after that nothing
   // may be posted into it — and the later years then run as its successors.
@@ -2435,6 +2450,9 @@ function report() {
   }
   console.log("");
   for (const [what, n] of rows) console.log(`  ${String(n).padStart(4)}  ${what}`);
+  if (MASTER_ONLY) {
+    console.log("\nMaster data and chart of accounts only — no Budget, document or journal.");
+  }
   console.log(
     "\nSample data only. This is not the seeder: these are ordinary records," +
       "\nand they can be edited or deactivated through the application.\n"
