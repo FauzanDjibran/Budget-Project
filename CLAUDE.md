@@ -369,10 +369,16 @@ scripts/
                          READ ONLY transaction. Run by hand after touching a
                          posting path, never by install or CI
   truncate-transactions.ts  Empties every transaction store and leaves master
-                         and system data standing — the documents, the books
-                         and their audit rows, in one transaction. Reports and
-                         refuses without `--confirm`. Run by hand, never by
-                         install or CI
+                         and system data standing — every posting document
+                         (Realisasi, Funding, Transfer, Penyesuaian, Pencairan,
+                         Reklasifikasi), the journals, the books and their
+                         audit rows, in one transaction. It also undoes every
+                         close: the closing records and the snapshots a close
+                         wrote go, and Closed years return to Open; a go-live
+                         snapshot is kept. Reports and refuses without
+                         `--confirm`. Run by hand, never by install or CI. A
+                         new posting document joins it in the change that
+                         builds it
   seed-showcase.ts       Dev convenience: four believable years of business data,
                          so every menu has something in it — Partners for both
                          Companies, a Chart of Accounts, the mappings, the cash

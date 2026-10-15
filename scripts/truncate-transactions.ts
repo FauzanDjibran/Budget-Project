@@ -12,13 +12,32 @@
  * are untouched.
  *
  * WHAT IT DELETES
- *   acc_journal_line, acc_journal                  the books' journals
- *   fin_cash_bank_transaction(_line)               Finance's documents
+ *   acc_journal_line, acc_journal                  the books' journals, manual
+ *                                                  and closing journals included
+ *   fin_cash_bank_transaction(_line)               Realisasi Budget
  *   fin_funding_request                            the intercompany bridge
+ *   fin_cash_bank_transfer(_line)                  Cash Bank Transfer
+ *   fin_item_adjustment(_line, _line_item)         Penyesuaian Open Item
+ *   fin_item_conversion(_line, _line_item)         Pencairan Open Item
+ *   fin_item_reclass(_line, _line_source,
+ *                    _line_target)                 Reklasifikasi Open Item
  *   bud_budget                                     the plans
- *   sub_ledger, sub_ledger_balance                 the six subject books
+ *   sub_ledger, sub_ledger_balance                 the subject books
  *   cash_bank_ledger, cash_bank_layer              the Cash Bank Book
- *   audit_log rows belonging to those documents
+ *   acc_fiscal_closing                             every Company's closes
+ *   acc_opening_balance(_line) written by a close  the snapshots they wrote
+ *   audit_log rows belonging to all of those, and each Fiscal Year's
+ *   "Ditutup" event
+ *
+ * WHY THE CLOSES GO TOO
+ *   A close is a posting: its `CLS-` journal goes with the other journals,
+ *   and the Opening Balance it wrote is built from journals that no longer
+ *   exist. Left behind, a year would still read Closed — refusing every
+ *   posting into it — and the reports would open from figures nothing backs.
+ *   So the closing records and the snapshots a close wrote are deleted, and a
+ *   year reading Closed goes back to Open. The years and their periods stay.
+ *   A go-live snapshot injected by hand (no source year) is not a close's and
+ *   is kept: it is the starting position, not a transaction.
  *
  * WHAT IT KEEPS
  *   every sys_* table, ref_currency, m_partner, m_cash_bank, the whole chart of
@@ -58,11 +77,26 @@ const DOCUMENT_ENTITY_KEYS = [
   "bud_budget",
   "fin_cash_bank_transaction",
   "fin_funding_request",
+  "fin_cash_bank_transfer",
+  "fin_item_adjustment",
+  "fin_item_conversion",
+  "fin_item_reclass",
   "acc_journal",
+  "acc_fiscal_closing",
 ];
+
+/** The snapshots a close wrote; a go-live snapshot has no source year and stays. */
+const WRITTEN_BY_A_CLOSE = { source_fiscal_year_id: { not: null } } as const;
+
+/** A Fiscal Year's own history keeps everything but the close being undone. */
+const YEAR_CLOSE_EVENTS = { entity_key: "acc_fiscal_year", event: "close" } as const;
 
 async function main() {
   const confirmed = process.argv.includes("--confirm");
+
+  const snapshotIds = (
+    await prisma.accOpeningBalance.findMany({ where: WRITTEN_BY_A_CLOSE, select: { id: true } })
+  ).map((o) => o.id);
 
   const counts = {
     acc_journal_line: await prisma.accJournalLine.count(),
@@ -70,17 +104,41 @@ async function main() {
     fin_cash_bank_transaction_line: await prisma.finCashBankTransactionLine.count(),
     fin_funding_request: await prisma.finFundingRequest.count(),
     fin_cash_bank_transaction: await prisma.finCashBankTransaction.count(),
+    fin_cash_bank_transfer_line: await prisma.finCashBankTransferLine.count(),
+    fin_cash_bank_transfer: await prisma.finCashBankTransfer.count(),
+    fin_item_adjustment_line_item: await prisma.finItemAdjustmentLineItem.count(),
+    fin_item_adjustment_line: await prisma.finItemAdjustmentLine.count(),
+    fin_item_adjustment: await prisma.finItemAdjustment.count(),
+    fin_item_conversion_line_item: await prisma.finItemConversionLineItem.count(),
+    fin_item_conversion_line: await prisma.finItemConversionLine.count(),
+    fin_item_conversion: await prisma.finItemConversion.count(),
+    fin_item_reclass_line_source: await prisma.finItemReclassLineSource.count(),
+    fin_item_reclass_line_target: await prisma.finItemReclassLineTarget.count(),
+    fin_item_reclass_line: await prisma.finItemReclassLine.count(),
+    fin_item_reclass: await prisma.finItemReclass.count(),
     bud_budget: await prisma.budBudget.count(),
     sub_ledger: await prisma.subLedger.count(),
     sub_ledger_balance: await prisma.subLedgerBalance.count(),
     cash_bank_ledger: await prisma.cashBankLedger.count(),
     cash_bank_layer: await prisma.cashBankLayer.count(),
+    acc_fiscal_closing: await prisma.accFiscalClosing.count(),
+    acc_opening_balance_line: await prisma.accOpeningBalanceLine.count({
+      where: { opening_id: { in: snapshotIds } },
+    }),
+    acc_opening_balance: snapshotIds.length,
     audit_log: await prisma.auditLog.count({
-      where: { entity_key: { in: DOCUMENT_ENTITY_KEYS } },
+      where: {
+        OR: [
+          { entity_key: { in: DOCUMENT_ENTITY_KEYS } },
+          { entity_key: "acc_opening_balance", row_id: { in: snapshotIds } },
+          YEAR_CLOSE_EVENTS,
+        ],
+      },
     }),
   };
 
   const resources = await prisma.mCashBank.count();
+  const closedYears = await prisma.accFiscalYear.count({ where: { status: "Closed" } });
   const total = Object.values(counts).reduce((t, n) => t + n, 0);
 
   console.log("\nData transaksi yang akan dihapus:\n");
@@ -88,6 +146,7 @@ async function main() {
     console.log(`  ${table.padEnd(32)} ${String(n).padStart(7)}`);
   }
   console.log(`\n  ${"cash_bank_balance".padEnd(32)} ${String(resources).padStart(7)}  (direset ke nol, tidak dihapus)`);
+  console.log(`  ${"acc_fiscal_year (Closed)".padEnd(32)} ${String(closedYears).padStart(7)}  (dibuka kembali, tidak dihapus)`);
 
   if (!total) {
     console.log("\nTidak ada data transaksi. Tidak ada yang dihapus.");
@@ -97,7 +156,8 @@ async function main() {
   if (!confirmed) {
     console.log(
       `\n${total} baris akan dihapus, dan saldo ${resources} Cash & Bank direset ke nol.` +
-        "\nMaster data (Partner, Cash & Bank, Bagan Akun, Tahun Buku) tidak tersentuh." +
+        (closedYears ? `\n${closedYears} Tahun Buku yang sudah ditutup dibuka kembali.` : "") +
+        "\nMaster data (Partner, Cash & Bank, Bagan Akun, Tahun Buku) tetap ada." +
         "\nSaldo awal Cash & Bank ikut terhapus dan tidak dapat diisi ulang dari GUI." +
         "\n\nJalankan ulang dengan --confirm untuk benar-benar menghapus:" +
         "\n  npm run db:truncate-transactions -- --confirm\n"
@@ -115,7 +175,30 @@ async function main() {
     await tx.finFundingRequest.deleteMany();
     await tx.finCashBankTransaction.deleteMany();
 
+    await tx.finCashBankTransferLine.deleteMany();
+    await tx.finCashBankTransfer.deleteMany();
+
+    await tx.finItemAdjustmentLineItem.deleteMany();
+    await tx.finItemAdjustmentLine.deleteMany();
+    await tx.finItemAdjustment.deleteMany();
+
+    await tx.finItemConversionLineItem.deleteMany();
+    await tx.finItemConversionLine.deleteMany();
+    await tx.finItemConversion.deleteMany();
+
+    await tx.finItemReclassLineSource.deleteMany();
+    await tx.finItemReclassLineTarget.deleteMany();
+    await tx.finItemReclassLine.deleteMany();
+    await tx.finItemReclass.deleteMany();
+
     await tx.budBudget.deleteMany();
+
+    // The closes, the snapshots they wrote, and the Closed rollup over them —
+    // see the note at the top of this file.
+    await tx.accFiscalClosing.deleteMany();
+    await tx.accOpeningBalanceLine.deleteMany({ where: { opening_id: { in: snapshotIds } } });
+    await tx.accOpeningBalance.deleteMany({ where: { id: { in: snapshotIds } } });
+    await tx.accFiscalYear.updateMany({ where: { status: "Closed" }, data: { status: "Open" } });
 
     await tx.subLedger.deleteMany();
     await tx.subLedgerBalance.deleteMany();
@@ -151,12 +234,19 @@ async function main() {
     }
 
     await tx.auditLog.deleteMany({
-      where: { entity_key: { in: DOCUMENT_ENTITY_KEYS } },
+      where: {
+        OR: [
+          { entity_key: { in: DOCUMENT_ENTITY_KEYS } },
+          { entity_key: "acc_opening_balance", row_id: { in: snapshotIds } },
+          YEAR_CLOSE_EVENTS,
+        ],
+      },
     });
   });
 
   console.log(
-    `\n${total} baris dihapus. Saldo ${resources} Cash & Bank direset ke nol.` +
+    `\n${total} baris dihapus. Saldo ${resources} Cash & Bank direset ke nol, ` +
+      `${closedYears} Tahun Buku Closed dibuka kembali.` +
       "\nMaster data dan data sistem tidak tersentuh. Penomoran dokumen dimulai " +
       "kembali dari 0001.\n"
   );
