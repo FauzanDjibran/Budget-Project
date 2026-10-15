@@ -1016,18 +1016,42 @@ describe("foreign currency on the funded route", () => {
     assert.equal(posted.lines[1].settlement_base_amount.toNumber(), 8_000_000);
   });
 
-  test("a rupiah anak draft is valued in full", async () => {
-    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 250_000 });
-    const doc = await makeAnakDraft({ purpose: "BIAYA_OUT", lines: [{ budgetId: budget, amount: 250_000 }] });
+  test("a rupiah anak draft is drafted the same way, at a kurs of 1", async () => {
+    const supplier = await makePartner({ companyId: anak, categoryLabel: "Stakeholder" });
+    const idrBank = await makeCashBank({ opening: 100_000_000 });
+    const loan = await makeBudget({ categoryLabel: "Hutang", type: "In", partnerId: supplier, amount: 400_000 });
+    await fundAndConfirm(
+      await makeAnakDraft({ purpose: "HTG_SH_IN", lines: [{ budgetId: loan, amount: 400_000 }] }),
+      idrBank
+    );
+    const [item] = await openItems(await bookId("Hutang"), supplier);
+
+    const repay = await makeBudget({ categoryLabel: "Hutang", partnerId: supplier, amount: 400_000 });
+    const expense = await makeBudget({ categoryLabel: "Biaya", amount: 250_000 });
+    const doc = await makeAnakDraft({
+      purpose: "HTG_SH_OUT",
+      lines: [
+        { budgetId: repay, amount: 400_000, items: [{ itemId: item.id, amount: 400_000 }] },
+        { budgetId: expense, amount: 250_000 },
+      ],
+    });
     await prisma.$transaction((tx) => valueDraft(tx, doc, actor));
     const drafted = await prisma.finCashBankTransaction.findUniqueOrThrow({
       where: { id: doc },
-      include: { lines: true },
+      include: { lines: { orderBy: { sequence_no: "asc" }, include: { items: true } } },
     });
-    assert.equal(drafted.exchange_rate.toNumber(), 1);
-    assert.equal(drafted.transaction_base_amount.toNumber(), 250_000);
-    assert.equal(drafted.lines[0].settlement_base_amount.toNumber(), 250_000);
-    assert.equal(drafted.lines[0].transaction_base_amount.toNumber(), 250_000);
+    assert.equal(drafted.exchange_rate.toNumber(), 0, "the cash side waits, as for a foreign draft");
+    assert.equal(drafted.transaction_base_amount.toNumber(), 0);
+    const [settles, spends] = drafted.lines;
+    assert.equal(settles.settlement_base_amount.toNumber(), 400_000);
+    assert.equal(settles.settlement_exchange_rate?.toNumber(), 1);
+    assert.equal(settles.transaction_base_amount.toNumber(), 0);
+    assert.deepEqual(
+      settles.items.map((it) => [it.settlement_base_amount.toNumber(), it.transaction_base_amount.toNumber()]),
+      [[400_000, 0]]
+    );
+    assert.equal(spends.settlement_base_amount.toNumber(), 0, "the cash originates it");
+    assert.equal(spends.settlement_exchange_rate, null);
   });
 
   test("a layer of another resource is refused", async () => {

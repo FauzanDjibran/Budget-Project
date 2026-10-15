@@ -2344,14 +2344,12 @@ export class DraftNotValued extends Error {
  * re-values — a layer or an item may move while the draft waits — and writes
  * the figures again.
  *
- * An anak draft names no cash. In base currency nothing is left to choose —
- * the kurs is 1 whichever induk resource pays — so it is valued in full. In a
- * foreign currency the cash side is the induk's choice at confirmation, so
- * only the settlement side is stated: each settled item at its own kurs. The
- * cash side — the header kurs and base, each line's and item's transaction
- * base and FX difference, and the base of a line that opens an item, which
- * the cash originates — stays unwritten (nil, kurs empty) until the
- * confirmation values the whole document.
+ * An anak draft names no cash, so the cash side is the induk's choice at
+ * confirmation, in every currency alike: only the settlement side is stated —
+ * each settled item at its own kurs. The cash side — the header kurs and base,
+ * each line's and item's transaction base and FX difference, and the base of a
+ * line that opens an item, which the cash originates — stays unwritten (nil,
+ * kurs empty) until the confirmation values the whole document.
  */
 export async function valueDraft(
   tx: Prisma.TransactionClient,
@@ -2372,14 +2370,12 @@ export async function valueDraft(
   const byId = new Map(budgets.map((b) => [b.id, b]));
   const amounts = doc.lines.map((l) => l.settlement_amount.toNumber());
   const funded = !doc.cash_bank_id;
-  const foreignFunded = funded && !isBaseCurrency(doc.currency.currency_label);
   const planned = await planPosting(doc, byId, {
     induk: !funded,
     draft: true,
     resolveFx: false,
-    // A funded draft has no resource to value against. Identity is exact for
-    // base currency; for a foreign one it only stands in, and nothing it
-    // produces on the cash side is written below.
+    // A funded draft has no resource to value against. This only stands in:
+    // nothing it produces on the cash side is written below.
     valuation: funded
       ? {
           rate: 1,
@@ -2392,7 +2388,7 @@ export async function valueDraft(
   if (!planned.ok) throw new DraftNotValued(planned.errors);
   const plan = planned.plan;
 
-  if (foreignFunded) {
+  if (funded) {
     for (const line of plan.lines) {
       const settles = line.items.length > 0;
       await tx.finCashBankTransactionLine.update({
