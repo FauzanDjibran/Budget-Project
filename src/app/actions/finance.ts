@@ -17,6 +17,8 @@ import {
   checkLines,
   eligibleBudgets,
   nextTransactionNo,
+  valueDraft,
+  DraftNotValued,
   type EligibleBudget,
   type LineInput,
 } from "@/lib/siba/finance";
@@ -220,51 +222,41 @@ export async function createTransaction(
   const transaction_no = await nextTransactionNo(checked.direction);
   const docType = await budgetDocTypeId();
 
-  const created = await prisma.finCashBankTransaction.create({
-    data: {
-      transaction_no,
-      // The day it belongs to in the books, chosen on the draft and possibly
-      // earlier than today. `posting_date` stays empty until Post writes the
-      // moment it actually happened.
-      document_date: new Date(`${dated.date}T00:00:00Z`),
-      posting_date: null,
-      transaction_type: checked.direction,
-      company_id: checked.companyId,
-      cash_bank_id: checked.cashBankId,
-      currency_id: checked.currencyId,
-      exchange_rate: checked.rate,
-      cash_bank_layer_id: checked.layerId,
-      transaction_amount: settled.total,
-      // Both figures are provisional while the document is a Draft: a Draft has
-      // moved nothing, and Post re-reads the layer before it values anything.
-      transaction_base_amount: roundBase(settled.total * checked.rate),
-      note: values.note?.trim() || null,
-      status: "Draft",
-      created_by: g.actor.user.id,
-      lines: {
-        create: settled.lines.map((l, i) => ({
-          sequence_no: i + 1,
-          source_doc_type_id: docType,
-          source_doc_id: l.budgetId,
-          outstanding_amount: l.outstanding,
-          settlement_amount: l.amount,
-          settlement_base_amount: roundBase(l.amount * checked.rate),
-          settlement_exchange_rate: checked.rate,
-          transaction_amount: l.amount,
-          transaction_base_amount: roundBase(l.amount * checked.rate),
+  let created: { id: number };
+  try {
+    created = await prisma.$transaction(async (tx) => {
+      const row = await tx.finCashBankTransaction.create({
+        data: {
+          transaction_no,
+          // The day it belongs to in the books, chosen on the draft and possibly
+          // earlier than today. `posting_date` stays empty until Post writes the
+          // moment it actually happened.
+          document_date: new Date(`${dated.date}T00:00:00Z`),
+          posting_date: null,
+          transaction_type: checked.direction,
+          company_id: checked.companyId,
+          cash_bank_id: checked.cashBankId,
+          currency_id: checked.currencyId,
+          exchange_rate: checked.rate,
+          cash_bank_layer_id: checked.layerId,
+          transaction_amount: settled.total,
+          transaction_base_amount: roundBase(settled.total * checked.rate),
+          note: values.note?.trim() || null,
+          status: "Draft",
           created_by: g.actor.user.id,
-          items: {
-            create: l.items.map((it, k) => ({
-              sequence_no: k + 1,
-              sub_ledger_balance_id: it.itemId,
-              amount: it.amount,
-              created_by: g.actor.user.id,
-            })),
-          },
-        })),
-      },
-    },
-  });
+          lines: { create: draftLines(settled.lines, checked.rate, docType, g.actor.user.id) },
+        },
+      });
+      // The base figures above are only the insert's; on the direct route
+      // `valueDraft` replaces them, in this transaction, with what Post would
+      // write.
+      await valueDraft(tx, row.id, g.actor.user.id);
+      return row;
+    });
+  } catch (error) {
+    if (error instanceof DraftNotValued) return { ok: false, errors: error.errors };
+    throw error;
+  }
 
   await audit(created.id, "TAMBAH", "create", g.actor.user.id);
   revalidateFinance(created.id, checked.direction);
@@ -331,52 +323,71 @@ export async function updateTransaction(
   // been posted from them and no book refers to them. Replacing them wholesale
   // is what "edit the document" means. The no-delete rule protects master data
   // and posted records, neither of which these are.
-  await prisma.$transaction(async (tx) => {
-    await tx.finCashBankTransactionLine.deleteMany({
-      where: { transaction_id: id },
-    });
-    await tx.finCashBankTransaction.update({
-      where: { id },
-      data: {
-        company_id: checked.companyId,
-        cash_bank_id: checked.cashBankId,
-        currency_id: checked.currencyId,
-        exchange_rate: checked.rate,
-        cash_bank_layer_id: checked.layerId,
-        document_date: new Date(`${dated.date}T00:00:00Z`),
-        transaction_amount: settled.total,
-        transaction_base_amount: roundBase(settled.total * checked.rate),
-        note: values.note?.trim() || null,
-        updated_by: g.actor.user.id,
-        lines: {
-          create: settled.lines.map((l, i) => ({
-            sequence_no: i + 1,
-            source_doc_type_id: docType,
-            source_doc_id: l.budgetId,
-            outstanding_amount: l.outstanding,
-            settlement_amount: l.amount,
-            settlement_base_amount: roundBase(l.amount * checked.rate),
-            settlement_exchange_rate: checked.rate,
-            transaction_amount: l.amount,
-            transaction_base_amount: roundBase(l.amount * checked.rate),
-            created_by: g.actor.user.id,
-            items: {
-              create: l.items.map((it, k) => ({
-                sequence_no: k + 1,
-                sub_ledger_balance_id: it.itemId,
-                amount: it.amount,
-                created_by: g.actor.user.id,
-              })),
-            },
-          })),
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.finCashBankTransactionLine.deleteMany({
+        where: { transaction_id: id },
+      });
+      await tx.finCashBankTransaction.update({
+        where: { id },
+        data: {
+          company_id: checked.companyId,
+          cash_bank_id: checked.cashBankId,
+          currency_id: checked.currencyId,
+          exchange_rate: checked.rate,
+          cash_bank_layer_id: checked.layerId,
+          document_date: new Date(`${dated.date}T00:00:00Z`),
+          transaction_amount: settled.total,
+          transaction_base_amount: roundBase(settled.total * checked.rate),
+          note: values.note?.trim() || null,
+          updated_by: g.actor.user.id,
+          lines: { create: draftLines(settled.lines, checked.rate, docType, g.actor.user.id) },
         },
-      },
+      });
+      await valueDraft(tx, id, g.actor.user.id);
     });
-  });
+  } catch (error) {
+    if (error instanceof DraftNotValued) return { ok: false, errors: error.errors };
+    throw error;
+  }
 
   await audit(id, "UPDATE", "update", g.actor.user.id);
   revalidateFinance(id, checked.direction);
   return { ok: true, id };
+}
+
+/**
+ * A draft's lines and their chosen items, as the insert writes them. The base
+ * figures here are the header kurs applied to the face — `valueDraft` then
+ * replaces them with what Post would write. Only an anak draft keeps them,
+ * because its cash side is the induk's to choose.
+ */
+function draftLines(
+  lines: { budgetId: number; amount: number; outstanding: number; items: { itemId: number; amount: number }[] }[],
+  rate: number,
+  docType: number,
+  actorId: number
+) {
+  return lines.map((l, i) => ({
+    sequence_no: i + 1,
+    source_doc_type_id: docType,
+    source_doc_id: l.budgetId,
+    outstanding_amount: l.outstanding,
+    settlement_amount: l.amount,
+    settlement_base_amount: roundBase(l.amount * rate),
+    settlement_exchange_rate: rate,
+    transaction_amount: l.amount,
+    transaction_base_amount: roundBase(l.amount * rate),
+    created_by: actorId,
+    items: {
+      create: l.items.map((it, k) => ({
+        sequence_no: k + 1,
+        sub_ledger_balance_id: it.itemId,
+        amount: it.amount,
+        created_by: actorId,
+      })),
+    },
+  }));
 }
 
 export type TransitionResult =

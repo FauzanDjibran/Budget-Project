@@ -3979,6 +3979,14 @@ below in outline because the half of it that still holds is easy to lose.**
   money move without the plan recording it, or a plan record a realization that never
   reached a book — and the Cash Bank Book's whole value is that its balance can always
   be re-derived from its entries.
+- **A draft states what Post will write.** Saving a direct-route draft runs the same
+  `planPosting` (`valueDraft` in `finance.ts`, inside the save's transaction), so each
+  line's and each item's settlement base, kurs, transaction base and FX difference are
+  the figures Post would write if it ran now — never amount × the header kurs, never a
+  placeholder. The user's rule. Post re-values and writes them again, because a layer
+  or an item can move while the draft waits. A missing mapping does not stop the save
+  (rule 50 is Post's). An anak draft is not valued: its cash side is the induk's
+  choice at confirmation.
 - **Impact:** Budgets are re-read *at Post*, not trusted from when the document was
   drafted: one that another document has since closed refuses the post and nothing is
   written. The rule lives in the data module rather than inside the Server Action so

@@ -9,6 +9,7 @@ import {
   checkLines,
   eligibleBudgets,
   transactingCompany,
+  valueDraft,
 } from "../src/lib/siba/finance";
 import {
   TRANSACTION_TRANSITIONS,
@@ -2548,6 +2549,74 @@ describe("a line lowering a position settles the open item it names", () => {
         fx > 0 ? "a gain on the credit side" : "a loss on the debit side"
       );
     }
+  });
+
+  test("a saved draft already states the figures Post writes", async () => {
+    // A Piutang lent at 15.000 and collected at 13.000. The draft used to store
+    // amount × the document kurs on both sides and nil on the item, so it read
+    // as settled at 13.000 with no difference until Post corrected it.
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    const rupiah = await makeCashBank({ opening: 50_000_000 });
+    const valas = await makeCashBank({ currencyId: otherCurrency });
+    const lent = await makeBudget({
+      categoryLabel: "Piutang",
+      type: "Out",
+      partnerId: partner,
+      amount: 1_000,
+      currencyId: otherCurrency,
+    });
+    await post(
+      await makeDraft({
+        transaction_type: "Out" as const,
+        cashBankId: rupiah,
+        currencyId: otherCurrency,
+        rate: 15_000,
+        lines: [{ budgetId: lent, amount: 1_000, outstanding: 1_000 }],
+      })
+    );
+    const item = await openItem(await bookId("Piutang"), partner, otherCurrency);
+    const collected = await makeBudget({
+      categoryLabel: "Piutang",
+      type: "In",
+      partnerId: partner,
+      amount: 1_000,
+      currencyId: otherCurrency,
+    });
+    const doc = await makeDraft({
+      transaction_type: "In" as const,
+      cashBankId: valas,
+      rate: 13_000,
+      lines: [{ budgetId: collected, amount: 1_000, outstanding: 1_000, itemId: item }],
+    });
+    await prisma.$transaction((tx) => valueDraft(tx, doc, actor));
+
+    const figures = async () => {
+      const line = await prisma.finCashBankTransactionLine.findFirstOrThrow({
+        where: { transaction_id: doc },
+        include: { items: true },
+      });
+      return {
+        settlementBase: line.settlement_base_amount.toNumber(),
+        settlementRate: line.settlement_exchange_rate?.toNumber(),
+        transactionBase: line.transaction_base_amount.toNumber(),
+        fx: line.fx_difference.toNumber(),
+        items: line.items.map((it) => [
+          it.settlement_base_amount.toNumber(),
+          it.transaction_base_amount.toNumber(),
+          it.fx_difference.toNumber(),
+        ]),
+      };
+    };
+    const drafted = await figures();
+    assert.deepEqual(drafted, {
+      settlementBase: 15_000_000,
+      settlementRate: 15_000,
+      transactionBase: 13_000_000,
+      fx: -2_000_000,
+      items: [[15_000_000, 13_000_000, -2_000_000]],
+    });
+    await post(doc);
+    assert.deepEqual(await figures(), drafted, "Post writes what the draft stated");
   });
 
   test("a payment larger than the resource holds is refused, not thrown", async () => {

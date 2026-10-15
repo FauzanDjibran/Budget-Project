@@ -1588,6 +1588,12 @@ async function planPosting(
     valuation?: Valuation;
     /** False skips resolving the Selisih Kurs account — the same check. */
     resolveFx?: boolean;
+    /**
+     * Valuing a Draft as it is saved. A missing mapping is Post's refusal, not
+     * the draft's (§10 rule 50): the figures are still computed, and the
+     * counter account is left unresolved because no journal is written.
+     */
+    draft?: boolean;
   }
 ): Promise<
   { ok: true; plan: PostingPlan } | { ok: false; errors: Record<string, string> }
@@ -1603,7 +1609,8 @@ async function planPosting(
 
   const lineBudgets = doc.lines.map((l) => budgets.get(l.source_doc_id)!);
   const mapped = await lineAccountIds(doc.company_id, lineBudgets);
-  if (!mapped.ok) return mapped;
+  if (!mapped.ok && !options.draft) return mapped;
+  const accounts = mapped.ok ? mapped.accounts : new Map<number, number>();
 
   const direction = doc.transaction_type as "In" | "Out";
   const books = await loadSubledgers();
@@ -1729,7 +1736,7 @@ async function planPosting(
       // receipt turns it over. On a line settling items it is the sum of
       // theirs, for reading; each item's is journaled on its own.
       fxDifference: fx,
-      counterAccountId: mapped.accounts.get(budget.id)!,
+      counterAccountId: accounts.get(budget.id) ?? 0,
       book,
       items: settled,
     });
@@ -2280,9 +2287,22 @@ async function writeRealizationLines(
     }
   }
 
-  // What the document was worth, and what each line's share of that was —
-  // written at Post rather than at Draft, because a Draft has no kurs it can
-  // rely on and nothing to be worth anything against.
+  // What the document was worth, and what each line's share of that was. The
+  // draft stored the same figures when it was saved; written again here
+  // because Post re-values against the books as they stand now.
+  await writeLineValuation(tx, plan, ctx.actorId);
+}
+
+/**
+ * Each line's and each item's base figures, as a plan valued them — written
+ * when a draft is saved, so the document states what Post will write, and
+ * again by Post, which re-values first.
+ */
+async function writeLineValuation(
+  tx: Prisma.TransactionClient,
+  plan: PostingPlan,
+  actorId: number
+): Promise<void> {
   for (const share of plan.lines) {
     await tx.finCashBankTransactionLine.update({
       where: { id: share.lineId },
@@ -2293,7 +2313,7 @@ async function writeRealizationLines(
           : plan.rate,
         transaction_base_amount: share.transactionBase,
         fx_difference: share.fxDifference,
-        updated_by: ctx.actorId,
+        updated_by: actorId,
       },
     });
     for (const it of share.items) {
@@ -2303,11 +2323,60 @@ async function writeRealizationLines(
           settlement_base_amount: it.settlementBase,
           transaction_base_amount: it.transactionBase,
           fx_difference: it.fxDifference,
-          updated_by: ctx.actorId,
+          updated_by: actorId,
         },
       });
     }
   }
+}
+
+/** A draft that could not be valued — rolls its save back. */
+export class DraftNotValued extends Error {
+  constructor(readonly errors: Record<string, string>) {
+    super(Object.values(errors)[0] ?? "Dokumen tidak dapat divaluasi.");
+  }
+}
+
+/**
+ * Values a direct-route draft as it is saved, inside the save's transaction:
+ * the same `planPosting` Post runs, so every line and item states the base,
+ * the kurs and the FX difference Post would write if it ran now. Post still
+ * re-values — a layer or an item may move while the draft waits — and writes
+ * the figures again.
+ *
+ * The funded route is not valued here: the anak's cash side is the induk's
+ * choice at confirmation.
+ */
+export async function valueDraft(
+  tx: Prisma.TransactionClient,
+  transactionId: number,
+  actorId: number
+): Promise<void> {
+  const doc = await tx.finCashBankTransaction.findUnique({
+    where: { id: transactionId },
+    include: {
+      lines: { include: { items: { orderBy: { sequence_no: "asc" } } } },
+      currency: { select: { currency_label: true } },
+      cash_bank: { select: { currency: { select: { currency_label: true } } } },
+    },
+  });
+  if (!doc || !doc.cash_bank_id || !doc.lines.length) return;
+
+  const budgets = await budgetsByIds(doc.lines.map((l) => l.source_doc_id));
+  const byId = new Map(budgets.map((b) => [b.id, b]));
+  const planned = await planPosting(doc, byId, {
+    induk: true,
+    draft: true,
+    resolveFx: false,
+  });
+  if (!planned.ok) throw new DraftNotValued(planned.errors);
+  const plan = planned.plan;
+
+  await writeLineValuation(tx, plan, actorId);
+  await tx.finCashBankTransaction.update({
+    where: { id: transactionId },
+    data: { exchange_rate: plan.rate, transaction_base_amount: plan.base },
+  });
 }
 
 // ----------------------------------------------------- funded posting (anak)
