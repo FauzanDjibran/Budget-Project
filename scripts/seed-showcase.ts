@@ -13,7 +13,12 @@
  * reads like a real group and the transactions that make every report say
  * something.
  *
- * **Anything posted goes through the real engine.** `applyPosting`,
+ * **Anything posted goes through the real engine.** The go-live setup is the
+ * one exception: the closed year's cash and its Opening Balance are stated,
+ * not posted, the way a real implementation states the balances it starts
+ * from (`injectClosedYear`).
+ *
+ * Posting itself: `applyPosting`,
  * `applyTransfer`, `confirmFundingRequest` and `applyItemAdjustment` write the Cash Bank Book, the
  * subject books, the journal and the rate layers together, inside one
  * transaction each. Inserting those rows directly would be faster and would
@@ -25,14 +30,18 @@
  *
  * **`--master-only`** (`npm run db:seed-master`) stops once the setup is in:
  * the Companies' names, the foreign currency, the Partners, both charts of
- * accounts, the mappings, Mapping Account System and the System Defaults, the
- * fiscal years and the Cash & Bank resources — at nil, so their books hold no
- * entry. No Budget, no document, no journal. The full showcase run afterwards
+ * accounts, the mappings, Mapping Account System and the System Defaults —
+ * transcribed from the deployed database — the previous year Closed and the
+ * current one Open, the Cash & Bank resources with their opening saldo and
+ * rate layers, and the current year's Opening Balance carrying that cash. No
+ * Budget, no document, no journal. The full showcase run afterwards
  * on the same database carries on from exactly there.
  */
 import "dotenv/config";
-import { openCashBankBook } from "@/lib/siba/cash-bank";
-import { ensureFiscalPeriods, fiscalYearShape } from "@/lib/siba/fiscal";
+import { openCashBankBook, recordCashBankEntry } from "@/lib/siba/cash-bank";
+import { openLayer } from "@/lib/siba/cash-bank-layers";
+import { ensureFiscalPeriods, fiscalYearShape, recordFiscalClosing } from "@/lib/siba/fiscal";
+import { writeOpeningBalance } from "@/lib/siba/opening-balance";
 import { syncControlAccounts } from "@/lib/siba/records";
 import { writeSystemDefaults } from "@/lib/siba/system-settings";
 import { systemAccountIds, writeSystemAccounts } from "@/lib/siba/system-account-data";
@@ -60,7 +69,6 @@ import {
 } from "@/lib/siba/item-reclass";
 import { subledgerForCategory, subledgerMovement } from "@/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
-import { executeClosing } from "@/lib/siba/closing";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 
@@ -95,29 +103,31 @@ type Group = { kelompok: string; balance: Balance; accounts: AccountNode[] };
 // Piutang per Partner Category, Prive for a Stakeholder, Investasi and Hasil
 // Investasi per Cabang, plus general Asset and Biaya accounts.
 
+/**
+ * Kas & Bank, the one kelompok where the two charts differ. The induk holds
+ * every Cash & Bank resource, so its bank accounts are named after them — one
+ * account per resource, the currency readable from the chart rather than only
+ * from the resource. The anak holds none (§10 rule 38) and keeps the generic
+ * names. Both transcribed from the deployed database, in the order the
+ * accounts were created, so the numbers come out the same.
+ */
+const cashGroup = (banks: string[]): Group => ({
+  kelompok: "1.1.1",
+  balance: "Debit",
+  accounts: [
+    {
+      name: "Kas",
+      header: true,
+      children: [{ name: "Kas Besar" }, { name: "Kas Kecil" }],
+    },
+    { name: "Bank", header: true, children: banks.map((name) => ({ name })) },
+  ],
+});
+const INDUK_BANKS = ["Mandiri IDR", "BCA IDR", "BCA USD", "Mandiri USD"];
+const ANAK_BANKS = ["Bank Mandiri", "Bank BCA", "Bank BCA Valas"];
+
+/** The rest of the chart, the same for both Companies. */
 const CHART: Group[] = [
-  {
-    kelompok: "1.1.1",
-    balance: "Debit",
-    accounts: [
-      {
-        name: "Kas",
-        header: true,
-        children: [{ name: "Kas Besar" }, { name: "Kas Kecil" }],
-      },
-      {
-        name: "Bank",
-        header: true,
-        children: [
-          { name: "Bank Mandiri" },
-          { name: "Bank BCA" },
-          // A foreign resource posts to its own account, so the currency is
-          // readable from the chart rather than only from the resource.
-          { name: "Bank BCA Valas" },
-        ],
-      },
-    ],
-  },
   {
     kelompok: "1.1.3",
     balance: "Debit",
@@ -321,7 +331,6 @@ const CHART: Group[] = [
   },
 ];
 
-/** Two per Partner Category, named plainly because they are placeholders. */
 /**
  * The two Companies, named. They are seeded as INDUK / "Perusahaan Induk",
  * which is a placeholder on every Company badge, report header and journal in
@@ -336,53 +345,48 @@ const COMPANIES: { parent: boolean; label: string; name: string }[] = [
   { parent: false, label: "SBTC", name: "SBTC" },
 ];
 
+/** The induk's Partners, transcribed from the deployed database. */
 const PARTNERS: [label: string, name: string, category: string][] = [
-  ["SBY", "Cabang Surabaya", "Cabang"],
-  ["MDN", "Cabang Medan", "Cabang"],
-  ["MKS", "Cabang Makassar", "Cabang"],
-  ["BDS", "Budi Santoso", "Karyawan"],
-  ["SRW", "Siti Rahmawati", "Karyawan"],
-  ["AGW", "Agus Wijaya", "Karyawan"],
-  ["SYH", "H. Suryanto Halim", "Stakeholder"],
-  ["RDK", "Ratna Dewi Kusuma", "Stakeholder"],
-  ["MAS", "PT Mitra Abadi Sentosa", "Stakeholder"],
-  ["ADF", "PT Adib Food", "Stakeholder"],
+  ["DAP", "PT. Delta Atsiri Prima", "Cabang"],
+  ["DESTEX", "PT. Delta Surya Textile", "Cabang"],
+  ["AKUI", "PT. AKUI Birdnest", "Cabang"],
+  ["EMP-001", "Fauzan", "Karyawan"],
+  ["EMP-002", "Rizal", "Karyawan"],
+  ["EMP-003", "Mikhail", "Karyawan"],
+  ["MR.X", "MR.X", "Stakeholder"],
   // Whoever sent or received money nobody can place yet.
-  ["BTI", "Belum Teridentifikasi", "Lainnya"],
+  ["Lainnya", "Lainnya", "Lainnya"],
 ];
 
 /**
- * The anak's own Partners.
+ * The anak's own Partners: one generic per Partner Category.
  *
  * A Partner belongs to one Company and cannot be moved between them, and a
  * Budget's Partner must belong to that Budget's Company (§10 rule 26) — so the
  * anak needs its own, or its Partner list is empty and its Budgets can only use
- * the two categories that name nobody. It also makes the Company filter on the
- * Partner list a control that does something.
+ * the two categories that name nobody. MR.X and Lainnya repeat the induk's
+ * names; `partner_label` is unique across both Companies, so their labels
+ * carry the Company.
  */
 const ANAK_PARTNERS: [label: string, name: string, category: string][] = [
-  ["DKW", "Dedi Kurniawan", "Karyawan"],
-  ["LSW", "Lina Setiawati", "Karyawan"],
-  ["HPT", "Hendra Pranata", "Stakeholder"],
+  ["CAB-A", "Cabang A", "Cabang"],
+  ["KRY-A", "Karyawan A", "Karyawan"],
+  ["MR.X-SBTC", "MR.X", "Stakeholder"],
+  ["Lainnya-SBTC", "Lainnya", "Lainnya"],
 ];
 
 const PARTNER_NOTE = "";
 
 /**
- * The calendar the showcase lives in: the current year and the three before
- * it, all four Open — because the business works back through its history by
- * backdating — and the oldest **closed by both Companies**, so the Neraca of
- * the current year carries one Laba/Rugi line per unclosed year and the chain
- * of Opening Balance snapshots has a real link in it.
+ * The calendar: the current year Open, and the one before it **Closed** by
+ * both Companies — so the current year opens from an Opening Balance whose
+ * source is a closed year. Nothing was posted in the closed year; it exists
+ * to hand the current year its cash.
  */
 const YEAR = new Date().getUTCFullYear();
-const FIRST_YEAR = YEAR - 3;
-const HISTORY_YEARS = [FIRST_YEAR, FIRST_YEAR + 1, FIRST_YEAR + 2];
-const CLOSED_YEAR = FIRST_YEAR;
-const ALL_YEARS = [...HISTORY_YEARS, YEAR];
+const CLOSED_YEAR = YEAR - 1;
+const ALL_YEARS = [CLOSED_YEAR, YEAR];
 
-/** The day the resources were registered: the first working day of the history. */
-const OPENING_DATE = `${FIRST_YEAR}-01-02`;
 const on = (year: number, month: number, date: number) =>
   `${year}-${String(month).padStart(2, "0")}-${String(date).padStart(2, "0")}`;
 /** A day in the current year. */
@@ -395,14 +399,16 @@ const FOREIGN = { label: "USD", name: "Dolar Amerika Serikat" };
  * Where the money is. All on the induk: the anak holds no Cash & Bank by
  * design, and reaches money through a Funding Request (§10 rule 38).
  *
- * **Every one opens at nil.** The group's money arrives the way it really
- * did — the founders' setoran, posted as a Cash Bank Transaction in the first
- * week of the history — so the Cash Bank Book, the General Ledger and the
- * Neraca agree from the first day. An opening balance would write the Cash
- * Bank Book alone, and a go-live Opening Balance snapshot for the ledger half
- * is not carried through a close (`closingBalances` reads journal lines only),
- * so the closed year would hand the next one a Neraca missing its cash. The
- * foreign account's layers likewise come from real Pembelian Valas.
+ * **Each opens with the saldo it held at the end of the closed year**, dated
+ * inside that year so every report of the current year reads it as Saldo
+ * Awal. A foreign resource opens one rate layer per acquisition — two, at
+ * different kurs, so a payment has a real choice to make. The same figures,
+ * in base, are the cash lines of the current year's Opening Balance
+ * (`injectClosedYear`), which is what makes Buku Kas & Bank and the Neraca
+ * agree from the first day.
+ *
+ * Injected rather than posted, deliberately: this is go-live setup, the way a
+ * real implementation states the balances it starts from.
  */
 const CASH_BANKS: {
   label: string;
@@ -410,11 +416,25 @@ const CASH_BANKS: {
   type: "Cash" | "Bank";
   currency: "IDR" | "USD";
   account: string;
+  /** Each is one `Opening` entry in the book and, on a foreign resource, one layer. */
+  openings: { date: [month: number, day: number]; amount: number; rate: number }[];
 }[] = [
-  { label: "KAS-PST", name: "Kas Besar Kantor Pusat", type: "Cash", currency: "IDR", account: "Kas Besar" },
-  { label: "BCA-OPS", name: "BCA Giro Operasional", type: "Bank", currency: "IDR", account: "Bank BCA" },
-  { label: "MDR-PAY", name: "Mandiri Giro Payroll", type: "Bank", currency: "IDR", account: "Bank Mandiri" },
-  { label: "BCA-USD", name: "BCA Valas USD", type: "Bank", currency: "USD", account: "Bank BCA Valas" },
+  { label: "KAS", name: "Kas", type: "Cash", currency: "IDR", account: "Kas Besar",
+    openings: [{ date: [12, 31], amount: 75_000_000, rate: 1 }] },
+  { label: "BCA-IDR", name: "BCA IDR", type: "Bank", currency: "IDR", account: "BCA IDR",
+    openings: [{ date: [12, 31], amount: 3_500_000_000, rate: 1 }] },
+  { label: "MDR-IDR", name: "Mandiri IDR", type: "Bank", currency: "IDR", account: "Mandiri IDR",
+    openings: [{ date: [12, 31], amount: 1_200_000_000, rate: 1 }] },
+  { label: "BCA-USD", name: "BCA USD", type: "Bank", currency: "USD", account: "BCA USD",
+    openings: [
+      { date: [11, 14], amount: 25_000, rate: 15_750 },
+      { date: [12, 16], amount: 20_000, rate: 16_300 },
+    ] },
+  { label: "MDR-USD", name: "Mandiri USD", type: "Bank", currency: "USD", account: "Mandiri USD",
+    openings: [
+      { date: [11, 20], amount: 10_000, rate: 15_900 },
+      { date: [12, 23], amount: 8_000, rate: 16_450 },
+    ] },
 ];
 
 /**
@@ -629,14 +649,35 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
         },
         select: { id: true },
       });
+      // The book's own registration path writes the balance row and the
+      // first opening; each further acquisition is one more `Opening` entry
+      // and its own layer, never merged into the first (§10 rule 71).
+      const [first, ...rest] = spec.openings;
       await openCashBankBook(tx, {
         cashBankId: created.id,
-        openingBalance: 0,
-        rate: 1,
+        openingBalance: first.amount,
+        rate: first.rate,
         layered,
-        date: OPENING_DATE,
+        date: on(CLOSED_YEAR, ...first.date),
         actorId: actor,
       });
+      for (const o of rest) {
+        const date = on(CLOSED_YEAR, ...o.date);
+        const note = "Saldo awal saat resource didaftarkan.";
+        await recordCashBankEntry(tx, {
+          cashBankId: created.id,
+          date,
+          type: "Opening",
+          direction: "In",
+          amount: o.amount,
+          rate: o.rate,
+          note,
+          actorId: actor,
+        });
+        if (layered) {
+          await openLayer(tx, { cashBankId: created.id, date, rate: o.rate, foreign: o.amount, note, actorId: actor });
+        }
+      }
       return created;
     });
     await audit("m_cash_bank", row.id, actor);
@@ -656,7 +697,7 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
   // The resource a new Realisasi starts on: the operating current account,
   // which is in the base currency a new Realisasi starts in.
   const operating = await prisma.mCashBank.findFirst({
-    where: { company_id: companyId, cash_bank_label: "BCA-OPS" },
+    where: { company_id: companyId, cash_bank_label: "BCA-IDR" },
     select: { id: true },
   });
   if (operating) {
@@ -711,32 +752,74 @@ async function ensureFiscalYear(year: number, actor: number) {
 }
 
 /**
- * The oldest year, closed by both Companies through the real engine: the
- * `CLS-` journal moves each Company's result into Laba Ditahan, the next
- * year's `OPB-` snapshot is written, and the year rolls to Closed once the
- * second Company is done. Skipped for a Company that already closed it.
+ * The closed year, injected: both Companies' closing records, and the
+ * induk's `OPB-` snapshot for the current year sourced from it, carrying the
+ * cash. Go-live setup rather than a run of `executeClosing` — the closed year
+ * holds no journal, so a real close would have nothing to hand on; the cash
+ * was stated, not posted.
+ *
+ * Each cash account is debited exactly the base its Cash Bank Book holds and
+ * Modal Disetor takes the other side, so the Neraca opens on the same figures
+ * Buku Kas & Bank does. Skipped once the year is closed.
  */
-async function closeOldestYear(actor: number) {
-  const year = await prisma.accFiscalYear.findFirstOrThrow({
-    where: { year_label: String(CLOSED_YEAR) },
-    select: { id: true },
-  });
+async function injectClosedYear(actor: number) {
+  const [closed, current] = await Promise.all(
+    [CLOSED_YEAR, YEAR].map((y) =>
+      prisma.accFiscalYear.findFirstOrThrow({
+        where: { year_label: String(y) },
+        select: { id: true, status: true, start_date: true },
+      })
+    )
+  );
+  if (closed.status === "Closed") return;
+
   const companies = await prisma.sysCompany.findMany({
     orderBy: { is_parent: "desc" },
-    select: { id: true, company_label: true },
+    select: { id: true, is_parent: true },
   });
-  for (const company of companies) {
-    const done = await prisma.accFiscalClosing.findFirst({
-      where: { fiscal_year_id: year.id, company_id: company.id, status: "Closed" },
-      select: { id: true },
-    });
-    if (done) continue;
-    const result = await executeClosing(company.id, year.id, actor);
-    if (!result.ok) {
-      throw new Error(`Closing ${CLOSED_YEAR} for ${company.company_label} refused: ${result.error}`);
-    }
-    tally("fiscal year closings");
+  const induk = companies.find((c) => c.is_parent)!;
+
+  const balances = await prisma.cashBankBalance.findMany({
+    where: { cash_bank: { company_id: induk.id } },
+    select: { base_balance: true, cash_bank: { select: { account_id: true } } },
+  });
+  const perAccount = new Map<number, number>();
+  for (const b of balances) {
+    const id = b.cash_bank.account_id;
+    perAccount.set(id, (perAccount.get(id) ?? 0) + b.base_balance.toNumber());
   }
+  const total = [...perAccount.values()].reduce((t, v) => t + v, 0);
+  const equity = await prisma.accAccount.findFirstOrThrow({
+    where: { company_id: induk.id, account_name: "Modal Disetor" },
+    select: { id: true },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    const opening = total
+      ? await writeOpeningBalance(tx, {
+          companyId: induk.id,
+          fiscalYearId: current.id,
+          sourceFiscalYearId: closed.id,
+          postingDate: current.start_date,
+          lines: [
+            ...[...perAccount].map(([accountId, base]) => ({ accountId, debit: base, credit: 0 })),
+            { accountId: equity.id, debit: 0, credit: total },
+          ],
+          actorId: actor,
+        })
+      : null;
+    for (const company of companies) {
+      await recordFiscalClosing(tx, {
+        fiscalYearId: closed.id,
+        companyId: company.id,
+        closingJournalId: null,
+        openingBalanceId: company.is_parent ? opening?.id ?? null : null,
+        actorId: actor,
+      });
+    }
+  });
+  tally("fiscal year closings", companies.length);
+  tally("opening balances");
 }
 
 // ------------------------------------------------------- what the year held
@@ -779,9 +862,10 @@ async function insertBudgets(
     (await prisma.sysBudgetCategory.findMany({ select: { id: true, category_label: true } }))
       .map((c) => [c.category_label, c.id])
   );
+  // Keyed by Company too: both Companies have a MR.X and a Lainnya.
   const partners = new Map(
-    (await prisma.mPartner.findMany({ select: { id: true, partner_name: true } }))
-      .map((x) => [x.partner_name, x.id])
+    (await prisma.mPartner.findMany({ select: { id: true, partner_name: true, company_id: true } }))
+      .map((x) => [`${x.company_id}|${x.partner_name}`, x.id])
   );
   const currencies = new Map(
     (await prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }))
@@ -812,7 +896,10 @@ async function insertBudgets(
         // Only a classified budget carries a classification: Open, or Closed
         // by the realization that follows (§10 rules 25–26).
         category_id: classified ? categories.get(spec.category)! : null,
-        partner_id: classified && spec.partner ? partners.get(spec.partner)! : null,
+        partner_id:
+          classified && spec.partner
+            ? partners.get(`${idOf(spec.company)}|${spec.partner}`)!
+            : null,
         status: spec.status === "Closed" ? "Open" : spec.status,
         created_by: actor,
       },
@@ -1203,7 +1290,7 @@ async function postConversion(spec: ConversionSpec, actor: number) {
   });
   const book = subledgerForCategory(await loadSubledgers(), category.id)!;
   const partner = await prisma.mPartner.findFirstOrThrow({
-    where: { partner_name: spec.partner },
+    where: { partner_name: spec.partner, company: { is_parent: true } },
     select: { id: true },
   });
 
@@ -1315,7 +1402,7 @@ async function postReclass(spec: ReclassSpec, budgets: Map<string, number>, acto
   const categoryId = async (label: string) =>
     (await prisma.sysBudgetCategory.findFirstOrThrow({ where: { category_label: label }, select: { id: true } })).id;
   const partnerId = async (name: string) =>
-    (await prisma.mPartner.findFirstOrThrow({ where: { partner_name: name }, select: { id: true } })).id;
+    (await prisma.mPartner.findFirstOrThrow({ where: { partner_name: name, company: { is_parent: true } }, select: { id: true } })).id;
   const budget = (key: string) => {
     const id = budgets.get(key);
     if (!id) throw new Error(`No Budget "${key}" for "${spec.note}".`);
@@ -1440,14 +1527,11 @@ async function fund(spec: FundingSpec, actor: number) {
 
 // -------------------------------------------------------- the manual journals
 //
-// Real accounting that is not a cash movement anybody could raise a Budget for:
-// depreciation and an accrual. Both go through the same engine an automatic
-// posting uses, so the balance rule and the control-account rule apply to them
-// exactly as they do to everything else.
-//
-// Neither touches an account a book reconciles against — that is what a manual
-// journal may never do (§10 rule 79), and it is why these two are depreciation
-// and an accrual rather than anything involving cash.
+// Real accounting that is not a cash movement anybody could raise a Budget for
+// — an accrual. It goes through the same engine an automatic posting uses, so
+// the balance rule and the control-account rule apply to it exactly as they do
+// to everything else, and it touches no account a book reconciles against
+// (§10 rule 79).
 
 type ManualSpec = {
   description: string;
@@ -1456,53 +1540,6 @@ type ManualSpec = {
   post: boolean;
   lines: { account: string; debit?: number; credit?: number; description: string }[];
 };
-
-/** A quarter's depreciation on the fixed assets the Asset budgets bought. */
-function depreciation(year: number, quarter: 1 | 2 | 3 | 4, amount: number): ManualSpec {
-  const end = [on(year, 3, 31), on(year, 6, 30), on(year, 9, 30), on(year, 12, 31)][quarter - 1];
-  const text = `Penyusutan kendaraan dan inventaris kuartal ${quarter} ${year}`;
-  return {
-    description: `Penyusutan aset tetap kuartal ${["I", "II", "III", "IV"][quarter - 1]} ${year}`,
-    date: end,
-    post: true,
-    lines: [
-      { account: "Biaya Penyusutan", debit: amount, description: text },
-      { account: "Akumulasi Penyusutan Kendaraan dan Inventaris", credit: amount, description: text },
-    ],
-  };
-}
-
-/**
- * December's electricity and telephone, accrued at the year-end because the
- * bill arrives in January — and reversed on the second of January, so the
- * bill paid then is the expense of record without being counted twice. The
- * accrual/reversal pair is ordinary year-end work nobody raises a Budget for.
- */
-function accrual(year: number, amount: number): ManualSpec {
-  const text = `Tagihan listrik dan telepon Desember ${year} belum diterima`;
-  return {
-    description: `Akrual listrik dan telepon Desember ${year}`,
-    date: on(year, 12, 31),
-    post: true,
-    lines: [
-      { account: "Biaya Listrik, Air dan Telepon", debit: amount, description: text },
-      { account: "Hutang Listrik dan Telepon", credit: amount, description: text },
-    ],
-  };
-}
-
-function reversal(accruedYear: number, amount: number): ManualSpec {
-  const text = `Pembalikan akrual listrik dan telepon Desember ${accruedYear}`;
-  return {
-    description: text,
-    date: on(accruedYear + 1, 1, 2),
-    post: true,
-    lines: [
-      { account: "Hutang Listrik dan Telepon", debit: amount, description: text },
-      { account: "Biaya Listrik, Air dan Telepon", credit: amount, description: text },
-    ],
-  };
-}
 
 
 /** Writes one manual journal through the real engine, posting it when asked. */
@@ -1567,8 +1604,8 @@ async function writeManualJournal(spec: ManualSpec, actor: number) {
 //
 // An adjustment moves a Partner's standing position without cash (§10 rules
 // 97–102), so each one here lands on a position a document above already
-// opened: Budi Santoso's advance in Piutang, H. Suryanto Halim's setoran in
-// Hutang, Cabang Surabaya's titipan. A Tambah opens a new open item; a Kurangi
+// opened: Fauzan's advance in Piutang, MR.X's setoran in
+// Hutang, PT. Delta Atsiri Prima's titipan. A Tambah opens a new open item; a Kurangi
 // settles the Partner's open items — the oldest first, which is the script
 // standing in for the user who would tick them. Posted ones go through
 // `applyItemAdjustment`, which writes the subject-book entries and the journal
@@ -1606,7 +1643,7 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
     select: { id: true },
   });
   const partner = await prisma.mPartner.findFirstOrThrow({
-    where: { partner_name: spec.partner },
+    where: { partner_name: spec.partner, company: { is_parent: true } },
     select: { id: true, company_id: true },
   });
 
@@ -1700,33 +1737,19 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
 }
 
 
-// ------------------------------------------------------------ the four years
+// ------------------------------------------------------------- the year
 //
-// Each year is a plan: the Budgets it held, and the events that happened to
+// The year is a plan: the Budgets it held, and the events that happened to
 // them, **in date order**. Order is not cosmetic. A book refuses to go below
 // zero and a layer to be overdrawn at the moment of posting, so a payroll run
 // posted before the transfer that funded it would be refused exactly as it
 // would be for a user — the runner sorts by date and posts in that order.
 //
-// The story, told by the reports rather than by this comment:
-//
-//   - the first year is the founding — the founders' money in, the gudang fitted
-//     out, Cabang Surabaya capitalised, the first dollars bought — and it runs a
-//     loss, which is why its Laba/Rugi line reads negative until the close;
-//   - the second is the expansion — PT Mitra Abadi Sentosa lends, Cabang Medan
-//     is capitalised, the forklift arrives, Surabaya pays its first bagi hasil,
-//     the first import is paid in dollars and some dollars are sold at a gain;
-//   - the third is the import year — more dollars bought at a dearer rate, two
-//     payments drawn on two layers, the oldest layer sold down to nothing, part
-//     of H. Suryanto Halim's setoran handed back;
-//   - the current year is the one being worked in, and the only one holding
-//     Drafts, a Pending Funding Request, a Submitted Budget and Cancelled
-//     documents. A year being closed may not hold a draft journal, and the live
-//     states belong where somebody is still working anyway.
-//
-// Only the induk holds cash; the anak's own spending reaches money through a
-// Funding Request each year, which is what keeps the intercompany bridge
-// moving on both Companies' Neraca.
+// It starts from the cash the closed year handed over (`CASH_BANKS`), and
+// holds every live state: Drafts, a Pending Funding Request, a Submitted
+// Budget and Cancelled documents. Only the induk holds cash; the anak's own
+// spending reaches money through a Funding Request, which is what keeps the
+// intercompany bridge moving on both Companies' Neraca.
 
 type CbtEvent = {
   kind: "cbt";
@@ -1767,165 +1790,6 @@ const journal = (spec: ManualSpec): Event => ({ kind: "journal", date: spec.date
 const adjustment = (spec: AdjustmentSpec): Event => ({ kind: "adjustment", date: spec.date, spec });
 const reclass = (spec: ReclassSpec): Event => ({ kind: "reclass", date: spec.date, spec });
 
-type BudgetRow = Omit<BudgetSpec, "date"> & { date: [month: number, day: number] };
-const budgetsOf = (year: number, rows: BudgetRow[]): BudgetSpec[] =>
-  rows.map((b) => ({ ...b, date: on(year, b.date[0], b.date[1]) }));
-
-/** The founding year: money in, the gudang fitted out, and a loss. */
-function foundingYear(y: number): YearPlan {
-  const d = (m: number, dd: number) => on(y, m, dd);
-  return {
-    year: y,
-    budgets: budgetsOf(y, [
-      { key: "setoran", company: "induk", date: [1, 3], type: "In", category: "Hutang", partner: "H. Suryanto Halim", amount: 3_000_000_000, description: `Setoran modal pendirian dari H. Suryanto Halim ${y}`, status: "Closed" },
-      { key: "titipan", company: "induk", date: [1, 4], type: "In", category: "Titipan", partner: "Ratna Dewi Kusuma", amount: 500_000_000, description: `Titipan dana pengembangan usaha Ratna Dewi Kusuma ${y}`, status: "Closed" },
-      { key: "fitout", company: "induk", date: [2, 6], type: "Out", category: "Biaya", amount: 420_000_000, description: `Renovasi dan fit-out gudang Cikarang ${y}`, status: "Closed" },
-      { key: "inventaris", company: "induk", date: [2, 20], type: "Out", category: "Asset", amount: 600_000_000, description: `Pengadaan rak gudang dan inventaris kantor pusat ${y}`, status: "Closed" },
-      { key: "penyertaan", company: "induk", date: [3, 1], type: "Out", category: "Investasi", partner: "Cabang Surabaya", amount: 800_000_000, description: `Penyertaan modal awal Cabang Surabaya ${y}`, status: "Closed" },
-      { key: "kaskecil", company: "induk", date: [3, 15], type: "Out", category: "Biaya", amount: 25_000_000, description: `Kebutuhan kas kecil kantor pusat ${y}`, status: "Closed" },
-      { key: "gaji", company: "induk", date: [1, 25], type: "Out", category: "Biaya", amount: 180_000_000, description: `Gaji dan tunjangan karyawan kantor pusat ${y}`, status: "Closed" },
-      { key: "advance", company: "induk", date: [8, 7], type: "Out", category: "Piutang", partner: "Budi Santoso", amount: 20_000_000, description: `Advance survei lokasi Cabang Medan ${y}`, status: "Closed" },
-      { key: "mobil", company: "induk", date: [5, 8], type: "Out", category: "Asset", amount: 650_000_000, description: `Pembelian mobil operasional direksi ${y}`, status: "Rejected" },
-      { key: "anakops", company: "anak", date: [4, 3], type: "Out", category: "Biaya", amount: 90_000_000, description: `Biaya operasional awal SBTC ${y}`, status: "Closed" },
-    ]),
-    events: [
-      { kind: "cbt", date: d(1, 5), purpose: "HTG_SH_IN", cashBank: "BCA-OPS", partner: "H. Suryanto Halim", note: `Setoran modal pendirian ${y}, termin tunggal`, lines: [{ budget: "setoran", amount: 3_000_000_000 }] },
-      { kind: "cbt", date: d(1, 6), purpose: "TTP_SH_IN", cashBank: "BCA-OPS", partner: "Ratna Dewi Kusuma", note: `Titipan dana pengembangan usaha ${y} dari Ratna Dewi Kusuma`, lines: [{ budget: "titipan", amount: 500_000_000 }] },
-      transfer({ purpose: "Transfer", from: "BCA-OPS", currency: "IDR", rate: 1, date: d(1, 9), note: `Pengisian kas dan rekening payroll awal operasional ${y}`, lines: [{ to: "KAS-PST", amount: 60_000_000 }, { to: "MDR-PAY", amount: 300_000_000 }] }),
-      { kind: "cbt", date: d(2, 10), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: `Pembayaran kontraktor fit-out gudang Cikarang ${y}`, lines: [{ budget: "fitout", amount: 420_000_000 }] },
-      { kind: "cbt", date: d(2, 24), purpose: "AST_OUT", cashBank: "BCA-OPS", note: `Pembayaran rak gudang dan inventaris kantor ${y}`, lines: [{ budget: "inventaris", amount: 600_000_000 }] },
-      { kind: "cbt", date: d(3, 6), purpose: "INV_CAB_OUT", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Setoran penyertaan modal Cabang Surabaya ${y}`, lines: [{ budget: "penyertaan", amount: 800_000_000 }] },
-      journal(depreciation(y, 1, 8_500_000)),
-      { kind: "cbt", date: d(4, 10), purpose: "BYA_OUT", cashBank: "KAS-PST", note: `Belanja kas kecil kantor pusat ${y}`, lines: [{ budget: "kaskecil", amount: 25_000_000 }] },
-      { kind: "funding", date: d(4, 12), purpose: "BYA_OUT", note: `Operasional awal gudang SBTC ${y}`, budget: "anakops", amount: 90_000_000, confirmFrom: "BCA-OPS" },
-      { kind: "cbt", date: d(6, 26), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan semester I ${y}`, lines: [{ budget: "gaji", amount: 90_000_000 }] },
-      journal(depreciation(y, 2, 8_500_000)),
-      { kind: "cbt", date: d(8, 9), purpose: "PTG_KRY_OUT", cashBank: "MDR-PAY", partner: "Budi Santoso", note: `Advance survei lokasi Cabang Medan ${y}`, lines: [{ budget: "advance", amount: 20_000_000 }] },
-      journal(depreciation(y, 3, 8_500_000)),
-      transfer({ purpose: "PembelianValas", from: "BCA-OPS", currency: "USD", rate: 15_480, date: d(11, 14), note: `Pembelian valas pertama untuk rencana impor ${y + 1}`, lines: [{ to: "BCA-USD", amount: 25_000 }] }),
-      { kind: "cbt", date: d(12, 22), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan semester II ${y}`, lines: [{ budget: "gaji", amount: 90_000_000 }] },
-      adjustment({ effect: "Increase", book: "Hutang", partner: "H. Suryanto Halim", amount: 12_000_000, description: `Imbal jasa atas setoran modal pendirian ${y}`, reference: `SK-SYH-12/${y}`, note: `Imbal jasa setoran modal pendirian ${y}`, date: d(12, 27), status: "Posted" }),
-      journal(depreciation(y, 4, 8_500_000)),
-      journal(accrual(y, 6_200_000)),
-    ],
-  };
-}
-
-/** The expansion year: a second lender, Cabang Medan, the first bagi hasil. */
-function expansionYear(y: number): YearPlan {
-  const d = (m: number, dd: number) => on(y, m, dd);
-  return {
-    year: y,
-    budgets: budgetsOf(y, [
-      { key: "listrik", company: "induk", date: [1, 5], type: "Out", category: "Biaya", amount: 6_200_000, description: `Tagihan listrik dan telepon Desember ${y - 1}`, status: "Closed" },
-      { key: "pinjaman", company: "induk", date: [1, 8], type: "In", category: "Hutang", partner: "PT Mitra Abadi Sentosa", amount: 1_500_000_000, description: `Pinjaman pemegang saham PT Mitra Abadi Sentosa ${y}`, status: "Closed" },
-      { key: "pelunasan", company: "induk", date: [1, 10], type: "In", category: "Piutang", partner: "Budi Santoso", amount: 18_500_000, description: `Pengembalian sisa advance survei Medan ${y}`, status: "Closed" },
-      { key: "penyertaan", company: "induk", date: [2, 5], type: "Out", category: "Investasi", partner: "Cabang Medan", amount: 500_000_000, description: `Penyertaan modal Cabang Medan ${y}`, status: "Closed" },
-      { key: "forklift", company: "induk", date: [3, 4], type: "Out", category: "Asset", amount: 340_000_000, description: `Pembelian forklift gudang Cikarang ${y}`, status: "Closed" },
-      { key: "ops", company: "induk", date: [1, 15], type: "Out", category: "Biaya", amount: 310_000_000, description: `Biaya operasional gudang Cikarang ${y}`, status: "Closed" },
-      { key: "gaji", company: "induk", date: [1, 20], type: "Out", category: "Biaya", amount: 200_000_000, description: `Gaji dan tunjangan karyawan kantor pusat ${y}`, status: "Closed" },
-      { key: "kaskecil", company: "induk", date: [3, 15], type: "Out", category: "Biaya", amount: 25_000_000, description: `Kebutuhan kas kecil kantor pusat ${y}`, status: "Closed" },
-      { key: "impor", company: "induk", date: [6, 3], type: "Out", category: "Biaya", currency: "USD", amount: 12_000, description: `Pembelian spare part forklift impor ${y}`, status: "Closed" },
-      { key: "bagihasil", company: "induk", date: [6, 3], type: "In", category: "Hasil Investasi", partner: "Cabang Surabaya", amount: 1_130_000_000, description: `Bagi hasil Cabang Surabaya ${y}`, status: "Closed" },
-      { key: "titipan", company: "induk", date: [8, 1], type: "In", category: "Titipan", partner: "Cabang Surabaya", amount: 75_000_000, description: `Titipan dana pembelian armada Cabang Surabaya ${y}`, status: "Closed" },
-      { key: "advance", company: "induk", date: [8, 28], type: "Out", category: "Piutang", partner: "Siti Rahmawati", amount: 15_000_000, description: `Advance pelatihan sertifikasi gudang ${y}`, status: "Open" },
-      { key: "prive", company: "induk", date: [12, 2], type: "Out", category: "Prive", partner: "H. Suryanto Halim", amount: 100_000_000, description: `Prive akhir tahun H. Suryanto Halim ${y}`, status: "Closed" },
-      { key: "genset", company: "induk", date: [9, 16], type: "Out", category: "Asset", amount: 180_000_000, description: `Pembelian genset cadangan gudang ${y}`, status: "Cancelled" },
-      { key: "anakops", company: "anak", date: [4, 2], type: "Out", category: "Biaya", amount: 120_000_000, description: `Biaya operasional gudang SBTC ${y}`, status: "Closed" },
-      { key: "anakadv", company: "anak", date: [5, 2], type: "Out", category: "Piutang", partner: "Lina Setiawati", amount: 10_000_000, description: `Advance pengadaan perlengkapan SBTC ${y}`, status: "Closed" },
-      { key: "anakadvback", company: "anak", date: [6, 10], type: "In", category: "Piutang", partner: "Lina Setiawati", amount: 1_750_000, description: `Pengembalian sisa advance perlengkapan SBTC ${y}`, status: "Closed" },
-    ]),
-    events: [
-      journal(reversal(y - 1, 6_200_000)),
-      { kind: "cbt", date: d(1, 8), purpose: "BYA_OUT", cashBank: "KAS-PST", note: `Pembayaran tagihan listrik dan telepon Desember ${y - 1}`, lines: [{ budget: "listrik", amount: 6_200_000 }] },
-      { kind: "cbt", date: d(1, 10), purpose: "HTG_SH_IN", cashBank: "BCA-OPS", partner: "PT Mitra Abadi Sentosa", note: `Pencairan pinjaman pemegang saham PT Mitra Abadi Sentosa ${y}`, lines: [{ budget: "pinjaman", amount: 1_500_000_000 }] },
-      adjustment({ effect: "Decrease", book: "Piutang", partner: "Budi Santoso", amount: 1_500_000, description: `Biaya transportasi survei Medan disetujui ${y}`, reference: `SPD-MDN-0107`, note: `Biaya transportasi survei Medan disetujui, mengurangi advance ${y}`, date: d(1, 12), status: "Posted" }),
-      transfer({ purpose: "Transfer", from: "BCA-OPS", currency: "IDR", rate: 1, date: d(1, 15), note: `Pengisian kas dan rekening payroll ${y}`, lines: [{ to: "KAS-PST", amount: 30_000_000 }, { to: "MDR-PAY", amount: 220_000_000 }] }),
-      { kind: "cbt", date: d(1, 22), purpose: "PTG_KRY_IN", cashBank: "BCA-OPS", partner: "Budi Santoso", note: `Pengembalian sisa advance survei Medan ${y}`, lines: [{ budget: "pelunasan", amount: 18_500_000 }] },
-      { kind: "cbt", date: d(2, 7), purpose: "INV_CAB_OUT", cashBank: "BCA-OPS", partner: "Cabang Medan", note: `Setoran penyertaan modal Cabang Medan ${y}`, lines: [{ budget: "penyertaan", amount: 500_000_000 }] },
-      transfer({ purpose: "PembelianValas", from: "BCA-OPS", currency: "USD", rate: 15_900, date: d(3, 6), note: `Pembelian valas untuk impor spare part ${y}`, lines: [{ to: "BCA-USD", amount: 30_000 }] }),
-      { kind: "cbt", date: d(3, 11), purpose: "AST_OUT", cashBank: "BCA-OPS", note: `Pembayaran forklift gudang Cikarang ${y}`, lines: [{ budget: "forklift", amount: 340_000_000 }] },
-      journal(depreciation(y, 1, 14_000_000)),
-      { kind: "cbt", date: d(4, 5), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: `Operasional gudang Cikarang semester I ${y}`, lines: [{ budget: "ops", amount: 150_000_000 }] },
-      { kind: "funding", date: d(4, 18), purpose: "BYA_OUT", note: `Operasional gudang SBTC ${y}`, budget: "anakops", amount: 120_000_000, confirmFrom: "BCA-OPS" },
-      { kind: "funding", date: d(5, 6), purpose: "PTG_KRY_OUT", partner: "Lina Setiawati", note: `Advance pengadaan perlengkapan SBTC ${y}`, budget: "anakadv", amount: 10_000_000, confirmFrom: "BCA-OPS" },
-      // A funded line lowering a position: the anak's receipt settles the open
-      // item the advance opened, exactly as an induk Realisasi would.
-      { kind: "funding", date: d(6, 14), purpose: "PTG_KRY_IN", partner: "Lina Setiawati", note: `Pengembalian sisa advance perlengkapan SBTC ${y}`, budget: "anakadvback", amount: 1_750_000, confirmFrom: "BCA-OPS" },
-      { kind: "cbt", date: d(6, 18), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: `Pembayaran pemasok spare part Singapura, invoice SG-1874`, lines: [{ budget: "impor", amount: 12_000 }] },
-      { kind: "cbt", date: d(6, 25), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan semester I ${y}`, lines: [{ budget: "gaji", amount: 100_000_000 }] },
-      journal(depreciation(y, 2, 14_000_000)),
-      { kind: "cbt", date: d(7, 15), purpose: "HIN_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Bagi hasil semester I ${y} Cabang Surabaya diterima`, lines: [{ budget: "bagihasil", amount: 520_000_000 }] },
-      { kind: "cbt", date: d(8, 5), purpose: "TTP_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Titipan dana pembelian armada Cabang Surabaya ${y}`, lines: [{ budget: "titipan", amount: 75_000_000 }] },
-      { kind: "cbt", date: d(9, 3), purpose: "PTG_KRY_OUT", cashBank: "MDR-PAY", partner: "Siti Rahmawati", note: `Advance pelatihan sertifikasi gudang ${y}`, lines: [{ budget: "advance", amount: 10_000_000 }] },
-      journal(depreciation(y, 3, 14_000_000)),
-      { kind: "cbt", date: d(10, 7), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: `Operasional gudang Cikarang semester II ${y}`, lines: [{ budget: "ops", amount: 160_000_000 }] },
-      // Dollars bought at 15.480 sold at 16.250: a realized gain.
-      transfer({ purpose: "Pencairan", from: "BCA-USD", currency: "USD", rate: 16_250, date: d(10, 9), note: `Pencairan valas untuk kebutuhan rupiah ${y}`, lines: [{ to: "BCA-OPS", amount: 8_000 }] }),
-      { kind: "cbt", date: d(11, 12), purpose: "BYA_OUT", cashBank: "KAS-PST", note: `Belanja kas kecil kantor pusat ${y}`, lines: [{ budget: "kaskecil", amount: 25_000_000 }] },
-      { kind: "cbt", date: d(12, 10), purpose: "PRV_SH_OUT", cashBank: "BCA-OPS", partner: "H. Suryanto Halim", note: `Prive akhir tahun H. Suryanto Halim ${y}`, lines: [{ budget: "prive", amount: 100_000_000 }] },
-      { kind: "cbt", date: d(12, 16), purpose: "HIN_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Bagi hasil semester II ${y} Cabang Surabaya diterima`, lines: [{ budget: "bagihasil", amount: 610_000_000 }] },
-      { kind: "cbt", date: d(12, 20), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan semester II ${y}`, lines: [{ budget: "gaji", amount: 100_000_000 }] },
-      journal(depreciation(y, 4, 14_000_000)),
-      journal(accrual(y, 7_400_000)),
-    ],
-  };
-}
-
-/** The import year: dearer dollars, two layers drawn, a partial repayment. */
-function importYear(y: number): YearPlan {
-  const d = (m: number, dd: number) => on(y, m, dd);
-  return {
-    year: y,
-    budgets: budgetsOf(y, [
-      { key: "listrik", company: "induk", date: [1, 5], type: "Out", category: "Biaya", amount: 7_400_000, description: `Tagihan listrik dan telepon Desember ${y - 1}`, status: "Closed" },
-      { key: "pelunasan", company: "induk", date: [1, 27], type: "In", category: "Piutang", partner: "Siti Rahmawati", amount: 10_000_000, description: `Pengembalian advance pelatihan sertifikasi ${y}`, status: "Closed" },
-      { key: "kendaraan", company: "induk", date: [3, 2], type: "Out", category: "Asset", amount: 250_000_000, description: `Pengadaan kendaraan operasional pengiriman ${y}`, status: "Closed" },
-      { key: "ops", company: "induk", date: [1, 14], type: "Out", category: "Biaya", amount: 380_000_000, description: `Biaya operasional gudang Cikarang ${y}`, status: "Closed" },
-      { key: "impor", company: "induk", date: [3, 20], type: "Out", category: "Biaya", currency: "USD", amount: 25_000, description: `Pembelian spare part dan suku cadang impor ${y}`, status: "Closed" },
-      { key: "gaji", company: "induk", date: [1, 20], type: "Out", category: "Biaya", amount: 240_000_000, description: `Gaji dan tunjangan karyawan kantor pusat ${y}`, status: "Closed" },
-      { key: "kaskecil", company: "induk", date: [3, 15], type: "Out", category: "Biaya", amount: 30_000_000, description: `Kebutuhan kas kecil kantor pusat ${y}`, status: "Closed" },
-      { key: "bagihasilsby", company: "induk", date: [6, 2], type: "In", category: "Hasil Investasi", partner: "Cabang Surabaya", amount: 1_150_000_000, description: `Bagi hasil Cabang Surabaya ${y}`, status: "Closed" },
-      { key: "bagihasilmdn", company: "induk", date: [11, 3], type: "In", category: "Hasil Investasi", partner: "Cabang Medan", amount: 180_000_000, description: `Bagi hasil pertama Cabang Medan ${y}`, status: "Closed" },
-      { key: "titipan", company: "induk", date: [8, 25], type: "Out", category: "Titipan", partner: "Cabang Surabaya", amount: 72_500_000, description: `Pengembalian titipan dana armada Cabang Surabaya ${y}`, status: "Closed" },
-      { key: "pengembalian", company: "induk", date: [10, 6], type: "Out", category: "Hutang", partner: "H. Suryanto Halim", amount: 600_000_000, description: `Pengembalian sebagian setoran modal H. Suryanto Halim ${y}`, status: "Open" },
-      { key: "prive", company: "induk", date: [12, 1], type: "Out", category: "Prive", partner: "H. Suryanto Halim", amount: 120_000_000, description: `Prive akhir tahun H. Suryanto Halim ${y}`, status: "Closed" },
-      { key: "renovasi", company: "induk", date: [5, 12], type: "Out", category: "Biaya", amount: 450_000_000, description: `Renovasi kantor pusat lantai 2 ${y}`, status: "Rejected" },
-      { key: "anakops", company: "anak", date: [4, 1], type: "Out", category: "Biaya", amount: 150_000_000, description: `Biaya operasional gudang SBTC ${y}`, status: "Closed" },
-    ]),
-    events: [
-      journal(reversal(y - 1, 7_400_000)),
-      { kind: "cbt", date: d(1, 7), purpose: "BYA_OUT", cashBank: "KAS-PST", note: `Pembayaran tagihan listrik dan telepon Desember ${y - 1}`, lines: [{ budget: "listrik", amount: 7_400_000 }] },
-      transfer({ purpose: "Transfer", from: "BCA-OPS", currency: "IDR", rate: 1, date: d(1, 13), note: `Pengisian kas dan rekening payroll ${y}`, lines: [{ to: "KAS-PST", amount: 40_000_000 }, { to: "MDR-PAY", amount: 260_000_000 }] }),
-      { kind: "cbt", date: d(2, 3), purpose: "PTG_KRY_IN", cashBank: "BCA-OPS", partner: "Siti Rahmawati", note: `Pengembalian advance pelatihan sertifikasi ${y}`, lines: [{ budget: "pelunasan", amount: 10_000_000 }] },
-      transfer({ purpose: "PembelianValas", from: "BCA-OPS", currency: "USD", rate: 16_350, date: d(2, 11), note: `Pembelian valas untuk impor suku cadang ${y}`, lines: [{ to: "BCA-USD", amount: 25_000 }] }),
-      { kind: "cbt", date: d(3, 12), purpose: "AST_OUT", cashBank: "BCA-OPS", note: `Pembayaran kendaraan operasional pengiriman ${y}`, lines: [{ budget: "kendaraan", amount: 250_000_000 }] },
-      journal(depreciation(y, 1, 21_000_000)),
-      { kind: "cbt", date: d(4, 4), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: `Operasional gudang Cikarang semester I ${y}`, lines: [{ budget: "ops", amount: 180_000_000 }] },
-      { kind: "cbt", date: d(4, 15), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: `Pembayaran pemasok suku cadang Singapura, invoice SG-2107`, lines: [{ budget: "impor", amount: 15_000 }] },
-      { kind: "funding", date: d(4, 22), purpose: "BYA_OUT", note: `Operasional gudang SBTC ${y}`, budget: "anakops", amount: 150_000_000, confirmFrom: "BCA-OPS" },
-      { kind: "cbt", date: d(6, 24), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan semester I ${y}`, lines: [{ budget: "gaji", amount: 120_000_000 }] },
-      journal(depreciation(y, 2, 21_000_000)),
-      { kind: "cbt", date: d(7, 14), purpose: "HIN_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Bagi hasil semester I ${y} Cabang Surabaya diterima`, lines: [{ budget: "bagihasilsby", amount: 540_000_000 }] },
-      { kind: "cbt", date: d(8, 20), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: `Pembayaran pemasok suku cadang Singapura, invoice SG-2188`, lines: [{ budget: "impor", amount: 10_000 }] },
-      adjustment({ effect: "Decrease", book: "Titipan", partner: "Cabang Surabaya", amount: 2_500_000, description: `Koreksi selisih titipan dana armada ${y}`, reference: `BA-SBY-09/${y}`, note: `Koreksi selisih titipan dana armada Cabang Surabaya ${y}`, date: d(9, 2), status: "Posted" }),
-      { kind: "cbt", date: d(9, 8), purpose: "TTP_CAB_OUT", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Pengembalian titipan dana armada Cabang Surabaya ${y}`, lines: [{ budget: "titipan", amount: 72_500_000 }] },
-      journal(depreciation(y, 3, 21_000_000)),
-      { kind: "cbt", date: d(10, 6), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: `Operasional gudang Cikarang semester II ${y}`, lines: [{ budget: "ops", amount: 200_000_000 }] },
-      // The last of the oldest layer, bought at 15.480, sold at 16.400.
-      transfer({ purpose: "Pencairan", from: "BCA-USD", currency: "USD", rate: 16_400, date: d(11, 5), note: `Pencairan sisa valas lama ${y}`, lines: [{ to: "BCA-OPS", amount: 5_000 }] }),
-      { kind: "cbt", date: d(11, 12), purpose: "BYA_OUT", cashBank: "KAS-PST", note: `Belanja kas kecil kantor pusat ${y}`, lines: [{ budget: "kaskecil", amount: 30_000_000 }] },
-      { kind: "cbt", date: d(11, 20), purpose: "HTG_SH_OUT", cashBank: "BCA-OPS", partner: "H. Suryanto Halim", note: `Pengembalian tahap I setoran modal H. Suryanto Halim ${y}`, lines: [{ budget: "pengembalian", amount: 300_000_000 }] },
-      { kind: "cbt", date: d(12, 9), purpose: "PRV_SH_OUT", cashBank: "BCA-OPS", partner: "H. Suryanto Halim", note: `Prive akhir tahun H. Suryanto Halim ${y}`, lines: [{ budget: "prive", amount: 120_000_000 }] },
-      { kind: "cbt", date: d(12, 15), purpose: "HIN_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Bagi hasil semester II ${y} Cabang Surabaya diterima`, lines: [{ budget: "bagihasilsby", amount: 610_000_000 }] },
-      { kind: "cbt", date: d(12, 18), purpose: "HIN_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Medan", note: `Bagi hasil pertama Cabang Medan ${y} diterima`, lines: [{ budget: "bagihasilmdn", amount: 180_000_000 }] },
-      { kind: "cbt", date: d(12, 19), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan semester II ${y}`, lines: [{ budget: "gaji", amount: 120_000_000 }] },
-      journal(depreciation(y, 4, 21_000_000)),
-      journal(accrual(y, 8_100_000)),
-    ],
-  };
-}
-
 /**
  * The year being worked in. Everything here is dated on or before today's
  * date in the months it uses — no document may be dated ahead (§12).
@@ -1935,56 +1799,54 @@ function currentYear(): YearPlan {
     year: YEAR,
     budgets: [
       { key: "gudang", company: "induk", date: day(1, 8), type: "Out", category: "Biaya", amount: 185_000_000, description: "Termin II kontraktor gudang Cikarang", status: "Closed" },
-      { key: "advance", company: "induk", date: day(1, 15), type: "Out", category: "Piutang", partner: "Budi Santoso", amount: 25_000_000, description: "Advance perjalanan dinas Surabaya", status: "Open" },
+      { key: "advance", company: "induk", date: day(1, 15), type: "Out", category: "Piutang", partner: "Fauzan", amount: 25_000_000, description: "Advance perjalanan dinas Surabaya", status: "Open" },
       { key: "forklift", company: "induk", date: day(2, 3), type: "Out", category: "Asset", amount: 340_000_000, description: "Pembelian forklift gudang Cikarang", status: "Open" },
-      { key: "penyertaan", company: "induk", date: day(2, 10), type: "Out", category: "Investasi", partner: "Cabang Medan", amount: 500_000_000, description: "Penyertaan modal Cabang Medan", status: "Open" },
-      { key: "bagihasil", company: "induk", date: day(3, 5), type: "In", category: "Hasil Investasi", partner: "Cabang Surabaya", amount: 120_000_000, description: "Bagi hasil semester I Cabang Surabaya", status: "Submitted" },
+      { key: "penyertaan", company: "induk", date: day(2, 10), type: "Out", category: "Investasi", partner: "PT. Delta Surya Textile", amount: 500_000_000, description: "Penyertaan modal PT. Delta Surya Textile", status: "Open" },
+      { key: "bagihasil", company: "induk", date: day(3, 5), type: "In", category: "Hasil Investasi", partner: "PT. Delta Atsiri Prima", amount: 120_000_000, description: "Bagi hasil semester I PT. Delta Atsiri Prima", status: "Submitted" },
       // Approved and waiting in Klasifikasi Budget, so that queue is not empty
       // — two of them alike, so its similar-classification hint has something
       // to point at and its bulk classification something to do.
       { key: "atk", company: "induk", date: day(3, 2), type: "Out", category: "Biaya", amount: 4_500_000, description: `Pembelian alat tulis kantor pusat kuartal II ${YEAR}`, status: "Approved" },
       { key: "atkgudang", company: "induk", date: day(3, 3), type: "Out", category: "Biaya", amount: 2_750_000, description: `Pembelian alat tulis kantor gudang kuartal II ${YEAR}`, status: "Approved" },
-      { key: "advanceanak2", company: "anak", date: day(3, 4), type: "Out", category: "Piutang", partner: "Dedi Kurniawan", amount: 7_500_000, description: "Advance operasional Dedi Kurniawan Maret", status: "Approved" },
-      { key: "modalkerja", company: "induk", date: day(1, 6), type: "In", category: "Hutang", partner: "H. Suryanto Halim", amount: 750_000_000, description: "Setoran modal kerja dari H. Suryanto Halim", status: "Closed" },
-      { key: "prive", company: "induk", date: day(3, 12), type: "Out", category: "Prive", partner: "H. Suryanto Halim", amount: 90_000_000, description: "Pembayaran prive H. Suryanto Halim", status: "Open" },
+      { key: "advanceanak2", company: "anak", date: day(3, 4), type: "Out", category: "Piutang", partner: "Karyawan A", amount: 7_500_000, description: "Advance operasional Karyawan A Maret", status: "Approved" },
+      { key: "modalkerja", company: "induk", date: day(1, 6), type: "In", category: "Hutang", partner: "MR.X", amount: 750_000_000, description: "Setoran modal kerja dari MR.X", status: "Closed" },
+      { key: "prive", company: "induk", date: day(3, 12), type: "Out", category: "Prive", partner: "MR.X", amount: 90_000_000, description: "Pembayaran prive MR.X", status: "Open" },
       { key: "sparepart", company: "induk", date: day(2, 18), type: "Out", category: "Biaya", currency: "USD", amount: 12_000, description: "Pembelian spare part impor dari pemasok Singapura", status: "Open" },
       { key: "operasional", company: "anak", date: day(2, 24), type: "Out", category: "Biaya", amount: 65_000_000, description: "Biaya operasional gudang SBTC Februari", status: "Open" },
-      { key: "advanceanak", company: "anak", date: day(2, 26), type: "Out", category: "Piutang", partner: "Dedi Kurniawan", amount: 15_000_000, description: "Advance operasional Dedi Kurniawan", status: "Open" },
+      { key: "advanceanak", company: "anak", date: day(2, 26), type: "Out", category: "Piutang", partner: "Karyawan A", amount: 15_000_000, description: "Advance operasional Karyawan A", status: "Open" },
       { key: "listrik", company: "induk", date: day(1, 5), type: "Out", category: "Biaya", amount: 8_100_000, description: `Tagihan listrik dan telepon Desember ${YEAR - 1}`, status: "Closed" },
       { key: "gaji", company: "induk", date: day(6, 10), type: "Out", category: "Biaya", amount: 130_000_000, description: `Gaji dan tunjangan karyawan semester I ${YEAR}`, status: "Closed" },
-      { key: "bagihasilsby", company: "induk", date: day(6, 2), type: "In", category: "Hasil Investasi", partner: "Cabang Surabaya", amount: 620_000_000, description: `Bagi hasil semester I ${YEAR} Cabang Surabaya`, status: "Closed" },
+      { key: "bagihasilsby", company: "induk", date: day(6, 2), type: "In", category: "Hasil Investasi", partner: "PT. Delta Atsiri Prima", amount: 620_000_000, description: `Bagi hasil semester I ${YEAR} PT. Delta Atsiri Prima`, status: "Closed" },
       // A stakeholder's dollar Titipan, part of which is later cashed into
       // rupiah by a Pencairan Open Item.
-      { key: "titipanadib", company: "induk", date: day(9, 1), type: "In", category: "Titipan", partner: "PT Adib Food", currency: "USD", amount: 30_000, description: `Titipan dana impor bahan baku PT Adib Food ${YEAR}`, status: "Closed" },
+      { key: "titipanadib", company: "induk", date: day(9, 1), type: "In", category: "Titipan", partner: "MR.X", currency: "USD", amount: 30_000, description: `Titipan dana impor bahan baku MR.X ${YEAR}`, status: "Closed" },
       // Money nobody could place when it moved, held until it could be.
-      { key: "terimabt", company: "induk", date: day(6, 4), type: "In", category: "Penerimaan Belum Teridentifikasi", partner: "Belum Teridentifikasi", amount: 50_000_000, description: "Transfer masuk BCA tanpa berita, menunggu identifikasi pengirim", status: "Closed" },
-      { key: "pinjamanadib", company: "induk", date: day(5, 19), type: "Out", category: "Piutang", partner: "PT Adib Food", currency: "USD", amount: 2_000, description: "Pinjaman dolar kepada PT Adib Food untuk uang muka impor", status: "Closed" },
-      { key: "terimabtusd", company: "induk", date: day(6, 15), type: "In", category: "Penerimaan Belum Teridentifikasi", partner: "Belum Teridentifikasi", currency: "USD", amount: 2_000, description: "Transfer masuk USD dari bank koresponden tanpa keterangan", status: "Closed" },
-      { key: "bayarbt", company: "induk", date: day(7, 1), type: "Out", category: "Pengeluaran Belum Teridentifikasi", partner: "Belum Teridentifikasi", amount: 12_500_000, description: "Debet rekening BCA tanpa dokumen pendukung", status: "Closed" },
+      { key: "terimabt", company: "induk", date: day(6, 4), type: "In", category: "Penerimaan Belum Teridentifikasi", partner: "Lainnya", amount: 50_000_000, description: "Transfer masuk BCA tanpa berita, menunggu identifikasi pengirim", status: "Closed" },
+      { key: "pinjamanadib", company: "induk", date: day(5, 19), type: "Out", category: "Piutang", partner: "MR.X", currency: "USD", amount: 2_000, description: "Pinjaman dolar kepada MR.X untuk uang muka impor", status: "Closed" },
+      { key: "terimabtusd", company: "induk", date: day(6, 15), type: "In", category: "Penerimaan Belum Teridentifikasi", partner: "Lainnya", currency: "USD", amount: 2_000, description: "Transfer masuk USD dari bank koresponden tanpa keterangan", status: "Closed" },
+      { key: "bayarbt", company: "induk", date: day(7, 1), type: "Out", category: "Pengeluaran Belum Teridentifikasi", partner: "Lainnya", amount: 12_500_000, description: "Debet rekening BCA tanpa dokumen pendukung", status: "Closed" },
     ],
     events: [
-      journal(reversal(YEAR - 1, 8_100_000)),
-      { kind: "cbt", date: day(1, 8), purpose: "BYA_OUT", cashBank: "KAS-PST", note: `Pembayaran tagihan listrik dan telepon Desember ${YEAR - 1}`, lines: [{ budget: "listrik", amount: 8_100_000 }] },
-      { kind: "cbt", date: day(1, 9), purpose: "HTG_SH_IN", cashBank: "BCA-OPS", partner: "H. Suryanto Halim", note: "Setoran modal kerja, dikembalikan setelah kontrak selesai", lines: [{ budget: "modalkerja", amount: 750_000_000 }] },
-      transfer({ purpose: "Transfer", from: "BCA-OPS", currency: "IDR", rate: 1, date: day(1, 12), note: `Pengisian kas dan rekening payroll semester I ${YEAR}`, lines: [{ to: "KAS-PST", amount: 50_000_000 }, { to: "MDR-PAY", amount: 200_000_000 }] }),
-      { kind: "cbt", date: day(1, 20), purpose: "BYA_OUT", cashBank: "BCA-OPS", note: "Termin II sesuai berita acara serah terima", lines: [{ budget: "gudang", amount: 185_000_000 }] },
-      { kind: "cbt", date: day(1, 22), purpose: "PTG_KRY_OUT", cashBank: "MDR-PAY", partner: "Budi Santoso", note: "Advance perjalanan dinas, dipertanggungjawabkan setelah kembali", lines: [{ budget: "advance", amount: 10_000_000 }] },
-      adjustment({ effect: "Increase", book: "Piutang", partner: "Budi Santoso", amount: 1_250_000, description: "Kelebihan klaim uang harian perjalanan dinas Surabaya", reference: "SPD-SBY-0142", note: "Kelebihan klaim uang harian perjalanan dinas Surabaya, dibebankan kembali", date: day(2, 3), status: "Posted" }),
+      { kind: "cbt", date: day(1, 8), purpose: "BYA_OUT", cashBank: "KAS", note: `Pembayaran tagihan listrik dan telepon Desember ${YEAR - 1}`, lines: [{ budget: "listrik", amount: 8_100_000 }] },
+      { kind: "cbt", date: day(1, 9), purpose: "HTG_SH_IN", cashBank: "BCA-IDR", partner: "MR.X", note: "Setoran modal kerja, dikembalikan setelah kontrak selesai", lines: [{ budget: "modalkerja", amount: 750_000_000 }] },
+      transfer({ purpose: "Transfer", from: "BCA-IDR", currency: "IDR", rate: 1, date: day(1, 12), note: `Pengisian kas dan rekening payroll semester I ${YEAR}`, lines: [{ to: "KAS", amount: 50_000_000 }, { to: "MDR-IDR", amount: 200_000_000 }] }),
+      { kind: "cbt", date: day(1, 20), purpose: "BYA_OUT", cashBank: "BCA-IDR", note: "Termin II sesuai berita acara serah terima", lines: [{ budget: "gudang", amount: 185_000_000 }] },
+      { kind: "cbt", date: day(1, 22), purpose: "PTG_KRY_OUT", cashBank: "MDR-IDR", partner: "Fauzan", note: "Advance perjalanan dinas, dipertanggungjawabkan setelah kembali", lines: [{ budget: "advance", amount: 10_000_000 }] },
+      adjustment({ effect: "Increase", book: "Piutang", partner: "Fauzan", amount: 1_250_000, description: "Kelebihan klaim uang harian perjalanan dinas Surabaya", reference: "SPD-SBY-0142", note: "Kelebihan klaim uang harian perjalanan dinas Surabaya, dibebankan kembali", date: day(2, 3), status: "Posted" }),
       // Taken back, so Cancelled is on the screen too.
-      { kind: "cbt", date: day(2, 10), purpose: "AST_OUT", cashBank: "BCA-OPS", note: "Dibatalkan — unit tidak tersedia, pengadaan diulang", lines: [{ budget: "forklift", amount: 340_000_000 }], status: "Cancelled" },
-      adjustment({ effect: "Decrease", book: "Hutang", partner: "H. Suryanto Halim", amount: 2_000_000, description: "Selisih pengembalian setoran modal kerja", note: "Dibatalkan — selisih sudah diselesaikan lewat transfer", date: day(2, 20), status: "Cancelled" }),
+      { kind: "cbt", date: day(2, 10), purpose: "AST_OUT", cashBank: "BCA-IDR", note: "Dibatalkan — unit tidak tersedia, pengadaan diulang", lines: [{ budget: "forklift", amount: 340_000_000 }], status: "Cancelled" },
+      adjustment({ effect: "Decrease", book: "Hutang", partner: "MR.X", amount: 2_000_000, description: "Selisih pengembalian setoran modal kerja", note: "Dibatalkan — selisih sudah diselesaikan lewat transfer", date: day(2, 20), status: "Cancelled" }),
       // Still waiting, so the induk's queue is not empty.
       { kind: "funding", date: day(2, 27), purpose: "BYA_OUT", note: "Operasional gudang Februari, menunggu konfirmasi induk", budget: "operasional", amount: 65_000_000 },
       // Confirmed. The anak's Purpose keeps a subject book, so its own Piutang
-      // against Dedi Kurniawan is written — while the position between the two
+      // against Karyawan A is written — while the position between the two
       // Companies goes to the bridge accounts (§10 rule 61).
-      { kind: "funding", date: day(3, 2), purpose: "PTG_KRY_OUT", partner: "Dedi Kurniawan", note: "Advance operasional cabang, dipertanggungjawabkan akhir bulan", budget: "advanceanak", amount: 15_000_000, confirmFrom: "BCA-OPS" },
+      { kind: "funding", date: day(3, 2), purpose: "PTG_KRY_OUT", partner: "Karyawan A", note: "Advance operasional cabang, dipertanggungjawabkan akhir bulan", budget: "advanceanak", amount: 15_000_000, confirmFrom: "BCA-IDR" },
       { kind: "cbt", date: day(3, 3), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: "Pembayaran pemasok Singapura, invoice SG-2291", lines: [{ budget: "sparepart", amount: 5_000 }] },
-      adjustment({ effect: "Decrease", book: "Piutang", partner: "Budi Santoso", amount: 350_000, description: "Biaya tol dan parkir perjalanan dinas disetujui", note: "Biaya tol dan parkir disetujui, mengurangi advance", date: day(3, 10), status: "Draft" }),
+      adjustment({ effect: "Decrease", book: "Piutang", partner: "Fauzan", amount: 350_000, description: "Biaya tol dan parkir perjalanan dinas disetujui", note: "Biaya tol dan parkir disetujui, mengurangi advance", date: day(3, 10), status: "Draft" }),
       // A Draft, left as one: it has moved nothing, which is what Draft means.
-      { kind: "cbt", date: day(3, 20), purpose: "PRV_SH_OUT", cashBank: "KAS-PST", partner: "H. Suryanto Halim", note: "Menunggu konfirmasi jadwal pencairan", lines: [{ budget: "prive", amount: 30_000_000 }], status: "Draft" },
-      journal(depreciation(YEAR, 1, 24_000_000)),
-      adjustment({ effect: "Increase", book: "Hutang", partner: "H. Suryanto Halim", amount: 7_500_000, description: "Kompensasi atas setoran modal kerja kuartal I", reference: `SK-SYH-03/${YEAR}`, note: "Kompensasi atas setoran modal kerja kuartal I", date: day(3, 31), status: "Posted" }),
+      { kind: "cbt", date: day(3, 20), purpose: "PRV_SH_OUT", cashBank: "KAS", partner: "MR.X", note: "Menunggu konfirmasi jadwal pencairan", lines: [{ budget: "prive", amount: 30_000_000 }], status: "Draft" },
+      adjustment({ effect: "Increase", book: "Hutang", partner: "MR.X", amount: 7_500_000, description: "Kompensasi atas setoran modal kerja kuartal I", reference: `SK-MRX-03/${YEAR}`, note: "Kompensasi atas setoran modal kerja kuartal I", date: day(3, 31), status: "Posted" }),
       // Left as a Draft, because Draft is the one status only a manual journal
       // ever has — and the reports must be seen leaving it out.
       journal({
@@ -1996,50 +1858,44 @@ function currentYear(): YearPlan {
           { account: "Hutang Listrik dan Telepon", credit: 8_400_000, description: "Tagihan Maret belum jatuh tempo" },
         ],
       }),
-      // Dollars from the layer bought at 16.350, sold at 16.100: a realized loss.
-      transfer({ purpose: "Pencairan", from: "BCA-USD", currency: "USD", rate: 16_100, date: day(4, 8), note: "Pencairan valas untuk kebutuhan rupiah operasional", lines: [{ to: "BCA-OPS", amount: 20_000 }] }),
-      transfer({ purpose: "PembelianValas", from: "BCA-OPS", currency: "USD", rate: 16_050, date: day(5, 12), note: "Pembelian valas untuk pembayaran pemasok kuartal II", lines: [{ to: "BCA-USD", amount: 10_000 }] }),
-      { kind: "cbt", date: day(6, 24), purpose: "BYA_OUT", cashBank: "MDR-PAY", note: `Gaji dan tunjangan karyawan semester I ${YEAR}`, lines: [{ budget: "gaji", amount: 130_000_000 }] },
-      journal(depreciation(YEAR, 2, 24_000_000)),
-      { kind: "cbt", date: day(7, 13), purpose: "HIN_CAB_IN", cashBank: "BCA-OPS", partner: "Cabang Surabaya", note: `Bagi hasil semester I ${YEAR} Cabang Surabaya diterima`, lines: [{ budget: "bagihasilsby", amount: 620_000_000 }] },
-      transfer({ purpose: "Transfer", from: "BCA-OPS", currency: "IDR", rate: 1, date: day(8, 28), note: "Menunggu jadwal pembayaran gaji akhir bulan", lines: [{ to: "MDR-PAY", amount: 120_000_000 }] }, true),
-      { kind: "cbt", date: day(9, 3), purpose: "TTP_SH_IN", cashBank: "BCA-USD", currency: "USD", rate: 16_150, partner: "PT Adib Food", note: "Titipan dana impor bahan baku dari PT Adib Food", lines: [{ budget: "titipanadib", amount: 30_000 }] },
-      // Adib asks for a third of it in rupiah. The dollars are sold out of a
+      // Dollars from the layer acquired at 15.750, sold at 16.100: a realized gain.
+      transfer({ purpose: "Pencairan", from: "BCA-USD", currency: "USD", rate: 16_100, date: day(4, 8), note: "Pencairan valas untuk kebutuhan rupiah operasional", lines: [{ to: "BCA-IDR", amount: 20_000 }] }),
+      transfer({ purpose: "PembelianValas", from: "BCA-IDR", currency: "USD", rate: 16_050, date: day(5, 12), note: "Pembelian valas untuk pembayaran pemasok kuartal II", lines: [{ to: "BCA-USD", amount: 10_000 }, { to: "MDR-USD", amount: 5_000 }] }),
+      { kind: "cbt", date: day(6, 24), purpose: "BYA_OUT", cashBank: "MDR-IDR", note: `Gaji dan tunjangan karyawan semester I ${YEAR}`, lines: [{ budget: "gaji", amount: 130_000_000 }] },
+      { kind: "cbt", date: day(7, 13), purpose: "HIN_CAB_IN", cashBank: "BCA-IDR", partner: "PT. Delta Atsiri Prima", note: `Bagi hasil semester I ${YEAR} PT. Delta Atsiri Prima diterima`, lines: [{ budget: "bagihasilsby", amount: 620_000_000 }] },
+      transfer({ purpose: "Transfer", from: "BCA-IDR", currency: "IDR", rate: 1, date: day(8, 28), note: "Menunggu jadwal pembayaran gaji akhir bulan", lines: [{ to: "MDR-IDR", amount: 120_000_000 }] }, true),
+      { kind: "cbt", date: day(9, 3), purpose: "TTP_SH_IN", cashBank: "BCA-USD", currency: "USD", rate: 16_150, partner: "MR.X", note: "Titipan dana impor bahan baku dari MR.X", lines: [{ budget: "titipanadib", amount: 30_000 }] },
+      // MR.X asks for a third of it in rupiah. The dollars are sold out of a
       // layer bought before its Titipan arrived, and both legs go at 16.250 —
       // one Selisih Kurs line for the gap between the two carrying rates.
-      { kind: "conversion", date: day(9, 10), spec: { date: day(9, 10), from: "BCA-USD", layerBy: day(9, 2), book: "Titipan", partner: "PT Adib Food", rate: 16_250, note: "Pencairan sebagian titipan PT Adib Food ke rupiah", lines: [{ to: "BCA-OPS", amount: 10_000 }] } },
+      { kind: "conversion", date: day(9, 10), spec: { date: day(9, 10), from: "BCA-USD", layerBy: day(9, 2), book: "Titipan", partner: "MR.X", rate: 16_250, note: "Pencairan sebagian titipan MR.X ke rupiah", lines: [{ to: "BCA-IDR", amount: 10_000 }] } },
       // Held money, and where it turned out to belong. Rp 50 juta arrived
       // with no berita; two weeks later it is identified as Rp 30 juta of
-      // H. Suryanto Halim's working capital and a Rp 15 juta deposit from
-      // Cabang Surabaya — the last Rp 5 juta is still held.
-      { kind: "cbt", date: day(6, 5), purpose: "PBT_IN", cashBank: "BCA-OPS", partner: "Belum Teridentifikasi", note: "Transfer masuk tanpa berita, ditampung sampai pengirim teridentifikasi", lines: [{ budget: "terimabt", amount: 50_000_000 }] },
-      reclass({ date: day(6, 19), book: "Penerimaan Belum Teridentifikasi", partner: "Belum Teridentifikasi", currency: "IDR", note: "Identifikasi transfer masuk 5 Juni berdasarkan konfirmasi pengirim", lines: [
-        { book: "Hutang", partner: "H. Suryanto Halim", description: "Tambahan setoran modal kerja H. Suryanto Halim", from: "terimabt", amount: 30_000_000 },
-        { book: "Titipan", partner: "Cabang Surabaya", description: "Titipan dana pembelian armada Cabang Surabaya", from: "terimabt", amount: 15_000_000 },
+      // MR.X's working capital and a Rp 15 juta deposit from
+      // PT. Delta Atsiri Prima — the last Rp 5 juta is still held.
+      { kind: "cbt", date: day(6, 5), purpose: "PBT_IN", cashBank: "BCA-IDR", partner: "Lainnya", note: "Transfer masuk tanpa berita, ditampung sampai pengirim teridentifikasi", lines: [{ budget: "terimabt", amount: 50_000_000 }] },
+      reclass({ date: day(6, 19), book: "Penerimaan Belum Teridentifikasi", partner: "Lainnya", currency: "IDR", note: "Identifikasi transfer masuk 5 Juni berdasarkan konfirmasi pengirim", lines: [
+        { book: "Hutang", partner: "MR.X", description: "Tambahan setoran modal kerja MR.X", from: "terimabt", amount: 30_000_000 },
+        { book: "Titipan", partner: "PT. Delta Atsiri Prima", description: "Titipan dana pembelian armada PT. Delta Atsiri Prima", from: "terimabt", amount: 15_000_000 },
       ] }),
-      // A dollar loan to Adib, and an unexplained dollar receipt that turns
+      // A dollar loan to MR.X, and an unexplained dollar receipt that turns
       // out to be its repayment: the held receipt settles the Piutang, and the
       // gap between the two kurs is a realized difference of its own.
-      { kind: "cbt", date: day(5, 20), purpose: "PTG_SH_OUT", cashBank: "BCA-USD", currency: "USD", partner: "PT Adib Food", note: "Pinjaman dolar PT Adib Food untuk uang muka impor", lines: [{ budget: "pinjamanadib", amount: 2_000 }] },
-      { kind: "cbt", date: day(6, 16), purpose: "PBT_IN", cashBank: "BCA-USD", currency: "USD", rate: 16_300, partner: "Belum Teridentifikasi", note: "Transfer masuk USD dari bank koresponden tanpa keterangan", lines: [{ budget: "terimabtusd", amount: 2_000 }] },
-      reclass({ date: day(6, 30), book: "Penerimaan Belum Teridentifikasi", partner: "Belum Teridentifikasi", currency: "USD", note: "Transfer USD 16 Juni teridentifikasi sebagai pelunasan pinjaman PT Adib Food", lines: [
-        { book: "Piutang", partner: "PT Adib Food", description: "Pelunasan pinjaman dolar PT Adib Food", from: "terimabtusd", amount: 2_000, settle: "pinjamanadib" },
+      { kind: "cbt", date: day(5, 20), purpose: "PTG_SH_OUT", cashBank: "BCA-USD", currency: "USD", partner: "MR.X", note: "Pinjaman dolar MR.X untuk uang muka impor", lines: [{ budget: "pinjamanadib", amount: 2_000 }] },
+      { kind: "cbt", date: day(6, 16), purpose: "PBT_IN", cashBank: "BCA-USD", currency: "USD", rate: 16_300, partner: "Lainnya", note: "Transfer masuk USD dari bank koresponden tanpa keterangan", lines: [{ budget: "terimabtusd", amount: 2_000 }] },
+      reclass({ date: day(6, 30), book: "Penerimaan Belum Teridentifikasi", partner: "Lainnya", currency: "USD", note: "Transfer USD 16 Juni teridentifikasi sebagai pelunasan pinjaman MR.X", lines: [
+        { book: "Piutang", partner: "MR.X", description: "Pelunasan pinjaman dolar MR.X", from: "terimabtusd", amount: 2_000, settle: "pinjamanadib" },
       ] }),
       // A bank debit with no document, later owned up to as a staff advance.
-      { kind: "cbt", date: day(7, 2), purpose: "PeBT_OUT", cashBank: "BCA-OPS", partner: "Belum Teridentifikasi", note: "Debet rekening BCA tanpa dokumen pendukung, ditampung", lines: [{ budget: "bayarbt", amount: 12_500_000 }] },
-      reclass({ date: day(7, 21), book: "Pengeluaran Belum Teridentifikasi", partner: "Belum Teridentifikasi", currency: "IDR", note: "Debet BCA 2 Juli teridentifikasi sebagai kasbon Budi Santoso", lines: [
-        { book: "Piutang", partner: "Budi Santoso", description: "Kasbon Budi Santoso, dipotong dari gaji", from: "bayarbt", amount: 12_500_000 },
+      { kind: "cbt", date: day(7, 2), purpose: "PeBT_OUT", cashBank: "BCA-IDR", partner: "Lainnya", note: "Debet rekening BCA tanpa dokumen pendukung, ditampung", lines: [{ budget: "bayarbt", amount: 12_500_000 }] },
+      reclass({ date: day(7, 21), book: "Pengeluaran Belum Teridentifikasi", partner: "Lainnya", currency: "IDR", note: "Debet BCA 2 Juli teridentifikasi sebagai kasbon Fauzan", lines: [
+        { book: "Piutang", partner: "Fauzan", description: "Kasbon Fauzan, dipotong dari gaji", from: "bayarbt", amount: 12_500_000 },
       ] }),
     ],
   };
 }
 
-const PLANS: YearPlan[] = [
-  foundingYear(FIRST_YEAR),
-  expansionYear(FIRST_YEAR + 1),
-  importYear(FIRST_YEAR + 2),
-  currentYear(),
-];
+const PLANS: YearPlan[] = [currentYear()];
 
 /** One Cash Bank Transaction: drafted, then posted, cancelled or left as it is. */
 async function runCbt(e: CbtEvent, budgets: Map<string, number>, actor: number) {
@@ -2163,7 +2019,7 @@ async function main() {
   // A chart of accounts, on the other hand, is per Company: the same numbers
   // on a different Company are different records.
   for (const company of companies) {
-    await insertChart(company.id, company.company_label, actor);
+    await insertChart(company.id, company.company_label, company.is_parent, actor);
   }
 
   // After the chart, because a mapping points at an account in it.
@@ -2178,6 +2034,8 @@ async function main() {
   // working day of the history.
   await ensureFiscalYears(actor);
   await insertCashBanks(induk.id, foreignId, actor);
+  // After the cash, because the Opening Balance states what the books hold.
+  await injectClosedYear(actor);
 
   if (MASTER_ONLY) {
     report();
@@ -2189,7 +2047,6 @@ async function main() {
   // may be posted into it — and the later years then run as its successors.
   for (const plan of PLANS) {
     await runPlan(plan, actor);
-    if (plan.year === CLOSED_YEAR) await closeOldestYear(actor);
   }
 
   report();
@@ -2360,7 +2217,12 @@ async function insertMappings(companyId: number, companyLabel: string, actor: nu
 
 // ----------------------------------------------------------------- accounts
 
-async function insertChart(companyId: number, companyLabel: string, actor: number) {
+async function insertChart(
+  companyId: number,
+  companyLabel: string,
+  isParent: boolean,
+  actor: number
+) {
   const subcategories = new Map(
     (
       await prisma.accAccountSubcategory.findMany({
@@ -2376,7 +2238,7 @@ async function insertChart(companyId: number, companyLabel: string, actor: numbe
     ).map((c) => [c.category_label, c.id])
   );
 
-  for (const group of CHART) {
+  for (const group of [cashGroup(isParent ? INDUK_BANKS : ANAK_BANKS), ...CHART]) {
     const subcategoryId = subcategories.get(group.kelompok);
     if (!subcategoryId) {
       throw new Error(

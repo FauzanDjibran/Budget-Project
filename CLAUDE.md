@@ -379,20 +379,19 @@ scripts/
                          `--confirm`. Run by hand, never by install or CI. A
                          new posting document joins it in the change that
                          builds it
-  seed-showcase.ts       Dev convenience: four believable years of business data,
-                         so every menu has something in it — Partners for both
-                         Companies, a Chart of Accounts, the mappings, the cash
-                         resources and their layers, four fiscal years (the
-                         oldest closed by both Companies), Budgets across the
-                         lifecycle, and the documents that realize them, each
-                         backdated in date order. **Not** the seeder —
-                         ordinary inserts, run by hand, never by
-                         install/migrate/reset/CI. Anything posted goes through
-                         the real engine, never a direct book insert.
+  seed-showcase.ts       Dev convenience: a year of business data, so every
+                         menu has something in it — the deployed database's
+                         master data and charts, the previous year Closed and
+                         the current one Open, the cash resources with their
+                         opening saldo and rate layers and the Opening Balance
+                         that matches them, Budgets across the lifecycle, and
+                         the documents that realize them, in date order.
+                         **Not** the seeder — ordinary inserts, run by hand,
+                         never by install/migrate/reset/CI. Anything posted
+                         goes through the real engine, never a direct book
+                         insert; only the go-live setup is injected.
                          `--master-only` (`db:seed-master`) stops after the
-                         setup — Partners, charts, mappings, Mapping Account
-                         System, fiscal years, Cash & Bank at nil — and posts
-                         nothing
+                         setup and posts nothing
 src/
   proxy.ts               Optimistic redirect to /login (NOT a security boundary);
                          lets /login and /api/health through without a cookie
@@ -562,8 +561,8 @@ npm run lint                 # ESLint
 npm test                     # test suite — needs a migrated, seeded database
 npm run db:seed              # sync system data; idempotent, destroys nothing
                              # (runs under --conditions=react-server)
-npm run db:seed-showcase     # dev only: four believable years of business data (NOT the seeder)
-npm run db:seed-master       # dev only: the showcase's master data + CoA, no transactions
+npm run db:seed-showcase     # dev only: a year of business data on the master setup (NOT the seeder)
+npm run db:seed-master       # dev only: master data, CoA, opening cash + Opening Balance, no transactions
 npm run db:backfill-account-flags  # one-off: resync Postable + Control Account to the structure
 npm run db:reconcile         # read-only: do the books agree? exits 1 if not
 npm run db:truncate-transactions          # reports what it would delete, deletes nothing
@@ -577,7 +576,7 @@ npx prisma studio            # browse the database
 # Against the DEPLOYED database rather than the local one. Both read the
 # connection from `.env.neon` through `scripts/with-remote.js`.
 npm run db:neon-seed         # sync system data on Neon; idempotent, destroys nothing
-npm run db:neon-seed-showcase  # dev/demo only: the same four years, on Neon
+npm run db:neon-seed-showcase  # dev/demo only: the same year, on Neon
 npm run db:neon-seed-master  # dev/demo only: master data + CoA, no transactions, on Neon
 npm run db:neon-reset        # reports what it would destroy, destroys nothing
 npm run db:neon-reset -- --confirm  # DESTRUCTIVE: drops and re-migrates the deployed
@@ -1778,33 +1777,35 @@ Specified in the concept doc, **not yet implemented** (see §13):
   Tests build their own business fixtures (`tests/helpers.ts`) and clean them up.
 - **Sample business data has its own script, outside the seed.**
   `scripts/seed-showcase.ts` (`npm run db:seed-showcase`) fills a development
-  database with **four years** of it, the current year and the three before:
-  Partners for both Companies, a full Chart of Accounts each, every Budget
-  Category × Partner Category → account mapping, the cash and bank resources,
-  and per year Budgets across the lifecycle and the documents that realize
-  them — Cash Bank Transactions, Transfers of all three kinds, Funding
-  Requests, quarterly depreciation and a year-end accrual with its January
-  reversal, and Penyesuaian Open Item. The goal is that **no menu is empty**, so
-  a screen can be judged on what it shows rather than on an empty state — and,
-  since backdating, that the multi-year concepts are demonstrable: all four
-  years stand Open, the oldest is **closed by both Companies** through
-  `executeClosing` (so `CLS-` journals and the next year's `OPB-` snapshots
-  exist), and the current Neraca carries one Laba/Rugi line per unclosed year.
-  The results are deliberately mixed — the founding year a loss, the others
-  profits of different sizes — so a negative year line is on screen.
-- **Each year is a plan posted in date order.** A book refuses to go below zero
-  and a layer to be overdrawn at the moment of posting, so the runner sorts a
-  year's events by Tanggal Dokumen and posts them in that order, exactly as a
-  user entering them would have to. Only the current year holds Drafts, a
-  Pending request, a Submitted Budget and Cancelled documents: a year being
-  closed may not hold a draft journal.
-- **The cash resources open at nil.** The founders' money arrives as backdated
-  Cash Bank Transactions instead. An opening balance writes the Cash Bank Book
-  alone, and a go-live Opening Balance snapshot for the ledger half is not
-  carried through a close — `closingBalances` reads journal lines only (§17) —
-  so the closed year would hand its successor a Neraca missing its cash. It
-  needs a database whose resources were not registered earlier: on one that
-  already holds the single-year showcase, reset first.
+  database with a year of it. The goal is that **no menu is empty**, so a
+  screen can be judged on what it shows rather than on an empty state, and
+  that the Neraca and Buku Kas & Bank can be shown working hand in hand.
+- **Its master data is the deployed database's.** Partners, both charts of
+  accounts, the mappings, Mapping Account System, the System Defaults and the
+  Cash & Bank resources are transcribed from Neon as the user set them up
+  through the GUI, so `db:seed-master` reproduces it; the anak's four generic
+  Partners (Cabang A, Karyawan A, MR.X, Lainnya) are added on the user's
+  instruction, because a Budget's Partner must belong to its Company. The two
+  charts differ in kelompok 1.1.1 only: the induk's bank accounts are named
+  after its resources.
+- **The previous year is Closed and the current one Open, and the cash comes
+  from the closed year — injected, not posted.** On the user's instruction,
+  because this is go-live setup and a real implementation states its starting
+  balances the same way. Each resource gets `Opening` entries dated inside the
+  closed year — one per acquisition, so each USD resource holds two rate layers
+  at different kurs — and the current year gets an `OPB-` snapshot **sourced
+  from the closed year**, debiting each cash account exactly the base its book
+  holds and crediting Modal Disetor. Both Companies' closing records are
+  written and the year rolls to Closed; nothing is posted in it, so there is no
+  `CLS-` journal. Every report of the current year therefore opens with Buku
+  Kas & Bank and the General Ledger on the same figures. Not `executeClosing`:
+  the closed year holds no journal, and a close carries journal lines only
+  (§17).
+- **The year is a plan posted in date order.** A book refuses to go below zero
+  and a layer to be overdrawn at the moment of posting, so the runner sorts the
+  events by Tanggal Dokumen and posts them in that order, exactly as a user
+  entering them would have to. It holds every live state: Drafts, a Pending
+  request, a Submitted Budget and Cancelled documents.
   It replaced `scripts/sample-data.ts` (`npm run db:sample`), which stopped at
   the setup tables and left every document screen blank.
   It is deliberately *not* part of the seed, is never run by install, migrate,
@@ -1812,16 +1813,16 @@ Specified in the concept doc, **not yet implemented** (see §13):
   entries, editable through the GUI. It reuses anything already present rather
   than overwriting it, and deletes nothing.
 - **Everything it posts goes through the real engine.** `applyPosting`,
-  `applyTransfer`, `confirmFundingRequest`, `applyItemAdjustment`, `postManualJournal`
-  and `executeClosing`, never a
-  direct insert into a book. Inserting those rows would be faster and would
+  `applyTransfer`, `confirmFundingRequest`, `applyItemAdjustment` and
+  `postManualJournal`, never a direct insert into a book — the go-live setup
+  above is the one exception, and it reconciles by construction. Inserting those rows would be faster and would
   produce reports whose figures do not reconcile — which is worse than an empty
   screen, because it looks like the application is wrong. It is also what makes
   the script a standing check on the posting paths: a rule one of them breaks
   refuses here, loudly, rather than being discovered on a report.
-- **The names are the point.** "Cabang Medan", "Budi Santoso", "Termin II
-  kontraktor gudang Cikarang" — on the user's instruction, because a showcase
-  populated with "Partner A" and "Category C" demonstrates the layout and
+- **The descriptions are the point.** "Termin II kontraktor gudang
+  Cikarang", "Bagi hasil semester I PT. Delta Atsiri Prima" — because a
+  showcase whose documents read "Transaksi 1" demonstrates the layout and
   nothing else. The two Companies are renamed from the seeded "Perusahaan
   Induk" / "Perusahaan Anak" to **ABHC** and **SBTC** for the same reason; that
   is the one `sys_*` row it touches, and a reseed of a fresh database restores
@@ -4914,7 +4915,7 @@ process allowed to restate positions, and it is not built.
 | The FX difference on a payment is a user decision | Which layer the user picks sets the gain or loss recognised. Under averaging it would be deterministic. This is the feature working as intended — the source document calls layer selection an auditable control point — but it does mean two clerks can post the same payment to different results, and nothing flags that. |
 | A standing foreign position is never retranslated | A Hutang in USD keeps the base value it was carried at until something settles it. Without period-end revaluation (§13) there is no unrealised gain or loss anywhere in the system, so the base measure of an open position drifts from what it would be worth today — by design for now, and the one thing revaluation exists to fix. |
 | A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
-| A close drops a go-live Opening Balance | `closingBalances` in `ledger.ts`, which a close snapshots the next year from, sums **journal lines only** — it does not stand on an earlier snapshot the way `openingBasis` does. A developer-injected go-live snapshot (null source) therefore reaches the reports of its own year and is left out of the snapshot the close writes, so every year after the first close would open without the go-live figures. Harmless while no go-live snapshot exists; the showcase avoids it by funding the business with postings. The fix is to make `closingBalances` open from `openingBasisFor` like the reports do, which touches the close and needs its own test at the boundary. |
+| A close drops a go-live Opening Balance | `closingBalances` in `ledger.ts`, which a close snapshots the next year from, sums **journal lines only** — it does not stand on an earlier snapshot the way `openingBasis` does. A developer-injected go-live snapshot (null source) therefore reaches the reports of its own year and is left out of the snapshot the close writes, so every year after the first close would open without the go-live figures. Harmless while no year after a go-live snapshot is closed; the showcase injects its closed year and its current year's snapshot rather than closing one. The fix is to make `closingBalances` open from `openingBasisFor` like the reports do, which touches the close and needs its own test at the boundary. |
 | A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
 | A backdated settlement draws on today's cash layer | A subject-book relief now releases at its open item's own kurs, which never changes, so the obligation side no longer depends on when a backdated document is posted. The cash side still draws on its layer as it stands at posting (§12). |
