@@ -1577,11 +1577,13 @@ table fin_funding_request {
 // balanced journal, in one transaction, and touches no Cash Bank Book, no rate
 // layer and no Budget.
 //
-// It adjusts a position (book x Partner x currency), not a document — SIBA
-// keeps no invoice to reference. Tambah (Increase) opens one open item per
-// line at the entered kurs; Kurangi (Decrease) settles the open items each
-// line names, each for the amount the user stated, at the item's own kurs, so
-// no FX difference arises. Which side of the journal that is follows from the
+// It changes existing open items of one position (book x Partner x currency)
+// and never opens one — what mainstream ERP calls a Debit Note (Penambahan,
+// Increase) and a Credit Note (Pengurangan, Decrease) against an invoice; SIBA
+// keeps no invoice, so the item is what it references. Every line names its
+// items, each for the amount the user stated, and each moves at its own kurs as
+// a new ledger line on the same item, so no FX difference arises and no kurs
+// is typed. Only an Open item may be adjusted. Which side of the journal that is follows from the
 // book's own `raises`. The counter side is the Company's Pendapatan
 // Penyesuaian account when credited, Beban Penyesuaian when debited.
 //
@@ -1612,8 +1614,8 @@ table fin_item_adjustment {
   // The position's currency.
   currency_id                 int [not null, ref : > ref_currency.id]
 
-  // Only ever an input: entered where a Tambah opens foreign items, 1 for base
-  // currency, null on a Kurangi — that releases each item at its own kurs.
+  // Null: every item moves at its own kurs. Documents posted while a raise
+  // opened a new item at a typed kurs keep the 1 they carried.
   exchange_rate               decimal(18,6)
 
   adjustment_amount           decimal(18,2) [not null]
@@ -1640,9 +1642,9 @@ table fin_item_adjustment {
   }
 }
 
-// One reason, and by how much. The journal writes a Partner line and a counter
-// line per document line, so the General Ledger reads back to the reason. On a
-// Kurangi the amount is the sum of the line's items.
+// One reason, and the open items it adjusts. The journal writes a Partner line
+// and a counter line per document line, so the General Ledger reads back to the
+// reason. The amount is the sum of the line's items.
 table fin_item_adjustment_line {
   id                          int [pk, increment, not null]
 
@@ -1653,13 +1655,8 @@ table fin_item_adjustment_line {
   description                 varchar(255) [not null]
 
   amount                      decimal(18,2) [not null]
-  // Originated at the entered kurs on a Tambah, released at each item's own
-  // kurs on a Kurangi.
+  // Each item at its own kurs.
   base_amount                 decimal(18,2) [not null, default: 0]
-
-  // The open item a Tambah line opened (sub_ledger_balance.id, a plain id),
-  // written at Post.
-  opened_item_id              int
 
   created_by                  int [not null]
   updated_by                  int
@@ -1669,12 +1666,11 @@ table fin_item_adjustment_line {
 
   indexes {
     (adjustment_id, sequence_no) [unique]
-    opened_item_id
   }
 }
 
-// One open item a Kurangi line settles, and for how much — chosen and stated
-// by the user, never distributed.
+// One open item a line adjusts, and by how much — chosen and stated by the
+// user, never distributed.
 table fin_item_adjustment_line_item {
   id                          int [pk, increment, not null]
 
@@ -1686,7 +1682,7 @@ table fin_item_adjustment_line_item {
   sub_ledger_balance_id       int [not null]
 
   amount                      decimal(18,2) [not null]
-  // What the item releases at its own kurs.
+  // What the item moves by in base, at its own kurs.
   base_amount                 decimal(18,2) [not null, default: 0]
 
   created_by                  int [not null]

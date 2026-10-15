@@ -86,9 +86,10 @@ export type NewSubledgerEntry = {
    */
   baseAmount?: number;
   /**
-   * The open item a **lowering** entry settles (`sub_ledger_balance.id`).
-   * Required when the entry lowers the position and refused when it raises
-   * one: a raise always opens an item of its own.
+   * The open item the entry moves (`sub_ledger_balance.id`). Required when
+   * the entry lowers the position. On a raise it is optional: named, that open
+   * item grows at its own kurs (a Penambahan); left out, the raise opens an
+   * item of its own.
    */
   itemId?: number | null;
   sourceDocTypeId?: number | null;
@@ -138,7 +139,8 @@ async function nextItemNo(db: Db): Promise<string> {
  * Appends one entry and moves the open item it names.
  *
  * **Raising a position opens an item**, at the rate the money moved at, and
- * the entry names it. **Lowering one relieves the item the caller chose**, at
+ * the entry names it — unless the caller names an open item to raise, which a
+ * Penyesuaian Open Item's Penambahan does: that item grows at its own kurs. **Lowering one relieves the item the caller chose**, at
  * that item's own rate and never at an average of the position: the item
  * releases base in proportion to what is left, and a relief to nothing hands
  * back its remaining base exactly. An item cannot go below nothing, so a
@@ -163,12 +165,11 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
     currency_id: entry.currencyId,
   };
 
+  if (movement > 0 && entry.itemId) {
+    return raiseItem(db, entry, key, movement, amount);
+  }
+
   if (movement > 0) {
-    if (entry.itemId) {
-      throw new SubledgerItemUnavailable(
-        "Entri yang menaikkan posisi membuka open item baru, bukan menyelesaikan yang lama."
-      );
-    }
     if (!(entry.rate > 0)) {
       throw new Error(
         `Kurs entri buku pembantu harus lebih besar dari nol (diterima ${entry.rate}).`
@@ -277,6 +278,76 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
       balance: after.foreign,
       base_balance: after.base,
       status: relief.exhausted ? "Cleared" : "Open",
+      entry_count: item.entry_count + 1,
+      last_entry_id: created.id,
+      last_entry_date: created.entry_date,
+    },
+  });
+  return created;
+}
+
+/**
+ * Raises an open item the caller named — a Penyesuaian Open Item's Penambahan,
+ * the one path that grows an item rather than opening a new one. The item is
+ * raised at **its own** kurs, so its `base ÷ foreign` stays its rate and no
+ * second rate enters it. Only an item still Open may be raised.
+ */
+async function raiseItem(
+  db: Db,
+  entry: NewSubledgerEntry,
+  key: { budget_category_id: number; partner_id: number; currency_id: number },
+  movement: number,
+  amount: number
+) {
+  const item = await db.subLedgerBalance.findUnique({ where: { id: entry.itemId! } });
+  if (
+    !item ||
+    item.budget_category_id !== key.budget_category_id ||
+    item.partner_id !== key.partner_id ||
+    item.currency_id !== key.currency_id
+  ) {
+    throw new SubledgerItemUnavailable(
+      "Open item yang dipilih bukan milik buku, Partner, dan currency baris ini."
+    );
+  }
+  if (item.status !== "Open") {
+    throw new SubledgerItemUnavailable(
+      `Open item ${item.item_no} sudah selesai dan tidak dapat ditambah.`
+    );
+  }
+  const base = roundBase(amount * item.rate.toNumber());
+  if (entry.baseAmount != null && roundBase(entry.baseAmount) !== base) {
+    throw new SubledgerItemUnavailable(
+      `Open item ${item.item_no} berubah sejak dokumen divaluasi. Ulangi Post.`
+    );
+  }
+  const after = {
+    foreign: item.balance.toNumber() + amount,
+    base: roundBase(item.base_balance.toNumber() + base),
+  };
+  const created = await db.subLedger.create({
+    data: {
+      entry_no: await nextEntryNo(db),
+      ...key,
+      balance_id: item.id,
+      entry_date: asDate(entry.date),
+      entry_type: entry.type,
+      movement,
+      balance_after: after.foreign,
+      rate: item.rate,
+      base_movement: base,
+      base_balance_after: after.base,
+      source_doc_type_id: entry.sourceDocTypeId ?? null,
+      source_doc_id: entry.sourceDocId ?? null,
+      note: entry.note ?? null,
+      created_by: entry.actorId,
+    },
+  });
+  await db.subLedgerBalance.update({
+    where: { id: item.id },
+    data: {
+      balance: after.foreign,
+      base_balance: after.base,
       entry_count: item.entry_count + 1,
       last_entry_id: created.id,
       last_entry_date: created.entry_date,

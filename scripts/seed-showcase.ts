@@ -1605,9 +1605,10 @@ async function writeManualJournal(spec: ManualSpec, actor: number) {
 // An adjustment moves a Partner's standing position without cash (§10 rules
 // 97–102), so each one here lands on a position a document above already
 // opened: Fauzan's advance in Piutang, MR.X's setoran in
-// Hutang, PT. Delta Atsiri Prima's titipan. A Tambah opens a new open item; a Kurangi
-// settles the Partner's open items — the oldest first, which is the script
-// standing in for the user who would tick them. Posted ones go through
+// Hutang, PT. Delta Atsiri Prima's titipan. A Penambahan raises an existing
+// open item and a Pengurangan lowers them, like a Debit and a Credit Note —
+// the oldest first, which is the script standing in for the user who would
+// tick them. Posted ones go through
 // `applyItemAdjustment`, which writes the subject-book entries and the journal
 // together; a Draft and a Cancelled put the other two statuses on the register.
 
@@ -1661,13 +1662,22 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
     throw new Error(`Adjustment ${spec.note} refused: ${Object.values(header.errors).join(" ")}`);
   }
 
-  // A Kurangi names the items it settles: the oldest first, for what each holds.
+  // Both effects name existing items — the script standing in for the user who
+  // would tick them. A Penambahan raises the oldest open item by the whole
+  // amount; a Pengurangan lowers the oldest first, for what each holds.
+  const open = await openSubledgerItems([
+    { bookId: category.id, partnerId: partner.id, currencyId: idr.id },
+  ]);
+  if (!open.length) {
+    console.log(`  skipped adjustment "${spec.note}": ${spec.partner} has no open item in ${spec.book}`);
+    return;
+  }
   let items: { item_id: number; amount: number }[] = [];
-  if (spec.effect === "Decrease") {
+  if (spec.effect === "Increase") {
+    items = [{ item_id: open[0].id, amount: spec.amount }];
+  } else {
     let left = spec.amount;
-    for (const i of await openSubledgerItems([
-      { bookId: category.id, partnerId: partner.id, currencyId: idr.id },
-    ])) {
+    for (const i of open) {
       if (left <= 0) break;
       const take = Math.min(left, i.remaining);
       items.push({ item_id: i.id, amount: take });
@@ -1692,7 +1702,7 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
         budget_category_id: category.id,
         partner_id: partner.id,
         currency_id: idr.id,
-        exchange_rate: header.rate,
+        exchange_rate: null,
         adjustment_amount: checked.total,
         reference: spec.reference ?? null,
         note: spec.note,

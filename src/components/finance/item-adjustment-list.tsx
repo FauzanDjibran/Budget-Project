@@ -26,8 +26,8 @@ import {
 import { menuButtonClass } from "@/lib/siba/header-actions";
 
 /**
- * The Penyesuaian Open Item register — Tambah and Kurangi in one list, told
- * apart by a filter.
+ * The Penyesuaian Open Item register — Penambahan and Pengurangan in one list,
+ * told apart by a filter.
  *
  * `can` mirrors the caller's permissions so the row menu offers only what they
  * may use. It is presentation: `transitionItemAdjustment` re-checks both the
@@ -149,8 +149,8 @@ export function ItemAdjustmentList({
           <div className="d">
             {summary.posted
               ? [
-                  summary.increaseTotals.length && `Tambah ${formatTotals(summary.increaseTotals)}`,
-                  summary.decreaseTotals.length && `Kurangi ${formatTotals(summary.decreaseTotals)}`,
+                  summary.increaseTotals.length && `Penambahan ${formatTotals(summary.increaseTotals)}`,
+                  summary.decreaseTotals.length && `Pengurangan ${formatTotals(summary.decreaseTotals)}`,
                 ]
                   .filter(Boolean)
                   .join(" · ")
@@ -379,8 +379,8 @@ export function ItemAdjustmentList({
       </div>
 
       <p className="foot-note">
-        Tambah membuka open item baru, Kurangi menyelesaikan open item yang dipilih,
-        masing-masing pada kursnya sendiri.
+        Penambahan dan Pengurangan mengubah nilai open item yang dipilih, masing-masing
+        pada kursnya sendiri.
       </p>
 
       {menuFor && (

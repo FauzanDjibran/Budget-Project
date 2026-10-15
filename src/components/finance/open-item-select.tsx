@@ -40,6 +40,7 @@ export function OpenItemSelect({
   subtitle = "Centang setiap item yang diselesaikan dan nominalnya. Nominal baris adalah jumlah item yang dipilih.",
   showFx = true,
   amountLabel = "Diselesaikan",
+  raising = false,
   invalid,
   onChange,
 }: {
@@ -66,6 +67,12 @@ export function OpenItemSelect({
   showFx?: boolean;
   /** What the amount column calls the figure taken from each item. */
   amountLabel?: string;
+  /**
+   * The line raises each item rather than settling it — a Penambahan. An
+   * amount is then not capped by what the item holds, and ticking proposes
+   * nothing: the figure is the user's to state.
+   */
+  raising?: boolean;
   invalid?: boolean;
   onChange: (value: ItemAllocation[]) => void;
 }) {
@@ -90,7 +97,8 @@ export function OpenItemSelect({
 
   const ticked = items.filter((i) => draft[i.id] !== undefined);
   const total = ticked.reduce((t, i) => t + (draft[i.id] || 0), 0);
-  const overOf = (i: OpenItemOption) => (draft[i.id] || 0) > i.remaining;
+  const overOf = (i: OpenItemOption) => !raising && (draft[i.id] || 0) > i.remaining;
+  const proposed = (i: OpenItemOption) => (raising ? 0 : i.remaining);
   const blocked = ticked.some((i) => overOf(i) || !(draft[i.id] > 0));
 
   /** Signed as a gain, from the line's side: released at the item's kurs, paid at the cash's. */
@@ -170,14 +178,14 @@ export function OpenItemSelect({
                   <input
                     type="checkbox"
                     aria-label="Pilih semua"
-                    title="Pilih semua, masing-masing sebesar sisanya"
+                    title={raising ? "Pilih semua" : "Pilih semua, masing-masing sebesar sisanya"}
                     checked={items.length > 0 && ticked.length === items.length}
                     onChange={() =>
                       setDraft(
                         ticked.length === items.length
                           ? {}
                           : Object.fromEntries(
-                              items.map((i) => [i.id, draft[i.id] ?? i.remaining])
+                              items.map((i) => [i.id, draft[i.id] ?? proposed(i)])
                             )
                       )
                     }
@@ -219,7 +227,7 @@ export function OpenItemSelect({
                           setDraft((d) => {
                             const next = { ...d };
                             if (on) delete next[i.id];
-                            else next[i.id] = i.remaining;
+                            else next[i.id] = proposed(i);
                             return next;
                           })
                         }

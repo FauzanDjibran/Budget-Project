@@ -202,7 +202,7 @@ export const MODULES: NavModule[] = [
             slug: "penyesuaian-open-item",
             name: "Penyesuaian Open Item",
             icon: "pen",
-            desc: "Penyesuaian nilai posisi Partner pada buku subjek tanpa perpindahan uang. Tambah membuka open item baru, Kurangi menyelesaikan open item yang dipilih.",
+            desc: "Penyesuaian nilai posisi Partner pada buku subjek tanpa perpindahan uang. Penambahan dan Pengurangan mengubah nilai open item yang dipilih, seperti Debit Note dan Credit Note.",
             permission: "ITEM_ADJUSTMENT_VIEW",
           },
           {

@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney, sumByCurrency, type MoneyTotal } from "@/lib/format";
-import { BASE_CURRENCY_LABEL, isBaseCurrency } from "./currency";
+import { isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
 import {
   PeriodShut,
@@ -11,7 +11,7 @@ import {
   holdPostingPeriod,
   todayDay,
 } from "./fiscal";
-import { originate, relieve, roundBase } from "./fx";
+import { relieve, roundBase } from "./fx";
 import {
   describeJournalLines,
   postJournal,
@@ -41,23 +41,23 @@ import type { SystemAccountKey } from "./system-accounts";
 import { checkSystemAccountValue, systemAccountId } from "./system-account-data";
 
 /**
- * Penyesuaian Open Item: the adjustment document for a Partner's standing
- * position in a subject book. It replaced Debit / Credit Note, whose name was
- * read from the issuer's side and came out opposite to the paper for a note a
- * Partner sent us.
+ * Penyesuaian Open Item: the adjustment document for a Partner's existing open
+ * items in a subject book — what mainstream ERP calls a Debit Note and a
+ * Credit Note issued against an invoice, kept under SIBA's own name.
  *
- * **It adjusts a position, not a transaction.** SIBA keeps no invoice to
- * reference, and what needs fixing is the value that stands — the Hutang to
- * Budi, the Piutang on Cabang Medan — so an adjustment names a book, a Partner
- * and a currency, and moves that position. No cash moves: it writes no Cash
- * Bank Book entry, draws on no rate layer and realizes no Budget.
+ * **It changes an item that exists, never creates one.** A Piutang item of 10m
+ * becomes 8m (Pengurangan, like a Credit Note) or 12m (Penambahan, like a
+ * Debit Note), and the change is a new ledger line on that same item. SIBA
+ * keeps no invoice, so the item is what the document references. No cash
+ * moves: it writes no Cash Bank Book entry, draws on no rate layer and
+ * realizes no Budget.
  *
- * **Tambah opens, Kurangi settles.** A Tambah line opens one open item at the
- * kurs the user states (`1` for base currency). A Kurangi line settles the
- * items the user chose, each for the amount the user stated, and relieves each
- * at its own kurs — the same rule every other path that lowers a position
- * keeps (§10 rule 105). Both journal sides carry the same base, so no FX
- * difference can arise.
+ * **Each item moves at its own kurs.** Every line names the items it adjusts,
+ * each for an amount the user stated, and is worth their sum — nothing is
+ * distributed (§10 rule 105). A Penambahan raises an item by `amount × its
+ * kurs`; a Pengurangan releases what the item is carried at. Both journal
+ * sides carry the same base, so no FX difference can arise and no kurs is
+ * typed.
  *
  * **One rule covers every book.** The effect is handed to the book as a cash
  * direction (`adjustmentDirection`), and the book's own `raises` decides the
@@ -127,8 +127,6 @@ export type ItemAdjustmentLineRow = {
   description: string;
   amount: number;
   base_amount: number;
-  /** The item a posted Tambah line opened. */
-  opened_item_no: string | null;
   items: ItemAdjustmentLineItemRow[];
 };
 
@@ -219,7 +217,6 @@ export async function itemAdjustmentLines(adjustmentId: number): Promise<ItemAdj
   });
   const ids = [
     ...lines.flatMap((l) => l.items.map((i) => i.sub_ledger_balance_id)),
-    ...lines.map((l) => l.opened_item_id).filter((i): i is number => i != null),
   ];
   const known = new Map((await subledgerItemsByIds(ids)).map((i) => [i.id, i]));
   return lines.map((l) => ({
@@ -228,7 +225,6 @@ export async function itemAdjustmentLines(adjustmentId: number): Promise<ItemAdj
     description: l.description,
     amount: l.amount.toNumber(),
     base_amount: l.base_amount.toNumber(),
-    opened_item_no: l.opened_item_id ? known.get(l.opened_item_id)?.itemNo ?? null : null,
     items: l.items.map((i) => {
       const item = known.get(i.sub_ledger_balance_id);
       return {
@@ -310,7 +306,7 @@ export type ItemAdjustmentPositionOption = {
   base: number;
 };
 
-/** An open item a Kurangi line may settle, with the position it belongs to. */
+/** An open item a line may adjust, with the position it belongs to. */
 export type ItemAdjustmentItemOption = {
   id: number;
   itemNo: string;
@@ -473,8 +469,6 @@ export type ResolvedItemAdjustmentHeader = {
   currencyLabel: string;
   /** The cash direction the position moves like — what the book is handed. */
   direction: "In" | "Out";
-  /** The entered rate on a Tambah, null on a Kurangi. */
-  rate: number | null;
 };
 
 export type ItemAdjustmentHeaderCheck =
@@ -550,33 +544,14 @@ export async function checkItemAdjustmentHeader(
 
   if (Object.keys(errors).length || !currency) return { ok: false, errors };
 
-  const base = isBaseCurrency(currency.currency_label);
-
-  // The kurs is an input exactly where the adjustment creates base value: a
-  // Tambah in a foreign currency. A Kurangi releases each item at the kurs it
-  // was raised at, so a typed rate there would be a second opinion nothing
-  // reads — refused rather than silently ignored.
-  let rate: number | null = null;
-  if (effect === "Increase") {
-    if (base) rate = 1;
-    else if (header.exchange_rate && header.exchange_rate > 0) rate = header.exchange_rate;
-    else {
-      return {
-        ok: false,
-        errors: {
-          exchange_rate:
-            `Isi kurs — berapa nilai 1 ${currency.currency_label} dalam ` +
-            `${BASE_CURRENCY_LABEL} untuk penyesuaian ini.`,
-        },
-      };
-    }
-  } else if (header.exchange_rate && !(base && header.exchange_rate === 1)) {
+  // Both effects move items at the kurs each was raised at, so a typed rate
+  // would be a second opinion nothing reads — refused rather than ignored.
+  if (header.exchange_rate && header.exchange_rate !== 1) {
     return {
       ok: false,
       errors: {
         exchange_rate:
-          "Kurangi menyelesaikan open item pada kurs masing-masing item, jadi " +
-          "tidak memakai kurs baru.",
+          "Penyesuaian memakai kurs masing-masing open item, jadi tidak memakai kurs baru.",
       },
     };
   }
@@ -591,7 +566,6 @@ export async function checkItemAdjustmentHeader(
     currencyId: header.currency_id,
     currencyLabel: currency.currency_label,
     direction: adjustmentDirection(effect, book.def.raises),
-    rate,
   };
 }
 
@@ -599,8 +573,8 @@ export async function checkItemAdjustmentHeader(
 
 export type ItemAdjustmentLineInput = {
   description: string;
-  /** Read on a Tambah; on a Kurangi the line is worth its items. */
-  amount: number;
+  /** Ignored: a line is worth the items it names. */
+  amount?: number;
   items?: { item_id: number; amount: number }[];
 };
 
@@ -615,26 +589,23 @@ export type ItemAdjustmentLineCheck =
   | { ok: false; errors: Record<string, string> };
 
 /**
- * Every line says why it adjusts, and by how much. A Tambah line states its
- * amount; a Kurangi line names the items it settles, each for an amount the
- * user stated, and is worth their sum (§10 rule 105). Nothing is distributed.
+ * Every line says why it adjusts and names the open items it moves, each for
+ * an amount the user stated; the line is worth their sum. A Penambahan raises
+ * each item by its amount, a Pengurangan lowers it — the way a Debit Note and
+ * a Credit Note move the invoice they reference. Nothing is distributed
+ * (§10 rule 105).
  */
 export async function checkItemAdjustmentLines(
   header: ResolvedItemAdjustmentHeader,
   lines: ItemAdjustmentLineInput[]
 ): Promise<ItemAdjustmentLineCheck> {
-  const decrease = header.effect === "Decrease";
   const wanted = lines
     .map((l) => ({
       description: l.description.trim(),
-      amount: decrease
-        ? roundBase((l.items ?? []).reduce((t, i) => t + (i.amount || 0), 0))
-        : l.amount,
-      items: decrease
-        ? (l.items ?? [])
-            .filter((i) => i.item_id)
-            .map((i) => ({ itemId: i.item_id, amount: i.amount || 0 }))
-        : [],
+      amount: roundBase((l.items ?? []).reduce((t, i) => t + (i.amount || 0), 0)),
+      items: (l.items ?? [])
+        .filter((i) => i.item_id)
+        .map((i) => ({ itemId: i.item_id, amount: i.amount || 0 })),
     }))
     .filter((l) => l.description || l.amount || l.items.length);
 
@@ -644,32 +615,20 @@ export async function checkItemAdjustmentLines(
   if (wanted.some((l) => !l.description)) {
     return { ok: false, errors: { _lines: "Setiap baris wajib menyebut alasan penyesuaiannya." } };
   }
-  if (!decrease) {
-    if (lines.some((l) => l.items?.length)) {
-      return {
-        ok: false,
-        errors: { _lines: "Tambah membuka open item baru, jadi tidak memilih open item." },
-      };
-    }
-    if (wanted.some((l) => !(l.amount > 0))) {
-      return { ok: false, errors: { _lines: "Nominal setiap baris harus lebih dari nol." } };
-    }
-  } else {
-    if (wanted.some((l) => !l.items.length)) {
-      return {
-        ok: false,
-        errors: { _lines: "Setiap baris Kurangi wajib memilih open item yang diselesaikan." },
-      };
-    }
-    if (wanted.some((l) => l.items.some((i) => !(i.amount > 0)))) {
-      return { ok: false, errors: { _lines: "Nominal setiap open item harus lebih dari nol." } };
-    }
-    if (wanted.some((l) => new Set(l.items.map((i) => i.itemId)).size !== l.items.length)) {
-      return { ok: false, errors: { _lines: "Satu open item hanya boleh dipilih sekali per baris." } };
-    }
-    const refusal = await itemRefusal(header, wanted);
-    if (refusal) return { ok: false, errors: { _lines: refusal } };
+  if (wanted.some((l) => !l.items.length)) {
+    return {
+      ok: false,
+      errors: { _lines: "Setiap baris wajib memilih open item yang disesuaikan." },
+    };
   }
+  if (wanted.some((l) => l.items.some((i) => !(i.amount > 0)))) {
+    return { ok: false, errors: { _lines: "Nominal setiap open item harus lebih dari nol." } };
+  }
+  if (wanted.some((l) => new Set(l.items.map((i) => i.itemId)).size !== l.items.length)) {
+    return { ok: false, errors: { _lines: "Satu open item hanya boleh dipilih sekali per baris." } };
+  }
+  const refusal = await itemRefusal(header, wanted);
+  if (refusal) return { ok: false, errors: { _lines: refusal } };
 
   return {
     ok: true,
@@ -679,8 +638,8 @@ export async function checkItemAdjustmentLines(
 }
 
 /**
- * Whether every chosen item belongs to this position, is still open, and holds
- * what the whole document takes from it.
+ * Whether every chosen item belongs to this position and is still open, and —
+ * on a Pengurangan — holds what the whole document takes from it.
  */
 async function itemRefusal(
   header: ResolvedItemAdjustmentHeader,
@@ -701,7 +660,10 @@ async function itemRefusal(
     ) {
       return "Open item yang dipilih bukan milik buku, Partner, dan currency dokumen ini.";
     }
-    if (item.status !== "Open" || cents(amount) > cents(item.remaining)) {
+    if (item.status !== "Open") {
+      return `Open item ${item.itemNo} sudah selesai dan tidak dapat disesuaikan.`;
+    }
+    if (header.effect === "Decrease" && cents(amount) > cents(item.remaining)) {
       return (
         `Open item ${item.itemNo} tinggal ${formatMoney(item.remaining, header.currencyLabel)}, ` +
         `tidak cukup untuk ${formatMoney(amount, header.currencyLabel)}. Posisi tidak ` +
@@ -716,31 +678,45 @@ async function itemRefusal(
 
 export type ValuedAdjustmentLine = CheckedAdjustmentLine & {
   base: number;
-  /** One per chosen item on a Kurangi, in the user's order. */
+  /** One per chosen item, in the user's order. */
   itemBases: number[];
 };
 
 /**
  * What every line and item is worth in base, by the kernel the posting runs.
  *
- * A Tambah line originates value at the entered kurs. A Kurangi item releases
- * what it is carried at, the item drawn down line by line, so two lines taking
- * one item value the second against what the first left — which is what the
- * book will hold when its entry is written.
+ * Every item moves at **its own** kurs. A Penambahan raises an item by
+ * `amount × its kurs`, so the item's rate never changes. A Pengurangan
+ * releases what the item is carried at, drawn down line by line, so two lines
+ * taking one item value the second against what the first left — which is
+ * what the book will hold when its entry is written.
  */
 export async function valueItemAdjustment(
   header: ResolvedItemAdjustmentHeader,
   lines: CheckedAdjustmentLine[],
   db: Db = prisma
 ): Promise<ValuedAdjustmentLine[]> {
-  if (header.effect === "Increase") {
-    return lines.map((l) => ({ ...l, base: originate(l.amount, header.rate!).base, itemBases: [] }));
-  }
   const ids = [...new Set(lines.flatMap((l) => l.items.map((i) => i.itemId)))];
-  const held = new Map<number, { foreign: number; base: number }>();
+  const held = new Map<number, { foreign: number; base: number; rate: number }>();
   for (const id of ids) {
     const item = await subledgerItem(id, db);
-    if (item) held.set(id, { foreign: item.remaining, base: item.baseRemaining });
+    if (item && item.status === "Open") {
+      held.set(id, { foreign: item.remaining, base: item.baseRemaining, rate: item.rate });
+    }
+  }
+  if (header.effect === "Increase") {
+    return lines.map((l) => {
+      const itemBases = l.items.map((i) => {
+        const h = held.get(i.itemId);
+        if (!h) {
+          throw new SubledgerItemUnavailable(
+            "Open item yang dipilih sudah selesai sejak dokumen disimpan. Ubah dokumen dan pilih ulang."
+          );
+        }
+        return roundBase(i.amount * h.rate);
+      });
+      return { ...l, base: roundBase(itemBases.reduce((t, b) => t + b, 0)), itemBases };
+    });
   }
   return lines.map((l) => {
     const itemBases = l.items.map((i) => {
@@ -751,7 +727,7 @@ export async function valueItemAdjustment(
         );
       }
       const relief = relieve(h, cents(i.amount) === cents(h.foreign) ? h.foreign : i.amount);
-      held.set(i.itemId, relief.remaining);
+      held.set(i.itemId, { ...relief.remaining, rate: h.rate });
       return relief.base;
     });
     return { ...l, base: roundBase(itemBases.reduce((t, b) => t + b, 0)), itemBases };
@@ -934,45 +910,26 @@ export async function applyItemAdjustment(
       const valued = await valueItemAdjustment(header, checked.lines, tx);
       baseAmount = roundBase(valued.reduce((t, l) => t + l.base, 0));
 
-      const opened: (number | null)[] = [];
+      // One entry per item moved, naming it — a new ledger line on the same
+      // item, raising it or lowering it at its own kurs.
       for (const l of valued) {
-        if (header.effect === "Increase") {
-          const entry = await recordSubledgerEntry(tx, {
+        for (const [k, i] of l.items.entries()) {
+          await recordSubledgerEntry(tx, {
             book: header.book,
             partnerId: doc.partner_id,
             currencyId: doc.currency_id,
             date,
             type: "Adjustment",
             direction: header.direction,
-            amount: l.amount,
-            rate: header.rate!,
-            baseAmount: l.base,
+            amount: i.amount,
+            rate: l.itemBases[k] / i.amount,
+            baseAmount: l.itemBases[k],
+            itemId: i.itemId,
             sourceDocTypeId: docTypeId,
             sourceDocId: doc.id,
             note: `${label} — ${l.description}`,
             actorId,
           });
-          opened.push(entry.balance_id);
-        } else {
-          for (const [k, i] of l.items.entries()) {
-            await recordSubledgerEntry(tx, {
-              book: header.book,
-              partnerId: doc.partner_id,
-              currencyId: doc.currency_id,
-              date,
-              type: "Adjustment",
-              direction: header.direction,
-              amount: i.amount,
-              rate: l.itemBases[k] / i.amount,
-              baseAmount: l.itemBases[k],
-              itemId: i.itemId,
-              sourceDocTypeId: docTypeId,
-              sourceDocId: doc.id,
-              note: `${label} — ${l.description}`,
-              actorId,
-            });
-          }
-          opened.push(null);
         }
       }
 
@@ -1014,7 +971,7 @@ export async function applyItemAdjustment(
         actorId,
       });
 
-      await writeValuation(tx, doc.lines, valued, actorId, opened);
+      await writeValuation(tx, doc.lines, valued, actorId);
       await tx.finItemAdjustment.update({
         where: { id: doc.id },
         data: {
@@ -1045,15 +1002,13 @@ async function writeValuation(
   db: Db,
   lines: { id: number; items: { id: number }[] }[],
   valued: ValuedAdjustmentLine[],
-  actorId: number,
-  opened?: (number | null)[]
+  actorId: number
 ): Promise<void> {
   for (const [n, line] of lines.entries()) {
     await db.finItemAdjustmentLine.update({
       where: { id: line.id },
       data: {
         base_amount: valued[n].base,
-        ...(opened ? { opened_item_id: opened[n] } : {}),
         updated_by: actorId,
       },
     });

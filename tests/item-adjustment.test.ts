@@ -48,17 +48,17 @@ import {
 } from "./helpers";
 
 /**
- * Penyesuaian Open Item — the adjustment document that replaced Debit / Credit
- * Note.
+ * Penyesuaian Open Item — a Debit Note and a Credit Note against existing open
+ * items, under SIBA's own name.
  *
  * What the feature lives or dies by, none of it visible on a screen:
  *
- *   1. **One rule signs every book.** Tambah raises and Kurangi lowers, in
- *      every book; the book's own `raises` turns that into a side of the
- *      journal. Nothing per book.
- *   2. **Tambah opens, Kurangi settles.** A Tambah line opens one open item at
- *      the entered kurs; a Kurangi line settles the items it names, each at its
- *      own kurs — never an average of the position.
+ *   1. **One rule signs every book.** Penambahan raises and Pengurangan
+ *      lowers, in every book; the book's own `raises` turns that into a side of
+ *      the journal. Nothing per book.
+ *   2. **It changes items that exist, never opens one.** Every line names the
+ *      items it adjusts, each moved at its own kurs — a new ledger line on the
+ *      same item, never an average of the position.
  *   3. **The book and the journal agree**, with the Pendapatan Penyesuaian
  *      account credited and the Beban Penyesuaian account debited.
  *   4. **Nothing goes below zero** — refused at save, and again at Post under a
@@ -129,13 +129,10 @@ async function makeAdjustment(options: {
   partnerId: number;
   companyId?: number;
   currencyId?: number;
-  rate?: number | null;
-  lines: { description: string; amount?: number; items?: [number, number][] }[];
+  lines: { description: string; items: [number, number][] }[];
 }): Promise<number> {
   const currencyId = options.currencyId ?? idr;
-  const amounts = options.lines.map((l) =>
-    l.items ? l.items.reduce((t, [, a]) => t + a, 0) : l.amount ?? 0
-  );
+  const amounts = options.lines.map((l) => l.items.reduce((t, [, a]) => t + a, 0));
   const row = await prisma.finItemAdjustment.create({
     data: {
       adjustment_no: await nextItemAdjustmentNo(),
@@ -145,12 +142,7 @@ async function makeAdjustment(options: {
       budget_category_id: options.book.categoryId,
       partner_id: options.partnerId,
       currency_id: currencyId,
-      exchange_rate:
-        options.rate !== undefined
-          ? options.rate
-          : options.effect === "Increase" && currencyId === idr
-            ? 1
-            : null,
+      exchange_rate: null,
       adjustment_amount: amounts.reduce((t, a) => t + a, 0),
       status: "Draft",
       created_by: actor,
@@ -161,7 +153,7 @@ async function makeAdjustment(options: {
           amount: amounts[i],
           created_by: actor,
           items: {
-            create: (l.items ?? []).map(([itemId, amount], k) => ({
+            create: l.items.map(([itemId, amount], k) => ({
               sequence_no: k + 1,
               sub_ledger_balance_id: itemId,
               amount,
@@ -278,7 +270,7 @@ after(async () => {
 // ------------------------------------------------------------------ the rule
 
 describe("one rule signs every book", () => {
-  test("Tambah raises and Kurangi lowers, in a book money leaving raises and one it lowers", () => {
+  test("Penambahan raises and Pengurangan lowers, in a book money leaving raises and one it lowers", () => {
     const moves = (book: SubledgerDef, effect: ItemAdjustmentEffect) =>
       subledgerMovement(book, adjustmentDirection(effect, book.raises), 100);
     assert.equal(moves(piutang, "Increase"), 100);
@@ -366,29 +358,25 @@ describe("the header", () => {
     assert.ok(!checked.ok && checked.errors.partner_id);
   });
 
-  test("a foreign Tambah needs a kurs; a Kurangi takes none", async () => {
+  test("neither effect takes a kurs: each item moves at its own", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
 
-    const noRate = await checkItemAdjustmentHeader(
+    const raise = await checkItemAdjustmentHeader(
       header(partner, { effect: "Increase", currency_id: foreign }) as never,
       [induk]
     );
-    assert.ok(!noRate.ok && noRate.errors.exchange_rate);
+    assert.ok(raise.ok && raise.direction === "Out");
 
-    const raise = await checkItemAdjustmentHeader(
-      header(partner, { effect: "Increase", currency_id: foreign, exchange_rate: 16000 }) as never,
-      [induk]
-    );
-    assert.ok(raise.ok && raise.direction === "Out" && raise.rate === 16000);
-
-    const lowerWithRate = await checkItemAdjustmentHeader(
-      header(partner, { currency_id: foreign, exchange_rate: 16000 }) as never,
-      [induk]
-    );
-    assert.ok(!lowerWithRate.ok && lowerWithRate.errors.exchange_rate);
+    for (const effect of ["Increase", "Decrease"]) {
+      const withRate = await checkItemAdjustmentHeader(
+        header(partner, { effect, currency_id: foreign, exchange_rate: 16000 }) as never,
+        [induk]
+      );
+      assert.ok(!withRate.ok && withRate.errors.exchange_rate, effect);
+    }
 
     const lower = await checkItemAdjustmentHeader(header(partner) as never, [induk]);
-    assert.ok(lower.ok && lower.rate === null && lower.direction === "In");
+    assert.ok(lower.ok && lower.direction === "In");
   });
 });
 
@@ -410,24 +398,43 @@ describe("the lines", () => {
     return h as ResolvedItemAdjustmentHeader;
   };
 
-  test("a Tambah line needs a reason and a positive amount, and chooses no item", async () => {
+  test("a Penambahan line names existing items too, and may raise one past what it holds", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const a = await seedItem(piutang, partner, idr, 100_000);
     const h = await resolved("Increase", partner);
     assert.equal((await checkItemAdjustmentLines(h, [])).ok, false);
-    assert.equal((await checkItemAdjustmentLines(h, [{ description: "", amount: 10 }])).ok, false);
-    assert.equal((await checkItemAdjustmentLines(h, [{ description: "Denda", amount: 0 }])).ok, false);
-    const withItem = await checkItemAdjustmentLines(h, [
-      { description: "Denda", amount: 10, items: [{ item_id: 1, amount: 10 }] },
+    const noItem = await checkItemAdjustmentLines(h, [{ description: "Denda", amount: 10 }]);
+    assert.equal(noItem.ok, false, "a Penambahan never opens an item of its own");
+    const noReason = await checkItemAdjustmentLines(h, [
+      { description: "", items: [{ item_id: a, amount: 10 }] },
     ]);
-    assert.equal(withItem.ok, false);
+    assert.equal(noReason.ok, false);
     const ok = await checkItemAdjustmentLines(h, [
-      { description: "Denda", amount: 100 },
-      { description: "Bunga", amount: 250.5 },
+      { description: "Denda", items: [{ item_id: a, amount: 150_000 }] },
+      { description: "Bunga", items: [{ item_id: a, amount: 250.5 }] },
     ]);
-    assert.ok(ok.ok && ok.total === 350.5);
+    assert.ok(ok.ok && ok.total === 150_250.5, JSON.stringify(ok));
   });
 
-  test("a Kurangi line is worth its items, and must name at least one", async () => {
+  test("a settled item cannot be adjusted either way", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const a = await seedItem(piutang, partner, idr, 50_000);
+    const settle = await makeAdjustment({
+      effect: "Decrease",
+      book: piutang,
+      partnerId: partner,
+      lines: [{ description: "Lunas", items: [[a, 50_000]] }],
+    });
+    assert.ok((await applyItemAdjustment(settle, actor)).ok);
+    for (const effect of ["Increase", "Decrease"] as const) {
+      const checked = await checkItemAdjustmentLines(await resolved(effect, partner), [
+        { description: "X", items: [{ item_id: a, amount: 1_000 }] },
+      ]);
+      assert.ok(!checked.ok && /sudah selesai/.test(checked.errors._lines), effect);
+    }
+  });
+
+  test("a Pengurangan line is worth its items, and must name at least one", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
     const a = await seedItem(piutang, partner, idr, 100_000);
     const h = await resolved("Decrease", partner);
@@ -481,42 +488,56 @@ describe("posting", () => {
     assert.deepEqual(await position(piutang, partner), { foreign: 500_000, base: 500_000 });
   });
 
-  test("a Tambah opens one item per line, and credits Pendapatan Penyesuaian on a Piutang", async () => {
+  test("a Penambahan raises the chosen item itself, and credits Pendapatan Penyesuaian on a Piutang", async () => {
+    // The user's case: a Piutang of 10m becomes 12m — the same item, a new
+    // ledger line on it, no second item.
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const a = await seedItem(piutang, partner, idr, 10_000_000);
     const id = await makeAdjustment({
       effect: "Increase",
       book: piutang,
       partnerId: partner,
       lines: [
-        { description: "Denda keterlambatan", amount: 75_000 },
-        { description: "Bunga", amount: 25_000 },
+        { description: "Denda keterlambatan", items: [[a, 1_500_000]] },
+        { description: "Bunga", items: [[a, 500_000]] },
       ],
     });
     const posted = await applyItemAdjustment(id, actor);
-    assert.ok(posted.ok && posted.baseAmount === 100_000, JSON.stringify(posted));
-    assert.deepEqual(await position(piutang, partner), { foreign: 100_000, base: 100_000 });
+    assert.ok(posted.ok && posted.baseAmount === 2_000_000, JSON.stringify(posted));
+    assert.deepEqual(await position(piutang, partner), { foreign: 12_000_000, base: 12_000_000 });
 
-    const lines = await prisma.finItemAdjustmentLine.findMany({
-      where: { adjustment_id: id },
-      orderBy: { sequence_no: "asc" },
-    });
-    assert.ok(lines.every((l) => l.opened_item_id), "each line records the item it opened");
-    const opened = await Promise.all(lines.map((l) => item(l.opened_item_id!)));
+    const raised = await item(a);
     assert.deepEqual(
-      opened.map((o) => o.balance.toNumber()),
-      [75_000, 25_000],
-      "one open item per line"
+      [raised.balance.toNumber(), raised.original.toNumber(), raised.status, raised.entry_count],
+      [12_000_000, 10_000_000, "Open", 3],
+      "the item grows; what it was raised by stays its history"
+    );
+    const count = await prisma.subLedgerBalance.count({
+      where: { budget_category_id: piutang.categoryId, partner_id: partner },
+    });
+    assert.equal(count, 1, "no new open item");
+    const entries = await prisma.subLedger.findMany({
+      where: { source_doc_id: id, source_doc_type: { doc_table: "fin_item_adjustment" } },
+      orderBy: { id: "asc" },
+    });
+    assert.deepEqual(
+      entries.map((e) => [e.balance_id, e.movement.toNumber()]),
+      [
+        [a, 1_500_000],
+        [a, 500_000],
+      ],
+      "one ledger line per item moved, on the same item"
     );
 
     const journal = await journalOf(id);
     const partnerLines = journal.lines.filter((l) => l.account_id === piutangAccount);
-    assert.deepEqual(partnerLines.map((l) => l.debit_amount.toNumber()), [75_000, 25_000]);
+    assert.deepEqual(partnerLines.map((l) => l.debit_amount.toNumber()), [1_500_000, 500_000]);
     assert.ok(partnerLines.every((l) => l.partner_id === partner));
     const counter = journal.lines.filter((l) => l.account_id === incomeAccount);
-    assert.deepEqual(counter.map((l) => l.kredit_amount.toNumber()), [75_000, 25_000]);
+    assert.deepEqual(counter.map((l) => l.kredit_amount.toNumber()), [1_500_000, 500_000]);
   });
 
-  test("a Kurangi settles the chosen items, and debits Beban Penyesuaian on a Piutang", async () => {
+  test("a Pengurangan settles the chosen items, and debits Beban Penyesuaian on a Piutang", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
     const a = await seedItem(piutang, partner, idr, 600_000);
     const b = await seedItem(piutang, partner, idr, 400_000);
@@ -562,7 +583,7 @@ describe("posting", () => {
     assert.equal((await applyItemAdjustment(id, actor)).ok, false, "a posted adjustment is final");
   });
 
-  test("a Kurangi lowers a Hutang to nil, debiting it and crediting Pendapatan Penyesuaian", async () => {
+  test("a Pengurangan lowers a Hutang to nil, debiting it and crediting Pendapatan Penyesuaian", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
     const a = await seedItem(hutang, partner, idr, 500_000);
     const id = await makeAdjustment({
@@ -621,22 +642,27 @@ describe("posting", () => {
     );
   });
 
-  test("a foreign Tambah originates at the stated kurs", async () => {
+  test("a foreign Penambahan raises the item at its own kurs, which never changes", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const a = await seedItem(piutang, partner, foreign, 1_000, 15_500);
     const id = await makeAdjustment({
       effect: "Increase",
       book: piutang,
       partnerId: partner,
       currencyId: foreign,
-      rate: 16_250,
-      lines: [{ description: "Tagihan tambahan", amount: 100 }],
+      lines: [{ description: "Tagihan tambahan", items: [[a, 100]] }],
     });
     const posted = await applyItemAdjustment(id, actor);
-    assert.ok(posted.ok && posted.baseAmount === 1_625_000);
-    assert.deepEqual(await position(piutang, partner, foreign), {
-      foreign: 100,
-      base: 1_625_000,
-    });
+    assert.ok(posted.ok && posted.baseAmount === 1_550_000, JSON.stringify(posted));
+    const raised = await item(a);
+    assert.deepEqual(
+      [raised.balance.toNumber(), raised.base_balance.toNumber(), raised.rate.toNumber()],
+      [1_100, 17_050_000, 15_500]
+    );
+    const journal = await journalOf(id);
+    const debit = journal.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0);
+    const credit = journal.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0);
+    assert.equal(debit, credit, "no FX difference");
   });
 
   test("a saved draft already states what Post writes", async () => {
@@ -770,11 +796,12 @@ describe("posting", () => {
 
   test("a closed year refuses the adjustment", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const a = await seedItem(piutang, partner, idr, 100_000);
     const id = await makeAdjustment({
       effect: "Increase",
       book: piutang,
       partnerId: partner,
-      lines: [{ description: "X", amount: 10_000 }],
+      lines: [{ description: "X", items: [[a, 10_000]] }],
     });
     const reopen = await closeYearFor(fiscalYear, induk);
     try {

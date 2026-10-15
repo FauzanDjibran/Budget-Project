@@ -85,8 +85,8 @@ export const ITEM_ADJUSTMENT_EFFECTS: Record<
   ItemAdjustmentEffect,
   { label: string; desc: string }
 > = {
-  Increase: { label: "Tambah", desc: "membuka open item baru" },
-  Decrease: { label: "Kurangi", desc: "menyelesaikan open item yang dipilih" },
+  Increase: { label: "Penambahan", desc: "menambah nilai open item yang dipilih" },
+  Decrease: { label: "Pengurangan", desc: "mengurangi nilai open item yang dipilih" },
 };
 
 /** The number series every adjustment is filed under. */
