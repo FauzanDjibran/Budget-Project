@@ -53,6 +53,7 @@ import { applyTransfer, nextTransferNo } from "@/lib/siba/transfer";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
 import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
 import {
+  adjustmentLineData,
   applyItemAdjustment,
   checkItemAdjustmentHeader,
   checkItemAdjustmentLines,
@@ -1605,19 +1606,19 @@ async function writeManualJournal(spec: ManualSpec, actor: number) {
 // An adjustment moves a Partner's standing position without cash (§10 rules
 // 97–102), so each one here lands on a position a document above already
 // opened: Fauzan's advance in Piutang, MR.X's setoran in
-// Hutang, PT. Delta Atsiri Prima's titipan. A Penambahan raises an existing
-// open item and a Pengurangan lowers them, like a Debit and a Credit Note —
-// the oldest first, which is the script standing in for the user who would
-// tick them. Posted ones go through
+// Hutang, PT. Delta Atsiri Prima's titipan. Each one names the oldest open
+// item that can take it — the script standing in for the user who would pick
+// it — and types its new value; the difference is a Penambahan or a
+// Pengurangan, like a Debit and a Credit Note. Posted ones go through
 // `applyItemAdjustment`, which writes the subject-book entries and the journal
 // together; a Draft and a Cancelled put the other two statuses on the register.
 
 type AdjustmentSpec = {
+  /** Which way the item should move, and by how much — the new value follows. */
   effect: "Increase" | "Decrease";
   book: "Piutang" | "Hutang" | "Titipan";
   partner: string;
   amount: number;
-  description: string;
   reference?: string;
   /** This script's marker, as a document's note is elsewhere. */
   note: string;
@@ -1650,7 +1651,6 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
 
   const header = await checkItemAdjustmentHeader(
     {
-      effect: spec.effect,
       budget_category_id: category.id,
       partner_id: partner.id,
       currency_id: idr.id,
@@ -1662,31 +1662,20 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
     throw new Error(`Adjustment ${spec.note} refused: ${Object.values(header.errors).join(" ")}`);
   }
 
-  // Both effects name existing items — the script standing in for the user who
-  // would tick them. A Penambahan raises the oldest open item by the whole
-  // amount; a Pengurangan lowers the oldest first, for what each holds.
+  // The oldest open item that can take the change, and the value it should
+  // hold after it.
   const open = await openSubledgerItems([
     { bookId: category.id, partnerId: partner.id, currencyId: idr.id },
   ]);
-  if (!open.length) {
-    console.log(`  skipped adjustment "${spec.note}": ${spec.partner} has no open item in ${spec.book}`);
+  const item = open.find((i) => spec.effect === "Increase" || i.remaining >= spec.amount);
+  if (!item) {
+    console.log(`  skipped adjustment "${spec.note}": ${spec.partner} has no open item in ${spec.book} that can take it`);
     return;
   }
-  let items: { item_id: number; amount: number }[] = [];
-  if (spec.effect === "Increase") {
-    items = [{ item_id: open[0].id, amount: spec.amount }];
-  } else {
-    let left = spec.amount;
-    for (const i of open) {
-      if (left <= 0) break;
-      const take = Math.min(left, i.remaining);
-      items.push({ item_id: i.id, amount: take });
-      left -= take;
-    }
-    if (left > 0) items = [];
-  }
+  const newAmount =
+    spec.effect === "Increase" ? item.remaining + spec.amount : item.remaining - spec.amount;
   const checked = await checkItemAdjustmentLines(header, [
-    { description: spec.description, amount: spec.amount, items },
+    { item_id: item.id, new_amount: newAmount },
   ]);
   if (!checked.ok) {
     throw new Error(`Adjustment ${spec.note} refused: ${Object.values(checked.errors).join(" ")}`);
@@ -1696,7 +1685,6 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
     const created = await tx.finItemAdjustment.create({
       data: {
         adjustment_no: await nextItemAdjustmentNo(tx),
-        effect: spec.effect,
         document_date: new Date(`${spec.date}T00:00:00Z`),
         company_id: partner.company_id,
         budget_category_id: category.id,
@@ -1708,22 +1696,7 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
         note: spec.note,
         status: "Draft",
         created_by: actor,
-        lines: {
-          create: checked.lines.map((l, n) => ({
-            sequence_no: n + 1,
-            description: l.description,
-            amount: l.amount,
-            created_by: actor,
-            items: {
-              create: l.items.map((it, k) => ({
-                sequence_no: k + 1,
-                sub_ledger_balance_id: it.itemId,
-                amount: it.amount,
-                created_by: actor,
-              })),
-            },
-          })),
-        },
+        lines: { create: adjustmentLineData(checked.lines, actor) },
       },
       select: { id: true, adjustment_no: true },
     });
@@ -1842,10 +1815,10 @@ function currentYear(): YearPlan {
       transfer({ purpose: "Transfer", from: "BCA-IDR", currency: "IDR", rate: 1, date: day(1, 12), note: `Pengisian kas dan rekening payroll semester I ${YEAR}`, lines: [{ to: "KAS", amount: 50_000_000 }, { to: "MDR-IDR", amount: 200_000_000 }] }),
       { kind: "cbt", date: day(1, 20), purpose: "BYA_OUT", cashBank: "BCA-IDR", note: "Termin II sesuai berita acara serah terima", lines: [{ budget: "gudang", amount: 185_000_000 }] },
       { kind: "cbt", date: day(1, 22), purpose: "PTG_KRY_OUT", cashBank: "MDR-IDR", partner: "Fauzan", note: "Advance perjalanan dinas, dipertanggungjawabkan setelah kembali", lines: [{ budget: "advance", amount: 10_000_000 }] },
-      adjustment({ effect: "Increase", book: "Piutang", partner: "Fauzan", amount: 1_250_000, description: "Kelebihan klaim uang harian perjalanan dinas Surabaya", reference: "SPD-SBY-0142", note: "Kelebihan klaim uang harian perjalanan dinas Surabaya, dibebankan kembali", date: day(2, 3), status: "Posted" }),
+      adjustment({ effect: "Increase", book: "Piutang", partner: "Fauzan", amount: 1_250_000, reference: "SPD-SBY-0142", note: "Kelebihan klaim uang harian perjalanan dinas Surabaya, dibebankan kembali", date: day(2, 3), status: "Posted" }),
       // Taken back, so Cancelled is on the screen too.
       { kind: "cbt", date: day(2, 10), purpose: "AST_OUT", cashBank: "BCA-IDR", note: "Dibatalkan — unit tidak tersedia, pengadaan diulang", lines: [{ budget: "forklift", amount: 340_000_000 }], status: "Cancelled" },
-      adjustment({ effect: "Decrease", book: "Hutang", partner: "MR.X", amount: 2_000_000, description: "Selisih pengembalian setoran modal kerja", note: "Dibatalkan — selisih sudah diselesaikan lewat transfer", date: day(2, 20), status: "Cancelled" }),
+      adjustment({ effect: "Decrease", book: "Hutang", partner: "MR.X", amount: 2_000_000, note: "Dibatalkan — selisih sudah diselesaikan lewat transfer", date: day(2, 20), status: "Cancelled" }),
       // Still waiting, so the induk's queue is not empty.
       { kind: "funding", date: day(2, 27), purpose: "BYA_OUT", note: "Operasional gudang Februari, menunggu konfirmasi induk", budget: "operasional", amount: 65_000_000 },
       // Confirmed. The anak's Purpose keeps a subject book, so its own Piutang
@@ -1853,10 +1826,10 @@ function currentYear(): YearPlan {
       // Companies goes to the bridge accounts (§10 rule 61).
       { kind: "funding", date: day(3, 2), purpose: "PTG_KRY_OUT", partner: "Karyawan A", note: "Advance operasional cabang, dipertanggungjawabkan akhir bulan", budget: "advanceanak", amount: 15_000_000, confirmFrom: "BCA-IDR" },
       { kind: "cbt", date: day(3, 3), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: "Pembayaran pemasok Singapura, invoice SG-2291", lines: [{ budget: "sparepart", amount: 5_000 }] },
-      adjustment({ effect: "Decrease", book: "Piutang", partner: "Fauzan", amount: 350_000, description: "Biaya tol dan parkir perjalanan dinas disetujui", note: "Biaya tol dan parkir disetujui, mengurangi advance", date: day(3, 10), status: "Draft" }),
+      adjustment({ effect: "Decrease", book: "Piutang", partner: "Fauzan", amount: 350_000, note: "Biaya tol dan parkir disetujui, mengurangi advance", date: day(3, 10), status: "Draft" }),
       // A Draft, left as one: it has moved nothing, which is what Draft means.
       { kind: "cbt", date: day(3, 20), purpose: "PRV_SH_OUT", cashBank: "KAS", partner: "MR.X", note: "Menunggu konfirmasi jadwal pencairan", lines: [{ budget: "prive", amount: 30_000_000 }], status: "Draft" },
-      adjustment({ effect: "Increase", book: "Hutang", partner: "MR.X", amount: 7_500_000, description: "Kompensasi atas setoran modal kerja kuartal I", reference: `SK-MRX-03/${YEAR}`, note: "Kompensasi atas setoran modal kerja kuartal I", date: day(3, 31), status: "Posted" }),
+      adjustment({ effect: "Increase", book: "Hutang", partner: "MR.X", amount: 7_500_000, reference: `SK-MRX-03/${YEAR}`, note: "Kompensasi atas setoran modal kerja kuartal I", date: day(3, 31), status: "Posted" }),
       // Left as a Draft, because Draft is the one status only a manual journal
       // ever has — and the reports must be seen leaving it out.
       journal({

@@ -2036,14 +2036,15 @@ model FinItemReclassLineTarget {
 
 // ------------------------------------------------- penyesuaian open item
 
-/// What an adjustment does to the open items it names: Penambahan raises them,
-/// Pengurangan lowers them — the way a Debit Note and a Credit Note move the
-/// invoice they reference in mainstream ERP.
+/// Which way one line moves its open item: Penambahan raises it, Pengurangan
+/// lowers it — the way a Debit Note and a Credit Note move the invoice they
+/// reference in mainstream ERP.
 ///
-/// Stated as the effect rather than as a side of the Partner's account, so a
-/// document reads the same in every book — a Penambahan raises a Piutang and a
-/// Hutang alike. Which side of the journal that is follows from the book's
-/// own `raises`, exactly as for a cash posting.
+/// Never chosen: it is the sign of the line's difference, the new value the
+/// user typed against what the item held when the draft was saved. Stated as
+/// the effect rather than as a side of the Partner's account, so a line reads
+/// the same in every book; which side of the journal that is follows from the
+/// book's own `raises`, exactly as for a cash posting.
 enum ItemAdjustmentEffect {
   Increase
   Decrease
@@ -2056,21 +2057,21 @@ enum ItemAdjustmentEffect {
 ///
 /// It changes **existing open items** of one position (book x Partner x
 /// currency) and never opens one: SIBA keeps no invoice, so the item is what
-/// the document references. Every line names its items, each for the amount
-/// the user stated, and each moves at its own kurs — a new ledger line on the
-/// same item — so no FX difference can arise and no kurs is typed.
-/// `reference` carries the counterparty's own document number where there is
-/// one.
+/// the document references. Every line names one item and the value it should
+/// now hold; the difference is posted as a new ledger line on that item, at
+/// its own kurs, so no FX difference can arise and no kurs is typed. One
+/// document may raise some items and lower others. `reference` carries the
+/// counterparty's own document number where there is one.
 ///
 /// The counter account is one of two Mapping Account System entries per
 /// Company: Pendapatan Penyesuaian when it is credited, Beban Penyesuaian when
-/// it is debited — which one is decided by the side the Partner line takes.
+/// it is debited — which one is decided, line by line, by the side the Partner
+/// line takes.
 model FinItemAdjustment {
-  id            Int                  @id @default(autoincrement())
+  id            Int    @id @default(autoincrement())
   /// `PYO-0001`. Documents posted as Debit / Credit Notes keep their `DN-` /
   /// `CN-` numbers.
-  adjustment_no String               @unique
-  effect        ItemAdjustmentEffect
+  adjustment_no String @unique
 
   /// The day it belongs to in the books, chosen on the draft.
   document_date DateTime? @db.Date
@@ -2088,10 +2089,11 @@ model FinItemAdjustment {
   /// opened a new item at a typed kurs keep the `1` they carried.
   exchange_rate Decimal? @db.Decimal(18, 6)
 
-  /// Sum of the lines, in the position's currency.
+  /// The net change to the position, in its currency: what the lines raise
+  /// less what they lower, so negative when the document lowers it on balance.
   adjustment_amount      Decimal @db.Decimal(18, 2)
-  /// What the adjustment is worth in base. Valued when the draft is saved and
-  /// again at Post.
+  /// The same net change in base. Valued when the draft is saved and again at
+  /// Post.
   adjustment_base_amount Decimal @default(0) @db.Decimal(18, 2)
 
   /// The counterparty's own document number, where there is one.
@@ -2117,16 +2119,34 @@ model FinItemAdjustment {
   @@map("fin_item_adjustment")
 }
 
-/// One reason, and the open items it adjusts; its amount is their sum.
+/// One open item and the value it should now hold. The user types the new
+/// value; the difference, its direction and its base are worked out when the
+/// draft is saved and again at Post. Post refuses when the item no longer
+/// holds `balance_before`, because a new value typed against another balance
+/// would move it by a difference nobody saw.
 model FinItemAdjustmentLine {
   id            Int    @id @default(autoincrement())
   adjustment_id Int
   sequence_no   Int
+  /// Written by the system — "Penambahan USD 200,00 atas SBI-0012" — and read
+  /// by the subject-book entry and the journal lines.
   description   String
 
-  /// In the position's currency.
+  /// The item adjusted (`sub_ledger_balance.id`). A plain id rather than a
+  /// relation: the item belongs to the subject-book module. Null only on
+  /// documents posted while a raise opened a new item.
+  sub_ledger_balance_id Int?
+  /// Derived from the sign of the difference, never chosen.
+  effect                ItemAdjustmentEffect
+  /// What the item held when the draft was saved, and the value typed for it.
+  /// Null on documents posted before a line was stated as a new value.
+  balance_before        Decimal?             @db.Decimal(18, 2)
+  new_amount            Decimal?             @db.Decimal(18, 2)
+
+  /// The difference, unsigned — `effect` says which way — in the position's
+  /// currency.
   amount      Decimal @db.Decimal(18, 2)
-  /// What the line is worth in base, each item at its own kurs.
+  /// What the difference is worth in base, at the item's own kurs.
   base_amount Decimal @default(0) @db.Decimal(18, 2)
 
   created_by Int
@@ -2134,39 +2154,11 @@ model FinItemAdjustmentLine {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  adjustment FinItemAdjustment           @relation(fields: [adjustment_id], references: [id], onDelete: Cascade)
-  items      FinItemAdjustmentLineItem[]
+  adjustment FinItemAdjustment @relation(fields: [adjustment_id], references: [id], onDelete: Cascade)
 
   @@unique([adjustment_id, sequence_no])
-  @@map("fin_item_adjustment_line")
-}
-
-/// One open item a line adjusts, and by how much. Chosen and stated by the
-/// user, never distributed (§10 rule 105).
-model FinItemAdjustmentLineItem {
-  id                    Int @id @default(autoincrement())
-  line_id               Int
-  sequence_no           Int
-  /// The item adjusted (`sub_ledger_balance.id`). A plain id rather than a
-  /// relation: the item belongs to the subject-book module.
-  sub_ledger_balance_id Int
-
-  /// In the position's currency; more than nil, never more than the item holds.
-  amount      Decimal @db.Decimal(18, 2)
-  /// What the item moves by in base, at its own kurs.
-  base_amount Decimal @default(0) @db.Decimal(18, 2)
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  line FinItemAdjustmentLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
-
-  @@unique([line_id, sub_ledger_balance_id])
-  @@unique([line_id, sequence_no])
   @@index([sub_ledger_balance_id])
-  @@map("fin_item_adjustment_line_item")
+  @@map("fin_item_adjustment_line")
 }
 
 // ---------------------------------------------------------------- audit

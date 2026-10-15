@@ -16,18 +16,19 @@ import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { ItemAdjustmentRow, ItemAdjustmentSummary } from "@/lib/siba/item-adjustment";
 import {
   ITEM_ADJUSTMENT_TRANSITIONS,
-  ITEM_ADJUSTMENT_EFFECTS,
+  ITEM_ADJUSTMENT_KINDS,
   availableItemAdjustmentActions,
   itemAdjustmentIsEditable,
   type ItemAdjustmentAbilities,
   type ItemAdjustmentAction,
-  type ItemAdjustmentEffect,
+  type ItemAdjustmentKind,
 } from "@/lib/siba/item-adjustment-workflow";
 import { menuButtonClass } from "@/lib/siba/header-actions";
 
 /**
- * The Penyesuaian Open Item register — Penambahan and Pengurangan in one list,
- * told apart by a filter.
+ * The Penyesuaian Open Item register. A document may raise some items and
+ * lower others, so its kind — Penambahan, Pengurangan or Campuran — is read
+ * off its lines and offered as a filter.
  *
  * `can` mirrors the caller's permissions so the row menu offers only what they
  * may use. It is presentation: `transitionItemAdjustment` re-checks both the
@@ -59,7 +60,7 @@ export function ItemAdjustmentList({
   const filtered = useMemo(() => {
     let out = rows.slice();
     if (status) out = out.filter((n) => n.status === status);
-    if (type) out = out.filter((n) => n.effect === type);
+    if (type) out = out.filter((n) => n.kind === type);
     const q = query.trim().toLowerCase();
     if (q) {
       out = out.filter((n) =>
@@ -195,9 +196,9 @@ export function ItemAdjustmentList({
             ariaLabel="Filter jenis penyesuaian"
             options={[
               { value: "", label: "Jenis: semua" },
-              ...(Object.keys(ITEM_ADJUSTMENT_EFFECTS) as ItemAdjustmentEffect[]).map((t) => ({
+              ...(Object.keys(ITEM_ADJUSTMENT_KINDS) as ItemAdjustmentKind[]).map((t) => ({
                 value: t,
-                label: ITEM_ADJUSTMENT_EFFECTS[t].label,
+                label: ITEM_ADJUSTMENT_KINDS[t],
               })),
             ]}
             onChange={(v) => {
@@ -247,7 +248,7 @@ export function ItemAdjustmentList({
                     <th style={{ width: 104 }}>Tanggal</th>
                     <th>Partner / Buku</th>
                     <th className="num" style={{ width: 170 }}>
-                      Nominal
+                      Selisih Bersih
                     </th>
                     <th style={{ width: 104 }}>Status</th>
                     <th style={{ width: 88 }} />
@@ -279,7 +280,8 @@ export function ItemAdjustmentList({
                                 {n.partner_label} — {n.partner_name}
                               </span>
                               <span className="d2">
-                                {ITEM_ADJUSTMENT_EFFECTS[n.effect].label} · {n.book_name}
+                                {n.kind ? `${ITEM_ADJUSTMENT_KINDS[n.kind]} · ` : ""}
+                                {n.book_name}
                               </span>
                             </span>
                           </Link>
@@ -379,8 +381,8 @@ export function ItemAdjustmentList({
       </div>
 
       <p className="foot-note">
-        Penambahan dan Pengurangan mengubah nilai open item yang dipilih, masing-masing
-        pada kursnya sendiri.
+        Selisih Bersih adalah total penambahan dikurangi total pengurangan; setiap open item
+        bergerak pada kursnya sendiri.
       </p>
 
       {menuFor && (

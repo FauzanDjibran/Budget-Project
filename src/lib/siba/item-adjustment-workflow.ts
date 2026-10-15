@@ -26,8 +26,11 @@ import type { PermissionCode } from "./permissions";
 
 export type ItemAdjustmentStatus = "Draft" | "Posted" | "Cancelled";
 
-/** What the adjustment does to the position — raise it or lower it. */
+/** What one line does to its open item — raise it or lower it. */
 export type ItemAdjustmentEffect = "Increase" | "Decrease";
+
+/** What a whole document does: every line one way, or some each way. */
+export type ItemAdjustmentKind = ItemAdjustmentEffect | "Mixed";
 
 export type ItemAdjustmentAction = "post" | "cancel";
 
@@ -88,6 +91,29 @@ export const ITEM_ADJUSTMENT_EFFECTS: Record<
   Increase: { label: "Penambahan", desc: "menambah nilai open item yang dipilih" },
   Decrease: { label: "Pengurangan", desc: "mengurangi nilai open item yang dipilih" },
 };
+
+export const ITEM_ADJUSTMENT_KINDS: Record<ItemAdjustmentKind, string> = {
+  Increase: "Penambahan",
+  Decrease: "Pengurangan",
+  Mixed: "Campuran",
+};
+
+/**
+ * The effect a typed new value has on an item: never chosen, always the sign
+ * of the difference. Null where there is none — a line that would move
+ * nothing.
+ */
+export function effectOfChange(balance: number, newAmount: number): ItemAdjustmentEffect | null {
+  const diff = Math.round(newAmount * 100) - Math.round(balance * 100);
+  if (diff === 0) return null;
+  return diff > 0 ? "Increase" : "Decrease";
+}
+
+/** The kind of a document, from its lines' effects. */
+export function adjustmentKind(effects: ItemAdjustmentEffect[]): ItemAdjustmentKind | null {
+  if (!effects.length) return null;
+  return effects.every((e) => e === effects[0]) ? effects[0] : "Mixed";
+}
 
 /** The number series every adjustment is filed under. */
 export const ITEM_ADJUSTMENT_SERIES = "PYO";

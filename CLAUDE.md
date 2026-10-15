@@ -69,7 +69,7 @@ or invariants that assume a particular row exists.
   converts its open items to Rupiah at the same kurs — the
   **Penyesuaian Open Item**, which raises (Penambahan) or lowers (Pengurangan)
   a Partner's existing open items without cash, the way a Debit and a Credit
-  Note move an invoice — the **Reklasifikasi Open Item**, which moves an
+  Note move an invoice — stated as the value each item should now hold — the **Reklasifikasi Open Item**, which moves an
   open item's value to another book or Partner, the way money held in a
   *Belum Teridentifikasi* book reaches the book it belongs in — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
@@ -101,7 +101,7 @@ or invariants that assume a particular row exists.
 | Finance module — Realisasi Budget | Done for draft → post — two menus (**Realisasi Penerimaan** `RBM-`, **Realisasi Pengeluaran** `RBK-`) over one document and one table. The header is Company · Cash & Bank · Currency · kurs and nothing else: no Purpose, no Partner, so one document settles Budgets of every category and every Partner. Post writes **one Cash Bank Book entry and one subject-book entry per Budget**, each reading the Budget's own description, and one journal: a cash line, a counter line per Budget on its own mapped account and Partner, and an FX line per Budget where one arises. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak's document is an ordinary Realisasi that does not name its cash: its Budgets and the open items each line settles are chosen on its draft, exactly as on the induk's. Ajukan Dana checks the lines (mapping, items) and freezes it at `Pending`, raising an `Open` request. The induk confirms by stating the cash side — resource, and its layer or kurs — and sees both journals first. One transaction then writes what a Realisasi Post writes (a Cash Bank Book entry per Budget on the induk's resource, the anak's subject-book entries per Budget or per settled item), a journal each — the bridge line carries the cash line's own figures, and every Selisih Kurs is the anak's — every Budget's realization, the Posted status and the request's closure. Foreign currency works as on the direct route. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
-| Penyesuaian Open Item | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget (`PYO-`). It replaced Debit / Credit Note and works like one: every line names **existing** open items, and **Penambahan** raises them (a Debit Note) while **Pengurangan** lowers them (a Credit Note), each for the amount the user states, at the item's own kurs, as a new ledger line on the same item — no item is ever opened. The book's own `raises` turns the effect into a journal side, so one document serves every book. Which books may be adjusted is `allows_item_adjustment` on the Budget Category (Titipan, Hutang, Piutang). Post writes the `Adjustment` entries and one balanced journal against the Company's Pendapatan or Beban Penyesuaian account, under a lock on the position; the draft is valued as Post will write it |
+| Penyesuaian Open Item | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget (`PYO-`). It replaced Debit / Credit Note and works like one: every line names one **existing** open item and the **new value** it should hold; the difference beside it is a **Penambahan** (a Debit Note) or a **Pengurangan** (a Credit Note), never chosen, and one document may hold both. The difference moves at the item's own kurs, as a new ledger line on the same item — no item is ever opened — and the line's keterangan is written by the system. Post refuses an item that moved since the draft. The book's own `raises` turns each line's effect into a journal side, so one document serves every book. Which books may be adjusted is `allows_item_adjustment` on the Budget Category (Titipan, Hutang, Piutang). Post writes the `Adjustment` entries and one balanced journal against the Company's Pendapatan or Beban Penyesuaian account, under a lock on the position; the draft is valued as Post will write it |
 | Pencairan Open Item | Done — foreign currency sold out of the Company's own Cash & Bank, and one Partner's open items in that currency converted to Rupiah **at the same kurs**, in one document (`POI-`). One book, one Partner and one layer per document. Each line's amount is the sum of the items it converts. Post writes both cash books, a `Conversion` entry releasing each foreign item at its own kurs, one new IDR item per line in the same book, and one balanced journal with **one** Selisih Kurs line for the whole document (§10 rules 109–112). Its own module, not a Transfer purpose |
 | Reklasifikasi Open Item | Done — an open item's value moved to another book, another Partner, or both, with no cash (`RKL-`). The header is the source position (book × Partner × currency); each line a target book and Partner and the source items it takes. The target is posted as the original movement would have been: a book running the same way **opens** one item per source item at its kurs and base, one running the other way has chosen items **settled**, each with its own Selisih Kurs line. Any category that names a Partner qualifies — no flag. Two holding categories, *Penerimaan* and *Pengeluaran Belum Teridentifikasi*, and Partner Category *Lainnya*, are seeded for money nobody can place yet (§10 rules 113–117). A Budget keeps its classification; its Realisasi card shows where the money went |
 | Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
@@ -225,7 +225,7 @@ of its own.
 | Reklasifikasi valuation | `src/lib/siba/item-reclass-valuation.ts` | Whether a target opens or settles (`reclassEffect`), each side, and each settled item's share and difference. Pure, so the form previews exactly what Post computes; client-safe |
 | Reklasifikasi lifecycle | `src/lib/siba/item-reclass-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Reklasifikasi data | `src/lib/siba/item-reclass.ts` | Header, line and item enforcement, `applyReclass` (and its dry run), `reclassTrail` (where an item's value went), `RKL-` numbering. Reaches the books only through what they export; `server-only` |
-| Penyesuaian Open Item lifecycle | `src/lib/siba/item-adjustment-workflow.ts` | Draft → Post / Cancel, the two effects (Penambahan / Pengurangan), and `adjustmentDirection` — the cash direction an effect moves the book like; client-safe |
+| Penyesuaian Open Item lifecycle | `src/lib/siba/item-adjustment-workflow.ts` | Draft → Post / Cancel, the two effects (Penambahan / Pengurangan), `effectOfChange` (a typed new value's effect), and `adjustmentDirection` — the cash direction an effect moves the book like; client-safe |
 | Penyesuaian Open Item data | `src/lib/siba/item-adjustment.ts` | Header, line and item enforcement, `valueItemAdjustment` (the draft's and Post's one valuation), `applyItemAdjustment` (and its dry run), `PYO-` numbering. Reaches the books only through what they export; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
 | Document links | `src/lib/siba/document-links.ts` | `documentHref` — a `(doc_table, doc_id)` pair to the page that shows it, so a journal can link its source without the book knowing any route; client-safe |
@@ -1552,23 +1552,29 @@ sent had to be entered as a Debit Note here; the behaviour follows mainstream
 ERP, the name stays SIBA's.
 
 97. **An adjustment changes existing open items, never creates one.** One
-    position — book × Partner × currency — and the items in it that the user
-    names: a Piutang item of 10m becomes 8m or 12m, as a new ledger line on
-    that same item. SIBA keeps no invoice, so the item is what the document
+    position — book × Partner × currency — and, per line, one of its items and
+    the value it should now hold: a Piutang item of 10m typed as 8m or 12m
+    moves by the difference, as a new ledger line on that same item. SIBA keeps no invoice, so the item is what the document
     references, the way a DN/CN references an invoice in SAP, Odoo and
     Oracle. No cash moves: it writes no Cash Bank Book entry, draws
     on no layer, realizes no Budget, and the anak posts its own directly, with
     no Funding Request.
-98. **It is stated by its effect: Penambahan raises the items, Pengurangan
-    lowers them** — what a Debit Note and a Credit Note do to their invoice. That is the whole definition, and it is why one document serves every
+98. **A line's effect is the sign of its difference: Penambahan raises the
+    item, Pengurangan lowers it** — what a Debit Note and a Credit Note do to
+    their invoice. The user types the new value and the system reads the
+    effect (`effectOfChange`), the way Business Central's Adjust Inventory
+    posts the gap to a typed New Inventory; a value equal to what the item
+    holds is refused, and **one document may raise some items and lower
+    others** (its kind reads *Campuran*). The effect is the whole definition,
+    and it is why one document serves every
     book: `adjustmentDirection` turns the effect into the cash direction that
     moves the book that way, and the book's own `raises` decides the journal
     side — the Partner line is debited exactly when that direction is money
     leaving. The counter side is the Company's **Pendapatan Penyesuaian**
     account when it is credited and its **Beban Penyesuaian** account when it
     is debited (Mapping Account System `adjustment_income` /
-    `adjustment_expense`), refused by name while unset, and never an account a
-    book reconciles against. Named after the effect rather than a side, as
+    `adjustment_expense`), per line, refused by name while a line needs one
+    that is unset, and never an account a book reconciles against. Named after the effect rather than a side, as
     mainstream ERP defines DN/CN relative to the document it adjusts.
 99. **Which books may be adjusted is `allows_item_adjustment`, on the Budget
     Category.** Stored, never inferred (the user's rule). One Profit & Loss
@@ -1577,25 +1583,30 @@ ERP, the name stays SIBA's.
     investment's own return, so the seed turns it on for Titipan, Hutang and
     Piutang only. Only a category that keeps a book may carry it — the form
     hides it otherwise and a CHECK refuses it.
-100. **Every line names its items; nothing below zero.** Penambahan and
-    Pengurangan alike name the open items they adjust, each for an amount the
-    user states, and a line is worth their sum (rule 105) — nothing is
-    distributed and nothing is preselected. A Penambahan may raise an item past
-    what it holds; a Pengurangan may take it to nil and no further, so no
-    position can go below zero. **Only an Open item may be adjusted** — raising
+100. **Every line names one item and its new value; nothing below zero.** The
+    item is chosen and the value typed, never preselected or distributed, and
+    one item is adjusted once per document. A new value may be above what the
+    item holds, or nil — which clears it — and never below nil, so no position
+    can go below zero. **A new value holds only against the balance it was
+    typed for**: the line keeps what the item held when the draft was saved
+    (`balance_before`), and Post refuses an item holding anything else,
+    because the same value would move it by a difference nobody saw —
+    possibly the other way. The keterangan is written by the system
+    ("Penambahan USD 200,00 atas SBI-0012") and is not shown on the form. **Only an Open item may be adjusted** — raising
     a settled one would reopen it, which is a decision not taken. Checked at save and again at Post, where
     `lockSubledgerPosition` holds the position and every item is re-read under
     it.
 101. **Each item moves at its own kurs, and the draft says so.** A Penambahan
-    raises an item by `amount × its kurs`, so the item's rate never changes; a
-    Pengurangan releases what the item is carried at. Both journal sides carry
+    raises an item by `difference × its kurs`, so the item's rate never
+    changes; a Pengurangan releases what that part is carried at, and taking
+    an item to nil hands back exactly the base it holds. Both journal sides carry
     the same base, so no FX difference can arise, and no kurs is typed — the
-    way Oracle values an adjustment at its invoice's own rate. Every line and item is valued
-    when the draft is saved, by the same `valueItemAdjustment` Post runs.
-102. **Draft → Post / Cancel, and a posted one is final.** Its effect is fixed
-    once saved, because it decides what every line is; one series, `PYO-`.
+    way Oracle values an adjustment at its invoice's own rate. Every line is
+    valued when the draft is saved, by the same `valueItemAdjustment` Post
+    runs. The header's figures are the **net** change, raised less lowered.
+102. **Draft → Post / Cancel, and a posted one is final.** One series, `PYO-`.
     Documents posted as Debit / Credit Notes keep their `DN-` / `CN-` numbers.
-    A posted adjustment is corrected by one of the opposite effect.
+    A posted adjustment is corrected by another one, typing the value back.
 
 **Open items** — how a subject book holds a position.
 
@@ -4159,14 +4170,15 @@ below in outline because the half of it that still holds is easy to lose.**
 - **Status:** Frozen, current.
 
 ### A Penyesuaian Open Item adjusts a position, in one rule for every book (FROZEN)
-- **Decision:** its own module (`fin_item_adjustment(_line, _line_item)`, one
+- **Decision:** its own module (`fin_item_adjustment(_line)`, one
   `PYO-` series, `ITEM_ADJUSTMENT_*` permissions, Finance › Penyesuaian ›
   Penyesuaian Open Item beside Reklasifikasi Open Item). It is **the
   adjustment document** — the only way to change a Partner's position without
   cash, since a manual journal may not touch a control account. A document
-  names a book, a Partner, a currency and its effect, **Penambahan** or
-  **Pengurangan**; every line names existing open items and raises or lowers
-  them, at each item's own kurs, as a new ledger line on the same item. Post writes the `Adjustment` entries and one balanced journal
+  names a book, a Partner and a currency; every line names one existing open
+  item and the value it should now hold, and the difference — a
+  **Penambahan** or a **Pengurangan**, read off its sign — moves the item at
+  its own kurs, as a new ledger line on the same item. Post writes the `Adjustment` entries and one balanced journal
   in one transaction. §10 rules 97–102 are the statement of it.
 - **It replaced Debit / Credit Note**, on the user's decision (2026-10-15),
   after a review of mainstream naming. In SAP, Odoo and Accurate a DN/CN
@@ -4193,6 +4205,18 @@ below in outline because the half of it that still holds is easy to lose.**
   the knowledge base's `accounting/open-items` concept, where a DNCN "creates
   its own open item" to be cleared later: SIBA has no invoice for a
   free-standing note to clear against.
+- **A line is stated as the new value, not the difference** — the user's
+  third decision (2026-10-16), after comparing mainstream ERPs. An amount is
+  how SAP, Odoo and Oracle take a note, because the counterparty's paper
+  states one; a target value is how Business Central's Adjust Inventory and
+  Revaluation Journal take a correction to what a balance *should* be, and it
+  is the case the user has. Either way the posted record is the difference.
+  The effect left the header for the line (migration
+  `20261016090000_item_adjustment_new_value`, which also folded
+  `fin_item_adjustment_line_item` into the line, one item per line), the
+  header's figures became the net change, and the per-line keterangan became
+  the system's own. Business Central posts at once; SIBA has drafts, so Post
+  is held to the balance each value was typed against.
 - **Reason for the shape:** the user's specification for DN/CN, unchanged in
   substance: it adjusts existing value rather than correcting one transaction;
   only real balances, never Budget; nothing below zero; the flag on the Budget
@@ -4212,7 +4236,8 @@ below in outline because the half of it that still holds is easy to lose.**
   move cash or realize a Budget, never decide its sign per book, never infer
   `allows_item_adjustment` from an account, never let an adjustment open an
   item or move one the user did not choose, never let a Pengurangan take an
-  item below nil, never adjust a settled item without a decision to reopen, never store a carrying
+  item below nil, never post a new value against a balance other than the one
+  it was typed for, never let the user choose a line's effect, never adjust a settled item without a decision to reopen, never store a carrying
   rate on it, never add an edit, reversal or delete for a posted one, and do
   not bring back the Debit / Credit names.**
 - **Status:** Frozen, current. Supersedes "A Debit / Credit Note adjusts a

@@ -17,7 +17,7 @@
  *   fin_cash_bank_transaction(_line)               Realisasi Budget
  *   fin_funding_request                            the intercompany bridge
  *   fin_cash_bank_transfer(_line)                  Cash Bank Transfer
- *   fin_item_adjustment(_line, _line_item)         Penyesuaian Open Item
+ *   fin_item_adjustment(_line)                     Penyesuaian Open Item
  *   fin_item_conversion(_line, _line_item)         Pencairan Open Item
  *   fin_item_reclass(_line, _line_source,
  *                    _line_target)                 Reklasifikasi Open Item
@@ -106,7 +106,6 @@ async function main() {
     fin_cash_bank_transaction: await prisma.finCashBankTransaction.count(),
     fin_cash_bank_transfer_line: await prisma.finCashBankTransferLine.count(),
     fin_cash_bank_transfer: await prisma.finCashBankTransfer.count(),
-    fin_item_adjustment_line_item: await prisma.finItemAdjustmentLineItem.count(),
     fin_item_adjustment_line: await prisma.finItemAdjustmentLine.count(),
     fin_item_adjustment: await prisma.finItemAdjustment.count(),
     fin_item_conversion_line_item: await prisma.finItemConversionLineItem.count(),
@@ -178,7 +177,6 @@ async function main() {
     await tx.finCashBankTransferLine.deleteMany();
     await tx.finCashBankTransfer.deleteMany();
 
-    await tx.finItemAdjustmentLineItem.deleteMany();
     await tx.finItemAdjustmentLine.deleteMany();
     await tx.finItemAdjustment.deleteMany();
 

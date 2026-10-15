@@ -9,6 +9,7 @@ import { DocumentHeader } from "@/components/ui/document-header";
 import { CancelButton } from "@/components/ui/cancel-button";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
+import { MoneyInput } from "@/components/ui/money-input";
 import { DateInput } from "@/components/ui/date-input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { JournalPreview } from "@/components/ui/journal-preview";
@@ -21,7 +22,7 @@ import {
   updateItemAdjustment,
   type ItemAdjustmentValues,
 } from "@/app/actions/item-adjustment";
-import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
+import { formatDate, formatForeignFace, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { relieve, roundBase } from "@/lib/siba/fx";
 import type {
@@ -33,6 +34,7 @@ import {
   ITEM_ADJUSTMENT_EFFECTS,
   ITEM_ADJUSTMENT_TRANSITIONS,
   availableItemAdjustmentActions,
+  effectOfChange,
   itemAdjustmentIsEditable,
   type ItemAdjustmentAbilities,
   type ItemAdjustmentAction,
@@ -43,33 +45,41 @@ import {
   orderForHeader,
   type ActionTone,
 } from "@/lib/siba/header-actions";
-import { OpenItemSelect, type ItemAllocation } from "./open-item-select";
 
 export type ItemAdjustmentFormMode = "new" | "view" | "edit";
 
 type DraftLine = {
   key: number;
-  description: string;
-  /** The line is worth the items it names. */
-  items: ItemAllocation[];
+  /** The open item, as a picker value. */
+  item_id: string;
+  /** The value the item should now hold, unformatted; "" while untyped. */
+  new_amount: string;
 };
 
 let nextKey = 1;
 
-const sum = (items: ItemAllocation[]) => roundBase(items.reduce((t, i) => t + (i.amount || 0), 0));
+/** What a line will do, worked out the way the Server Action does. */
+type LinePreview = {
+  effect: ItemAdjustmentEffect;
+  /** Signed: positive raises the item, negative lowers it. */
+  change: number;
+  /** The change in base, signed the same way. */
+  base: number;
+  rate: number;
+};
 
 /**
  * Penyesuaian Open Item create / detail / edit.
  *
  * The header names the **position** being adjusted — a book, a Partner, a
- * currency — and whether it is raised or lowered. Every line states its
- * reason and the existing open items it adjusts, each for an amount the user
- * chooses, and is worth their sum: a Penambahan raises them, a Pengurangan
- * lowers them, like a Debit Note and a Credit Note. Nothing on this screen
- * moves a position: Post does, and it is a separate, confirmed act.
+ * currency. Every line names one of its open items and the value it should
+ * now hold; the difference beside it, and whether that is a Penambahan or a
+ * Pengurangan, is never typed. The line's description is written by the
+ * system. Nothing on this screen moves a position: Post does, and it is a
+ * separate, confirmed act.
  *
  * The figures in IDR are the kernel's own, each item at its own kurs —
- * `amount × kurs` on a Penambahan, `relieve` on a Pengurangan — the same
+ * `difference × kurs` on a raise, `relieve` on a lowering — the same
  * arithmetic the saved draft and Post write.
  */
 export function ItemAdjustmentForm({
@@ -90,7 +100,6 @@ export function ItemAdjustmentForm({
   const editing = mode === "new" || mode === "edit";
 
   const [values, setValues] = useState<ItemAdjustmentValues>(() => ({
-    effect: doc?.effect ?? "",
     budget_category_id: doc ? String(doc.budget_category_id) : "",
     partner_id: doc ? String(doc.partner_id) : "",
     currency_id: doc ? String(doc.currency_id) : "",
@@ -106,10 +115,10 @@ export function ItemAdjustmentForm({
     lines.length
       ? lines.map((l) => ({
           key: nextKey++,
-          description: l.description,
-          items: l.items.map((i) => ({ item_id: i.itemId, amount: i.amount })),
+          item_id: l.itemId ? String(l.itemId) : "",
+          new_amount: l.new_amount != null ? String(l.new_amount) : "",
         }))
-      : [{ key: nextKey++, description: "", items: [] }]
+      : [{ key: nextKey++, item_id: "", new_amount: "" }]
   );
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -120,8 +129,6 @@ export function ItemAdjustmentForm({
   // Post is answerable once its journal preview has loaded and not refused.
   const [postReady, setPostReady] = useState(false);
 
-  const effect = (values.effect || null) as ItemAdjustmentEffect | null;
-  const decrease = effect === "Decrease";
   const book = refs.books.find((b) => String(b.categoryId) === values.budget_category_id) ?? null;
   const partner = refs.partners.find((p) => String(p.id) === values.partner_id) ?? null;
   const currency = refs.currencies.find((c) => String(c.id) === values.currency_id) ?? null;
@@ -145,9 +152,7 @@ export function ItemAdjustmentForm({
 
 
   /** What the first missing header field is — the clause a line waits on. */
-  const lineWaitingFor = !effect
-    ? "Pilih Jenis dulu…"
-    : !book
+  const lineWaitingFor = !book
       ? "Pilih Buku Subjek dulu…"
       : !partner
         ? "Pilih Partner dulu…"
@@ -167,9 +172,9 @@ export function ItemAdjustmentForm({
       }
       return next;
     });
-    // The items a line chose belong to one position and one effect.
+    // The items the lines chose belong to one position.
     if (key !== "exchange_rate" && key !== "document_date" && key !== "reference" && key !== "note") {
-      setDraftLines((rows) => rows.map((r) => (r.items.length ? { ...r, items: [] } : r)));
+      setDraftLines((rows) => rows.map((r) => (r.item_id ? { ...r, item_id: "", new_amount: "" } : r)));
     }
     setDirty(true);
     setErrors((e) => {
@@ -193,56 +198,62 @@ export function ItemAdjustmentForm({
 
   // ------------------------------------------------------------- preview
 
-  const lineAmount = (l: DraftLine) => sum(l.items);
-
-  const total = editing
-    ? roundBase(draftLines.reduce((t, l) => t + lineAmount(l), 0))
-    : doc?.adjustment_amount ?? 0;
+  const itemsById = new Map(positionItems.map((i) => [String(i.id), i]));
 
   /**
-   * Each line's value in IDR, by the posting's own arithmetic — or null where
-   * an item's amount is not stated yet. Every item moves at its own kurs: a
-   * Penambahan raises it by `amount × kurs`, a Pengurangan draws it down line
-   * by line, as Post will.
+   * What each draft line will do, or null while its item or new value is
+   * missing or the value moves nothing. Every item moves at its own kurs.
    */
-  const lineBases: (number | null)[] = (() => {
-    if (!editing) return lines.map((l) => l.base_amount);
-    if (!effect) return draftLines.map(() => null);
-    if (!decrease) {
-      const rates = new Map(positionItems.map((i) => [i.id, i.rate]));
-      return draftLines.map((l) => {
-        if (!l.items.length || l.items.some((a) => !(a.amount > 0) || !rates.has(a.item_id))) return null;
-        return roundBase(l.items.reduce((t, a) => t + roundBase(a.amount * rates.get(a.item_id)!), 0));
-      });
-    }
-    const held = new Map(positionItems.map((i) => [i.id, { foreign: i.remaining, base: i.baseRemaining }]));
-    return draftLines.map((l) => {
-      let base = 0;
-      for (const a of l.items) {
-        const h = held.get(a.item_id);
-        if (!h || !(a.amount > 0) || a.amount > h.foreign) return null;
-        const r = relieve(h, Math.round(a.amount * 100) === Math.round(h.foreign * 100) ? h.foreign : a.amount);
-        held.set(a.item_id, r.remaining);
-        base += r.base;
-      }
-      return l.items.length ? roundBase(base) : null;
-    });
-  })();
-  const totalBase = lineBases.every((b) => b != null)
-    ? roundBase(lineBases.reduce<number>((t, b) => t + (b ?? 0), 0))
-    : null;
+  const previews: (LinePreview | null)[] = draftLines.map((l) => {
+    const item = itemsById.get(l.item_id);
+    if (!item || l.new_amount === "") return null;
+    const target = Number(l.new_amount);
+    const effect = effectOfChange(item.remaining, target);
+    if (!effect || target < 0) return null;
+    const amount = roundBase(Math.abs(target - item.remaining));
+    const base =
+      effect === "Increase"
+        ? roundBase(amount * item.rate)
+        : relieve(
+            { foreign: item.remaining, base: item.baseRemaining },
+            Math.round(amount * 100) === Math.round(item.remaining * 100) ? item.remaining : amount
+          ).base;
+    const sign = effect === "Increase" ? 1 : -1;
+    return { effect, change: sign * amount, base: sign * base, rate: item.rate };
+  });
 
-  const after = standing ? (decrease ? standing.foreign - total : standing.foreign + total) : null;
+  const savedPreviews: LinePreview[] = lines.map((l) => {
+    const sign = l.effect === "Increase" ? 1 : -1;
+    return { effect: l.effect, change: sign * l.amount, base: sign * l.base_amount, rate: l.rate };
+  });
+
+  const net = editing
+    ? roundBase(previews.reduce((t, p) => t + (p?.change ?? 0), 0))
+    : doc?.adjustment_amount ?? 0;
+  const netBase = editing
+    ? roundBase(previews.reduce((t, p) => t + (p?.base ?? 0), 0))
+    : doc?.adjustment_base_amount ?? 0;
+  const after = standing ? roundBase(standing.foreign + net) : null;
+
+  /** The items no other line has taken — one item is adjusted once. */
+  const optionsFor = (key: number) => {
+    const taken = new Set(draftLines.filter((r) => r.key !== key).map((r) => r.item_id));
+    return positionItems
+      .filter((i) => !taken.has(String(i.id)))
+      .map((i) => ({
+        value: String(i.id),
+        label: `${i.itemNo} · ${formatDate(i.date)}`,
+        hint: foreign
+          ? `${formatMoney(i.remaining, currencyLabel)} @ ${formatRate(i.rate)}`
+          : formatMoney(i.remaining, currencyLabel),
+      }));
+  };
 
   // ---------------------------------------------------------------- writes
 
   const onSave = async () => {
     setSaving(true);
-    const payload = draftLines.map((l) => ({
-      description: l.description,
-      amount: String(lineAmount(l) || ""),
-      items: l.items,
-    }));
+    const payload = draftLines.map((l) => ({ item_id: l.item_id, new_amount: l.new_amount }));
     const result =
       mode === "new"
         ? await createItemAdjustment(values, payload)
@@ -390,33 +401,8 @@ export function ItemAdjustmentForm({
               <FormSection>
                 <FormRow>
                   <Field
-                    label="Jenis"
-                    span={3}
-                    required={mode === "new"}
-                    locked={mode === "edit"}
-                    help={effect ? ITEM_ADJUSTMENT_EFFECTS[effect].desc : undefined}
-                    error={errors.effect}
-                  >
-                    {mode === "new" ? (
-                      <Select
-                        value={values.effect}
-                        invalid={Boolean(errors.effect)}
-                        placeholder="Pilih jenis…"
-                        options={(Object.keys(ITEM_ADJUSTMENT_EFFECTS) as ItemAdjustmentEffect[]).map(
-                          (t) => ({ value: t, label: ITEM_ADJUSTMENT_EFFECTS[t].label })
-                        )}
-                        onChange={(v) => set("effect", v)}
-                      />
-                    ) : (
-                      <div className="ro">
-                        <span>{effect ? ITEM_ADJUSTMENT_EFFECTS[effect].label : "—"}</span>
-                      </div>
-                    )}
-                  </Field>
-
-                  <Field
                     label="Buku Subjek"
-                    span={3}
+                    span={4}
                     required={editing}
                     error={errors.budget_category_id}
                   >
@@ -438,7 +424,7 @@ export function ItemAdjustmentForm({
                     )}
                   </Field>
 
-                  <Field label="Partner" span={3} required={editing} error={errors.partner_id}>
+                  <Field label="Partner" span={5} required={editing} error={errors.partner_id}>
                     {editing ? (
                       <Combobox
                         value={values.partner_id ? Number(values.partner_id) : null}
@@ -585,9 +571,8 @@ export function ItemAdjustmentForm({
               <div className="ct">
                 <h3>Rincian</h3>
                 <p>
-                  {decrease
-                    ? "Alasan penyesuaian dan open item yang dikurangi, masing-masing pada kursnya sendiri."
-                    : "Alasan penyesuaian dan open item yang ditambah, masing-masing pada kursnya sendiri."}
+                  Setiap baris memilih satu open item dan nilai barunya. Selisihnya
+                  menentukan penambahan atau pengurangan, pada kurs open item itu sendiri.
                 </p>
               </div>
               {editing ? (
@@ -596,7 +581,7 @@ export function ItemAdjustmentForm({
                   onClick={() => {
                     setDraftLines((rows) => [
                       ...rows,
-                      { key: nextKey++, description: "", items: [] },
+                      { key: nextKey++, item_id: "", new_amount: "" },
                     ]);
                     setDirty(true);
                   }}
@@ -620,14 +605,19 @@ export function ItemAdjustmentForm({
             )}
 
             <div className="tw">
-              <table className="grid ltab" style={{ minWidth: 560 }}>
+              <table className="grid ltab" style={{ minWidth: 640 }}>
                 <thead>
                   <tr>
                     <th style={{ width: 34 }}>No</th>
-                    <th>Alasan</th>
-                    <th style={{ width: 200 }}>Open Item</th>
+                    <th>Open Item</th>
+                    <th className="num" style={{ width: 170 }}>
+                      {editing ? "Nilai Saat Ini" : "Nilai Sebelum"}
+                    </th>
                     <th className="num" style={{ width: 190 }}>
-                      Nominal ({currencyLabel})
+                      Nilai Baru ({currencyLabel})
+                    </th>
+                    <th className="num" style={{ width: 170 }}>
+                      Selisih
                     </th>
                     {foreign && (
                       <th className="num" style={{ width: 170 }}>
@@ -639,120 +629,109 @@ export function ItemAdjustmentForm({
                 </thead>
                 <tbody>
                   {editing
-                    ? draftLines.map((l, i) => (
-                        <tr key={l.key}>
-                          <td className="no">{i + 1}</td>
-                          <td className="pri">
-                            <input
-                              className="inp sm"
-                              type="text"
-                              autoComplete="off"
-                              value={l.description}
-                              placeholder="Diskon pelunasan, retur barang, koreksi tagihan…"
-                              aria-label="Alasan"
-                              onChange={(e) => setLine(l.key, { description: e.target.value })}
-                            />
-                          </td>
-                          <td>
-                              {lineWaitingFor ? (
-                                <span className="dash">{lineWaitingFor}</span>
-                              ) : (
-                                <OpenItemSelect
-                                  value={l.items}
-                                  items={positionItems}
-                                  currencyLabel={currencyLabel}
-                                  direction={book!.raises}
-                                  cashRate={null}
-                                  showFx={false}
-                                  amountLabel={decrease ? "Dikurangi" : "Ditambah"}
-                                  raising={!decrease}
-                                  title="Pilih Open Item"
-                                  subtitle={`Centang setiap open item yang ${decrease ? "dikurangi" : "ditambah"} dan nominalnya. Nominal baris adalah jumlah item yang dipilih.`}
-                                  onChange={(v) => setLine(l.key, { items: v })}
-                                />
-                              )}
+                    ? draftLines.map((l, i) => {
+                        const item = itemsById.get(l.item_id);
+                        return (
+                          <tr key={l.key}>
+                            <td className="no">{i + 1}</td>
+                            <td>
+                              <Select
+                                size="sm"
+                                searchable
+                                value={l.item_id}
+                                placeholder="Pilih open item…"
+                                waitingFor={lineWaitingFor}
+                                options={optionsFor(l.key)}
+                                ariaLabel={`Open item baris ${i + 1}`}
+                                onChange={(v) => setLine(l.key, { item_id: v })}
+                              />
                             </td>
-                          <td className="num">
-                            <Amount value={lineAmount(l)} currency={currencyLabel} />
-                          </td>
-                          {foreign && (
                             <td className="num">
-                              {lineBases[i] != null ? (
-                                <Amount value={lineBases[i]!} currency={BASE_CURRENCY_LABEL} />
+                              {item ? (
+                                <Amount value={item.remaining} currency={currencyLabel} />
                               ) : (
                                 <span className="dash">—</span>
                               )}
                             </td>
-                          )}
-                          <td className="acts">
-                            <button
-                              className="iact del"
-                              title="Keluarkan dari dokumen"
-                              disabled={draftLines.length === 1}
-                              onClick={() => {
-                                setDraftLines((rows) => rows.filter((r) => r.key !== l.key));
-                                setDirty(true);
-                              }}
-                            >
-                              <Icon name="trash" size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                            <td className="num">
+                              <MoneyInput
+                                size="sm"
+                                placeholder=""
+                                ariaLabel={`Nilai baru baris ${i + 1}`}
+                                currencyLabel={currencyLabel}
+                                value={l.new_amount}
+                                onChange={(v) => setLine(l.key, { new_amount: v })}
+                              />
+                            </td>
+                            <ChangeCells preview={previews[i]} currency={currencyLabel} foreign={foreign} />
+                            <td className="acts">
+                              <button
+                                className="iact del"
+                                title="Keluarkan dari dokumen"
+                                disabled={draftLines.length === 1}
+                                onClick={() => {
+                                  setDraftLines((rows) => rows.filter((r) => r.key !== l.key));
+                                  setDirty(true);
+                                }}
+                              >
+                                <Icon name="trash" size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
                     : lines.map((l, i) => (
                         <tr key={l.id}>
                           <td className="no">{i + 1}</td>
-                          <td className="pri wrapok">
-                            {l.description}
-                          </td>
-                            <td>
-                              {!l.items.length && <span className="dash">—</span>}
-                              <span className="dstack">
-                                {l.items.map((it) => (
-                                  <span key={it.itemId} className="d1">
-                                    <span className="lab">{it.itemNo}</span>{" "}
-                                    {formatMoney(it.amount, currencyLabel)}
-                                    {foreign && <> @ {formatRate(it.rate)}</>}
-                                  </span>
-                                ))}
+                          <td>
+                            <span className="dstack">
+                              <span className="d1">
+                                <span className="lab">{l.itemNo}</span>
                               </span>
-                            </td>
-                          <td className="num">
-                            <Amount value={l.amount} currency={currencyLabel} />
+                              {l.itemDate && (
+                                <span className="d2">
+                                  {formatDate(l.itemDate)}
+                                  {foreign && <> · kurs {formatRate(l.rate)}</>}
+                                </span>
+                              )}
+                            </span>
                           </td>
-                          {foreign && (
-                            <td className="num">
-                              <Amount value={l.base_amount} currency={BASE_CURRENCY_LABEL} />
-                            </td>
-                          )}
+                          <td className="num">
+                            {l.balance_before != null ? (
+                              <Amount value={l.balance_before} currency={currencyLabel} />
+                            ) : (
+                              <span className="dash">—</span>
+                            )}
+                          </td>
+                          <td className="num">
+                            {l.new_amount != null ? (
+                              <Amount value={l.new_amount} currency={currencyLabel} />
+                            ) : (
+                              <span className="dash">—</span>
+                            )}
+                          </td>
+                          <ChangeCells preview={savedPreviews[i]} currency={currencyLabel} foreign={foreign} />
                         </tr>
                       ))}
                 </tbody>
                 <tfoot>
                   <tr className="totrow">
-                    <td colSpan={3} style={{ textAlign: "right" }}>
-                      Total {effect ? ITEM_ADJUSTMENT_EFFECTS[effect].label : "Penyesuaian"}
+                    <td colSpan={4} style={{ textAlign: "right" }}>
+                      Selisih Bersih
                     </td>
                     <td className="num">
-                      <Amount value={total} currency={currencyLabel} big />
+                      <Amount value={net} currency={currencyLabel} big />
                     </td>
                     {foreign && (
                       <td className="num">
-                        {(editing ? totalBase : doc?.adjustment_base_amount) != null ? (
-                          <Amount
-                            value={(editing ? totalBase : doc?.adjustment_base_amount)!}
-                            currency={BASE_CURRENCY_LABEL}
-                          />
-                        ) : (
-                          <span className="dash">—</span>
-                        )}
+                        <Amount value={netBase} currency={BASE_CURRENCY_LABEL} />
                       </td>
                     )}
                     {editing && <td />}
                   </tr>
-                  {editing && after != null && total > 0 && (
+                  {editing && after != null && previews.some(Boolean) && (
                     <tr className="totrow">
-                      <td colSpan={3} style={{ textAlign: "right" }}>
+                      <td colSpan={4} style={{ textAlign: "right" }}>
                         Posisi Setelah Penyesuaian
                       </td>
                       <td className="num">
@@ -775,7 +754,7 @@ export function ItemAdjustmentForm({
           icon={ITEM_ADJUSTMENT_TRANSITIONS[confirm].icon}
           tone={ITEM_ADJUSTMENT_TRANSITIONS[confirm].tone === "danger" ? "danger" : "ok"}
           title={ITEM_ADJUSTMENT_TRANSITIONS[confirm].title}
-          subject={`${doc.adjustment_no} – ${formatMoney(doc.adjustment_amount, currencyLabel)}`}
+          subject={`${doc.adjustment_no} – selisih bersih ${formatMoney(doc.adjustment_amount, currencyLabel)}`}
           body={ITEM_ADJUSTMENT_TRANSITIONS[confirm].body}
           confirmLabel={ITEM_ADJUSTMENT_TRANSITIONS[confirm].confirmLabel}
           confirmTone={ITEM_ADJUSTMENT_TRANSITIONS[confirm].tone === "danger" ? "solid-danger" : "primary"}
@@ -795,6 +774,50 @@ export function ItemAdjustmentForm({
             />
           )}
         </ConfirmDialog>
+      )}
+    </>
+  );
+}
+
+/**
+ * A line's difference and its value in base, signed — a Penambahan reads
+ * positive, a Pengurangan negative — with the effect named under the figure,
+ * so the direction is read rather than inferred from a minus sign.
+ */
+function ChangeCells({
+  preview,
+  currency,
+  foreign,
+}: {
+  preview: LinePreview | null;
+  currency: string;
+  foreign: boolean;
+}) {
+  return (
+    <>
+      <td className="num">
+        {preview ? (
+          <>
+            <Amount value={preview.change} currency={currency} />
+            <span className="rsub">{ITEM_ADJUSTMENT_EFFECTS[preview.effect].label}</span>
+          </>
+        ) : (
+          <span className="dash">—</span>
+        )}
+      </td>
+      {foreign && (
+        <td className="num">
+          {preview ? (
+            <>
+              <Amount value={preview.base} currency={BASE_CURRENCY_LABEL} />
+              <span className="rsub">
+                {formatForeignFace(Math.abs(preview.change), currency, preview.rate)}
+              </span>
+            </>
+          ) : (
+            <span className="dash">—</span>
+          )}
+        </td>
       )}
     </>
   );

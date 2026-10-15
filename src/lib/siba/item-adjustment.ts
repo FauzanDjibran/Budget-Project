@@ -22,7 +22,10 @@ import {
   ITEM_ADJUSTMENT_EFFECTS,
   ITEM_ADJUSTMENT_SERIES,
   adjustmentDirection,
+  adjustmentKind,
+  effectOfChange,
   type ItemAdjustmentEffect,
+  type ItemAdjustmentKind,
   type ItemAdjustmentStatus,
 } from "./item-adjustment-workflow";
 import {
@@ -45,32 +48,39 @@ import { checkSystemAccountValue, systemAccountId } from "./system-account-data"
  * items in a subject book — what mainstream ERP calls a Debit Note and a
  * Credit Note issued against an invoice, kept under SIBA's own name.
  *
- * **It changes an item that exists, never creates one.** A Piutang item of 10m
- * becomes 8m (Pengurangan, like a Credit Note) or 12m (Penambahan, like a
- * Debit Note), and the change is a new ledger line on that same item. SIBA
- * keeps no invoice, so the item is what the document references. No cash
- * moves: it writes no Cash Bank Book entry, draws on no rate layer and
- * realizes no Budget.
+ * **It changes an item that exists, never creates one.** Every line names one
+ * open item and the value it should now hold: a Piutang item of 10m typed as
+ * 8m is lowered by 2m (a Pengurangan, like a Credit Note), typed as 12m it is
+ * raised by 2m (a Penambahan, like a Debit Note). The difference is never
+ * typed and the direction never chosen — both are read off the item, the way
+ * Business Central's Adjust Inventory posts the gap to a typed New Inventory.
+ * The change is a new ledger line on that same item. One document may raise
+ * some items and lower others. SIBA keeps no invoice, so the item is what the
+ * document references. No cash moves: it writes no Cash Bank Book entry,
+ * draws on no rate layer and realizes no Budget.
  *
- * **Each item moves at its own kurs.** Every line names the items it adjusts,
- * each for an amount the user stated, and is worth their sum — nothing is
- * distributed (§10 rule 105). A Penambahan raises an item by `amount × its
- * kurs`; a Pengurangan releases what the item is carried at. Both journal
+ * **A new value is typed against a balance, and Post holds it to that
+ * balance.** The draft records what each item held when it was saved; Post
+ * refuses when an item holds anything else, because the same new value would
+ * then move it by a difference nobody saw — possibly the other way.
+ *
+ * **Each item moves at its own kurs.** A Penambahan raises an item by
+ * `difference × its kurs`; a Pengurangan releases what that part is carried
+ * at, and taking an item to nil hands back exactly what it holds. Both journal
  * sides carry the same base, so no FX difference can arise and no kurs is
  * typed.
  *
- * **One rule covers every book.** The effect is handed to the book as a cash
- * direction (`adjustmentDirection`), and the book's own `raises` decides the
- * rest. The Partner line is debited exactly when that direction is money
- * leaving, and the counter side is the Company's Pendapatan Penyesuaian
- * account when it is credited and its Beban Penyesuaian account when it is
- * debited. Which books may be adjusted is the category's
- * `allows_item_adjustment`, not a code list.
+ * **One rule covers every book.** Each line's effect is handed to the book as
+ * a cash direction (`adjustmentDirection`), and the book's own `raises`
+ * decides the rest. The Partner line is debited exactly when that direction is
+ * money leaving, and its counter line is the Company's Pendapatan Penyesuaian
+ * account when credited and its Beban Penyesuaian account when debited. Which
+ * books may be adjusted is the category's `allows_item_adjustment`, not a
+ * code list.
  *
  * **Valued when saved, and again at Post.** A draft states the base of every
- * line and item Post would write if it ran now; Post re-values under the
- * position's lock and writes them again, because an item can move while the
- * draft waits.
+ * line Post would write if it ran now; Post re-values under the position's
+ * lock and writes them again.
  */
 
 type Db = Prisma.TransactionClient | typeof prisma;
@@ -83,7 +93,8 @@ const cents = (n: number) => Math.round(n * 100);
 export type ItemAdjustmentRow = {
   id: number;
   adjustment_no: string;
-  effect: ItemAdjustmentEffect;
+  /** What the lines do together — null on a document with no line. */
+  kind: ItemAdjustmentKind | null;
   document_date: string | null;
   posting_date: string | null;
   company_id: number;
@@ -91,8 +102,12 @@ export type ItemAdjustmentRow = {
   partner_id: number;
   currency_id: number;
   exchange_rate: number | null;
+  /** The net change, raised less lowered; negative when it lowers on balance. */
   adjustment_amount: number;
   adjustment_base_amount: number;
+  /** What the lines raise, and what they lower — both unsigned. */
+  increase_amount: number;
+  decrease_amount: number;
   reference: string | null;
   note: string | null;
   status: ItemAdjustmentStatus;
@@ -112,28 +127,27 @@ export type ItemAdjustmentRow = {
   updated_at: string;
 };
 
-export type ItemAdjustmentLineItemRow = {
-  itemId: number;
-  itemNo: string;
-  date: string;
-  rate: number;
-  amount: number;
-  baseAmount: number;
-};
-
 export type ItemAdjustmentLineRow = {
   id: number;
   sequence_no: number;
   description: string;
+  effect: ItemAdjustmentEffect;
+  /** Null only on documents posted while a raise opened a new item. */
+  itemId: number | null;
+  itemNo: string;
+  itemDate: string;
+  rate: number;
+  /** Null on documents posted before a line was stated as a new value. */
+  balance_before: number | null;
+  new_amount: number | null;
+  /** The difference, unsigned; `effect` says which way. */
   amount: number;
   base_amount: number;
-  items: ItemAdjustmentLineItemRow[];
 };
 
 type AdjustmentRecord = {
   id: number;
   adjustment_no: string;
-  effect: string;
   document_date: Date | null;
   posting_date: Date | null;
   company_id: number;
@@ -150,24 +164,26 @@ type AdjustmentRecord = {
   updated_by: number | null;
   created_at: Date;
   updated_at: Date;
-  _count?: { lines: number };
+  lines: { effect: string; amount: { toNumber(): number } }[];
   partner: { partner_label: string; partner_name: string };
   budget_category: { category_label: string };
   currency: { currency_label: string };
 };
 
 const ROW_INCLUDE = {
-  _count: { select: { lines: true } },
+  lines: { select: { effect: true, amount: true } },
   partner: { select: { partner_label: true, partner_name: true } },
   budget_category: { select: { category_label: true } },
   currency: { select: { currency_label: true } },
 } as const;
 
 function toRow(n: AdjustmentRecord): ItemAdjustmentRow {
+  const by = (effect: ItemAdjustmentEffect) =>
+    roundBase(n.lines.filter((l) => l.effect === effect).reduce((t, l) => t + l.amount.toNumber(), 0));
   return {
     id: n.id,
     adjustment_no: n.adjustment_no,
-    effect: n.effect as ItemAdjustmentEffect,
+    kind: adjustmentKind(n.lines.map((l) => l.effect as ItemAdjustmentEffect)),
     document_date: n.document_date ? day(n.document_date) : null,
     posting_date: n.posting_date ? n.posting_date.toISOString() : null,
     company_id: n.company_id,
@@ -177,10 +193,12 @@ function toRow(n: AdjustmentRecord): ItemAdjustmentRow {
     exchange_rate: n.exchange_rate ? n.exchange_rate.toNumber() : null,
     adjustment_amount: n.adjustment_amount.toNumber(),
     adjustment_base_amount: n.adjustment_base_amount.toNumber(),
+    increase_amount: by("Increase"),
+    decrease_amount: by("Decrease"),
     reference: n.reference,
     note: n.note,
     status: n.status as ItemAdjustmentStatus,
-    line_count: n._count?.lines ?? 0,
+    line_count: n.lines.length,
     partner_label: n.partner.partner_label,
     partner_name: n.partner.partner_name,
     book_name: `Buku ${n.budget_category.category_label}`,
@@ -213,30 +231,26 @@ export async function itemAdjustmentLines(adjustmentId: number): Promise<ItemAdj
   const lines = await prisma.finItemAdjustmentLine.findMany({
     where: { adjustment_id: adjustmentId },
     orderBy: { sequence_no: "asc" },
-    include: { items: { orderBy: { sequence_no: "asc" } } },
   });
-  const ids = [
-    ...lines.flatMap((l) => l.items.map((i) => i.sub_ledger_balance_id)),
-  ];
+  const ids = lines.flatMap((l) => (l.sub_ledger_balance_id ? [l.sub_ledger_balance_id] : []));
   const known = new Map((await subledgerItemsByIds(ids)).map((i) => [i.id, i]));
-  return lines.map((l) => ({
-    id: l.id,
-    sequence_no: l.sequence_no,
-    description: l.description,
-    amount: l.amount.toNumber(),
-    base_amount: l.base_amount.toNumber(),
-    items: l.items.map((i) => {
-      const item = known.get(i.sub_ledger_balance_id);
-      return {
-        itemId: i.sub_ledger_balance_id,
-        itemNo: item?.itemNo ?? "—",
-        date: item?.date ?? "",
-        rate: item?.rate ?? 0,
-        amount: i.amount.toNumber(),
-        baseAmount: i.base_amount.toNumber(),
-      };
-    }),
-  }));
+  return lines.map((l) => {
+    const item = l.sub_ledger_balance_id ? known.get(l.sub_ledger_balance_id) : undefined;
+    return {
+      id: l.id,
+      sequence_no: l.sequence_no,
+      description: l.description,
+      effect: l.effect as ItemAdjustmentEffect,
+      itemId: l.sub_ledger_balance_id,
+      itemNo: item?.itemNo ?? "—",
+      itemDate: item?.date ?? "",
+      rate: item?.rate ?? 0,
+      balance_before: l.balance_before?.toNumber() ?? null,
+      new_amount: l.new_amount?.toNumber() ?? null,
+      amount: l.amount.toNumber(),
+      base_amount: l.base_amount.toNumber(),
+    };
+  });
 }
 
 // ----------------------------------------------------------------- doc type
@@ -452,7 +466,6 @@ export async function itemAdjustmentRefs(companyIds: number[]): Promise<ItemAdju
 // ------------------------------------------------------------------- header
 
 export type ItemAdjustmentHeader = {
-  effect: string;
   budget_category_id: number | null;
   partner_id: number | null;
   currency_id: number | null;
@@ -460,23 +473,17 @@ export type ItemAdjustmentHeader = {
 };
 
 export type ResolvedItemAdjustmentHeader = {
-  effect: ItemAdjustmentEffect;
   book: SubledgerDef;
   companyId: number;
   partnerId: number;
   partnerCategoryId: number;
   currencyId: number;
   currencyLabel: string;
-  /** The cash direction the position moves like — what the book is handed. */
-  direction: "In" | "Out";
 };
 
 export type ItemAdjustmentHeaderCheck =
   | ({ ok: true } & ResolvedItemAdjustmentHeader)
   | { ok: false; errors: Record<string, string> };
-
-const isEffect = (v: string): v is ItemAdjustmentEffect =>
-  v === "Increase" || v === "Decrease";
 
 /**
  * The header, checked against every rule at once. The form narrows each
@@ -488,11 +495,6 @@ export async function checkItemAdjustmentHeader(
   companyIds: number[]
 ): Promise<ItemAdjustmentHeaderCheck> {
   const errors: Record<string, string> = {};
-
-  if (!isEffect(header.effect)) {
-    return { ok: false, errors: { effect: "Pilih jenis penyesuaian." } };
-  }
-  const effect = header.effect;
 
   if (!header.budget_category_id) {
     return { ok: false, errors: { budget_category_id: "Buku subjek wajib dipilih." } };
@@ -544,8 +546,8 @@ export async function checkItemAdjustmentHeader(
 
   if (Object.keys(errors).length || !currency) return { ok: false, errors };
 
-  // Both effects move items at the kurs each was raised at, so a typed rate
-  // would be a second opinion nothing reads — refused rather than ignored.
+  // Every item moves at the kurs it was raised at, so a typed rate would be a
+  // second opinion nothing reads — refused rather than ignored.
   if (header.exchange_rate && header.exchange_rate !== 1) {
     return {
       ok: false,
@@ -558,181 +560,189 @@ export async function checkItemAdjustmentHeader(
 
   return {
     ok: true,
-    effect,
     book: book.def,
     companyId: partner.company_id,
     partnerId: header.partner_id,
     partnerCategoryId: partner.category_id,
     currencyId: header.currency_id,
     currencyLabel: currency.currency_label,
-    direction: adjustmentDirection(effect, book.def.raises),
   };
 }
 
 // -------------------------------------------------------------------- lines
 
 export type ItemAdjustmentLineInput = {
-  description: string;
-  /** Ignored: a line is worth the items it names. */
-  amount?: number;
-  items?: { item_id: number; amount: number }[];
+  item_id: number | null;
+  /** The value the item should now hold; null while it is not typed yet. */
+  new_amount: number | null;
+  /**
+   * What the item held when the draft was saved. Absent on a save — the item
+   * is read as it stands — and present at Post, which refuses if the item has
+   * moved since.
+   */
+  balance_before?: number | null;
 };
 
 export type CheckedAdjustmentLine = {
-  description: string;
+  itemId: number;
+  itemNo: string;
+  effect: ItemAdjustmentEffect;
+  balanceBefore: number;
+  newAmount: number;
+  /** The difference, unsigned. */
   amount: number;
-  items: { itemId: number; amount: number }[];
+  /** Written by the system, never typed. */
+  description: string;
 };
 
 export type ItemAdjustmentLineCheck =
   | { ok: true; lines: CheckedAdjustmentLine[]; total: number }
   | { ok: false; errors: Record<string, string> };
 
+/** What a line says about itself, in the ledger and the journal. */
+export function describeAdjustmentLine(
+  effect: ItemAdjustmentEffect,
+  amount: number,
+  currencyLabel: string,
+  itemNo: string
+): string {
+  return `${ITEM_ADJUSTMENT_EFFECTS[effect].label} ${formatMoney(amount, currencyLabel)} atas ${itemNo}`;
+}
+
 /**
- * Every line says why it adjusts and names the open items it moves, each for
- * an amount the user stated; the line is worth their sum. A Penambahan raises
- * each item by its amount, a Pengurangan lowers it — the way a Debit Note and
- * a Credit Note move the invoice they reference. Nothing is distributed
- * (§10 rule 105).
+ * Every line names one open item of this position and the value it should now
+ * hold. The difference against what the item holds decides the line: more is
+ * a Penambahan, less a Pengurangan, nil is refused — a line that moves
+ * nothing is a mistake, not an adjustment. A new value may be nil, which
+ * clears the item, and never below it, so no position can go below zero.
  */
 export async function checkItemAdjustmentLines(
   header: ResolvedItemAdjustmentHeader,
   lines: ItemAdjustmentLineInput[]
 ): Promise<ItemAdjustmentLineCheck> {
-  const wanted = lines
-    .map((l) => ({
-      description: l.description.trim(),
-      amount: roundBase((l.items ?? []).reduce((t, i) => t + (i.amount || 0), 0)),
-      items: (l.items ?? [])
-        .filter((i) => i.item_id)
-        .map((i) => ({ itemId: i.item_id, amount: i.amount || 0 })),
-    }))
-    .filter((l) => l.description || l.amount || l.items.length);
+  const wanted = lines.filter((l) => l.item_id || l.new_amount != null);
 
   if (!wanted.length) {
     return { ok: false, errors: { _lines: "Penyesuaian harus memiliki minimal satu baris." } };
   }
-  if (wanted.some((l) => !l.description)) {
-    return { ok: false, errors: { _lines: "Setiap baris wajib menyebut alasan penyesuaiannya." } };
+  if (wanted.some((l) => !l.item_id)) {
+    return { ok: false, errors: { _lines: "Setiap baris wajib memilih open item yang disesuaikan." } };
   }
-  if (wanted.some((l) => !l.items.length)) {
-    return {
-      ok: false,
-      errors: { _lines: "Setiap baris wajib memilih open item yang disesuaikan." },
-    };
+  if (wanted.some((l) => l.new_amount == null || !Number.isFinite(l.new_amount))) {
+    return { ok: false, errors: { _lines: "Setiap baris wajib mengisi Nilai Baru open item-nya." } };
   }
-  if (wanted.some((l) => l.items.some((i) => !(i.amount > 0)))) {
-    return { ok: false, errors: { _lines: "Nominal setiap open item harus lebih dari nol." } };
+  if (wanted.some((l) => l.new_amount! < 0)) {
+    return { ok: false, errors: { _lines: "Nilai Baru tidak boleh di bawah nol." } };
   }
-  if (wanted.some((l) => new Set(l.items.map((i) => i.itemId)).size !== l.items.length)) {
-    return { ok: false, errors: { _lines: "Satu open item hanya boleh dipilih sekali per baris." } };
+  const ids = wanted.map((l) => l.item_id!);
+  if (new Set(ids).size !== ids.length) {
+    return { ok: false, errors: { _lines: "Satu open item hanya boleh disesuaikan sekali per dokumen." } };
   }
-  const refusal = await itemRefusal(header, wanted);
-  if (refusal) return { ok: false, errors: { _lines: refusal } };
 
-  return {
-    ok: true,
-    lines: wanted,
-    total: roundBase(wanted.reduce((t, l) => t + l.amount, 0)),
-  };
-}
-
-/**
- * Whether every chosen item belongs to this position and is still open, and —
- * on a Pengurangan — holds what the whole document takes from it.
- */
-async function itemRefusal(
-  header: ResolvedItemAdjustmentHeader,
-  lines: CheckedAdjustmentLine[]
-): Promise<string | null> {
-  const taken = new Map<number, number>();
-  for (const l of lines) {
-    for (const i of l.items) taken.set(i.itemId, (taken.get(i.itemId) ?? 0) + i.amount);
-  }
-  const items = new Map((await subledgerItemsByIds([...taken.keys()])).map((i) => [i.id, i]));
-  for (const [id, amount] of taken) {
-    const item = items.get(id);
+  const items = new Map((await subledgerItemsByIds(ids)).map((i) => [i.id, i]));
+  const out: CheckedAdjustmentLine[] = [];
+  for (const l of wanted) {
+    const item = items.get(l.item_id!);
     if (
       !item ||
       item.bookId !== header.book.categoryId ||
       item.partnerId !== header.partnerId ||
       item.currencyId !== header.currencyId
     ) {
-      return "Open item yang dipilih bukan milik buku, Partner, dan currency dokumen ini.";
+      return {
+        ok: false,
+        errors: { _lines: "Open item yang dipilih bukan milik buku, Partner, dan currency dokumen ini." },
+      };
     }
     if (item.status !== "Open") {
-      return `Open item ${item.itemNo} sudah selesai dan tidak dapat disesuaikan.`;
+      return {
+        ok: false,
+        errors: { _lines: `Open item ${item.itemNo} sudah selesai dan tidak dapat disesuaikan.` },
+      };
     }
-    if (header.effect === "Decrease" && cents(amount) > cents(item.remaining)) {
-      return (
-        `Open item ${item.itemNo} tinggal ${formatMoney(item.remaining, header.currencyLabel)}, ` +
-        `tidak cukup untuk ${formatMoney(amount, header.currencyLabel)}. Posisi tidak ` +
-        "boleh di bawah nol — kurangi nominalnya atau pilih item lain."
-      );
+    if (l.balance_before != null && cents(l.balance_before) !== cents(item.remaining)) {
+      return { ok: false, errors: { _lines: movedSince(item, header.currencyLabel, l.balance_before) } };
     }
+    const newAmount = roundBase(l.new_amount!);
+    const effect = effectOfChange(item.remaining, newAmount);
+    if (!effect) {
+      return {
+        ok: false,
+        errors: {
+          _lines:
+            `Nilai Baru ${item.itemNo} sama dengan nilainya sekarang ` +
+            `(${formatMoney(item.remaining, header.currencyLabel)}), jadi tidak ada yang disesuaikan.`,
+        },
+      };
+    }
+    const amount = roundBase(Math.abs(newAmount - item.remaining));
+    out.push({
+      itemId: item.id,
+      itemNo: item.itemNo,
+      effect,
+      balanceBefore: item.remaining,
+      newAmount,
+      amount,
+      description: describeAdjustmentLine(effect, amount, header.currencyLabel, item.itemNo),
+    });
   }
-  return null;
+
+  return { ok: true, lines: out, total: netChange(out) };
 }
+
+const movedSince = (item: SubledgerItem, currencyLabel: string, before: number) =>
+  `Open item ${item.itemNo} berubah sejak dokumen disimpan: nilainya ` +
+  `${formatMoney(before, currencyLabel)} saat itu, sekarang ` +
+  `${formatMoney(item.remaining, currencyLabel)}. Ubah dokumen dan periksa Nilai Baru-nya.`;
+
+/** Raised less lowered — the document's net change, signed. */
+const netChange = (lines: { effect: ItemAdjustmentEffect; amount: number }[]) =>
+  roundBase(lines.reduce((t, l) => t + (l.effect === "Increase" ? l.amount : -l.amount), 0));
 
 // ---------------------------------------------------------------- valuation
 
-export type ValuedAdjustmentLine = CheckedAdjustmentLine & {
-  base: number;
-  /** One per chosen item, in the user's order. */
-  itemBases: number[];
-};
+export type ValuedAdjustmentLine = CheckedAdjustmentLine & { base: number };
 
 /**
- * What every line and item is worth in base, by the kernel the posting runs.
+ * What every line is worth in base, by the kernel the posting runs, and only
+ * while every item still holds what the line was stated against.
  *
  * Every item moves at **its own** kurs. A Penambahan raises an item by
- * `amount × its kurs`, so the item's rate never changes. A Pengurangan
- * releases what the item is carried at, drawn down line by line, so two lines
- * taking one item value the second against what the first left — which is
- * what the book will hold when its entry is written.
+ * `difference × its kurs`, so the item's rate never changes. A Pengurangan
+ * releases what that part is carried at, and taking an item to nil hands back
+ * exactly the base it holds.
  */
 export async function valueItemAdjustment(
   header: ResolvedItemAdjustmentHeader,
   lines: CheckedAdjustmentLine[],
   db: Db = prisma
 ): Promise<ValuedAdjustmentLine[]> {
-  const ids = [...new Set(lines.flatMap((l) => l.items.map((i) => i.itemId)))];
-  const held = new Map<number, { foreign: number; base: number; rate: number }>();
-  for (const id of ids) {
-    const item = await subledgerItem(id, db);
-    if (item && item.status === "Open") {
-      held.set(id, { foreign: item.remaining, base: item.baseRemaining, rate: item.rate });
+  const out: ValuedAdjustmentLine[] = [];
+  for (const l of lines) {
+    const item = await subledgerItem(l.itemId, db);
+    if (!item || item.status !== "Open") {
+      throw new SubledgerItemUnavailable(
+        `Open item ${l.itemNo} sudah selesai sejak dokumen disimpan. Ubah dokumen dan pilih ulang.`
+      );
     }
+    if (cents(item.remaining) !== cents(l.balanceBefore)) {
+      throw new SubledgerItemUnavailable(movedSince(item, header.currencyLabel, l.balanceBefore));
+    }
+    const base =
+      l.effect === "Increase"
+        ? roundBase(l.amount * item.rate)
+        : relieve(
+            { foreign: item.remaining, base: item.baseRemaining },
+            cents(l.amount) === cents(item.remaining) ? item.remaining : l.amount
+          ).base;
+    out.push({ ...l, base });
   }
-  if (header.effect === "Increase") {
-    return lines.map((l) => {
-      const itemBases = l.items.map((i) => {
-        const h = held.get(i.itemId);
-        if (!h) {
-          throw new SubledgerItemUnavailable(
-            "Open item yang dipilih sudah selesai sejak dokumen disimpan. Ubah dokumen dan pilih ulang."
-          );
-        }
-        return roundBase(i.amount * h.rate);
-      });
-      return { ...l, base: roundBase(itemBases.reduce((t, b) => t + b, 0)), itemBases };
-    });
-  }
-  return lines.map((l) => {
-    const itemBases = l.items.map((i) => {
-      const h = held.get(i.itemId);
-      if (!h || cents(i.amount) > cents(h.foreign)) {
-        throw new SubledgerItemUnavailable(
-          "Open item yang dipilih berubah sejak dokumen disimpan. Ubah dokumen dan periksa nominalnya."
-        );
-      }
-      const relief = relieve(h, cents(i.amount) === cents(h.foreign) ? h.foreign : i.amount);
-      held.set(i.itemId, { ...relief.remaining, rate: h.rate });
-      return relief.base;
-    });
-    return { ...l, base: roundBase(itemBases.reduce((t, b) => t + b, 0)), itemBases };
-  });
+  return out;
 }
+
+/** The net change in base, signed the way `netChange` signs the amount. */
+const netBase = (lines: ValuedAdjustmentLine[]) =>
+  roundBase(lines.reduce((t, l) => t + (l.effect === "Increase" ? l.base : -l.base), 0));
 
 // ------------------------------------------------------------------ posting
 
@@ -752,20 +762,21 @@ class AdjustmentDryRun extends Error {
  * The counter account by the side it takes: credited it is income, debited an
  * expense.
  */
-const COUNTER_KEY = {
-  credit: "adjustment_income",
-  debit: "adjustment_expense",
-} as const satisfies Record<string, SystemAccountKey>;
+const COUNTER = {
+  credit: { key: "adjustment_income", name: "Pendapatan Penyesuaian" },
+  debit: { key: "adjustment_expense", name: "Beban Penyesuaian" },
+} as const satisfies Record<string, { key: SystemAccountKey; name: string }>;
 
 /**
  * Post: the actual boundary, and one database transaction.
  *
  * Everything that can be decided without the position is decided first — the
- * period, the book, the Partner, both accounts — so an ordinary refusal comes
- * back without a transaction ever opening. Inside it the position is locked,
- * every chosen item re-read and valued, and then the subject-book entries, the
- * journal and the document's own figures are written together. Either all of
- * it happened or none of it did.
+ * period, the book, the Partner, the accounts the lines need — so an ordinary
+ * refusal comes back without a transaction ever opening. Inside it the
+ * position is locked, every item re-read and held to the balance its line was
+ * stated against, and then the subject-book entries, the journal and the
+ * document's own figures are written together. Either all of it happened or
+ * none of it did.
  *
  * Lives here rather than inside the Server Action so the rule is testable: the
  * action resolves a caller and then calls this, and the suite calls the same
@@ -785,10 +796,7 @@ export async function applyItemAdjustment(
   const doc = await prisma.finItemAdjustment.findUnique({
     where: { id: adjustmentId },
     include: {
-      lines: {
-        orderBy: { sequence_no: "asc" },
-        include: { items: { orderBy: { sequence_no: "asc" } } },
-      },
+      lines: { orderBy: { sequence_no: "asc" } },
       company: { select: { is_parent: true } },
     },
   });
@@ -800,6 +808,12 @@ export async function applyItemAdjustment(
   if (!doc.lines.length) {
     return { ok: false, errors: { _form: "Tambahkan minimal satu baris sebelum dokumen diposting." } };
   }
+  if (doc.lines.some((l) => l.balance_before == null || l.new_amount == null)) {
+    return {
+      ok: false,
+      errors: { _form: "Dokumen disimpan dengan cara lama. Ubah dokumen dan isi Nilai Baru setiap baris." },
+    };
+  }
 
   // The day this belongs to in the books — chosen on the draft, possibly
   // earlier than today, and re-checked here because a year can close in
@@ -810,10 +824,9 @@ export async function applyItemAdjustment(
 
   // Re-checked rather than trusted from when the draft was saved: the book may
   // have lost its flag, the Partner may have been deactivated or moved out of
-  // the categories the book admits, and an item may have been settled since.
+  // the categories the book admits, and an item may have moved since.
   const header = await checkItemAdjustmentHeader(
     {
-      effect: doc.effect,
       budget_category_id: doc.budget_category_id,
       partner_id: doc.partner_id,
       currency_id: doc.currency_id,
@@ -825,9 +838,9 @@ export async function applyItemAdjustment(
   const checked = await checkItemAdjustmentLines(
     header,
     doc.lines.map((l) => ({
-      description: l.description,
-      amount: l.amount.toNumber(),
-      items: l.items.map((i) => ({ item_id: i.sub_ledger_balance_id, amount: i.amount.toNumber() })),
+      item_id: l.sub_ledger_balance_id,
+      new_amount: l.new_amount!.toNumber(),
+      balance_before: l.balance_before!.toNumber(),
     }))
   );
   if (!checked.ok) return { ok: false, errors: { _form: Object.values(checked.errors)[0] } };
@@ -873,29 +886,34 @@ export async function applyItemAdjustment(
     };
   }
 
-  // The counter side: Pendapatan or Beban Penyesuaian, by the side it takes.
-  // Never guessed and never a fallback — refused by name while unset.
-  const partnerDebit = header.direction === "Out";
-  const counterKey = partnerDebit ? COUNTER_KEY.credit : COUNTER_KEY.debit;
-  const counterName = partnerDebit ? "Pendapatan Penyesuaian" : "Beban Penyesuaian";
-  const counterAccountId = await systemAccountId(doc.company.is_parent, counterKey);
-  const counterRefusal = counterAccountId
-    ? await checkSystemAccountValue(doc.company_id, counterKey, counterAccountId)
-    : "belum diatur";
-  if (!counterAccountId || counterRefusal) {
-    return {
-      ok: false,
-      errors: {
-        _form:
-          `Account ${counterName} untuk Company ini ${
-            counterAccountId ? `tidak dapat dipakai: ${counterRefusal}` : "belum diatur"
-          }. Lengkapi di Accounting › Mapping Account System sebelum dokumen diposting.`,
-      },
-    };
+  // Each line's direction, and from it which side its Partner line takes.
+  const directionOf = (effect: ItemAdjustmentEffect) =>
+    adjustmentDirection(effect, header.book.raises);
+  const partnerDebits = (effect: ItemAdjustmentEffect) => directionOf(effect) === "Out";
+
+  // The counter side: Pendapatan or Beban Penyesuaian, by the side it takes —
+  // only the ones a line actually needs, never guessed and never a fallback.
+  const counterIds = new Map<"credit" | "debit", number>();
+  for (const side of ["credit", "debit"] as const) {
+    if (!checked.lines.some((l) => partnerDebits(l.effect) === (side === "credit"))) continue;
+    const { key, name } = COUNTER[side];
+    const id = await systemAccountId(doc.company.is_parent, key);
+    const refusal = id ? await checkSystemAccountValue(doc.company_id, key, id) : "belum diatur";
+    if (!id || refusal) {
+      return {
+        ok: false,
+        errors: {
+          _form:
+            `Account ${name} untuk Company ini ${
+              id ? `tidak dapat dipakai: ${refusal}` : "belum diatur"
+            }. Lengkapi di Accounting › Mapping Account System sebelum dokumen diposting.`,
+        },
+      };
+    }
+    counterIds.set(side, id);
   }
 
   const docTypeId = await itemAdjustmentDocTypeId();
-  const label = `${doc.adjustment_no} — ${ITEM_ADJUSTMENT_EFFECTS[header.effect].label}`;
   let baseAmount = 0;
 
   try {
@@ -908,66 +926,66 @@ export async function applyItemAdjustment(
       // position waits here, and its read below sees what this one left.
       await lockSubledgerPosition(tx, header.book.categoryId, doc.partner_id, doc.currency_id);
       const valued = await valueItemAdjustment(header, checked.lines, tx);
-      baseAmount = roundBase(valued.reduce((t, l) => t + l.base, 0));
+      baseAmount = netBase(valued);
 
-      // One entry per item moved, naming it — a new ledger line on the same
+      // One entry per line, naming its item — a new ledger line on the same
       // item, raising it or lowering it at its own kurs.
       for (const l of valued) {
-        for (const [k, i] of l.items.entries()) {
-          await recordSubledgerEntry(tx, {
-            book: header.book,
-            partnerId: doc.partner_id,
-            currencyId: doc.currency_id,
-            date,
-            type: "Adjustment",
-            direction: header.direction,
-            amount: i.amount,
-            rate: l.itemBases[k] / i.amount,
-            baseAmount: l.itemBases[k],
-            itemId: i.itemId,
-            sourceDocTypeId: docTypeId,
-            sourceDocId: doc.id,
-            note: `${label} — ${l.description}`,
-            actorId,
-          });
-        }
+        await recordSubledgerEntry(tx, {
+          book: header.book,
+          partnerId: doc.partner_id,
+          currencyId: doc.currency_id,
+          date,
+          type: "Adjustment",
+          direction: directionOf(l.effect),
+          amount: l.amount,
+          rate: l.base / l.amount,
+          baseAmount: l.base,
+          itemId: l.itemId,
+          sourceDocTypeId: docTypeId,
+          sourceDocId: doc.id,
+          note: `${doc.adjustment_no} — ${l.description}`,
+          actorId,
+        });
       }
 
       // Per line, the Partner line and its counter line, each reading the
-      // line's reason so the General Ledger reads back to it. Same currency,
-      // same base on both sides — there is no second valuation to disagree
-      // with. Debits first.
-      const partnerLines: JournalLineInput[] = valued.map((l) => ({
-        accountId: partnerAccount.id,
-        partnerId: doc.partner_id,
-        currencyId: doc.currency_id,
-        rate: l.base / l.amount,
-        debit: partnerDebit ? l.amount : 0,
-        credit: partnerDebit ? 0 : l.amount,
-        baseAmount: l.base,
-        description: `${doc.adjustment_no} — ${l.description}`,
-      }));
-      const counterLines: JournalLineInput[] = valued.map((l) => ({
-        accountId: counterAccountId,
-        currencyId: doc.currency_id,
-        rate: l.base / l.amount,
-        debit: partnerDebit ? 0 : l.amount,
-        credit: partnerDebit ? l.amount : 0,
-        baseAmount: l.base,
-        description: `${doc.adjustment_no} — ${l.description}`,
-      }));
-      const ordered = partnerDebit
-        ? [...partnerLines, ...counterLines]
-        : [...counterLines, ...partnerLines];
-      if (dryRun) throw new AdjustmentDryRun(ordered);
+      // line's own description so the General Ledger reads back to it. Same
+      // currency, same base on both sides — there is no second valuation to
+      // disagree with. Debits first.
+      const journal: JournalLineInput[] = [];
+      for (const l of valued) {
+        const debit = partnerDebits(l.effect);
+        const shared = {
+          currencyId: doc.currency_id,
+          rate: l.base / l.amount,
+          baseAmount: l.base,
+          description: `${doc.adjustment_no} — ${l.description}`,
+        };
+        const partnerLine: JournalLineInput = {
+          ...shared,
+          accountId: partnerAccount.id,
+          partnerId: doc.partner_id,
+          debit: debit ? l.amount : 0,
+          credit: debit ? 0 : l.amount,
+        };
+        const counterLine: JournalLineInput = {
+          ...shared,
+          accountId: counterIds.get(debit ? "credit" : "debit")!,
+          debit: debit ? 0 : l.amount,
+          credit: debit ? l.amount : 0,
+        };
+        journal.push(...(debit ? [partnerLine, counterLine] : [counterLine, partnerLine]));
+      }
+      if (dryRun) throw new AdjustmentDryRun(journal);
 
       await postJournal(tx, {
         companyId: doc.company_id,
         postingDate: new Date(`${date}T00:00:00Z`),
-        description: label,
+        description: `${doc.adjustment_no} — Penyesuaian Open Item`,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
-        lines: ordered,
+        lines: journal,
         actorId,
       });
 
@@ -978,6 +996,7 @@ export async function applyItemAdjustment(
           status: "Posted",
           document_date: new Date(`${date}T00:00:00Z`),
           posting_date: new Date(),
+          adjustment_amount: netChange(valued),
           adjustment_base_amount: baseAmount,
           updated_by: actorId,
         },
@@ -995,29 +1014,20 @@ export async function applyItemAdjustment(
 }
 
 /**
- * Each line's and each item's base, as a valuation found them — written when
- * a draft is saved, so it states what Post will write, and again by Post.
+ * Each line's base, as a valuation found them — written when a draft is
+ * saved, so it states what Post will write, and again by Post.
  */
 async function writeValuation(
   db: Db,
-  lines: { id: number; items: { id: number }[] }[],
+  lines: { id: number }[],
   valued: ValuedAdjustmentLine[],
   actorId: number
 ): Promise<void> {
   for (const [n, line] of lines.entries()) {
     await db.finItemAdjustmentLine.update({
       where: { id: line.id },
-      data: {
-        base_amount: valued[n].base,
-        updated_by: actorId,
-      },
+      data: { base_amount: valued[n].base, updated_by: actorId },
     });
-    for (const [k, item] of line.items.entries()) {
-      await db.finItemAdjustmentLineItem.update({
-        where: { id: item.id },
-        data: { base_amount: valued[n].itemBases[k], updated_by: actorId },
-      });
-    }
   }
 }
 
@@ -1034,22 +1044,22 @@ export type ItemAdjustmentSummary = {
 
 export function summariseItemAdjustments(rows: ItemAdjustmentRow[]): ItemAdjustmentSummary {
   const posted = rows.filter((r) => r.status === "Posted");
-  const totals = (effect: ItemAdjustmentEffect) =>
+  const totals = (pick: (r: ItemAdjustmentRow) => number) =>
     sumByCurrency(
       posted
-        .filter((r) => r.effect === effect)
+        .filter((r) => pick(r) > 0)
         .map((r) => ({
           currencyId: r.currency_id,
           currencyLabel: r.currency_label,
-          amount: r.adjustment_amount,
+          amount: pick(r),
         }))
     );
   return {
     draft: rows.filter((r) => r.status === "Draft").length,
     posted: posted.length,
     cancelled: rows.filter((r) => r.status === "Cancelled").length,
-    increaseTotals: totals("Increase"),
-    decreaseTotals: totals("Decrease"),
+    increaseTotals: totals((r) => r.increase_amount),
+    decreaseTotals: totals((r) => r.decrease_amount),
   };
 }
 
@@ -1066,8 +1076,8 @@ export async function previewItemAdjustment(
 }
 
 /**
- * A draft's figures, written inside its own save: what every line and item is
- * worth now, as Post would value it.
+ * A draft's figures, written inside its own save: what every line is worth
+ * now, as Post would value it.
  */
 export async function valueItemAdjustmentDraft(
   db: Db,
@@ -1080,11 +1090,25 @@ export async function valueItemAdjustmentDraft(
   const written = await db.finItemAdjustmentLine.findMany({
     where: { adjustment_id: adjustmentId },
     orderBy: { sequence_no: "asc" },
-    select: { id: true, items: { orderBy: { sequence_no: "asc" }, select: { id: true } } },
+    select: { id: true },
   });
   await writeValuation(db, written, valued, actorId);
   await db.finItemAdjustment.update({
     where: { id: adjustmentId },
-    data: { adjustment_base_amount: roundBase(valued.reduce((t, l) => t + l.base, 0)) },
+    data: { adjustment_base_amount: netBase(valued) },
   });
+}
+
+/** The rows a checked set of lines is saved as. */
+export function adjustmentLineData(lines: CheckedAdjustmentLine[], actorId: number) {
+  return lines.map((l, i) => ({
+    sequence_no: i + 1,
+    description: l.description,
+    sub_ledger_balance_id: l.itemId,
+    effect: l.effect,
+    balance_before: l.balanceBefore,
+    new_amount: l.newAmount,
+    amount: l.amount,
+    created_by: actorId,
+  }));
 }

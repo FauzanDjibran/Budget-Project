@@ -8,13 +8,13 @@ import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import {
+  adjustmentLineData,
   applyItemAdjustment,
   checkItemAdjustmentHeader,
   checkItemAdjustmentLines,
   nextItemAdjustmentNo,
   previewItemAdjustment,
   valueItemAdjustmentDraft,
-  type CheckedAdjustmentLine,
   type ItemAdjustmentLineInput,
 } from "@/lib/siba/item-adjustment";
 import {
@@ -31,10 +31,11 @@ import { SubledgerItemUnavailable } from "@/lib/siba/subledger";
  * Penyesuaian Open Item writes.
  *
  * A Draft adjusts nothing — no subject-book entry, no journal. It does state
- * what Post will write: every line and item is valued when it is saved, by
- * the same `valueItemAdjustment` Post runs. Post is the boundary and writes the
- * books and the journal in one transaction; Posted is final, and an
- * adjustment is corrected by one of the opposite effect.
+ * what Post will write: every line's difference, direction and base are
+ * worked out from the item when it is saved, by the same
+ * `valueItemAdjustment` Post runs. Post is the boundary and writes the books
+ * and the journal in one transaction; Posted is final, and an adjustment is
+ * corrected by another one.
  *
  * The rules live in `lib/siba/item-adjustment.ts` so the suite can exercise
  * them — an action resolves a caller from a session cookie, which a test
@@ -42,7 +43,6 @@ import { SubledgerItemUnavailable } from "@/lib/siba/subledger";
  */
 
 export type ItemAdjustmentValues = {
-  effect: string;
   budget_category_id: string;
   partner_id: string;
   currency_id: string;
@@ -53,10 +53,10 @@ export type ItemAdjustmentValues = {
   note: string;
 };
 
+/** One open item and the value it should now hold, as the form sends it. */
 export type ItemAdjustmentLineValues = {
-  description: string;
-  amount: string;
-  items: { item_id: number; amount: number }[];
+  item_id: string;
+  new_amount: string;
 };
 
 export type ItemAdjustmentResult =
@@ -86,7 +86,6 @@ const num = (raw: string | null | undefined): number | null => {
 };
 
 const headerOf = (values: ItemAdjustmentValues) => ({
-  effect: String(values.effect ?? "").trim(),
   budget_category_id: num(values.budget_category_id),
   partner_id: num(values.partner_id),
   currency_id: num(values.currency_id),
@@ -95,12 +94,8 @@ const headerOf = (values: ItemAdjustmentValues) => ({
 
 const asLines = (lines: ItemAdjustmentLineValues[]): ItemAdjustmentLineInput[] =>
   lines.map((l) => ({
-    description: String(l.description ?? ""),
-    amount: num(l.amount) ?? 0,
-    items: (l.items ?? []).map((i) => ({
-      item_id: Number(i.item_id),
-      amount: Number(i.amount) || 0,
-    })),
+    item_id: num(l.item_id),
+    new_amount: num(l.new_amount),
   }));
 
 /** Everything an adjustment must satisfy before it is saved. */
@@ -126,22 +121,6 @@ async function validate(
   return { ok: true as const, header, settled, date: dated.date };
 }
 
-const lineData = (lines: CheckedAdjustmentLine[], actorId: number) =>
-  lines.map((l, i) => ({
-    sequence_no: i + 1,
-    description: l.description,
-    amount: l.amount,
-    created_by: actorId,
-    items: {
-      create: l.items.map((it, k) => ({
-        sequence_no: k + 1,
-        sub_ledger_balance_id: it.itemId,
-        amount: it.amount,
-        created_by: actorId,
-      })),
-    },
-  }));
-
 export async function createItemAdjustment(
   values: ItemAdjustmentValues,
   lines: ItemAdjustmentLineValues[]
@@ -160,7 +139,6 @@ export async function createItemAdjustment(
       const created = await tx.finItemAdjustment.create({
         data: {
           adjustment_no,
-          effect: header.effect,
           // The day it belongs to in the books, chosen on the draft and
           // possibly earlier than today. `posting_date` waits for Post.
           document_date: new Date(`${date}T00:00:00Z`),
@@ -175,7 +153,7 @@ export async function createItemAdjustment(
           note: values.note?.trim() || null,
           status: "Draft",
           created_by: g.actor.user.id,
-          lines: { create: lineData(settled.lines, g.actor.user.id) },
+          lines: { create: adjustmentLineData(settled.lines, g.actor.user.id) },
         },
       });
       await valueItemAdjustmentDraft(tx, created.id, header, settled.lines, g.actor.user.id);
@@ -203,7 +181,7 @@ export async function updateItemAdjustment(
 
   const existing = await prisma.finItemAdjustment.findUnique({
     where: { id },
-    select: { status: true, effect: true, company_id: true },
+    select: { status: true, company_id: true },
   });
   const scope = await accessibleCompanyIds(g.actor.permissions);
   if (!existing || !scope.includes(existing.company_id)) {
@@ -220,10 +198,7 @@ export async function updateItemAdjustment(
     };
   }
 
-  // The effect decides what every line is — an amount or a set of chosen
-  // items — so it is fixed once the document exists. The other effect is a
-  // new document.
-  const checked = await validate(g.actor, { ...values, effect: existing.effect }, lines);
+  const checked = await validate(g.actor, values, lines);
   if (!checked.ok) return { ok: false, errors: checked.errors };
   const { header, settled, date } = checked;
 
@@ -244,7 +219,7 @@ export async function updateItemAdjustment(
           reference: values.reference?.trim() || null,
           note: values.note?.trim() || null,
           updated_by: g.actor.user.id,
-          lines: { create: lineData(settled.lines, g.actor.user.id) },
+          lines: { create: adjustmentLineData(settled.lines, g.actor.user.id) },
         },
       });
       await valueItemAdjustmentDraft(tx, id, header, settled.lines, g.actor.user.id);

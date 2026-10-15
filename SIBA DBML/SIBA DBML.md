@@ -1596,8 +1596,6 @@ table fin_item_adjustment {
   // PYO-0001; DN- / CN- for documents posted as Debit / Credit Notes.
   adjustment_no               varchar(255) [not null, unique]
 
-  effect                      enum('Increase', 'Decrease') [not null]
-
   // document_date is chosen on the draft, up to today, and dates what Post
   // writes; posting_date stays null until Post runs.
   document_date               date
@@ -1618,8 +1616,10 @@ table fin_item_adjustment {
   // opened a new item at a typed kurs keep the 1 they carried.
   exchange_rate               decimal(18,6)
 
+  // The net change: what the lines raise less what they lower, so negative
+  // when the document lowers the position on balance. The same in base,
+  // valued when the draft is saved and again at Post.
   adjustment_amount           decimal(18,2) [not null]
-  // Valued when the draft is saved, and again at Post.
   adjustment_base_amount      decimal(18,2) [not null, default: 0]
 
   // The counterparty's own document number, where there is one.
@@ -1652,10 +1652,25 @@ table fin_item_adjustment_line {
 
   sequence_no                 int [not null]
 
+  // Written by the system — "Penambahan USD 200,00 atas SBI-0012".
   description                 varchar(255) [not null]
 
+  // The item adjusted. A plain id: the item belongs to the subject-book
+  // module. Null only on documents posted while a raise opened a new item.
+  sub_ledger_balance_id       int
+
+  // The sign of the difference, never chosen.
+  effect                      enum('Increase', 'Decrease') [not null]
+
+  // What the item held when the draft was saved, and the value typed for it.
+  // Post refuses an item that no longer holds balance_before. Null on
+  // documents posted before a line was stated as a new value.
+  balance_before              decimal(18,2)
+  new_amount                  decimal(18,2)
+
+  // The difference, unsigned; effect says which way.
   amount                      decimal(18,2) [not null]
-  // Each item at its own kurs.
+  // At the item's own kurs.
   base_amount                 decimal(18,2) [not null, default: 0]
 
   created_by                  int [not null]
@@ -1666,34 +1681,6 @@ table fin_item_adjustment_line {
 
   indexes {
     (adjustment_id, sequence_no) [unique]
-  }
-}
-
-// One open item a line adjusts, and by how much — chosen and stated by the
-// user, never distributed.
-table fin_item_adjustment_line_item {
-  id                          int [pk, increment, not null]
-
-  line_id                     int [not null, ref : > fin_item_adjustment_line.id]
-
-  sequence_no                 int [not null]
-
-  // A plain id: the item belongs to the subject-book module.
-  sub_ledger_balance_id       int [not null]
-
-  amount                      decimal(18,2) [not null]
-  // What the item moves by in base, at its own kurs.
-  base_amount                 decimal(18,2) [not null, default: 0]
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-
-  indexes {
-    (line_id, sub_ledger_balance_id) [unique]
-    (line_id, sequence_no) [unique]
     sub_ledger_balance_id
   }
 }
