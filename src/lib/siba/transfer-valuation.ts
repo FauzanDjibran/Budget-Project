@@ -72,6 +72,16 @@ export type TransferLineInputs = {
   layerRate?: number;
 };
 
+/**
+ * The rupiah side of a Pencairan or a Pembelian Valas line: the foreign amount
+ * valued at the line's kurs. One multiplication, never a division (§10 rule
+ * 88). Exported so the form's summary and its rupiah column read the figure
+ * `valueTransferLine` writes, before a destination is chosen.
+ */
+export function rupiahSide(amount: number, rate: number): number {
+  return roundBase(amount * rate);
+}
+
 export function valueTransferLine(
   input: TransferLineInputs
 ): TransferLineValuation {
@@ -96,7 +106,7 @@ export function valueTransferLine(
     // bought valued at the purchase kurs. A multiplication, never a division —
     // the kurs always values the foreign side into base, which is what keeps
     // the foreign amount a figure somebody stated rather than a quotient.
-    outAmount = roundBase(amount * rate);
+    outAmount = rupiahSide(amount, rate);
     outBase = outAmount;
   } else {
     outAmount = amount;
@@ -111,7 +121,7 @@ export function valueTransferLine(
     // Pencairan: the bank credits rupiah at the sale rate. This figure and
     // `outBase` are the two independently determined base values whose residual
     // is the realized gain or loss.
-    inAmount = roundBase(amount * rate);
+    inAmount = rupiahSide(amount, rate);
     inBase = inAmount;
     inRate = 1;
   } else if (!destinationIsBase) {

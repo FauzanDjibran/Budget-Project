@@ -759,6 +759,7 @@ lifted verbatim. Components emit its class names; they do not invent styles.
 | Page heading | A document's number (`.docno`, mono) with its status badge beside it; a master record's name with its code as a `.docno sm` chip. Before the first save, a placeholder — `Budget Baru`, `User Baru` |
 | Document screens | `DocumentHeader` draws the header, `Amount` every figure in a table. View, new and edit are **one** component with the same cards; a closing `.fnote` says where the record stands and a `.lockchip` says why a final one offers no button; Riwayat on view and edit; the register has `No`, `Status:`, `.ract` (three icon columns, `.sp` where a row offers less) and `Pager`. Held per document by `DOCUMENT_SCREENS` in `tests/design-system.test.ts` (§12) |
 | Summary cards | **None.** Each fact sits where it is read; a closing note about the record's state is a `.fnote` at the foot of its card |
+| Source summary | The one exception, on the user's instruction: a document whose lines spend one source states **Saldo Saat Ini · Total Digunakan · Sisa** in a `.lsum` strip between its line card's header and the table (`ReportSummary`), in the source's currency. Nothing else in it — the header already names the source. A shortfall reads **Kekurangan** in red and the line that crosses it is marked. Draft only: today's balance is no fact about a posted document. Cash Bank Transfer is the first |
 | Read-only fields | `.ro` — presented as text, **never disabled inputs**. A field locked after creation is shown the same way on the edit page, with its `Terkunci` chip |
 | FK pickers | `Combobox` — searchable, `CODE – Name` options. **The control itself is the search box**: opening turns it into a text input in place, and the popup carries no filter bar of its own |
 | Sets | `MultiSelect` — a searchable picker that adds, chips that remove. **Never a checkbox per option**: a grid grows with the catalogue rather than with the answer |
@@ -4274,6 +4275,13 @@ below in outline because the half of it that still holds is easy to lose.**
 - **A transfer records as `Transaction` in the Cash Bank Book**, not as a fourth
   entry type. Confirmed with the user: the book's enum is untouched and a
   transfer is told apart by its note, which carries `TRF-0001 — <Purpose>`.
+- **A line is read by what its figures are, not which way they move** — the
+  user's rule, after "Keluar / Masuk" printed one amount three times on a
+  Transfer and called the price paid on a Pembelian Valas "Keluar". A Transfer
+  line is `Tujuan · Nominal`; a Pencairan `Valas Dijual · Kurs · Rupiah
+  Diterima`; a Pembelian Valas `Valas Dibeli · Kurs · Rupiah Dibayar` — the
+  typed foreign side, then its product (rule 88). Above the lines sits the
+  source summary (§8); the footer holds only what that summary does not state.
 - **Do not change unless:** explicitly instructed. **Never let a transfer settle
   a Budget or write a subject book**, never merge it back into
   `fin_cash_bank_transaction`, never blend the layers it creates, and never

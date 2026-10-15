@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
-import { InsufficientFunds, recordCashBankEntry } from "./cash-bank";
+import { InsufficientFunds, cashBankBalanceMap, recordCashBankEntry } from "./cash-bank";
 import { drawFromLayer, openLayer, openLayersFor, type LayerOption } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL, consumesLayer, isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
@@ -243,6 +243,12 @@ export type TransferCashBankOption = {
   currencyLabel: string;
   isBase: boolean;
   active: boolean;
+  /**
+   * The book's balance now, in the resource's own currency, so a draft can say
+   * whether the source covers it. A foreign source is capped by its chosen
+   * layer instead, which the form reads from `layers`.
+   */
+  balance: number;
   /** The open rate layers this resource holds — empty for a base-currency one. */
   layers: LayerOption[];
 };
@@ -289,7 +295,10 @@ export async function transferRefs(companyIds?: number[]): Promise<TransferRefs>
     }),
   ]);
 
-  const layers = await openLayersFor(cashBanks.map((c) => c.id));
+  const [layers, balances] = await Promise.all([
+    openLayersFor(cashBanks.map((c) => c.id)),
+    cashBankBalanceMap(),
+  ]);
 
   return {
     cashBanks: cashBanks.map((c) => ({
@@ -301,6 +310,7 @@ export async function transferRefs(companyIds?: number[]): Promise<TransferRefs>
       currencyLabel: c.currency.currency_label,
       isBase: isBaseCurrency(c.currency.currency_label),
       active: c.status === "Active",
+      balance: balances.get(c.id) ?? 0,
       layers: layers.get(c.id) ?? [],
     })),
     currencies: currencies.map((c) => ({

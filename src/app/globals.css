@@ -1114,6 +1114,23 @@ a{color:inherit;text-decoration:none}
 .cbh .rsum .z b{opacity:.45}
 .cbh .rsum .neg b{color:#FCA5A5}
 
+/* ---------- a document's source summary, above its lines ----------
+   The same figures, on a card instead of a navy block: what the source holds
+   now, what the lines use, and what is left. Sits between the card header and
+   the line table, so the answer to "is there enough?" is beside the amounts
+   being typed. A shortfall is the one figure coloured. */
+.lsum{display:flex;justify-content:flex-end;padding:9px 16px;border-bottom:1px solid var(--line-2);background:var(--bg)}
+.lsum .rsum{display:flex;align-items:stretch;flex-wrap:wrap}
+.lsum .rsum > span{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:1px;
+  padding:0 14px;border-left:1px solid var(--line)}
+.lsum .rsum > span:first-child{border-left:0}
+.lsum .rsum > span:last-child{padding-right:0}
+.lsum .rsum i{font-style:normal;font-size:8.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted-2)}
+.lsum .rsum b{font-family:var(--f-mono);font-size:12px;font-weight:700;white-space:nowrap;color:var(--ink)}
+.lsum .rsum .k b{font-size:13.5px}
+.lsum .rsum .neg i,.lsum .rsum .neg b{color:var(--bad)}
+.lsum .wait{font-size:11.5px;color:var(--muted-2)}
+
 /* A balanced report says nothing about balance; only a broken one speaks. */
 .cbh .rwarn{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 10px;border-radius:999px;
   background:rgba(225,29,72,.28);border:1px solid rgba(253,164,175,.55);color:#FFE4E6;

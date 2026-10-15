@@ -25,7 +25,7 @@ import {
 } from "@/app/actions/transfer";
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
-import { relieve, type Balance } from "@/lib/siba/fx";
+import { relieve, roundBase, type Balance } from "@/lib/siba/fx";
 import type {
   TransferLineRow,
   TransferRefs,
@@ -36,7 +36,8 @@ import {
   transferCurrencyFollowsSource,
   transferPurposeOf,
 } from "@/lib/siba/transfer-catalogue";
-import { valueTransferLine } from "@/lib/siba/transfer-valuation";
+import { rupiahSide, valueTransferLine } from "@/lib/siba/transfer-valuation";
+import { ReportSummary } from "@/components/report/report-summary";
 import {
   TRANSFER_TRANSITIONS,
   availableTransferActions,
@@ -287,6 +288,15 @@ export function TransferForm({
   // ------------------------------------------------------------- valuation
 
   /**
+   * What one line takes out of the source, in the source's own currency: the
+   * rupiah paid on a Pembelian Valas, the amount itself everywhere else.
+   */
+  const sourceSide = (amount: number, rate: number | string) =>
+    purpose?.key === "PembelianValas"
+      ? rupiahSide(amount || 0, Number(rate) || 0)
+      : amount || 0;
+
+  /**
    * What each line will actually move, previewed with the same arithmetic the
    * posting runs.
    *
@@ -301,10 +311,20 @@ export function TransferForm({
       ? { foreign: layer.foreignRemaining, base: layer.baseRemaining }
       : null;
 
+    // An unlayered source is held by its book balance: the line that takes the
+    // running total past it is the one marked, the same way a layer is.
+    let used = 0;
+
     return draftLines.map((l) => {
       const destination = refs.cashBanks.find((c) => c.id === l.to_cash_bank_id);
       const rate = Number(l.rate) || (layer?.rate ?? 1);
       let releasedBase: number | undefined;
+      let overBalance = false;
+
+      if (!drawsLayer && source) {
+        used += sourceSide(l.amount, l.rate);
+        overBalance = Boolean(l.amount) && used > source.balance;
+      }
 
       if (drawsLayer && balance) {
         if (l.amount > balance.foreign) {
@@ -318,7 +338,7 @@ export function TransferForm({
         balance = relief.remaining;
       }
 
-      if (!destination || !l.amount) return { valued: null, over: false };
+      if (!destination || !l.amount) return { valued: null, over: overBalance };
 
       return {
         valued: valueTransferLine({
@@ -330,18 +350,93 @@ export function TransferForm({
           releasedBase,
           layerRate: layer?.rate,
         }),
-        over: false,
+        over: overBalance,
       };
     });
   })();
 
-  const total = editing
-    ? draftLines.reduce((t, l) => t + (l.amount || 0), 0)
-    : transfer?.transfer_amount ?? 0;
+  /**
+   * The line's rupiah, on a Pencairan or a Pembelian Valas — received on the
+   * first, paid on the second. A posted line reads what was written; a draft
+   * values it with the posting's own product, so it shows before a
+   * destination is chosen.
+   */
+  const rupiahOf = (amount: number, rate: number | string, written?: number) =>
+    written || rupiahSide(amount, Number(rate) || 0);
+
+  // ------------------------------------------------------------- summary
+
+  /**
+   * What the source holds, what the lines use of it, and what is left, all in
+   * the source's own currency.
+   *
+   * A foreign source is capped by the one layer the document draws on (§10
+   * rule 70), so that layer's remainder is its balance here; an unlayered
+   * source has its book. A posted or cancelled document drops the summary:
+   * today's balance is not a fact about it.
+   */
+  const showSummary =
+    Boolean(purpose) && (editing || transfer?.status === "Draft");
+  const sourceLabel = source?.currencyLabel ?? currencyLabel;
+  const summaryWaitingFor = !purpose
+    ? "Pilih Purpose dulu…"
+    : !source
+      ? "Pilih Cash & Bank sumber dulu…"
+      : drawsLayer && !layer
+        ? "Pilih Kurs Sumber dulu…"
+        : null;
+  const available = drawsLayer ? layer?.foreignRemaining ?? 0 : source?.balance ?? 0;
+  const used = roundBase(
+    editing
+      ? draftLines.reduce((t, l) => t + sourceSide(l.amount, l.rate), 0)
+      : lines.reduce((t, l) => t + sourceSide(l.amount, l.exchange_rate), 0)
+  );
+  const left = roundBase(available - used);
 
   const fxTotal = editing
     ? preview.reduce((t, p) => t + (p.valued?.fxDifference ?? 0), 0)
     : lines.reduce((t, l) => t + l.fx_difference, 0);
+
+  /**
+   * Line columns named by what the figure is, not by which way it moves:
+   * "Keluar / Masuk" said the same amount twice on a Transfer, and on a
+   * Pembelian Valas called the price paid "Keluar". The foreign side is always
+   * typed and the rupiah is its product (§10 rule 88), so they read in that
+   * order on both exchanges.
+   */
+  const amountHeading =
+    purpose?.key === "Pencairan"
+      ? "Valas Dijual"
+      : purpose?.key === "PembelianValas"
+        ? "Valas Dibeli"
+        : "Nominal";
+  const rupiahHeading =
+    purpose?.key === "Pencairan" ? "Rupiah Diterima" : "Rupiah Dibayar";
+
+  /** The footer's one total: what the summary does not already state. */
+  const footTotal =
+    purpose?.key === "Pencairan"
+      ? {
+          label: "Total Rupiah Diterima",
+          value: editing
+            ? draftLines.reduce((t, l) => t + rupiahOf(l.amount, l.rate), 0)
+            : lines.reduce(
+                (t, l) => t + rupiahOf(l.amount, l.exchange_rate, l.in_amount),
+                0
+              ),
+          currency: BASE_CURRENCY_LABEL,
+          underRupiah: true,
+        }
+      : purpose?.key === "PembelianValas"
+        ? {
+            label: "Total Valas Dibeli",
+            value: editing
+              ? draftLines.reduce((t, l) => t + (l.amount || 0), 0)
+              : transfer?.transfer_amount ?? 0,
+            currency: currencyLabel,
+            underRupiah: false,
+          }
+        : null;
 
   // ---------------------------------------------------------------- writes
 
@@ -749,6 +844,39 @@ export function TransferForm({
               )}
             </div>
 
+            {showSummary && (
+              <div className="lsum">
+                {summaryWaitingFor ? (
+                  <span className="wait">{summaryWaitingFor}</span>
+                ) : (
+                  <ReportSummary
+                    figures={[
+                      {
+                        label: "Saldo Saat Ini",
+                        value: formatMoney(available, sourceLabel),
+                      },
+                      {
+                        label: "Total Digunakan",
+                        value: formatMoney(used, sourceLabel),
+                      },
+                      left < 0
+                        ? {
+                            label: "Kekurangan",
+                            value: formatMoney(-left, sourceLabel),
+                            key: true,
+                            negative: true,
+                          }
+                        : {
+                            label: "Sisa",
+                            value: formatMoney(left, sourceLabel),
+                            key: true,
+                          },
+                    ]}
+                  />
+                )}
+              </div>
+            )}
+
             {errors._lines && (
               <div className="nbox bad slim">
                 <span className="ni">
@@ -762,25 +890,27 @@ export function TransferForm({
 
             {(editing ? draftLines.length : lines.length) ? (
               <div className="tw">
-                <table className="grid ltab" style={{ minWidth: 920 }}>
+                <table
+                  className="grid ltab"
+                  style={{ minWidth: purpose?.entersRate ? 860 : 640 }}
+                >
                   <thead>
                     <tr>
                       <th style={{ width: 34 }}>No</th>
                       <th>Cash &amp; Bank Tujuan</th>
-                      <th className="num" style={{ width: 150 }}>
-                        Nominal ({currencyLabel})
+                      <th className="num" style={{ width: 170 }}>
+                        {amountHeading} ({currencyLabel})
                       </th>
                       {purpose?.entersRate && (
-                        <th className="num" style={{ width: 150 }}>
-                          Kurs ({currencyLabel} → {BASE_CURRENCY_LABEL})
-                        </th>
+                        <>
+                          <th className="num" style={{ width: 150 }}>
+                            Kurs ({currencyLabel} → {BASE_CURRENCY_LABEL})
+                          </th>
+                          <th className="num" style={{ width: 180 }}>
+                            {rupiahHeading}
+                          </th>
+                        </>
                       )}
-                      <th className="num" style={{ width: 160 }}>
-                        Keluar
-                      </th>
-                      <th className="num" style={{ width: 160 }}>
-                        Masuk
-                      </th>
                       {editing && <th style={{ width: 44 }} />}
                     </tr>
                   </thead>
@@ -788,9 +918,6 @@ export function TransferForm({
                     {editing
                       ? draftLines.map((l, i) => {
                           const p = preview[i];
-                          const destination = refs.cashBanks.find(
-                            (c) => c.id === l.to_cash_bank_id
-                          );
                           return (
                             <tr key={l.key} className={p?.over ? "overrow" : undefined}>
                               <td className="no">{i + 1}</td>
@@ -831,8 +958,8 @@ export function TransferForm({
                                   }}
                                 />
                                 {p?.over && (
-                                  <span className="overtag" title="Melebihi sisa layer">
-                                    Melebihi sisa layer
+                                  <span className="overtag">
+                                    {drawsLayer ? "Melebihi sisa layer" : "Melebihi saldo"}
                                   </span>
                                 )}
                               </td>
@@ -858,35 +985,27 @@ export function TransferForm({
                                   />
                                 </td>
                               )}
-                              <td className="num">
-                                <span className="mny">
-                                  {p?.valued
-                                    ? formatMoney(
-                                        p.valued.outAmount,
-                                        source?.currencyLabel ?? currencyLabel
-                                      )
-                                    : "—"}
-                                </span>
-                              </td>
-                              <td className="num">
-                                <span className="mny">
-                                  {p?.valued && destination
-                                    ? formatMoney(
-                                        p.valued.inAmount,
-                                        destination.currencyLabel
-                                      )
-                                    : "—"}
-                                </span>
-                                {p?.valued && p.valued.fxDifference !== 0 && (
-                                  <span className="rsub">
-                                    selisih kurs{" "}
-                                    {formatMoney(
-                                      p.valued.fxDifference,
-                                      BASE_CURRENCY_LABEL
-                                    )}
+                              {purpose?.entersRate && (
+                                <td className="num">
+                                  <span className="mny">
+                                    {l.amount && Number(l.rate)
+                                      ? formatMoney(
+                                          rupiahOf(l.amount, l.rate),
+                                          BASE_CURRENCY_LABEL
+                                        )
+                                      : "—"}
                                   </span>
-                                )}
-                              </td>
+                                  {p?.valued && p.valued.fxDifference !== 0 && (
+                                    <span className="rsub">
+                                      selisih kurs{" "}
+                                      {formatMoney(
+                                        p.valued.fxDifference,
+                                        BASE_CURRENCY_LABEL
+                                      )}
+                                    </span>
+                                  )}
+                                </td>
+                              )}
                               <td className="acts">
                                 <button
                                   className="iact del"
@@ -927,80 +1046,83 @@ export function TransferForm({
                                 </span>
                               </td>
                               {purpose?.entersRate && (
-                                <td className="num">
-                                  <span className="mny">
-                                    {formatRate(l.exchange_rate)}
-                                  </span>
-                                </td>
-                              )}
-                              <td className="num">
-                                <span className="mny">
-                                  {formatMoney(
-                                    l.out_amount,
-                                    refs.cashBanks.find(
-                                      (c) => c.id === transfer!.from_cash_bank_id
-                                    )?.currencyLabel ?? currencyLabel
-                                  )}
-                                </span>
-                              </td>
-                              <td className="num">
-                                <span className="mny">
-                                  {formatMoney(
-                                    l.in_amount,
-                                    destination?.currencyLabel ?? currencyLabel
-                                  )}
-                                </span>
-                                {l.fx_difference !== 0 && (
-                                  <span className="rsub">
-                                    selisih kurs{" "}
-                                    {formatMoney(
-                                      l.fx_difference,
-                                      BASE_CURRENCY_LABEL
+                                <>
+                                  <td className="num">
+                                    <span className="mny">
+                                      {formatRate(l.exchange_rate)}
+                                    </span>
+                                  </td>
+                                  <td className="num">
+                                    <span className="mny">
+                                      {formatMoney(
+                                        rupiahOf(
+                                          l.amount,
+                                          l.exchange_rate,
+                                          purpose.key === "Pencairan"
+                                            ? l.in_amount
+                                            : l.out_amount
+                                        ),
+                                        BASE_CURRENCY_LABEL
+                                      )}
+                                    </span>
+                                    {l.fx_difference !== 0 && (
+                                      <span className="rsub">
+                                        selisih kurs{" "}
+                                        {formatMoney(
+                                          l.fx_difference,
+                                          BASE_CURRENCY_LABEL
+                                        )}
+                                      </span>
                                     )}
-                                  </span>
-                                )}
-                              </td>
+                                  </td>
+                                </>
+                              )}
                             </tr>
                           );
                         })}
                   </tbody>
-                  <tfoot>
-                    <tr className="totrow">
-                      <td
-                        colSpan={purpose?.entersRate ? 3 : 2}
-                        style={{ textAlign: "right" }}
-                      >
-                        Total Dipindahkan
-                      </td>
-                      <td className="num" colSpan={2}>
-                        <span className="mny big">
-                          {formatMoney(total, currencyLabel)}
-                        </span>
-                      </td>
-                      {editing && <td />}
-                    </tr>
-                    {/* A row of its own rather than a `.rsub` under the total:
-                        `.rsub` is scoped to `tbody td`, so in a footer it runs
-                        inline into the figure beside it — and a realized gain
-                        is a figure in its own right, not an annotation on the
-                        amount transferred. */}
-                    {fxTotal !== 0 && (
+                  {/* Only the totals the summary above does not state: what
+                      the source gives up is there, so a Transfer has no
+                      footer at all. */}
+                  {footTotal && (
+                    <tfoot>
+                      {/* Each total stands under its own column: rupiah
+                          received under Rupiah Diterima, currency bought under
+                          Valas Dibeli. */}
                       <tr className="totrow">
                         <td
-                          colSpan={purpose?.entersRate ? 3 : 2}
+                          colSpan={footTotal.underRupiah ? 4 : 2}
                           style={{ textAlign: "right" }}
                         >
-                          {fxTotal > 0 ? "Laba Selisih Kurs" : "Rugi Selisih Kurs"}
+                          {footTotal.label}
                         </td>
-                        <td className="num" colSpan={2}>
-                          <span className="mny">
-                            {formatMoney(fxTotal, BASE_CURRENCY_LABEL)}
+                        <td className="num">
+                          <span className="mny big">
+                            {formatMoney(footTotal.value, footTotal.currency)}
                           </span>
                         </td>
+                        {!footTotal.underRupiah && <td colSpan={2} />}
                         {editing && <td />}
                       </tr>
-                    )}
-                  </tfoot>
+                      {/* A row of its own rather than a `.rsub` under the
+                          total: `.rsub` is scoped to `tbody td`, so in a
+                          footer it runs inline into the figure beside it —
+                          and a realized gain is a figure in its own right. */}
+                      {fxTotal !== 0 && (
+                        <tr className="totrow">
+                          <td colSpan={4} style={{ textAlign: "right" }}>
+                            {fxTotal > 0 ? "Laba Selisih Kurs" : "Rugi Selisih Kurs"}
+                          </td>
+                          <td className="num">
+                            <span className="mny">
+                              {formatMoney(fxTotal, BASE_CURRENCY_LABEL)}
+                            </span>
+                          </td>
+                          {editing && <td />}
+                        </tr>
+                      )}
+                    </tfoot>
+                  )}
                 </table>
               </div>
             ) : (
