@@ -3985,8 +3985,12 @@ below in outline because the half of it that still holds is easy to lose.**
   the figures Post would write if it ran now — never amount × the header kurs, never a
   placeholder. The user's rule. Post re-values and writes them again, because a layer
   or an item can move while the draft waits. A missing mapping does not stop the save
-  (rule 50 is Post's). An anak draft is not valued: its cash side is the induk's
-  choice at confirmation.
+  (rule 50 is Post's). An anak draft in base currency is valued in full, since its
+  kurs is 1 whichever induk resource pays. A foreign anak draft states its
+  **settlement side only** — each settled item's base at its own kurs — and leaves
+  the cash side unwritten (header kurs and base, every transaction base and FX
+  difference, and the base of a line opening an item, at nil with no kurs) until
+  the induk's confirmation values the whole document. The user's choice.
 - **Impact:** Budgets are re-read *at Post*, not trusted from when the document was
   drafted: one that another document has since closed refuses the post and nothing is
   written. The rule lives in the data module rather than inside the Server Action so

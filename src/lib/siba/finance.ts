@@ -2344,8 +2344,14 @@ export class DraftNotValued extends Error {
  * re-values — a layer or an item may move while the draft waits — and writes
  * the figures again.
  *
- * The funded route is not valued here: the anak's cash side is the induk's
- * choice at confirmation.
+ * An anak draft names no cash. In base currency nothing is left to choose —
+ * the kurs is 1 whichever induk resource pays — so it is valued in full. In a
+ * foreign currency the cash side is the induk's choice at confirmation, so
+ * only the settlement side is stated: each settled item at its own kurs. The
+ * cash side — the header kurs and base, each line's and item's transaction
+ * base and FX difference, and the base of a line that opens an item, which
+ * the cash originates — stays unwritten (nil, kurs empty) until the
+ * confirmation values the whole document.
  */
 export async function valueDraft(
   tx: Prisma.TransactionClient,
@@ -2360,17 +2366,64 @@ export async function valueDraft(
       cash_bank: { select: { currency: { select: { currency_label: true } } } },
     },
   });
-  if (!doc || !doc.cash_bank_id || !doc.lines.length) return;
+  if (!doc || !doc.lines.length) return;
 
   const budgets = await budgetsByIds(doc.lines.map((l) => l.source_doc_id));
   const byId = new Map(budgets.map((b) => [b.id, b]));
+  const amounts = doc.lines.map((l) => l.settlement_amount.toNumber());
+  const funded = !doc.cash_bank_id;
+  const foreignFunded = funded && !isBaseCurrency(doc.currency.currency_label);
   const planned = await planPosting(doc, byId, {
-    induk: true,
+    induk: !funded,
     draft: true,
     resolveFx: false,
+    // A funded draft has no resource to value against. Identity is exact for
+    // base currency; for a foreign one it only stands in, and nothing it
+    // produces on the cash side is written below.
+    valuation: funded
+      ? {
+          rate: 1,
+          accountRate: 1,
+          layerId: null,
+          lines: amounts.map((a) => ({ accountAmount: a, base: a })),
+        }
+      : undefined,
   });
   if (!planned.ok) throw new DraftNotValued(planned.errors);
   const plan = planned.plan;
+
+  if (foreignFunded) {
+    for (const line of plan.lines) {
+      const settles = line.items.length > 0;
+      await tx.finCashBankTransactionLine.update({
+        where: { id: line.lineId },
+        data: {
+          settlement_base_amount: settles ? line.settlementBase : 0,
+          settlement_exchange_rate:
+            settles && line.amount ? line.settlementBase / line.amount : null,
+          transaction_base_amount: 0,
+          fx_difference: 0,
+          updated_by: actorId,
+        },
+      });
+      for (const it of line.items) {
+        await tx.finCashBankTransactionLineItem.update({
+          where: { id: it.allocationId },
+          data: {
+            settlement_base_amount: it.settlementBase,
+            transaction_base_amount: 0,
+            fx_difference: 0,
+            updated_by: actorId,
+          },
+        });
+      }
+    }
+    await tx.finCashBankTransaction.update({
+      where: { id: transactionId },
+      data: { exchange_rate: 0, transaction_base_amount: 0 },
+    });
+    return;
+  }
 
   await writeLineValuation(tx, plan, actorId);
   await tx.finCashBankTransaction.update({
