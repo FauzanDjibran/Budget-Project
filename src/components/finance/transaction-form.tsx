@@ -29,11 +29,12 @@ import { requestFunding, withdrawFunding } from "@/app/actions/funding";
 import {
   formatDate,
   formatMoney,
-  formatNumber,
   formatRate,
   todayIso,
 } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, rateSource } from "@/lib/siba/currency";
+import { roundBase } from "@/lib/siba/fx";
+import { ReportSummary } from "@/components/report/report-summary";
 import type { BudgetMapping } from "@/lib/siba/budget";
 import type {
   EligibleBudget,
@@ -378,7 +379,8 @@ export function TransactionForm({
     .map((c) => ({
       id: c.id,
       label: c.label,
-      name: `${c.name} · ${c.currencyLabel} ${formatNumber(c.balance)}`,
+      // The balance is stated once, in the summary above the lines.
+      name: `${c.name} (${c.currencyLabel})`,
       active: c.active,
     }));
 
@@ -387,19 +389,6 @@ export function TransactionForm({
 
   const inn = direction === "In";
 
-  // The resource's balance is in the resource's own currency, which is not the
-  // document's when a foreign document is paid from a rupiah account — there
-  // the movement is the document total at the entered kurs.
-  const balanceCurrency = cashBank?.currencyLabel ?? currencyLabel;
-  const resourceTotal =
-    balanceCurrency !== currencyLabel
-      ? total * (Number(editing ? values.exchange_rate : transaction?.exchange_rate) || 0)
-      : total;
-  const balanceBefore = cashBank?.balance ?? 0;
-  const balanceAfter =
-    transaction?.status === "Posted" || transaction?.status === "Cancelled"
-      ? balanceBefore
-      : balanceBefore + (inn ? 1 : -1) * resourceTotal;
 
   // ------------------------------------------------------------------ lines
 
@@ -467,6 +456,55 @@ export function TransactionForm({
         items: l.items,
         itemRole: l.items.length ? "lowers" : null,
       }));
+  // ---------------------------------------------------------------- summary
+
+  /**
+   * The resource's balance, what this document moves it by, and where it
+   * lands — all in the **resource's** currency, which is not the document's
+   * when a foreign document is paid from a rupiah account: there a line moves
+   * the account by its amount at the kurs, rounded per line as Post writes it.
+   *
+   * Money leaving a foreign resource draws on one chosen layer (§10 rule 70),
+   * so that layer's remainder is what it can spend. Money arriving opens a new
+   * layer, so the account's balance is the starting figure. Only a direct
+   * Draft carries it: the anak holds no cash, and today's balance is no fact
+   * about a posted document.
+   */
+  const showSummary =
+    !funded && (editing || transaction?.status === "Draft");
+  const resourceLabel = cashBank?.currencyLabel ?? currencyLabel;
+  const crossesToBase = Boolean(cashBank) && resourceLabel !== currencyLabel;
+  const chosenLayer =
+    kursSource === "layer"
+      ? cashBank?.layers.find((y) => y.id === Number(values.cash_bank_layer_id)) ?? null
+      : null;
+  const summaryWaitingFor = !cashBank
+    ? "Pilih Cash & Bank dulu…"
+    : kursSource === "layer" && !inn && !chosenLayer
+      ? "Pilih Kurs dulu…"
+      : crossesToBase && !cashRate
+        ? "Isi Kurs dulu…"
+        : null;
+  const onResource = (amount: number) =>
+    crossesToBase ? roundBase((amount || 0) * (cashRate ?? 0)) : amount || 0;
+  const startBalance =
+    !inn && chosenLayer ? chosenLayer.foreignRemaining : cashBank?.balance ?? 0;
+  const moved = roundBase(rows.reduce((t, r) => t + onResource(r.amount), 0));
+  const endBalance = roundBase(startBalance + (inn ? moved : -moved));
+
+  /**
+   * The lines that take a payment past what the source holds, marked the way
+   * a transfer line is. A receipt cannot run short.
+   */
+  const pastBalance = new Set<number>();
+  if (showSummary && !inn && !summaryWaitingFor) {
+    let running = 0;
+    for (const r of rows) {
+      running += onResource(r.amount);
+      if (r.amount && running > startBalance) pastBalance.add(r.budgetId);
+    }
+  }
+
   // The column exists only where a line has an open item to state or choose.
   // An accumulating book (Investasi, Hasil Investasi) has nothing to choose or
   // settle, so it does not bring the column in on its own.
@@ -976,6 +1014,45 @@ export function TransactionForm({
               )}
             </div>
 
+            {showSummary && (
+              <div className="lsum">
+                {summaryWaitingFor ? (
+                  <span className="wait">{summaryWaitingFor}</span>
+                ) : (
+                  <ReportSummary
+                    figures={[
+                      {
+                        label: "Saldo Saat Ini",
+                        value: formatMoney(startBalance, resourceLabel),
+                      },
+                      {
+                        label: inn ? "Total Diterima" : "Total Digunakan",
+                        value: formatMoney(moved, resourceLabel),
+                      },
+                      inn
+                        ? {
+                            label: "Saldo Baru",
+                            value: formatMoney(endBalance, resourceLabel),
+                            key: true,
+                          }
+                        : endBalance < 0
+                          ? {
+                              label: "Kekurangan",
+                              value: formatMoney(-endBalance, resourceLabel),
+                              key: true,
+                              negative: true,
+                            }
+                          : {
+                              label: "Sisa",
+                              value: formatMoney(endBalance, resourceLabel),
+                              key: true,
+                            },
+                    ]}
+                  />
+                )}
+              </div>
+            )}
+
             {editing && dropped > 0 && (
               <div className="nbox warn slim">
                 <span className="ni">
@@ -1135,6 +1212,11 @@ export function TransactionForm({
                                 {formatMoney(r.amount, currencyLabel)}
                               </span>
                             )}
+                            {pastBalance.has(r.budgetId) && (
+                              <span className="overtag">
+                                {chosenLayer ? "Melebihi sisa layer" : "Melebihi saldo"}
+                              </span>
+                            )}
                           </td>
                           <td className="acts">
                             <span className="ract">
@@ -1165,19 +1247,25 @@ export function TransactionForm({
                       );
                     })}
                   </tbody>
-                  <tfoot>
-                    <tr className="totrow">
-                      <td colSpan={showItems ? 4 : 3} style={{ textAlign: "right" }}>
-                        Total Realisasi
-                      </td>
-                      <td className="num">
-                        <span className="mny big">
-                          {formatMoney(total, currencyLabel)}
-                        </span>
-                      </td>
-                      <td />
-                    </tr>
-                  </tfoot>
+                  {/* The total in the document's currency, where the summary
+                      above does not already state it: a posted or funded
+                      document has no summary, and a foreign document paid
+                      from a rupiah account states its rupiah there. */}
+                  {(!showSummary || crossesToBase || summaryWaitingFor) && (
+                    <tfoot>
+                      <tr className="totrow">
+                        <td colSpan={showItems ? 4 : 3} style={{ textAlign: "right" }}>
+                          Total Realisasi
+                        </td>
+                        <td className="num">
+                          <span className="mny big">
+                            {formatMoney(total, currencyLabel)}
+                          </span>
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             ) : (
@@ -1222,36 +1310,6 @@ export function TransactionForm({
                       {inn ? "Piutang kepada induk" : "Hutang kepada induk"}{" "}
                       {formatMoney(total, currencyLabel)}
                     </b>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {!funded && cashBank && total > 0 && (
-              <div className="cardfoot">
-                <div className="impact">
-                  <div className="ttl">Dampak Transaksi</div>
-                  <div className="ir">
-                    <span>Arah kas</span>
-                    <b>{inn ? "Penerimaan" : "Pengeluaran"}</b>
-                  </div>
-                  <div className="ir">
-                    <span>Cash &amp; Bank</span>
-                    <b>{cashBank.label}</b>
-                  </div>
-                  <div className="ir">
-                    <span>Entri Cash Bank Book</span>
-                    <b>{editing ? draftLines.length : lines.length} entri, satu per Budget</b>
-                  </div>
-                  <div className="ir">
-                    <span>
-                      {transaction?.status === "Posted"
-                        ? `Saldo ${cashBank.label} kini`
-                        : transaction?.status === "Cancelled"
-                          ? "Saldo tidak berubah"
-                          : "Saldo setelah posting"}
-                    </span>
-                    <b>{formatMoney(balanceAfter, balanceCurrency)}</b>
                   </div>
                 </div>
               </div>
