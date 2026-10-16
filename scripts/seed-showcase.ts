@@ -68,6 +68,13 @@ import {
   checkReclassLines,
   nextReclassNo,
 } from "@/lib/siba/item-reclass";
+import {
+  applyRevaluation,
+  checkRevaluationHeader,
+  nextRevaluationNo,
+  valueRevaluation,
+  writeRevaluationDraftValues,
+} from "@/lib/siba/cash-bank-revaluation";
 import { subledgerForCategory, subledgerMovement } from "@/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -326,6 +333,9 @@ const CHART: Group[] = [
     accounts: [
       { name: "Biaya Bunga Pinjaman" },
       { name: "Selisih Kurs" },
+      // Where a Revaluasi Kurs states its gain or loss — kept apart from the
+      // Selisih Kurs a settlement realises.
+      { name: "Laba/Rugi Revaluasi Kurs" },
       // Where an adjustment's counter side lands when it is debited.
       { name: "Beban Penyesuaian" },
     ],
@@ -592,6 +602,7 @@ async function setDefaults(actor: number) {
         bridge_ar: await accountId(company.id, "Piutang Perusahaan Afiliasi"),
         bridge_ap: await accountId(company.id, "Hutang kepada Perusahaan Afiliasi"),
         fx: await accountId(company.id, "Selisih Kurs"),
+        fx_revaluation: await accountId(company.id, "Laba/Rugi Revaluasi Kurs"),
         accumulated_pl: await accountId(company.id, "Laba Ditahan"),
         current_pl: await accountId(company.id, "Laba Rugi Tahun Berjalan"),
         adjustment_income: await accountId(company.id, "Pendapatan Penyesuaian"),
@@ -1720,6 +1731,73 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
 }
 
 
+// ---------------------------------------------------------- revaluasi kurs
+//
+// A foreign resource restated at a kurs somebody states as current (§10 rule
+// 24): every open layer closes, one opens at the stated kurs, and the
+// difference is journalled. Posted through `applyRevaluation`, like a user
+// pressing Post; a Draft leaves the other status on the register.
+
+type RevaluationSpec = {
+  cashBank: string;
+  rate: number;
+  /** The Tanggal Dokumen, `YYYY-MM-DD`. */
+  date: string;
+  /** This script's marker, as a document's note is elsewhere. */
+  note: string;
+  status: "Posted" | "Draft";
+};
+
+async function writeRevaluation(spec: RevaluationSpec, actor: number) {
+  const already = await prisma.finCashBankRevaluation.findFirst({
+    where: { note: spec.note },
+    select: { id: true },
+  });
+  if (already) return;
+
+  const resource = await prisma.mCashBank.findFirstOrThrow({
+    where: { cash_bank_label: spec.cashBank },
+    select: { id: true, company_id: true },
+  });
+  const header = await checkRevaluationHeader(
+    { cash_bank_id: resource.id, exchange_rate: spec.rate },
+    [resource.company_id]
+  );
+  if (!header.ok) {
+    throw new Error(`Revaluation ${spec.note} refused: ${Object.values(header.errors).join(" ")}`);
+  }
+  const valued = await valueRevaluation(header);
+
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.finCashBankRevaluation.create({
+      data: {
+        revaluation_no: await nextRevaluationNo(tx),
+        document_date: new Date(`${spec.date}T00:00:00Z`),
+        company_id: header.companyId,
+        cash_bank_id: header.cashBankId,
+        currency_id: header.currencyId,
+        exchange_rate: header.rate,
+        note: spec.note,
+        status: "Draft",
+        created_by: actor,
+      },
+      select: { id: true, revaluation_no: true },
+    });
+    await writeRevaluationDraftValues(tx, created.id, valued);
+    return created;
+  });
+  await audit("fin_cash_bank_revaluation", row.id, actor);
+  tally("revaluasi kurs");
+
+  if (spec.status === "Posted") {
+    const posted = await applyRevaluation(row.id, actor);
+    if (!posted.ok) {
+      throw new Error(`Posting ${row.revaluation_no} refused: ${Object.values(posted.errors).join(" ")}`);
+    }
+  }
+}
+
+
 // ------------------------------------------------------------- the year
 //
 // The year is a plan: the Budgets it held, and the events that happened to
@@ -1764,7 +1842,8 @@ type Event =
   | { kind: "journal"; date: string; spec: ManualSpec }
   | { kind: "adjustment"; date: string; spec: AdjustmentSpec }
   | { kind: "conversion"; date: string; spec: ConversionSpec }
-  | { kind: "reclass"; date: string; spec: ReclassSpec };
+  | { kind: "reclass"; date: string; spec: ReclassSpec }
+  | { kind: "revaluation"; date: string; spec: RevaluationSpec };
 
 type YearPlan = { year: number; budgets: BudgetSpec[]; events: Event[] };
 
@@ -1772,6 +1851,7 @@ const transfer = (spec: TransferSpec, draft = false): Event => ({ kind: "transfe
 const journal = (spec: ManualSpec): Event => ({ kind: "journal", date: spec.date, spec });
 const adjustment = (spec: AdjustmentSpec): Event => ({ kind: "adjustment", date: spec.date, spec });
 const reclass = (spec: ReclassSpec): Event => ({ kind: "reclass", date: spec.date, spec });
+const revaluation = (spec: RevaluationSpec): Event => ({ kind: "revaluation", date: spec.date, spec });
 
 /**
  * The year being worked in. Everything here is dated on or before today's
@@ -1874,6 +1954,11 @@ function currentYear(): YearPlan {
       reclass({ date: day(7, 21), book: "Pengeluaran Belum Teridentifikasi", partner: "Lainnya", currency: "IDR", note: "Debet BCA 2 Juli teridentifikasi sebagai kasbon Fauzan", lines: [
         { book: "Piutang", partner: "Fauzan", description: "Kasbon Fauzan, dipotong dari gaji", from: "bayarbt", amount: 12_500_000 },
       ] }),
+      // Quarter end: BCA USD's layers, bought between 15.750 and 16.300, are
+      // restated at the bank's closing kurs and become one layer. Mandiri USD
+      // waits for treasury to confirm its kurs.
+      revaluation({ date: day(9, 30), cashBank: "BCA-USD", rate: 16_450, note: "Revaluasi kurs akhir kuartal III, kurs tengah BCA 30 September", status: "Posted" }),
+      revaluation({ date: day(9, 30), cashBank: "MDR-USD", rate: 16_450, note: "Revaluasi kurs akhir kuartal III, menunggu konfirmasi kurs Mandiri", status: "Draft" }),
     ],
   };
 }
@@ -1972,6 +2057,9 @@ async function runPlan(plan: YearPlan, actor: number) {
         break;
       case "reclass":
         await postReclass(e.spec, budgets, actor);
+        break;
+      case "revaluation":
+        await writeRevaluation(e.spec, actor);
         break;
     }
   }

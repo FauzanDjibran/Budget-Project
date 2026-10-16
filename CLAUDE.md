@@ -71,12 +71,14 @@ or invariants that assume a particular row exists.
   a Partner's existing open items without cash, the way a Debit and a Credit
   Note move an invoice — stated as the value each item should now hold — the **Reklasifikasi Open Item**, which moves an
   open item's value to another book or Partner, the way money held in a
-  *Belum Teridentifikasi* book reaches the book it belongs in — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
+  *Belum Teridentifikasi* book reaches the book it belongs in — the **Revaluasi Kurs**, which
+  restates a foreign Cash & Bank at a kurs the user states by collapsing its rate layers into
+  one — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
   snapshot a close writes and the ledger reports then read their openings from.
 - **Not yet built** — report output (print and export), intercompany settlement (the
   anak paying the induk back), subledger opening balances, and revaluation of standing
-  foreign positions at a period end. Full list in §13.
+  foreign subject-book positions. Full list in §13.
 
 ### Current status
 
@@ -85,7 +87,7 @@ or invariants that assume a particular row exists.
 | Scaffold, DB, migration | Done |
 | Seed | Done — **system data only**, idempotent, destroys nothing (§12) |
 | Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered |
-| Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. Period-end revaluation is **not** built (§13) |
+| Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. A foreign Cash & Bank is restated by **Revaluasi Kurs**; standing foreign subject-book positions are never retranslated (§13) |
 | Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows them and says when they stop reconciling with the book |
 | Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
@@ -104,13 +106,14 @@ or invariants that assume a particular row exists.
 | Penyesuaian Open Item | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget (`PYO-`). It replaced Debit / Credit Note and works like one: every line names one **existing** open item and the **new value** it should hold; the difference beside it is a **Penambahan** (a Debit Note) or a **Pengurangan** (a Credit Note), never chosen, and one document may hold both. The difference moves at the item's own kurs, as a new ledger line on the same item — no item is ever opened — and the line's keterangan is written by the system. Post refuses an item that moved since the draft. The book's own `raises` turns each line's effect into a journal side, so one document serves every book. Which books may be adjusted is `allows_item_adjustment` on the Budget Category (Titipan, Hutang, Piutang). Post writes the `Adjustment` entries and one balanced journal against the Company's Pendapatan or Beban Penyesuaian account, under a lock on the position; the draft is valued as Post will write it |
 | Pencairan Open Item | Done — foreign currency sold out of the Company's own Cash & Bank, and one Partner's open items in that currency converted to Rupiah **at the same kurs**, in one document (`POI-`). One book, one Partner and one layer per document. Each line's amount is the sum of the items it converts. Post writes both cash books, a `Conversion` entry releasing each foreign item at its own kurs, one new IDR item per line in the same book, and one balanced journal with **one** Selisih Kurs line for the whole document (§10 rules 109–112). Its own module, not a Transfer purpose |
 | Reklasifikasi Open Item | Done — an open item's value moved to another book, another Partner, or both, with no cash (`RKL-`). The header is the source position (book × Partner × currency); each line a target book and Partner and the source items it takes. The target is posted as the original movement would have been: a book running the same way **opens** one item per source item at its kurs and base, one running the other way has chosen items **settled**, each with its own Selisih Kurs line. Any category that names a Partner qualifies — no flag. Two holding categories, *Penerimaan* and *Pengeluaran Belum Teridentifikasi*, and Partner Category *Lainnya*, are seeded for money nobody can place yet (§10 rules 113–117). A Budget keeps its classification; its Realisasi card shows where the money went |
+| Revaluasi Kurs | Done — one foreign Cash & Bank restated at a kurs the user states (`RVK-`), raised from its own menu and never by a period close. Post closes every open layer of the resource (`ClosedByRevaluation`, recorded per layer in `fin_cash_bank_revaluation_layer`), opens one layer holding the whole foreign balance at the stated kurs, writes one base-only Cash Bank Book entry (`Revaluation`) and journals the difference against the Company's Laba/Rugi Revaluasi Kurs account (Mapping Account System `fx_revaluation`). Reads the layers as they stand when posted, whatever its date. Final: a wrong kurs is corrected by another revaluation (§10 rules 118–121) |
 | Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
 | System Default | Done — `/settings/system-default`; catalogue in code, values in `sys_setting`. Currency, Company and Realisasi Cash & Bank defaults, with the base currency shown read-only. A new Budget needs only its amount and description; a new Realisasi starts on the default Company, its Cash & Bank and the base currency |
 | Mapping Account System | Done — `/accounting/system-account`, one Company at a time; `acc_system_account`, one row per Company and key. The intercompany bridge, Selisih Kurs, the two Laba/Rugi equity accounts, and the Penyesuaian Open Item counter accounts (Pendapatan / Beban Penyesuaian) |
-| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Pencairan Open Item, Reklasifikasi Open Item, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
+| Tests | Security suite plus the Accounting, Budget, Finance, Funding, Transfer, Pencairan Open Item, Reklasifikasi Open Item, Revaluasi Kurs, Cash Bank Book, subject book, rate layer, FX kernel, manual journal, fiscal calendar, Opening Balance, Fiscal Year closing and System Default enforcement points, via `node:test` (`npm test`). `tests/ledger-opening.test.ts` holds the one property the snapshot-based opening rests on — equivalence with the full scan, at three boundaries. Business fixtures are created by the tests, not by the seed. A design-system suite scans the source for UI conventions that had already drifted, and `tests/money-input.test.ts` drives the one numeric field one keystroke at a time, for an amount and for a kurs. |
 
 ---
 
@@ -227,6 +230,8 @@ of its own.
 | Reklasifikasi data | `src/lib/siba/item-reclass.ts` | Header, line and item enforcement, `applyReclass` (and its dry run), `reclassTrail` (where an item's value went), `RKL-` numbering. Reaches the books only through what they export; `server-only` |
 | Penyesuaian Open Item lifecycle | `src/lib/siba/item-adjustment-workflow.ts` | Draft → Post / Cancel, the two effects (Penambahan / Pengurangan), `effectOfChange` (a typed new value's effect), and `adjustmentDirection` — the cash direction an effect moves the book like; client-safe |
 | Penyesuaian Open Item data | `src/lib/siba/item-adjustment.ts` | Header, line and item enforcement, `valueItemAdjustment` (the draft's and Post's one valuation), `applyItemAdjustment` (and its dry run), `PYO-` numbering. Reaches the books only through what they export; `server-only` |
+| Revaluasi Kurs lifecycle | `src/lib/siba/cash-bank-revaluation-workflow.ts` | Draft → Post / Cancel, one transition table, `RVK` series; client-safe |
+| Revaluasi Kurs data | `src/lib/siba/cash-bank-revaluation.ts` | Header enforcement, `valueRevaluation` (the draft's and Post's one valuation), `applyRevaluation` (and its dry run), `RVK-` numbering. Collapses layers only through `collapseLayers` in the Cash Bank Book; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
 | Document links | `src/lib/siba/document-links.ts` | `documentHref` — a `(doc_table, doc_id)` pair to the page that shows it, so a journal can link its source without the book knowing any route; client-safe |
 | Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and the three builders — `buildProfitLoss`, `buildBalanceSheet` and `buildTrialBalance` over one shared tree — chart + figures to rows, pure; client-safe |
@@ -258,6 +263,7 @@ source scan and needs no database.
 | Penyesuaian Open Item | `fin_item_adjustment(_line, _line_item)` | `lib/siba/item-adjustment.ts`, `app/actions/item-adjustment.ts` |
 | Pencairan Open Item | `fin_item_conversion(_line, _line_item)` | `lib/siba/item-conversion.ts`, `app/actions/item-conversion.ts` |
 | Reklasifikasi Open Item | `fin_item_reclass(_line, _line_source, _line_target)` | `lib/siba/item-reclass.ts`, `app/actions/item-reclass.ts` |
+| Revaluasi Kurs | `fin_cash_bank_revaluation(_layer)` | `lib/siba/cash-bank-revaluation.ts`, `app/actions/cash-bank-revaluation.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` (+ `subledger-data.ts`, which reads the Budget Categories the books are) |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22); the manual journal's rules sit above it in `lib/siba/manual-journal.ts` + `app/actions/journal.ts` |
@@ -362,7 +368,7 @@ scripts/
                          what reconciles against the account for the second.
                          Idempotent, sets and clears. Run by hand, never by
                          install or CI
-  reconcile-books.ts     Read-only: seventeen checks that Budget realization,
+  reconcile-books.ts     Read-only: eighteen checks that Budget realization,
                          the Cash Bank Book, the subject books and their open
                          items, and the journals agree with each other and
                          with the General Ledger. Each selects only the rows
@@ -435,6 +441,7 @@ src/
       finance/pencairan-open-item/  Bespoke: list, /new, /[id], /[id]/edit
       finance/penyesuaian-open-item/  Bespoke: list, /new, /[id], /[id]/edit
       finance/reklasifikasi-open-item/  Bespoke: list, /new, /[id], /[id]/edit
+      finance/revaluasi-kurs/  Bespoke: list, /new, /[id], /[id]/edit
       finance/funding-request/  The induk's queue: list and /[id] (confirm)
       finance/report/[report]/  Every Report View, driven by `reports.ts`
       settings/[entity]/ The registry pages again — the classification chain:
@@ -452,6 +459,7 @@ src/
       item-conversion.ts Pencairan Open Item writes, plus Post
       item-reclass.ts    Reklasifikasi Open Item writes, plus Post
       item-adjustment.ts Penyesuaian Open Item writes, plus Post
+      cash-bank-revaluation.ts  Revaluasi Kurs writes, plus Post
       fiscal.ts          The Fiscal Year lifecycle — the one way out of Draft
       journal.ts         Manual journal writes: create, edit, Post / Batalkan
       settings.ts        System Default writes
@@ -477,7 +485,8 @@ src/
                          TransferList, TransferForm,
                          ItemConversionList, ItemConversionForm,
                          ItemReclassList, ItemReclassForm,
-                         ItemAdjustmentList, ItemAdjustmentForm
+                         ItemAdjustmentList, ItemAdjustmentForm,
+                         RevaluationList, RevaluationForm
     report/              ReportView chrome, ReportSummary, its three filter
                          bars (ReportParams for one subject, SubjectParams for
                          several, FiscalPeriodParams for a statement,
@@ -1507,8 +1516,8 @@ the rules that follow from it.
     name three things at once. The rate stays true by construction rather than by
     rule: relief releases base in proportion to what is left, so
     `base_remaining ÷ foreign_remaining` equals the layer's rate for its whole
-    life. Period-end revaluation is the **only** sanctioned consolidation of
-    layers, and it is not built (§13).
+    life. Revaluasi Kurs is the **only** sanctioned consolidation of layers
+    (rules 118–121).
 72. **A foreign account's balance *is* the sum of its open layers, on both
     measures.** `cash_bank_layer` is mutable, unlike the books beside it, so
     nothing can recompute it from an entry log; `reconcileLayers` is what checks
@@ -1725,6 +1734,38 @@ ERP, the name stays SIBA's.
     was valued. Held positions at a year end are not checked yet — out of scope
     on the user's decision.
 
+**Revaluasi Kurs** — restating a foreign Cash & Bank (SIBA multi-currency §7, KB
+rate-layers 2.0).
+
+118. **A revaluation is a document a user raises, for one foreign Cash & Bank.**
+    It is its own menu (Finance › Penyesuaian › Revaluasi Kurs, `RVK-`), and
+    nothing raises one automatically — not a period close, not a schedule. It
+    names the resource, a Tanggal Dokumen and the kurs the user states as
+    current, an input like any entered kurs (rule 68). The user's decision: when
+    a rate is worth restating is somebody's call, the way which layer a payment
+    consumes is. A base-currency resource has nothing to revalue.
+119. **Post collapses every open layer into one.** Each open layer is closed
+    (`ClosedByRevaluation`, nothing remaining) and recorded with what it held;
+    one layer opens holding the whole foreign balance at the stated kurs, its
+    base `foreign × kurs` (`revalue` in `fx.ts`, `collapseLayers` in
+    `cash-bank-layers.ts`, the only place layers are consolidated). The foreign
+    balance never moves. One Cash Bank Book entry of type `Revaluation` moves
+    base only, and the journal states the difference in base currency: a gain
+    debits the cash account and credits Laba/Rugi Revaluasi Kurs, a loss the
+    mirror. A difference of nil still collapses and writes neither. Refused
+    while the layers disagree with the book (`reconcileLayers`).
+120. **The difference has its own account, refused by name while unset.**
+    Mapping Account System `fx_revaluation`, kept apart from `fx` on the user's
+    choice — a difference a revaluation states and one a settlement realises are
+    reported separately, as mainstream ERP keeps unrealised and realised apart.
+    It may not be an account a book reconciles against, and it is resolved only
+    when a difference arises.
+121. **It reads the present, and it is final.** Post works on the layers open
+    when it runs, whatever its date; a document backdated before a revaluation
+    later sees only the layer it left — the user's rule, accepted. There is no
+    reversal: a wrong kurs is corrected by another revaluation, and a closed
+    layer is never reopened.
+
 Specified in the concept doc, **not yet implemented** (see §13):
 
 23. **Intercompany settlement** (§36). Funding leaves the induk holding a claim on
@@ -1732,16 +1773,10 @@ Specified in the concept doc, **not yet implemented** (see §13):
     Both positions are already kept — in the two Companies' **journals**, on the
     bridge accounts, not in the subject books (rule 61) — and what is missing is
     the document that settles them.
-24. **Revaluation of a foreign Cash & Bank** (SIBA multi-currency §7, KB 2.0).
-    A document of its own, raised by a user from its own menu for one resource
-    at the kurs they state — never run by a period close. It collapses the
-    resource's open layers into one at that kurs and journals the difference.
-    It is final: a wrong kurs is corrected by another revaluation. A document
-    backdated before it sees only the layers open now — accepted, the user's
-    rule. `CashBankLayerStatus.ClosedByRevaluation` exists in
-    the schema and nothing writes it: a layer's status had to be able to reach
-    that state, because revaluation is the one sanctioned way layers consolidate
-    and it must not arrive later as a change to an append-only shape.
+24. **Revaluation of foreign subject-book positions** (CORE multi-currency
+    §6.1). A Hutang or Piutang in USD keeps the base value each open item was
+    raised at until something settles it. A foreign Cash & Bank is revalued
+    (rules 118–121); a Partner's foreign open items are not yet.
 
 ---
 
@@ -3568,8 +3603,36 @@ below in outline because the half of it that still holds is easy to lose.**
   source document's policy table switches one on.
 - **Do not change unless:** explicitly instructed. **Never merge layers, never
   auto-select one, never let a layer's rate be edited, and do not add a second
-  consolidation path** — period-end revaluation is the only sanctioned one and it is
-  not built (§13).
+  consolidation path** — Revaluasi Kurs is the only sanctioned one (§10 rules
+  118–121).
+- **Status:** Frozen, current.
+
+### Revaluasi Kurs is a user-triggered document, final, and reads the present (FROZEN)
+- **Decision:** Revaluation of a foreign Cash & Bank is its own module
+  (`fin_cash_bank_revaluation(_layer)`, `RVK-`, `CASH_BANK_REVALUATION_*`,
+  Finance › Penyesuaian › Revaluasi Kurs). One resource per document, the kurs
+  typed, any Tanggal Dokumen up to today. Post collapses the resource's open
+  layers into one at that kurs, writes a base-only `Revaluation` book entry and
+  one journal against `fx_revaluation`. §10 rules 118–121 state it.
+- **Reason:** the user's (16/10/2026), after a review of mainstream ERP —
+  Business Central's Adjust Exchange Rates and SAP's valuation run restate a
+  bank account's base on a key date without reversing it; Odoo reverses its
+  adjustment. SIBA restates by collapsing layers, so the new layer *is* the
+  carrying value and a reversal would contradict it. The trigger is a user
+  rather than a period close, and KB `accounting/multi-currency~rate-layers`
+  2.0 was changed to say so (it used to tie revaluation to the close and allow
+  reversing a close).
+- **Accepted consequence:** rate selection has effect only across layers
+  acquired since the last revaluation, plus its one carried layer; a document
+  backdated before a revaluation cannot choose the layers it closed. A Draft
+  holding a layer a revaluation closed is refused at Post by `drawFromLayer`,
+  naming the layer, and is re-pointed by the user. A layer's write is guarded
+  on what was read, so a draw and a collapse in different fiscal years cannot
+  overwrite each other.
+- **Do not change unless:** explicitly instructed. **Never run a revaluation
+  from a period close or a schedule, never reverse one or reopen a layer it
+  closed, never consolidate layers anywhere but `collapseLayers`, never post
+  its difference to `fx`, and never value it as of its date instead of now.**
 - **Status:** Frozen, current.
 
 ### One numeric control, and one meaning per separator key (FROZEN)
@@ -4530,7 +4593,7 @@ decisions now that foreclose them.
 | Item | Planned behaviour |
 | --- | --- |
 | Subledger opening balances | A subject's position before the application started keeping its book. `SubLedgerEntryType.Opening` exists and nothing writes it. **Deliberately outside the Opening Balance work**, on the user's decision: the subject books are continuous stores, so a year-end does not interrupt one, and a close writes no subledger entry |
-| Revaluation | SIBA multi-currency §7 (KB 2.0): a user-triggered document per foreign Cash & Bank that collapses its layers into one at a stated kurs (§10 rule 24) — **next to build**. Retranslating open subject-book items stays later. `CashBankLayerStatus.ClosedByRevaluation` exists and nothing writes it. **The only sanctioned consolidation of layers** — do not add a second one, and do not merge layers for any other reason (§10 rule 71) |
+| Subject-book revaluation | CORE multi-currency §6.1: retranslate a Partner's open foreign items at a closing rate. Revaluasi Kurs covers Cash & Bank only (§10 rules 118–121); a Hutang or Piutang in USD keeps its items' kurs until settled (§10 rule 24) |
 | Multi-layer settlement | The source specification lets one payment draw on several layers (`Σ selected = account_amount`). SIBA takes one per document, refused at draft time with a message that says to split it. Widening this means a selection UI with a running total and per-layer relief, not a loosened check (§12) |
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
@@ -4544,8 +4607,8 @@ holds no market rate and looks none up: a kurs is either the identity, the rate 
 layer that was acquired at it, or a figure the user typed because that is what the
 bank actually used (§10 rule 68). If a real rate feed ever arrives it can only ever
 **prefill** an entered kurs — it must not revalue a stored base figure, which is
-history (§12, a rate is an input or an output). Period-end revaluation is the one
-process allowed to restate positions, and it is not built.
+history (§12, a rate is an input or an output). Revaluasi Kurs is the one process
+allowed to restate a position, and it restates a foreign Cash & Bank only.
 
 ---
 
@@ -4617,8 +4680,11 @@ process allowed to restate positions, and it is not built.
 - Do **not** store a derived carrying rate, default one into a document, or treat one
   as a market rate. `carryingRate` exists to be displayed (§10 rule 68, §12).
 - Do **not** re-derive a stored base figure at a later rate. The base measure is
-  history; only period-end revaluation may restate a position, and it is not built
-  (§12, §13).
+  history; only Revaluasi Kurs may restate a position, and only a Cash & Bank's
+  (§10 rules 118–121).
+- Do **not** run a Revaluasi Kurs from a period close or a schedule, reverse a posted
+  one, reopen a layer it closed, or post its difference to the `fx` account. It is a
+  user's document, final, and reads the layers as they stand (§10 rules 118–121, §12).
 - Do **not** merge rate layers, auto-select one, edit a layer's rate, or add a second
   way to consolidate them. One payment draws on one layer the user picked
   (§10 rules 70–71, §12).
@@ -4973,9 +5039,10 @@ process allowed to restate positions, and it is not built.
 | A transfer shows in the Cash Bank Book by number, not as a link | `sourceDocumentNumbers` in `cash-bank.ts` resolves only `fin_cash_bank_transaction`, which is already the baselined crossing this table records below. A transfer entry therefore carries `TRF-0001 — <Purpose>` in its note and has no drill-through. Extending that function to a second table would deepen the debt; the clean fix is to make labelling a `(doc_type_id, doc_id)` pair the caller's job, which is a decision in its own right. |
 | A subject book's report shows a document's note, not a link | An entry carries its source as the weak `(doc_type_id, doc_id)` pair and its document number inside `note`. Resolving that to a link would mean the book importing Finance, which is the boundary crossing `cash-bank.ts` already has and that has not been decided. |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
-| Layers can go stale, and that is accepted | Nothing forces the oldest layer to be consumed, so an unselected layer persists indefinitely. The source document names this as a consequence of the design rather than a defect: period-end revaluation is what absorbs them, and it is not built (§13). |
+| Layers can go stale, and that is accepted | Nothing forces the oldest layer to be consumed, so an unselected layer persists indefinitely. The source document names this as a consequence of the design rather than a defect: a Revaluasi Kurs is what absorbs them, when a user raises one (§10 rules 118–121). |
 | The FX difference on a payment is a user decision | Which layer the user picks sets the gain or loss recognised. Under averaging it would be deterministic. This is the feature working as intended — the source document calls layer selection an auditable control point — but it does mean two clerks can post the same payment to different results, and nothing flags that. |
-| A standing foreign position is never retranslated | A Hutang in USD keeps the base value it was carried at until something settles it. Without period-end revaluation (§13) there is no unrealised gain or loss anywhere in the system, so the base measure of an open position drifts from what it would be worth today — by design for now, and the one thing revaluation exists to fix. |
+| A standing foreign subject-book position is never retranslated | A Hutang in USD keeps the base value its items were carried at until something settles it. Revaluasi Kurs restates a foreign Cash & Bank only (§10 rules 118–121), so a Partner's foreign position drifts from what it would be worth today — by design for now (§13). |
+| A Draft can hold a layer a revaluation has closed | Nothing warns a Realisasi, Transfer or Pencairan draft that its chosen layer was collapsed; its Post is refused naming the layer, and the user picks the new one. A revaluation cannot list those drafts without reading other modules' tables. |
 | A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
 | A close drops a go-live Opening Balance | `closingBalances` in `ledger.ts`, which a close snapshots the next year from, sums **journal lines only** — it does not stand on an earlier snapshot the way `openingBasis` does. A developer-injected go-live snapshot (null source) therefore reaches the reports of its own year and is left out of the snapshot the close writes, so every year after the first close would open without the go-live figures. Harmless while no year after a go-live snapshot is closed; the showcase injects its closed year and its current year's snapshot rather than closing one. The fix is to make `closingBalances` open from `openingBasisFor` like the reports do, which touches the close and needs its own test at the boundary. |
 | A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |

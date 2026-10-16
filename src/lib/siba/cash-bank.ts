@@ -27,7 +27,7 @@ import type { PeriodRange } from "./period";
 /** A Prisma client or an interactive transaction — every write here takes one. */
 type Db = Prisma.TransactionClient | typeof prisma;
 
-export type CashBankEntryType = "Opening" | "Transaction" | "Adjustment";
+export type CashBankEntryType = "Opening" | "Transaction" | "Adjustment" | "Revaluation";
 
 export type NewEntry = {
   cashBankId: number;
@@ -35,7 +35,10 @@ export type NewEntry = {
   date: string;
   type: CashBankEntryType;
   direction: "In" | "Out";
-  /** Positive; `direction` carries the sign. */
+  /**
+   * Positive; `direction` carries the sign. Nil only on a `Revaluation`,
+   * where no currency moves and `baseAmount` is the whole movement.
+   */
   amount: number;
   /**
    * The kurs this movement is valued at, converting the resource's own
@@ -109,9 +112,17 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
   }
 
   const amount = Math.abs(entry.amount);
+  // A revaluation restates base and moves no currency.
+  if (
+    entry.type === "Revaluation" &&
+    (amount !== 0 || !(entry.baseAmount && entry.baseAmount > 0))
+  ) {
+    throw new Error("Entri revaluasi hanya menggerakkan nilai base, dan harus menggerakkannya.");
+  }
   const base = entry.baseAmount ?? roundBase(amount * entry.rate);
   const sign = entry.direction === "In" ? 1 : -1;
-  const movement = sign * amount;
+  // `|| 0` keeps a revaluation's nil movement from being stored as -0.
+  const movement = sign * amount || 0;
   const baseMovement = sign * base;
 
   const current = await db.cashBankBalance.findUnique({

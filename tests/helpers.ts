@@ -466,6 +466,22 @@ export async function cleanupFixtures(): Promise<void> {
         ],
       },
     });
+    // A Revaluasi Kurs names one resource, and records the layers it closed.
+    const revaluations = (
+      await prisma.finCashBankRevaluation.findMany({
+        where: { cash_bank_id: { in: ids } },
+        select: { id: true },
+      })
+    ).map((r) => r.id);
+    if (revaluations.length) {
+      await prisma.finCashBankRevaluationLayer.deleteMany({
+        where: { revaluation_id: { in: revaluations } },
+      });
+      await prisma.auditLog.deleteMany({
+        where: { entity_key: "fin_cash_bank_revaluation", row_id: { in: revaluations } },
+      });
+      await prisma.finCashBankRevaluation.deleteMany({ where: { id: { in: revaluations } } });
+    }
     await prisma.cashBankLayer.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.cashBankLedger.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.cashBankBalance.deleteMany({ where: { cash_bank_id: { in: ids } } });

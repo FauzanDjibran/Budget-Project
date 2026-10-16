@@ -413,7 +413,9 @@ table cash_bank_ledger {
   cash_bank_id                int [not null, ref : > m_cash_bank.id]
 
   entry_date                  date [not null]
-  entry_type                  enum('Opening', 'Transaction', 'Adjustment') [not null]
+  // Revaluation: a Revaluasi Kurs — movement nil, base_movement the restated
+  // difference.
+  entry_type                  enum('Opening', 'Transaction', 'Adjustment', 'Revaluation') [not null]
 
   // Signed: positive money in, negative money out. The sign is the direction —
   // direction, amount and base_amount were dropped in
@@ -472,6 +474,8 @@ table cash_bank_layer {
   foreign_remaining           decimal(18,2) [not null]
   base_remaining              decimal(18,2) [not null]
 
+  // ClosedByRevaluation: replaced by a Revaluasi Kurs, which keeps the record
+  // (fin_cash_bank_revaluation_layer). Never reopened.
   status                      enum('Open', 'Exhausted', 'ClosedByRevaluation') [not null, default: 'Open']
 
   source_doc_type_id          int [ref : >? sys_doc_type.id]
@@ -1682,6 +1686,78 @@ table fin_item_adjustment_line {
   indexes {
     (adjustment_id, sequence_no) [unique]
     sub_ledger_balance_id
+  }
+}
+
+// Revaluasi Kurs: one foreign Cash & Bank restated at a kurs the user states,
+// raised by a user — never by a period close. Post closes every open layer of
+// the resource, opens one layer of the whole balance at the stated kurs,
+// writes one base-only Cash Bank Book entry (Revaluation) and journals the
+// difference on the Company's fx_revaluation account. Reads the layers as they
+// stand when posted. Final: a wrong kurs is corrected by another revaluation.
+table fin_cash_bank_revaluation {
+  id                          int [pk, increment, not null]
+
+  // RVK-0001.
+  revaluation_no              varchar(255) [not null, unique]
+
+  document_date               date
+  posting_date                timestamptz
+
+  // Derived from the resource.
+  company_id                  int [not null, ref : > sys_company.id]
+  cash_bank_id                int [not null, ref : > m_cash_bank.id]
+  currency_id                 int [not null, ref : > ref_currency.id]
+
+  // The kurs the user states as current — an input.
+  exchange_rate               decimal(18,6) [not null]
+
+  // Valued when the draft is saved and again at Post.
+  foreign_balance             decimal(18,2) [not null, default: 0]
+  base_before                 decimal(18,2) [not null, default: 0]
+  base_after                  decimal(18,2) [not null, default: 0]
+  // base_after − base_before: positive a gain, negative a loss.
+  fx_difference               decimal(18,2) [not null, default: 0]
+
+  // The layer Post opened. A plain id: the layer belongs to the Cash Bank Book.
+  opened_layer_id             int
+
+  note                        text
+  status                      enum('Draft', 'Pending', 'Posted', 'Cancelled') [not null, default: 'Draft']
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    company_id
+    cash_bank_id
+    status
+  }
+}
+
+// One layer a posted revaluation closed, as it stood when closed. Written at
+// Post only; a layer is closed by at most one revaluation.
+table fin_cash_bank_revaluation_layer {
+  id                          int [pk, increment, not null]
+
+  revaluation_id              int [not null, ref : > fin_cash_bank_revaluation.id]
+  sequence_no                 int [not null]
+
+  // cash_bank_layer.id, a plain id like every other layer reference.
+  cash_bank_layer_id          int [not null, unique]
+
+  rate                        decimal(18,6) [not null]
+  foreign_amount              decimal(18,2) [not null]
+  base_amount                 decimal(18,2) [not null]
+
+  created_by                  int [not null]
+  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    revaluation_id
   }
 }
 

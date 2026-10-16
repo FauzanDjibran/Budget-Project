@@ -365,6 +365,7 @@ model SysCompany {
   transfers        FinCashBankTransfer[]
   item_adjustments FinItemAdjustment[]
   conversions      FinItemConversion[]
+  revaluations     FinCashBankRevaluation[]
   reclasses        FinItemReclass[]
 
   journals AccJournal[]
@@ -571,6 +572,7 @@ model RefCurrency {
   funding_requests   FinFundingRequest[]
   item_adjustments   FinItemAdjustment[]
   conversions        FinItemConversion[]
+  revaluations       FinCashBankRevaluation[]
   reclasses          FinItemReclass[]
 
   @@map("ref_currency")
@@ -638,6 +640,7 @@ model MCashBank {
   transfers_in     FinCashBankTransferLine[]
   conversions_out  FinItemConversion[]
   conversions_in   FinItemConversionLine[]
+  revaluations     FinCashBankRevaluation[]
   ledger           CashBankLedger[]
   layers           CashBankLayer[]
   book_balance     CashBankBalance?
@@ -669,6 +672,9 @@ enum CashBankEntryType {
   Transaction
   /// A manual correction, recorded rather than edited into an existing entry.
   Adjustment
+  /// A Revaluasi Kurs: no currency moves (`movement` is nil) and the base
+  /// measure is restated to the kurs the user stated.
+  Revaluation
 }
 
 model CashBankLedger {
@@ -755,10 +761,9 @@ enum CashBankLayerStatus {
   Open
   /// Drawn down to nothing. Kept for audit, never offered again.
   Exhausted
-  /// Collapsed by a period-end revaluation. Nothing writes this yet — the
-  /// closing process is the next scope — but a layer's status has to be able
-  /// to reach it, because revaluation is the one sanctioned way layers are
-  /// consolidated and it must not arrive as a change to an append-only shape.
+  /// Collapsed by a Revaluasi Kurs, which replaced every open layer of the
+  /// resource with one at the kurs it stated. Never reopened; which document
+  /// closed it is `fin_cash_bank_revaluation_layer`.
   ClosedByRevaluation
 }
 
@@ -2296,4 +2301,88 @@ model AuditLog {
 
   @@index([entity_key, row_id])
   @@map("audit_log")
+}
+
+/// Revaluasi Kurs: one foreign Cash & Bank restated at a kurs the user states
+/// (SIBA multi-currency §7, KB rate-layers 2.0). A document of its own, raised
+/// by a user — never by a period close. Post closes every open layer of the
+/// resource (`ClosedByRevaluation`), opens one layer holding the whole foreign
+/// balance at the stated kurs, writes one base-only Cash Bank Book entry and
+/// journals the difference against the Company's revaluation account.
+///
+/// It works on the layers **as they stand when it is posted**, never as they
+/// stood on its date, and it is final: a wrong kurs is corrected by another
+/// revaluation (CLAUDE.md §10 rule 24).
+model FinCashBankRevaluation {
+  id             Int    @id @default(autoincrement())
+  /// `RVK-0001`.
+  revaluation_no String @unique
+
+  /// The day it belongs to in the books, chosen on the draft.
+  document_date DateTime? @db.Date
+  posting_date  DateTime? @db.Timestamptz(6)
+
+  /// The resource's Company, derived rather than picked.
+  company_id   Int
+  cash_bank_id Int
+  /// The resource's currency, derived. Never the base currency.
+  currency_id  Int
+
+  /// The kurs the user states as current — an input that creates base value.
+  exchange_rate Decimal @db.Decimal(18, 6)
+
+  /// What the resource holds, what it was carried at, and what it is carried
+  /// at afterwards — valued when the draft is saved and again at Post.
+  foreign_balance Decimal @default(0) @db.Decimal(18, 2)
+  base_before     Decimal @default(0) @db.Decimal(18, 2)
+  base_after      Decimal @default(0) @db.Decimal(18, 2)
+  /// `base_after − base_before`: positive a gain, negative a loss.
+  fx_difference   Decimal @default(0) @db.Decimal(18, 2)
+
+  /// The layer Post opened (`cash_bank_layer.id`). A plain id: the layer
+  /// belongs to the Cash Bank Book.
+  opened_layer_id Int?
+
+  note   String?
+  status TransactionStatus @default(Draft)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company   SysCompany  @relation(fields: [company_id], references: [id])
+  cash_bank MCashBank   @relation(fields: [cash_bank_id], references: [id])
+  currency  RefCurrency @relation(fields: [currency_id], references: [id])
+
+  closed_layers FinCashBankRevaluationLayer[]
+
+  @@index([company_id])
+  @@index([cash_bank_id])
+  @@index([status])
+  @@map("fin_cash_bank_revaluation")
+}
+
+/// One layer a posted revaluation closed, as it stood when it was closed —
+/// what the governance rule asks to be kept: which rates were given up, and
+/// for how much. Written at Post only; a draft lists the layers live.
+model FinCashBankRevaluationLayer {
+  id                 Int @id @default(autoincrement())
+  revaluation_id     Int
+  sequence_no        Int
+  /// `cash_bank_layer.id`, a plain id like every other layer reference.
+  cash_bank_layer_id Int
+
+  rate           Decimal @db.Decimal(18, 6)
+  foreign_amount Decimal @db.Decimal(18, 2)
+  base_amount    Decimal @db.Decimal(18, 2)
+
+  created_by Int
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  revaluation FinCashBankRevaluation @relation(fields: [revaluation_id], references: [id])
+
+  @@unique([cash_bank_layer_id])
+  @@index([revaluation_id])
+  @@map("fin_cash_bank_revaluation_layer")
 }

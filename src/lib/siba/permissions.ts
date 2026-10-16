@@ -278,6 +278,23 @@ export const PERMISSIONS = [
   },
   { code: "ITEM_ADJUSTMENT_CANCEL", name: "Batalkan Penyesuaian Open Item", module: "finance" },
 
+  // Revaluasi Kurs: restating a foreign Cash & Bank at a kurs somebody states.
+  // Its own capabilities, because it collapses every rate layer of the
+  // resource and books a gain or loss — a treasury decision, not a cash
+  // clerk's.
+  { code: "CASH_BANK_REVALUATION_VIEW", name: "Lihat Revaluasi Kurs", module: "finance" },
+  { code: "CASH_BANK_REVALUATION_CREATE", name: "Tambah Revaluasi Kurs", module: "finance" },
+  { code: "CASH_BANK_REVALUATION_EDIT", name: "Ubah Revaluasi Kurs", module: "finance" },
+  {
+    code: "CASH_BANK_REVALUATION_POST",
+    name: "Post Revaluasi Kurs",
+    module: "finance",
+    description:
+      "Menutup seluruh layer kurs satu Cash & Bank valas, membuka satu layer " +
+      "pada kurs yang dinyatakan, dan menjurnal selisihnya.",
+  },
+  { code: "CASH_BANK_REVALUATION_CANCEL", name: "Batalkan Revaluasi Kurs", module: "finance" },
+
   // Funding is the induk's side of the same business event, and a separate
   // capability on purpose: raising a request is the anak's clerk, confirming it
   // releases the induk's money. Nobody should hold one because they hold the

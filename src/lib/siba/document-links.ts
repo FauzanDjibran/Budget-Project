@@ -18,6 +18,7 @@ const ROUTES: Record<string, string> = {
   fin_item_adjustment: "/finance/penyesuaian-open-item",
   fin_item_conversion: "/finance/pencairan-open-item",
   fin_item_reclass: "/finance/reklasifikasi-open-item",
+  fin_cash_bank_revaluation: "/finance/revaluasi-kurs",
   acc_fiscal_year: "/accounting/fiscal-year",
   acc_opening_balance: "/accounting/opening-balance",
 };

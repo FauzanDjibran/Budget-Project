@@ -3,6 +3,7 @@ import { Icon } from "@/components/icon";
 import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { LedgerReport } from "@/lib/siba/cash-bank";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { documentHref } from "@/lib/siba/document-links";
 
 /**
@@ -27,11 +28,13 @@ import { documentHref } from "@/lib/siba/document-links";
 const TYPE_TEXT: Record<string, string> = {
   Opening: "Saldo Awal",
   Adjustment: "Penyesuaian",
+  Revaluation: "Revaluasi Kurs",
 };
 
 const TYPE_CLASS: Record<string, string> = {
   Opening: "t-slate",
   Adjustment: "t-vio",
+  Revaluation: "t-acc",
 };
 
 export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
@@ -104,6 +107,10 @@ export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
 
               {report.entries.map((e) => {
                 const inn = e.movement > 0;
+                // A revaluation moves no currency, only what it is worth in
+                // base — so neither column carries it and the restated value
+                // is read under the description.
+                const restated = e.type === "Revaluation";
                 const linked =
                   e.sourceDocNo &&
                   e.sourceDocTable === "fin_cash_bank_transaction";
@@ -134,6 +141,12 @@ export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
                         </span>
                       )}
                       {e.note ?? <span className="dash">—</span>}
+                      {restated && (
+                        <span className="rsub">
+                          Nilai {BASE_CURRENCY_LABEL} {e.baseMovement > 0 ? "naik" : "turun"}{" "}
+                          {formatMoney(Math.abs(e.baseMovement), BASE_CURRENCY_LABEL)}
+                        </span>
+                      )}
                     </td>
                     <td className="num">
                       {inn ? (
@@ -143,7 +156,7 @@ export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
                       )}
                     </td>
                     <td className="num">
-                      {!inn ? (
+                      {!inn && !restated ? (
                         <span className="mny">{money(Math.abs(e.movement))}</span>
                       ) : (
                         <span className="dash">–</span>

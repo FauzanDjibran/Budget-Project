@@ -8,6 +8,7 @@ import { budgetsByIds } from "./budget";
 import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer";
 import { itemAdjustmentNumbersByIds } from "./item-adjustment";
+import { revaluationNumbersByIds } from "./cash-bank-revaluation";
 import { conversionNumbersByIds } from "./item-conversion";
 import { reclassNumbersByIds } from "./item-reclass";
 import { fundingRequestNumbersByIds } from "./funding";
@@ -89,6 +90,10 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
   fin_item_adjustment: {
     label: "Penyesuaian Open Item",
     resolve: itemAdjustmentNumbersByIds,
+  },
+  fin_cash_bank_revaluation: {
+    label: "Revaluasi Kurs",
+    resolve: revaluationNumbersByIds,
   },
   fin_item_conversion: {
     label: "Pencairan Open Item",

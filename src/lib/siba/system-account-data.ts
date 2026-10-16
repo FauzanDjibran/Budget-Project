@@ -119,12 +119,14 @@ export async function checkSystemAccountValue(
   // reconciles against: posted against a Piutang account it would move the
   // General Ledger with no subject-book entry beside it — exactly the
   // discrepancy the adjustment exists to avoid.
-  if (systemAccountDef(key).group === "adjustment") {
+  // The same holds for a revaluation's gain or loss: posted against a cash
+  // or Partner account it would restate one book through another.
+  if (systemAccountDef(key).group === "adjustment" || key === "fx_revaluation") {
     const reasons = await controlAccountReasons(accountId);
     if (reasons.length) {
       return (
         `Account tersebut direkonsiliasi dengan ${reasons.join(", ")} dan tidak ` +
-        "dapat menjadi lawan posting Penyesuaian Open Item."
+        `dapat menjadi lawan posting ${key === "fx_revaluation" ? "Revaluasi Kurs" : "Penyesuaian Open Item"}.`
       );
     }
   }

@@ -520,6 +520,7 @@ describe("a header's buttons sit where the user last left them", () => {
       "src/components/budget/budget-form.tsx",
       "src/components/finance/transaction-form.tsx",
       "src/components/finance/item-adjustment-form.tsx",
+      "src/components/finance/revaluation-form.tsx",
     ]) {
       const text = code(files.find((f) => f.rel === rel)!.text);
       assert.ok(
@@ -738,6 +739,7 @@ describe("a form is laid out by one component", () => {
       "src/components/budget/budget-form.tsx",
       "src/components/finance/transaction-form.tsx",
       "src/components/finance/item-adjustment-form.tsx",
+      "src/components/finance/revaluation-form.tsx",
       "src/components/finance/funding-detail.tsx",
       "src/components/accounting/journal-form.tsx",
       "src/components/accounting/opening-balance-detail.tsx",
@@ -1358,6 +1360,12 @@ const DOCUMENT_SCREENS: {
     routes: "src/app/(app)/finance/penyesuaian-open-item",
   },
   {
+    name: "Revaluasi Kurs",
+    form: "src/components/finance/revaluation-form.tsx",
+    list: "src/components/finance/revaluation-list.tsx",
+    routes: "src/app/(app)/finance/revaluasi-kurs",
+  },
+  {
     name: "Funding Request",
     form: "src/components/finance/funding-detail.tsx",
     list: "src/components/finance/funding-list.tsx",
@@ -1568,6 +1576,7 @@ describe("a Post confirmation shows the journal it will write", () => {
     "src/components/finance/item-conversion-form.tsx",
     "src/components/finance/item-reclass-form.tsx",
     "src/components/finance/item-adjustment-form.tsx",
+    "src/components/finance/revaluation-form.tsx",
   ];
   for (const rel of POSTING_FORMS) {
     test(`${rel} previews its journal in the Post confirmation`, () => {

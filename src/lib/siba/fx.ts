@@ -225,6 +225,25 @@ export function drawLayer(
   };
 }
 
+/**
+ * Restates a foreign balance at a stated rate: the foreign side stays, the
+ * base side becomes `foreign × rate`, and the difference is what moved.
+ *
+ * The rate here is an **input** — somebody stated it as current — so the new
+ * base is originated, not derived. Positive difference is a gain: the same
+ * currency is now carried at more base than before.
+ */
+export function revalue(
+  balance: Balance,
+  rate: number
+): { balance: Balance; difference: FxDifference } {
+  const restated = originate(balance.foreign, rate);
+  return {
+    balance: restated,
+    difference: fxDifference(restated.base, balance.base),
+  };
+}
+
 export type FxSide = "gain" | "loss";
 
 export type FxDifference = {

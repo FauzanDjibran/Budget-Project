@@ -23,6 +23,7 @@
 import type { IconName } from "@/components/icon";
 import { BUDGET_TRANSITIONS } from "./budget-workflow";
 import { ITEM_ADJUSTMENT_TRANSITIONS } from "./item-adjustment-workflow";
+import { REVALUATION_TRANSITIONS } from "./cash-bank-revaluation-workflow";
 import { FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
 import type { ActionTone } from "./header-actions";
 import { CONVERSION_TRANSITIONS } from "./item-conversion-workflow";
@@ -144,6 +145,13 @@ const ITEM_ADJUSTMENT_EVENTS: Record<string, AuditEventLabel> = {
   cancel: fromTransition(ITEM_ADJUSTMENT_TRANSITIONS.cancel, "Dibatalkan"),
 };
 
+/** Revaluasi Kurs: Draft → Posted, or Draft → Cancelled. */
+const REVALUATION_EVENTS: Record<string, AuditEventLabel> = {
+  ...COMMON,
+  post: fromTransition(REVALUATION_TRANSITIONS.post, "Diposting"),
+  cancel: fromTransition(REVALUATION_TRANSITIONS.cancel, "Dibatalkan"),
+};
+
 /** Funding Request: Open → Closed, or withdrawn by the requester. */
 const FUNDING_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
@@ -221,6 +229,7 @@ const BY_ENTITY: Record<string, Record<string, AuditEventLabel>> = {
   fin_item_conversion: CONVERSION_EVENTS,
   fin_item_reclass: RECLASS_EVENTS,
   fin_item_adjustment: ITEM_ADJUSTMENT_EVENTS,
+  fin_cash_bank_revaluation: REVALUATION_EVENTS,
   fin_funding_request: FUNDING_EVENTS,
   acc_fiscal_year: FISCAL_EVENTS,
   acc_fiscal_closing: FISCAL_CLOSING_EVENTS,

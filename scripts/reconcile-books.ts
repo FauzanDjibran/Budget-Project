@@ -30,6 +30,8 @@
  *         the line's own figures
  *   17    a reclassification carries value, never recomputes it: the item a
  *         source item became holds exactly what the source released
+ *   18    a revaluation's one new layer holds what the layers it closed held,
+ *         restated by exactly the difference its book entry records
  *
  * WHAT IT LEAVES OUT, ON PURPOSE
  *   An `Opening` Cash Bank Book entry writes no journal (CLAUDE.md §12), so
@@ -367,6 +369,36 @@ WHERE r.status = 'Posted'
   AND (opened.original <> s.amount
        OR opened.base_original <> s.released_base_amount
        OR opened.rate <> src.rate)`,
+  },
+  {
+    no: 18,
+    name: "Revaluasi Kurs: layer baru = layer yang ditutup + selisihnya, dan buku mencatat selisih itu",
+    sql: `
+, closed AS (
+  SELECT revaluation_id, SUM(foreign_amount) AS foreign_amount, SUM(base_amount) AS base_amount
+  FROM fin_cash_bank_revaluation_layer GROUP BY revaluation_id
+), entry AS (
+  SELECT l.source_doc_id, SUM(l.base_movement) AS base_movement
+  FROM cash_bank_ledger l
+  JOIN sys_doc_type d ON d.id = l.source_doc_type_id AND d.doc_table = 'fin_cash_bank_revaluation'
+  GROUP BY l.source_doc_id
+)
+SELECT r.revaluation_no, r.foreign_balance, r.base_before, r.base_after, r.fx_difference,
+       closed.foreign_amount AS closed_foreign, closed.base_amount AS closed_base,
+       opened.foreign_original AS opened_foreign, opened.base_original AS opened_base,
+       opened.rate AS opened_rate, COALESCE(entry.base_movement, 0) AS book_base
+FROM fin_cash_bank_revaluation r
+LEFT JOIN closed ON closed.revaluation_id = r.id
+LEFT JOIN cash_bank_layer opened ON opened.id = r.opened_layer_id
+LEFT JOIN entry ON entry.source_doc_id = r.id
+WHERE r.status = 'Posted'
+  AND (closed.foreign_amount IS DISTINCT FROM r.foreign_balance
+       OR closed.base_amount IS DISTINCT FROM r.base_before
+       OR opened.foreign_original IS DISTINCT FROM r.foreign_balance
+       OR opened.base_original IS DISTINCT FROM r.base_after
+       OR opened.rate IS DISTINCT FROM r.exchange_rate
+       OR r.base_after - r.base_before <> r.fx_difference
+       OR COALESCE(entry.base_movement, 0) <> r.fx_difference)`,
   },
 ];
 

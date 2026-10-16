@@ -21,6 +21,7 @@
  *   fin_item_conversion(_line, _line_item)         Pencairan Open Item
  *   fin_item_reclass(_line, _line_source,
  *                    _line_target)                 Reklasifikasi Open Item
+ *   fin_cash_bank_revaluation(_layer)              Revaluasi Kurs
  *   bud_budget                                     the plans
  *   sub_ledger, sub_ledger_balance                 the subject books
  *   cash_bank_ledger, cash_bank_layer              the Cash Bank Book
@@ -81,6 +82,7 @@ const DOCUMENT_ENTITY_KEYS = [
   "fin_item_adjustment",
   "fin_item_conversion",
   "fin_item_reclass",
+  "fin_cash_bank_revaluation",
   "acc_journal",
   "acc_fiscal_closing",
 ];
@@ -115,6 +117,8 @@ async function main() {
     fin_item_reclass_line_target: await prisma.finItemReclassLineTarget.count(),
     fin_item_reclass_line: await prisma.finItemReclassLine.count(),
     fin_item_reclass: await prisma.finItemReclass.count(),
+    fin_cash_bank_revaluation_layer: await prisma.finCashBankRevaluationLayer.count(),
+    fin_cash_bank_revaluation: await prisma.finCashBankRevaluation.count(),
     bud_budget: await prisma.budBudget.count(),
     sub_ledger: await prisma.subLedger.count(),
     sub_ledger_balance: await prisma.subLedgerBalance.count(),
@@ -188,6 +192,9 @@ async function main() {
     await tx.finItemReclassLineTarget.deleteMany();
     await tx.finItemReclassLine.deleteMany();
     await tx.finItemReclass.deleteMany();
+
+    await tx.finCashBankRevaluationLayer.deleteMany();
+    await tx.finCashBankRevaluation.deleteMany();
 
     await tx.budBudget.deleteMany();
 

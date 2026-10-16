@@ -72,6 +72,12 @@ export function JournalPreview({
       </>
     );
   }
+  // A posting that restates nothing — a revaluation at the kurs a resource is
+  // already carried at — writes no journal, and says so rather than drawing
+  // an empty table.
+  if (!result.lines.length) {
+    return <div className="apmap">Tidak ada selisih, jadi Post tidak menulis journal.</div>;
+  }
   return <JournalTable lines={result.lines} />;
 }
 

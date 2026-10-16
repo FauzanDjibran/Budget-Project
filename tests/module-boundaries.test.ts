@@ -113,6 +113,14 @@ const TABLE_OWNERS: Record<string, string[]> = {
     "src/app/actions/item-adjustment.ts",
   ],
   finFundingRequest: ["src/lib/siba/funding.ts", "src/app/actions/funding.ts"],
+  finCashBankRevaluation: [
+    "src/lib/siba/cash-bank-revaluation.ts",
+    "src/app/actions/cash-bank-revaluation.ts",
+  ],
+  finCashBankRevaluationLayer: [
+    "src/lib/siba/cash-bank-revaluation.ts",
+    "src/app/actions/cash-bank-revaluation.ts",
+  ],
   cashBankLedger: ["src/lib/siba/cash-bank.ts"],
   cashBankBalance: ["src/lib/siba/cash-bank.ts"],
   subLedger: ["src/lib/siba/subledger.ts"],

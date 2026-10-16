@@ -213,6 +213,14 @@ export const MODULES: NavModule[] = [
             desc: "Pemindahan nilai open item dari satu buku subjek ke buku atau Partner lain tanpa perpindahan uang — termasuk menuntaskan dana Belum Teridentifikasi.",
             permission: "ITEM_RECLASS_VIEW",
           },
+          {
+            key: "fin_cash_bank_revaluation",
+            slug: "revaluasi-kurs",
+            name: "Revaluasi Kurs",
+            icon: "trend",
+            desc: "Penyesuaian kurs Cash & Bank valas: seluruh layer kurs ditutup dan satu layer dibuka pada kurs yang dinyatakan, dengan selisihnya dijurnal.",
+            permission: "CASH_BANK_REVALUATION_VIEW",
+          },
         ],
       },
       {

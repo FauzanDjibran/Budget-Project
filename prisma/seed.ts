@@ -174,6 +174,9 @@ const DOC_TYPES: [label: string, table: string][] = [
   // A Reklasifikasi Open Item writes two subject-book positions and a journal,
   // and each names the document as its source.
   ["Reklasifikasi Open Item", "fin_item_reclass"],
+  // A Revaluasi Kurs writes a Cash Bank Book entry, opens a layer and writes a
+  // journal, and each names the document as its source.
+  ["Revaluasi Kurs", "fin_cash_bank_revaluation"],
 ];
 
 /**

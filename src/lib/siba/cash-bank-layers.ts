@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
-import { drawLayer, originate, type Layer } from "./fx";
+import { drawLayer, originate, revalue, type Layer } from "./fx";
 
 /**
  * The rate layers a foreign Cash & Bank resource holds.
@@ -191,8 +191,16 @@ export async function drawFromLayer(
 
   const drawn = drawLayer(layer, input.foreign);
 
-  await db.cashBankLayer.update({
-    where: { id: row.id },
+  // Guarded on what was read: a revaluation in another transaction may close
+  // this layer between the read above and this write, and an unconditional
+  // update would put currency back into a layer that no longer exists.
+  const written = await db.cashBankLayer.updateMany({
+    where: {
+      id: row.id,
+      status: "Open",
+      foreign_remaining: row.foreign_remaining,
+      base_remaining: row.base_remaining,
+    },
     data: {
       foreign_remaining: drawn.remaining.foreign,
       base_remaining: drawn.remaining.base,
@@ -200,11 +208,138 @@ export async function drawFromLayer(
       updated_by: input.actorId,
     },
   });
+  if (written.count !== 1) {
+    throw new LayerNotAvailable(
+      `Layer ${row.layer_no} berubah saat transaksi diproses. Muat ulang dan pilih ulang layernya.`
+    );
+  }
 
   return { base: drawn.base, rate: layer.rate, exhausted: drawn.exhausted };
 }
 
+export type ClosedLayer = {
+  id: number;
+  layerNo: string;
+  rate: number;
+  foreign: number;
+  base: number;
+};
+
+/**
+ * Collapses every open layer of one resource into one, at a stated rate — the
+ * only sanctioned consolidation of layers (SIBA multi-currency §7).
+ *
+ * Each open layer is closed (`ClosedByRevaluation`, nothing remaining) and one
+ * layer is opened holding the whole foreign balance at `rate`, its base
+ * originated as `foreign × rate`. Works on the layers **as they stand now**,
+ * whatever the document's date. The caller writes the base difference into the
+ * book and the journal; this returns what it needs to.
+ *
+ * Throws rather than returns, like `drawFromLayer`: it runs inside the posting
+ * transaction, and a layer that moved under it has to take the posting down.
+ */
+export async function collapseLayers(
+  db: Db,
+  input: {
+    cashBankId: number;
+    date: string;
+    rate: number;
+    sourceDocTypeId: number;
+    sourceDocId: number;
+    note: string;
+    actorId: number;
+  }
+): Promise<{
+  closed: ClosedLayer[];
+  before: { foreign: number; base: number };
+  after: { foreign: number; base: number };
+  openedLayerId: number;
+}> {
+  const open = await db.cashBankLayer.findMany({
+    where: { cash_bank_id: input.cashBankId, status: "Open" },
+    orderBy: [{ acquisition_date: "asc" }, { acquisition_seq: "asc" }],
+    select: {
+      id: true,
+      layer_no: true,
+      rate: true,
+      foreign_remaining: true,
+      base_remaining: true,
+    },
+  });
+  if (!open.length) {
+    throw new LayerNotAvailable("Cash & Bank ini tidak memegang layer kurs terbuka untuk direvaluasi.");
+  }
+
+  const closed: ClosedLayer[] = [];
+  for (const l of open) {
+    const written = await db.cashBankLayer.updateMany({
+      where: {
+        id: l.id,
+        status: "Open",
+        foreign_remaining: l.foreign_remaining,
+        base_remaining: l.base_remaining,
+      },
+      data: {
+        foreign_remaining: 0,
+        base_remaining: 0,
+        status: "ClosedByRevaluation",
+        updated_by: input.actorId,
+      },
+    });
+    if (written.count !== 1) {
+      throw new LayerNotAvailable(
+        `Layer ${l.layer_no} berubah saat revaluasi diproses. Muat ulang dan coba lagi.`
+      );
+    }
+    closed.push({
+      id: l.id,
+      layerNo: l.layer_no,
+      rate: l.rate.toNumber(),
+      foreign: l.foreign_remaining.toNumber(),
+      base: l.base_remaining.toNumber(),
+    });
+  }
+
+  const cents = (n: number) => Math.round(n * 100);
+  const before = {
+    foreign: cents(closed.reduce((t, l) => t + l.foreign, 0)) / 100,
+    base: cents(closed.reduce((t, l) => t + l.base, 0)) / 100,
+  };
+  const restated = revalue(before, input.rate);
+
+  const opened = await openLayer(db, {
+    cashBankId: input.cashBankId,
+    date: input.date,
+    rate: input.rate,
+    foreign: before.foreign,
+    baseAmount: restated.balance.base,
+    sourceDocTypeId: input.sourceDocTypeId,
+    sourceDocId: input.sourceDocId,
+    note: input.note,
+    actorId: input.actorId,
+  });
+
+  return { closed, before, after: restated.balance, openedLayerId: opened.id };
+}
+
 // ------------------------------------------------------------------- reads
+
+/**
+ * How a set of layers names itself — number and acquisition date — for a
+ * module that holds a layer id and must not read this table itself.
+ */
+export async function layersByIds(
+  ids: number[]
+): Promise<Map<number, { layerNo: string; date: string }>> {
+  if (!ids.length) return new Map();
+  const rows = await prisma.cashBankLayer.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, layer_no: true, acquisition_date: true },
+  });
+  return new Map(
+    rows.map((r) => [r.id, { layerNo: r.layer_no, date: r.acquisition_date.toISOString().slice(0, 10) }])
+  );
+}
 
 export type LayerOption = {
   id: number;

@@ -21,6 +21,7 @@ export type SystemAccountKey =
   | "bridge_ar"
   | "bridge_ap"
   | "fx"
+  | "fx_revaluation"
   | "accumulated_pl"
   | "current_pl"
   | "adjustment_income"
@@ -51,8 +52,9 @@ export const SYSTEM_ACCOUNT_GROUPS = [
     key: "fx",
     name: "Selisih Kurs",
     desc:
-      "Tempat selisih kurs dicatat. Hanya dibutuhkan ketika dokumen mata uang " +
-      "asing diposting dan selisih benar-benar timbul.",
+      "Tempat selisih kurs dicatat. Selisih Kurs untuk selisih yang timbul saat " +
+      "dokumen mata uang asing diposting; Laba/Rugi Revaluasi Kurs untuk selisih " +
+      "Revaluasi Kurs Cash & Bank valas.",
     icon: "coin",
   },
   {
@@ -110,6 +112,20 @@ export const SYSTEM_ACCOUNTS = [
     name: { induk: "Account Selisih Kurs — Induk", anak: "Account Selisih Kurs — Anak" },
     help: "hanya terpakai saat dokumen mata uang asing diposting",
   },
+  // Kept apart from `fx` on the user's choice: a difference realised by a
+  // settlement and one a revaluation states are reported separately, as
+  // mainstream ERP keeps realised and unrealised exchange differences apart.
+  // One account rather than a gain and a loss, for the reason `fx` is one.
+  {
+    key: "fx_revaluation",
+    group: "fx",
+    icon: "coin",
+    name: {
+      induk: "Account Laba/Rugi Revaluasi Kurs — Induk",
+      anak: "Account Laba/Rugi Revaluasi Kurs — Anak",
+    },
+    help: "hanya terpakai saat Revaluasi Kurs diposting",
+  },
   {
     key: "accumulated_pl",
     group: "equity_pl",
@@ -159,6 +175,7 @@ export const EMPTY_SYSTEM_ACCOUNTS: SystemAccountValues = {
   bridge_ar: null,
   bridge_ap: null,
   fx: null,
+  fx_revaluation: null,
   accumulated_pl: null,
   current_pl: null,
   adjustment_income: null,
