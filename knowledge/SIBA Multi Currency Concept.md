@@ -52,7 +52,7 @@ Confirmed section by section, and guaranteed by SIBA invariant 13:
 |---|---|---|
 | §5.2 transaction-base kernel (`× carrying_rate(account)`) | Replaced by layer consumption | 4.2 |
 | §5.8 transfers | Refined — layers propagate one-for-one | 6 |
-| §6 period-end revaluation | Replaced — collapses layers | 7 |
+| §6 period-end revaluation | Replaced — a user-triggered revaluation that collapses layers | 7 |
 | Invariant 6 (relief at the balance's carrying rate) | Applies at **layer** level | 4.3 |
 | Invariant 8 (no rate entered for same-currency movement) | Restated — no rate may be *entered*, but a layer must be *selected* | 4.4 |
 | Invariant 5 (carrying rate never a market rate) | Unchanged; the account-level carrying rate becomes reporting-only | 3.4 |
@@ -64,7 +64,7 @@ No other core rule is affected.
 Two follow directly from the design and are accepted, not mitigated:
 
 1. **The FX difference on a payment becomes a user decision.** Under averaging it is deterministic; here the user's layer choice sets the gain or loss. This is the feature working as intended, and it makes selection an auditable control point (§9).
-2. **Layers can go stale.** Nothing forces the oldest layer to be consumed, so unselected layers persist until a period close absorbs them (§7).
+2. **Layers can go stale.** Nothing forces the oldest layer to be consumed, so unselected layers persist until a revaluation absorbs them (§7).
 
 ---
 
@@ -237,43 +237,57 @@ Consuming three layers therefore creates three layers on the receiving account �
 
 ---
 
-## 7. Period-End Revaluation
+## 7. Revaluation
 
-### 7.1 Mechanism — collapse
+### 7.1 Trigger — a document of its own, run by a user
 
-At each period close, for every **foreign-currency** account:
+A revaluation is **its own document**, raised from a menu of its own when a user decides a foreign account's rate should be restated. It names **one** foreign-currency account, a document date, and the rate the user states as current. Nothing raises one automatically: not a period close, not a schedule, not a rate feed.
+
+*Why:* the layers exist so that which rate is consumed is somebody's decision (§1.2). Collapsing them is the same kind of decision and is taken the same way, by a person, at a moment they choose, with the consequence in front of them. A period close tied to it would either wait on a rate nobody has entered or collapse layers nobody chose to give up. Whether every foreign account must be revalued before a period closes is a policy a project may add on top; it is not part of the mechanism.
+
+### 7.2 Mechanism — collapse
+
+On posting, for the account it names:
 
 ```
-revalued_base = foreign_balance × closing_rate
-unrealised_fx = revalued_base − base_balance
+revalued_base = foreign_balance × stated_rate
+fx_difference = revalued_base − base_balance
 
 close all open layers          ( status = closed_by_revaluation, remaining → 0 )
 
 create exactly one new layer:
-    acquisition_date = period end date
-    rate             = closing_rate
+    acquisition_date = the document date
+    rate             = stated_rate
     foreign_original = foreign_balance
     base_original    = revalued_base
-    source_event     = the period close
+    source_event     = the revaluation document
 
-post unrealised_fx to the unrealised FX difference account
+post fx_difference against the account's base value (gain or loss), in one journal
 ```
 
-Base-currency accounts are not revalued. Closed layers are retained for audit and excluded from selection.
+The foreign balance never moves; only base value does. A difference of nil still collapses the layers and writes no journal line. Base-currency accounts are not revalued. Closed layers are retained for audit, record which revaluation closed them, and are excluded from selection.
 
-### 7.2 Scope of the never-merge rule
+Example: `$1,000` held at `15,000` (`15,000,000`) revalued at `14,000` closes the old layer, opens one layer of `$1,000 / 14,000,000`, and journals a `1,000,000` loss.
 
-The rule in §3.2 governs **acquisition**: a receipt never joins an existing layer. **Period-end revaluation is the single sanctioned consolidation of layers in the system.** No other process may merge, group, or combine layers — not transfers, not settlements, not reversals, not reporting.
+### 7.3 Scope of the never-merge rule
 
-### 7.3 Accepted consequence
+The rule in §3.2 governs **acquisition**: a receipt never joins an existing layer. **Revaluation is the single sanctioned consolidation of layers in the system.** No other process may merge, group, or combine layers — not transfers, not settlements, not reversals, not reporting.
 
-After each close, every pre-existing layer is replaced by one layer at the closing rate. **Rate selection therefore has effect only across receipts acquired within the current period, plus the single carried-forward layer.** A payment late in a period chooses among that period's receipts and one uniform block representing everything older.
+### 7.4 Accepted consequence
 
-This is a deliberate decision for SIBA. It is recorded here so it is not rediscovered as a defect.
+After a revaluation, every pre-existing layer of that account is replaced by one layer at the stated rate. **Rate selection therefore has effect only across receipts acquired since the last revaluation, plus the single carried-forward layer.** This is a deliberate decision, recorded here so it is not rediscovered as a defect.
 
-### 7.4 Re-running a close
+### 7.5 A revaluation is final
 
-A period close is reversible only by reversing the close itself, which restores the layers it collapsed and removes the layer it created. Individual layers closed by revaluation may never be reopened in isolation.
+A posted revaluation is never reversed, and a layer it closed is never reopened. A wrong rate is corrected by **another revaluation** at the right one.
+
+*Why:* a posted document is permanent and a correction is a new document. Restoring collapsed layers would mean putting back remaining figures that later payments may already have drawn against the new layer.
+
+### 7.6 Backdating reads the present
+
+A revaluation, and any document dated around it, works on the layers **as they stand when it is posted**, never as they stood on its date. Example: a receipt at `15,000` dated the 10th, a revaluation to `16,000` dated the 15th, and then a payment entered with the date 10th. The payment can choose only the `16,000` layer; the `15,000` layer no longer exists to be chosen. Likewise, a revaluation dated before movements already posted collapses every layer open at the moment it posts.
+
+This is accepted. It is the core concept's rule for backdated movements (valued at the carrying rate as it stands when posted, no replay), applied to layers. Replaying history would restate base figures already written, which base-as-history forbids.
 
 ---
 
@@ -327,7 +341,7 @@ All core-concept policy parameters (core §10) carry over unchanged.
 7. `Σ selected amounts = account_amount` exactly; no selected amount exceeds its layer's remaining.
 8. **Full consumption of a layer releases its remaining base exactly.**
 9. Transfers **conserve base value** and propagate layers one-for-one.
-10. **Revaluation is the only sanctioned consolidation of layers.**
+10. **Revaluation is the only sanctioned consolidation of layers.** It is a document a user raises for one account, and it is final.
 11. Reversal **restores the exact layers consumed**; it never re-acquires at a current rate.
 12. Base-currency accounts are **unlayered**.
 13. **Layer selection never affects the settlement-base side of any transaction.** — the containment guarantee for §2.1.
@@ -377,7 +391,7 @@ The same payment against the same obligation yields a `142,000` loss or an `8,00
 
 L2 is exhausted. Open layers: L1 `$200 / 3,000,000`, L3 `$100 / 1,500,000` — balance `$300 / 4,500,000`.
 
-### Month-end close at a closing rate of `16,200`
+### Revaluation at a stated rate of `16,200`
 
 ```
 revalued_base  = 300 × 16,200 = 4,860,000
@@ -387,4 +401,4 @@ close L1, L3
 create L4:  31 Jan, rate 16,200, $300 / 4,860,000
 ```
 
-February payments may select only L4 and any February receipts — §7.3 in effect.
+Later payments may select only L4 and any receipts after it — §7.4 in effect.

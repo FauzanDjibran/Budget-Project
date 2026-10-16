@@ -36,7 +36,7 @@ in **Note** to stay on an older version on purpose.
 | accounting/chart-of-accounts | 1.1 | control-account=derived | — | §10 rules 44–46, 77–80 |
 | accounting/fiscal-periods-and-statements | 1.0 | core | — | §12; Initialization/Opening & Closing Update Phase.md |
 | accounting/multi-currency | 1.1 | core | knowledge/CORE Multi Currency Concept.md | Extended by the variant below |
-| accounting/multi-currency~rate-layers | 1.0 | variant | knowledge/SIBA Multi Currency Concept.md | §10 rules 69–72 |
+| accounting/multi-currency~rate-layers | 2.0 | variant | knowledge/SIBA Multi Currency Concept.md | §10 rules 69–72; 2.0 §7 (revaluation a user-triggered document, final) adopted 16/10/2026, built by the Revaluasi Kurs work (§13) |
 | budgeting/plan-to-realization | 1.0 | core | — | Origin; Initialization/Konsep SIBA 3.0 v3.md |
 | ui/design-convention | 1.1 | form-layout=single-card | knowledge/design-convention.md | Origin of the convention. **Known gap:** the code breaks 20 of 22 decisions; design-convention-update-plan.md (proposed, not executed) closes it |
 | ui/benchmark-study | 1.0 | reference | knowledge/akui_proto_ui_reference.md | |

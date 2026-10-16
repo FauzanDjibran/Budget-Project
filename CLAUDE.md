@@ -1732,9 +1732,13 @@ Specified in the concept doc, **not yet implemented** (see §13):
     Both positions are already kept — in the two Companies' **journals**, on the
     bridge accounts, not in the subject books (rule 61) — and what is missing is
     the document that settles them.
-24. **Period-end revaluation** (SIBA multi-currency §7). Closing a period
-    retranslates open positions at the closing rate and collapses a foreign
-    account's layers into one. `CashBankLayerStatus.ClosedByRevaluation` exists in
+24. **Revaluation of a foreign Cash & Bank** (SIBA multi-currency §7, KB 2.0).
+    A document of its own, raised by a user from its own menu for one resource
+    at the kurs they state — never run by a period close. It collapses the
+    resource's open layers into one at that kurs and journals the difference.
+    It is final: a wrong kurs is corrected by another revaluation. A document
+    backdated before it sees only the layers open now — accepted, the user's
+    rule. `CashBankLayerStatus.ClosedByRevaluation` exists in
     the schema and nothing writes it: a layer's status had to be able to reach
     that state, because revaluation is the one sanctioned way layers consolidate
     and it must not arrive later as a change to an append-only shape.
@@ -4526,7 +4530,7 @@ decisions now that foreclose them.
 | Item | Planned behaviour |
 | --- | --- |
 | Subledger opening balances | A subject's position before the application started keeping its book. `SubLedgerEntryType.Opening` exists and nothing writes it. **Deliberately outside the Opening Balance work**, on the user's decision: the subject books are continuous stores, so a year-end does not interrupt one, and a close writes no subledger entry |
-| Period-end revaluation | SIBA multi-currency §7: retranslate open positions at the closing rate and collapse a foreign account's layers into one. `CashBankLayerStatus.ClosedByRevaluation` exists and nothing writes it. **The only sanctioned consolidation of layers** — do not add a second one, and do not merge layers for any other reason (§10 rule 71) |
+| Revaluation | SIBA multi-currency §7 (KB 2.0): a user-triggered document per foreign Cash & Bank that collapses its layers into one at a stated kurs (§10 rule 24) — **next to build**. Retranslating open subject-book items stays later. `CashBankLayerStatus.ClosedByRevaluation` exists and nothing writes it. **The only sanctioned consolidation of layers** — do not add a second one, and do not merge layers for any other reason (§10 rule 71) |
 | Multi-layer settlement | The source specification lets one payment draw on several layers (`Σ selected = account_amount`). SIBA takes one per document, refused at draft time with a message that says to split it. Widening this means a selection UI with a running total and per-layer relief, not a loosened check (§12) |
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
