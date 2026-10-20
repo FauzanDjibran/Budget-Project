@@ -34,6 +34,7 @@ import {
   recordSubledgerEntry,
   subledgerItem,
   subledgerItemsByIds,
+  itemLowestFrom,
 } from "./subledger";
 import { subledgerForCategory, type SubledgerDef } from "./subledger-catalogue";
 import { loadSubledgers } from "./subledger-data";
@@ -603,7 +604,9 @@ const lineRefusal = (message: string): ConversionLineCheck => ({
  */
 export async function checkConversionLines(
   header: ResolvedConversionHeader,
-  lines: ConversionLineInput[]
+  lines: ConversionLineInput[],
+  /** The document's date — an item may not go below nothing from it on. */
+  date: string = todayDay()
 ): Promise<ConversionLineCheck> {
   const wanted = lines.filter((l) => l.to_cash_bank_id > 0);
   if (!wanted.length) {
@@ -697,6 +700,14 @@ export async function checkConversionLines(
         return lineRefusal(
           `Open item ${item.itemNo} tinggal ${formatMoney(item.remaining, header.currencyLabel)}, ` +
             `tidak cukup untuk ${formatMoney(total, header.currencyLabel)} pada dokumen ini.`
+        );
+      }
+      const lowest = await itemLowestFrom(item.id, date);
+      if (cents(total) > cents(lowest.balance)) {
+        return lineRefusal(
+          `Open item ${item.itemNo} tinggal ${formatMoney(lowest.balance, header.currencyLabel)} ` +
+            `pada ${lowest.at}, tidak cukup untuk ${formatMoney(total, header.currencyLabel)}. ` +
+            "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal dokumen."
         );
       }
       used.set(item.id, total);
@@ -843,7 +854,8 @@ export async function applyConversion(
       to_cash_bank_id: l.to_cash_bank_id,
       exchange_rate: l.exchange_rate.toNumber(),
       items: l.items.map((i) => ({ item_id: i.sub_ledger_balance_id, amount: i.amount.toNumber() })),
-    }))
+    })),
+    date
   );
   if (!lineCheck.ok) return { ok: false, errors: { _form: lineCheck.errors._lines } };
 

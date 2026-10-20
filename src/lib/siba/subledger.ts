@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { sumByCurrency, type MoneyTotal } from "@/lib/format";
+import { formatDate, sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { nextDocumentNumber } from "./document-number";
 import { relieve, roundBase } from "./fx";
 import type { PeriodRange } from "./period";
@@ -112,6 +112,36 @@ export class SubledgerItemUnavailable extends Error {}
 const asDate = (d: string) => new Date(`${d}T00:00:00Z`);
 const startOf = (d: string) => new Date(`${d}T00:00:00Z`);
 const cents = (n: number) => Math.round(n * 100);
+
+/**
+ * The least an open item holds on any day from `date` to now — what a movement
+ * dated `date` may take from it, since a backdated lowering lowers every later
+ * day too. Before it opened an item holds nothing, so an item cannot be settled
+ * by a document dated before it (§10 rule 106). The movement is placed last on
+ * its day, as the reports order it. An item has few entries, so they are read
+ * whole rather than kept in a period chain like the Cash Bank Book's.
+ */
+export async function itemLowestFrom(
+  itemId: number,
+  date: string,
+  db: Db = prisma
+): Promise<{ balance: number; at: string }> {
+  const entries = await db.subLedger.findMany({
+    where: { balance_id: itemId },
+    orderBy: [{ entry_date: "asc" }, { id: "asc" }],
+    select: { entry_date: true, movement: true },
+  });
+  const day = asDate(date);
+  let run = 0;
+  let lowest: { run: number; at: Date } | null = null;
+  for (const e of entries) {
+    if (!lowest && e.entry_date > day) lowest = { run, at: day };
+    run += cents(e.movement.toNumber());
+    if (lowest && run < lowest.run) lowest = { run, at: e.entry_date };
+  }
+  lowest ??= { run, at: day };
+  return { balance: lowest.run / 100, at: formatDate(lowest.at) };
+}
 
 /** Next entry number, `SBL-0001`. The format lives in `document-number.ts`. */
 async function nextEntryNo(db: Db): Promise<string> {
@@ -239,6 +269,13 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
     throw new SubledgerItemUnavailable(
       `Open item ${item.item_no} tinggal ${remaining}, tidak cukup untuk ${amount}. ` +
         "Posisi tidak boleh di bawah nol — pilih item lain atau kurangi nominalnya."
+    );
+  }
+  const lowest = await itemLowestFrom(item.id, entry.date, db);
+  if (cents(amount) > cents(lowest.balance)) {
+    throw new SubledgerItemUnavailable(
+      `Open item ${item.item_no} tinggal ${lowest.balance} pada ${lowest.at}, tidak cukup untuk ${amount}. ` +
+        "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal dokumen atau kurangi nominalnya."
     );
   }
   // Equal to the cent is the whole item, so the exact remaining is released

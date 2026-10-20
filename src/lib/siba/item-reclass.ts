@@ -31,6 +31,7 @@ import {
   recordSubledgerEntry,
   subledgerItem,
   subledgerItemsByIds,
+  itemLowestFrom,
 } from "./subledger";
 import { subledgerForCategory, type SubledgerDef } from "./subledger-catalogue";
 import { loadSubledgers } from "./subledger-data";
@@ -564,7 +565,9 @@ function allocationRefusal(
  */
 export async function checkReclassLines(
   header: ResolvedReclassHeader,
-  lines: ReclassLineInput[]
+  lines: ReclassLineInput[],
+  /** The document's date — an item may not go below nothing from it on. */
+  date: string = todayDay()
 ): Promise<ReclassLineCheck> {
   const wanted = lines.filter((l) => l.target_budget_category_id > 0 || l.sources.length);
   if (!wanted.length) return lineRefusal("Dokumen harus memiliki minimal satu baris tujuan.");
@@ -593,6 +596,9 @@ export async function checkReclassLines(
     ...new Set(wanted.flatMap((l) => [...l.sources, ...l.targets].map((a) => a.item_id))),
   ];
   const items = new Map((await subledgerItemsByIds(itemIds)).map((i) => [i.id, i]));
+  const lowestOf = new Map(
+    await Promise.all([...items.keys()].map(async (id) => [id, await itemLowestFrom(id, date)] as const))
+  );
   const used = new Map<number, number>();
   const raisedIn = directionText(header.book.raises).toLowerCase();
 
@@ -603,6 +609,14 @@ export async function checkReclassLines(
       return (
         `Open item ${item.itemNo} tinggal ${formatMoney(item.remaining, header.currencyLabel)}, ` +
         `tidak cukup untuk ${formatMoney(total, header.currencyLabel)} pada dokumen ini.`
+      );
+    }
+    const lowest = lowestOf.get(itemId)!;
+    if (cents(total) > cents(lowest.balance)) {
+      return (
+        `Open item ${item.itemNo} tinggal ${formatMoney(lowest.balance, header.currencyLabel)} ` +
+        `pada ${lowest.at}, tidak cukup untuk ${formatMoney(total, header.currencyLabel)}. ` +
+        "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal dokumen."
       );
     }
     used.set(itemId, total);
@@ -899,7 +913,8 @@ export async function applyReclass(
       description: l.description,
       sources: l.sources.map((s) => ({ item_id: s.sub_ledger_balance_id, amount: s.amount.toNumber() })),
       targets: l.targets.map((t) => ({ item_id: t.sub_ledger_balance_id, amount: t.amount.toNumber() })),
-    }))
+    })),
+    date
   );
   if (!lineCheck.ok) return { ok: false, errors: { _form: lineCheck.errors._lines } };
 

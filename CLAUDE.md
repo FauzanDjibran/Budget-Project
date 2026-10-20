@@ -1649,11 +1649,17 @@ ERP, the name stays SIBA's.
     `lockSubledgerPosition` for every position it lowers and
     `recordSubledgerEntry` throws if an item moved since the plan valued it.
     **So no position can go below zero** through a realization.
-106. **An item may be settled by a document dated before the item was opened.**
-    Illogical — a deposit returned before it was received — and allowed on the
-    user's instruction, because backdating means any open item may be cleared at
-    any time. **Marked as possibly reverted to restricted** once the user has seen
-    it in use.
+106. **An item may not go below nothing on any day, so it cannot be settled
+    before it opened.** A lowering dated `d` is checked against the least the
+    item holds on every day from `d` to now (`itemLowestFrom` in
+    `subledger.ts`, the movement placed last on its day), because a backdated
+    lowering lowers every later day too — and before it opened an item holds
+    nothing. Asked when a draft is saved and again by `recordSubledgerEntry`
+    inside the posting, under `lockSubledgerPosition`; the refusal names the
+    item and the day. The user's decision (2026-10-20), reversing the earlier
+    permission to settle an item before it opened. An item has few entries, so
+    they are read whole; no period chain like the Cash Bank Book's. A raise
+    (Penambahan) is not checked — it cannot go below nothing.
 107. **Each settled item has its own FX difference, on its own journal line.** What
     the line's cash cost is split across its items in proportion (`allocateBase`
     in `fx.ts`, the last item taking the rounding, so the shares add up to what
@@ -2654,8 +2660,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
   the entries that name it dated on or before it (`subledgerBalanceReport` in
   `subledger.ts`): each item's opening is the entries before the period, its
   movements the period's entries that name it, so the items are the
-  position regrouped — equal in every column by construction, including for an item settled by a document dated before it
-  opened (§10 rule 106). The movement figures come from `subledgerReport`
+  position regrouped — equal in every column by construction. No item
+  stands below nothing on any date (§10 rule 106). The movement figures come from `subledgerReport`
   itself, so the two reports cannot disagree about a Partner.
   `tests/subledger.test.ts` holds it at three dates.
 - **A book that only accumulates speaks of *rincian*, not open items.**
@@ -4062,7 +4068,8 @@ below in outline because the half of it that still holds is easy to lose.**
   names the day, or the month, it would break. The two Cash & Bank reports
   open from the same table. A payment may still draw on a layer acquired
   after its own date (the user's decision), as long as the account holds the
-  money that day. Subject-book items are not checked by date yet. Journal
+  money that day. An open item is held to the same rule from its own entries
+  (§10 rule 106). Journal
   numbers run in the order
   journals were written, so `JRN-0102` may be dated before `JRN-0101` —
   accepted. A closed year is sealed exactly as before, so an Opening Balance
@@ -4607,7 +4614,6 @@ decisions now that foreclose them.
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
-| Restricting an item's clearing date | An item may be settled by a document dated before it was opened (§10 rule 106), on the user's instruction; they may revert it to restricted after seeing it |
 | Penyesuaian Open Item tax | An adjustment carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
 | Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
 
@@ -5057,7 +5063,6 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
 | A backdated settlement draws on today's cash layer | A subject-book relief now releases at its open item's own kurs, which never changes, so the obligation side no longer depends on when a backdated document is posted. The cash side still draws on its layer as it stands at posting (§12). |
-| A subject-book item is not checked by date | A Cash & Bank is checked on every day from a backdated movement on (§12), but an open item may still be settled by a document dated before it opened (§10 rule 106), so Saldo Buku Subjek can show an item below zero between the two dates. Tahap 2 of the period work closes it. |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |

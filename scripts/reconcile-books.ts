@@ -22,7 +22,7 @@
  *   6–8   every posted journal balances; a Realisasi has one, with a counter
  *         line per Budget and each FX difference on the side its sign says
  *   9–12  every materialised figure equals the entries under it: cash
- *         balances, foreign layers, open items (Cleared exactly at nil)
+ *         balances, foreign layers, open items (Cleared exactly at nil, never below it on any day)
  *   13–14 each book equals its General Ledger account — a cash resource on
  *         its own account, a subject book per account and Partner
  *   15–16 a line settling open items is worth what its items add up to, and
@@ -284,10 +284,17 @@ HAVING i.balance <> COALESCE(SUM(s.movement), 0)
   },
   {
     no: 12,
-    name: "Tidak ada open item di bawah nol",
+    name: "Tidak ada open item di bawah nol, pada hari mana pun",
     sql: `
-SELECT item_no, balance, base_balance FROM sub_ledger_balance
-WHERE balance < 0 OR base_balance < 0`,
+, run AS (
+  SELECT balance_id, entry_date,
+         SUM(movement) OVER (PARTITION BY balance_id ORDER BY entry_date, id) AS balance
+  FROM sub_ledger
+)
+SELECT b.item_no, MIN(r.entry_date) AS first_below, b.balance, b.base_balance
+FROM sub_ledger_balance b LEFT JOIN run r ON r.balance_id = b.id AND r.balance < 0
+WHERE r.balance_id IS NOT NULL OR b.balance < 0 OR b.base_balance < 0
+GROUP BY b.id, b.item_no, b.balance, b.base_balance`,
   },
   {
     no: 13,

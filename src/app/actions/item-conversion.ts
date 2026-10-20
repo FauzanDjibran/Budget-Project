@@ -130,7 +130,7 @@ async function checkDraft(
   const dated = await checkTransactionDate(values.document_date, [header.companyId]);
   if (!dated.ok) return { ok: false as const, errors: { document_date: dated.message } };
 
-  const settled = await checkConversionLines(header, asLines(lines));
+  const settled = await checkConversionLines(header, asLines(lines), dated.date);
   if (!settled.ok) return { ok: false as const, errors: settled.errors };
 
   return { ok: true as const, header, date: dated.date, settled };

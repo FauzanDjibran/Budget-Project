@@ -48,6 +48,7 @@ import {
 import { loadSubledgers } from "./subledger-data";
 import {
   SubledgerItemUnavailable,
+  itemLowestFrom,
   lockSubledgerPosition,
   openSubledgerItems,
   recordSubledgerEntry,
@@ -1564,6 +1565,7 @@ async function planPosting(
     cash_bank_layer_id: number | null;
     company_id: number;
     currency_id: number;
+    document_date: Date | null;
     currency: { currency_label: string };
     cash_bank: { currency: { currency_label: string } } | null;
     lines: {
@@ -1694,6 +1696,23 @@ async function planPosting(
                 `Open item ${item.itemNo} tinggal ${held.foreign}, tidak cukup untuk ` +
                 `${budget.budget_no}. Kemungkinan sudah diselesaikan dokumen lain — ` +
                 "ubah dokumen dan periksa nominalnya.",
+            },
+          };
+        }
+        // What earlier lines of this document took counts against the
+        // document's own day as well as against today.
+        const lowest = await itemLowestFrom(
+          item.id,
+          doc.document_date ? day(doc.document_date) : todayDay()
+        );
+        if (cents(share) > cents(lowest.balance - (item.remaining - held.foreign))) {
+          return {
+            ok: false,
+            errors: {
+              _form:
+                `Open item ${item.itemNo} tinggal ${lowest.balance} pada ${lowest.at}, ` +
+                `tidak cukup untuk ${budget.budget_no}. Posisi tidak boleh di bawah nol ` +
+                "pada hari mana pun — ubah tanggal dokumen atau nominalnya.",
             },
           };
         }

@@ -11,6 +11,8 @@ import {
 } from "../src/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "../src/lib/siba/subledger-data";
 import {
+  SubledgerItemUnavailable,
+  itemLowestFrom,
   recordSubledgerEntry,
   rebuildSubledgerBalance,
   subledgerPosition,
@@ -312,6 +314,47 @@ describe("the book is append-only, and its total is derived", () => {
       7_500_000,
       "and recomputing every item from its entries agrees with the stored total"
     );
+  });
+
+  test("an item may not go below nothing on any day from a backdated lowering on", async () => {
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
+    const entry = (date: string, direction: "In" | "Out", amount: number, itemId?: number) =>
+      prisma.$transaction((tx) =>
+        recordSubledgerEntry(tx, {
+          book: bookOf("Hutang"),
+          partnerId: partner,
+          currencyId: currency,
+          date,
+          type: "Transaction",
+          direction,
+          amount,
+          rate: 1,
+          itemId,
+          note: `${FIXTURE_PREFIX} dated ${date}`,
+          actorId: actor,
+        })
+      );
+
+    const item = (await entry("2026-01-10", "In", 100)).balance_id;
+    await entry("2026-02-20", "Out", 80, item);
+    await entry("2026-03-15", "In", 50, item); // a Penambahan: 20 → 70 today
+
+    assert.deepEqual(await itemLowestFrom(item, "2026-02-01"), { balance: 20, at: "20/02/2026" });
+    assert.deepEqual(await itemLowestFrom(item, "2026-01-05"), { balance: 0, at: "05/01/2026" });
+    assert.deepEqual(await itemLowestFrom(item, "2026-03-20"), { balance: 70, at: "20/03/2026" });
+
+    await assert.rejects(
+      entry("2026-02-01", "Out", 30, item),
+      (e: Error) => e instanceof SubledgerItemUnavailable && /pada 20\/02\/2026/.test(e.message),
+      "70 today, but on 20/02 it would stand at -10"
+    );
+    await assert.rejects(
+      entry("2026-01-05", "Out", 10, item),
+      SubledgerItemUnavailable,
+      "an item cannot be settled by a document dated before it opened"
+    );
+    const fits = await entry("2026-02-01", "Out", 20, item);
+    assert.equal(fits.balance_after.toNumber(), 50, "what the lowest day allows still posts");
   });
 
   test("a category that keeps no book yields none to write to", async () => {

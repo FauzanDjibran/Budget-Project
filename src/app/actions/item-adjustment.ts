@@ -108,15 +108,15 @@ async function validate(
   const header = await checkItemAdjustmentHeader(headerOf(values), companyIds);
   if (!header.ok) return { ok: false as const, errors: header.errors };
 
-  const settled = await checkItemAdjustmentLines(header, asLines(lines));
-  if (!settled.ok) return { ok: false as const, errors: settled.errors };
-
   // Any day up to today, inside a year this Company may still write into.
   // Asked again at Post, since a year can close in between.
   const dated = await checkTransactionDate(values.document_date, [header.companyId]);
   if (!dated.ok) {
     return { ok: false as const, errors: { document_date: dated.message } };
   }
+
+  const settled = await checkItemAdjustmentLines(header, asLines(lines), dated.date);
+  if (!settled.ok) return { ok: false as const, errors: settled.errors };
 
   return { ok: true as const, header, settled, date: dated.date };
 }

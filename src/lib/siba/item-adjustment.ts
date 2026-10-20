@@ -37,6 +37,7 @@ import {
   subledgerItemsByIds,
   subledgerPositionsFor,
   type SubledgerItem,
+  itemLowestFrom,
 } from "./subledger";
 import { subledgerForCategory, type SubledgerDef } from "./subledger-catalogue";
 import { loadSubledgers } from "./subledger-data";
@@ -618,7 +619,9 @@ export function describeAdjustmentLine(
  */
 export async function checkItemAdjustmentLines(
   header: ResolvedItemAdjustmentHeader,
-  lines: ItemAdjustmentLineInput[]
+  lines: ItemAdjustmentLineInput[],
+  /** The document's date — an item may not go below nothing from it on. */
+  date: string = todayDay()
 ): Promise<ItemAdjustmentLineCheck> {
   const wanted = lines.filter((l) => l.item_id || l.new_amount != null);
 
@@ -676,6 +679,20 @@ export async function checkItemAdjustmentLines(
       };
     }
     const amount = roundBase(Math.abs(newAmount - item.remaining));
+    if (effect === "Decrease") {
+      const lowest = await itemLowestFrom(item.id, date);
+      if (cents(amount) > cents(lowest.balance)) {
+        return {
+          ok: false,
+          errors: {
+            _lines:
+              `Open item ${item.itemNo} tinggal ${formatMoney(lowest.balance, header.currencyLabel)} ` +
+              `pada ${lowest.at}, tidak cukup untuk dikurangi ${formatMoney(amount, header.currencyLabel)}. ` +
+              "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal dokumen.",
+          },
+        };
+      }
+    }
     out.push({
       itemId: item.id,
       itemNo: item.itemNo,
@@ -841,7 +858,8 @@ export async function applyItemAdjustment(
       item_id: l.sub_ledger_balance_id,
       new_amount: l.new_amount!.toNumber(),
       balance_before: l.balance_before!.toNumber(),
-    }))
+    })),
+    date
   );
   if (!checked.ok) return { ok: false, errors: { _form: Object.values(checked.errors)[0] } };
 
