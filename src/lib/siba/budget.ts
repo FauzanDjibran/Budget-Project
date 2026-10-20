@@ -114,18 +114,22 @@ export type BudgetMonth = {
 };
 
 /**
- * Every Fiscal Period, with the budgets that fall inside it rolled up.
+ * Every calendar month any Company's fiscal calendar holds, with the budgets
+ * that fall inside it rolled up.
  *
  * Periods with no budgets are still listed: a month you have planned nothing
  * for is exactly the month a planner needs to see.
+ *
+ * Each Company keeps its own calendar, but a Budget transcends Company, so the
+ * month is one row whichever calendars hold it: named by its earliest period
+ * row (any of them resolves to the same range), and Open while any Company can
+ * still post into it.
  */
 export async function budgetMonths(companyIds: number[]): Promise<BudgetMonth[]> {
-  // Budgets belong to a Company; the fiscal calendar does not, so the months
-  // themselves are the same either way and only their rollups narrow. The
-  // Companies are the ones the reader's permissions open — none of them means
-  // no budget is readable, and the months come back empty rather than whole.
-  const [periods, budgets] = await Promise.all([
-    prisma.accFiscalPeriod.findMany({ orderBy: { start_date: "desc" } }),
+  // The Companies are the ones the reader's permissions open — none of them
+  // means no budget is readable, and the months come back empty rather than whole.
+  const [rows, budgets] = await Promise.all([
+    prisma.accFiscalPeriod.findMany({ orderBy: [{ start_date: "desc" }, { id: "asc" }] }),
     prisma.budBudget.findMany({
       where: { company_id: { in: companyIds } },
       select: { budget_date: true },
@@ -133,6 +137,14 @@ export async function budgetMonths(companyIds: number[]): Promise<BudgetMonth[]>
   ]);
 
   const today = day(new Date());
+
+  const rank: Record<string, number> = { Open: 0, Locked: 1, Closed: 2 };
+  const periods: typeof rows = [];
+  for (const r of rows) {
+    const same = periods.find((p) => p.start_date.getTime() === r.start_date.getTime());
+    if (!same) periods.push({ ...r });
+    else if (rank[r.status] < rank[same.status]) same.status = r.status;
+  }
 
   return periods.map((p) => {
     const from = day(p.start_date);
@@ -212,6 +224,7 @@ export async function monthOfDate(
       start_date: { lte: new Date(`${date}T00:00:00Z`) },
       end_date: { gte: new Date(`${date}T00:00:00Z`) },
     },
+    orderBy: { id: "asc" },
     select: { id: true, period_label: true, period_name: true },
   });
   return p ? { id: p.id, label: p.period_label, name: p.period_name } : null;

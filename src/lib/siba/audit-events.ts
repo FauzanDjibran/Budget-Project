@@ -24,7 +24,7 @@ import type { IconName } from "@/components/icon";
 import { BUDGET_TRANSITIONS } from "./budget-workflow";
 import { ITEM_ADJUSTMENT_TRANSITIONS } from "./item-adjustment-workflow";
 import { REVALUATION_TRANSITIONS } from "./cash-bank-revaluation-workflow";
-import { FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
+import { FISCAL_PERIOD_TRANSITIONS, FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
 import type { ActionTone } from "./header-actions";
 import { CONVERSION_TRANSITIONS } from "./item-conversion-workflow";
 import { RECLASS_TRANSITIONS } from "./item-reclass-workflow";
@@ -175,24 +175,18 @@ const JOURNAL_EVENTS: Record<string, AuditEventLabel> = {
   cancel: fromTransition(JOURNAL_TRANSITIONS.cancel, "Dibatalkan"),
 };
 
-/**
- * Fiscal Year: Draft → Open → Closed.
- *
- * The year's own `close` row is written **once**, when the last Company shuts
- * it — that is the moment the year itself becomes Closed, and it is a rollup
- * rather than anybody's decision. Each Company's own close is a row on
- * `acc_fiscal_closing` instead, because it is a different record saying a
- * different thing.
- */
+/** Fiscal Year: Draft → Open → Closed. A year is one Company's, so is its close. */
 const FISCAL_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
   open: fromTransition(FISCAL_YEAR_TRANSITIONS.open, "Diaktifkan"),
-  close: {
-    label: "Ditutup — seluruh Company selesai",
-    icon: "lock",
-    tone: "primary",
-    systemDriven: true,
-  },
+  close: fromTransition(FISCAL_YEAR_TRANSITIONS.close, "Ditutup"),
+};
+
+/** A period inside an Open year: Open ⇄ Locked. */
+const FISCAL_PERIOD_EVENTS: Record<string, AuditEventLabel> = {
+  ...COMMON,
+  lock: fromTransition(FISCAL_PERIOD_TRANSITIONS.lock, "Dikunci"),
+  unlock: fromTransition(FISCAL_PERIOD_TRANSITIONS.unlock, "Kunci dibuka"),
 };
 
 /** One Company's closing state for one year. Written once, never reopened. */
@@ -232,6 +226,7 @@ const BY_ENTITY: Record<string, Record<string, AuditEventLabel>> = {
   fin_cash_bank_revaluation: REVALUATION_EVENTS,
   fin_funding_request: FUNDING_EVENTS,
   acc_fiscal_year: FISCAL_EVENTS,
+  acc_fiscal_period: FISCAL_PERIOD_EVENTS,
   acc_fiscal_closing: FISCAL_CLOSING_EVENTS,
   acc_journal: JOURNAL_EVENTS,
   sys_user: USER_EVENTS,

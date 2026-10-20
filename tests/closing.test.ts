@@ -2,7 +2,7 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { closingPlan, executeClosing } from "../src/lib/siba/closing";
-import { carriedYearsBefore } from "../src/lib/siba/fiscal";
+import { carriedYearsBefore, ensureFiscalPeriods } from "../src/lib/siba/fiscal";
 import { closingBalances, generalLedgerReport } from "../src/lib/siba/ledger";
 import { getOpeningBalance } from "../src/lib/siba/opening-balance";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
@@ -50,8 +50,11 @@ const YEAR_PREFIX = "test.cls.";
 let actor = 0;
 let induk = 0;
 let anak = 0;
+/** The induk's 1990 and 1991; each Company keeps its own calendar. */
 let fiscalYear = 0;
 let nextYear = 0;
+let anakYear = 0;
+let anakNextYear = 0;
 
 /** One Company's fixtures: somewhere for cash, income, expense and equity. */
 type Chart = {
@@ -100,11 +103,13 @@ async function makeChart(companyId: number): Promise<Chart> {
 
 async function makeYear(
   year: number,
-  status: "Draft" | "Open" | "Closed"
+  status: "Draft" | "Open" | "Closed",
+  companyId = induk
 ): Promise<number> {
   const row = await prisma.accFiscalYear.create({
     data: {
-      year_code: `${YEAR_PREFIX}${year}`,
+      year_code: `${YEAR_PREFIX}${companyId}.${year}`,
+      company_id: companyId,
       year_label: String(year),
       year_name: `Tahun Buku ${year}`,
       start_date: new Date(Date.UTC(year, 0, 1)),
@@ -180,6 +185,14 @@ before(async () => {
 
   fiscalYear = await makeYear(FY, "Open");
   nextYear = await makeYear(NEXT_FY, "Draft");
+  anakYear = await makeYear(FY, "Open", anak);
+  anakNextYear = await makeYear(NEXT_FY, "Draft", anak);
+  // A year closes only once its twelve periods are Locked; one test unlocks
+  // a period to watch the close refuse.
+  for (const id of [fiscalYear, anakYear]) {
+    await ensureFiscalPeriods(prisma, { fiscalYearId: id, year: FY, actorId: actor });
+    await prisma.accFiscalPeriod.updateMany({ where: { fiscal_year_id: id }, data: { status: "Locked" } });
+  }
 
   indukChart = await makeChart(induk);
   anakChart = await makeChart(anak);
@@ -272,13 +285,16 @@ after(async () => {
   await disconnect();
 });
 
-const plan = (companyId: number, yearId = fiscalYear) =>
+/** A Company's own 1990, unless a test names another year. */
+const own = (companyId: number) => (companyId === anak ? anakYear : fiscalYear);
+
+const plan = (companyId: number, yearId = own(companyId)) =>
   closingPlan(companyId, yearId);
 
 const check = async (
   companyId: number,
   key: string,
-  yearId = fiscalYear
+  yearId = own(companyId)
 ) => {
   const p = await plan(companyId, yearId);
   assert.ok(p, "the plan resolves");
@@ -392,6 +408,31 @@ describe("every blocking condition refuses by name", () => {
     } finally {
       await prisma.accFiscalYear.delete({ where: { id: older } });
     }
+  });
+
+  test("a period that is not Locked, by name", async () => {
+    const march = await prisma.accFiscalPeriod.findFirstOrThrow({
+      where: { fiscal_year_id: fiscalYear, sequence_no: 3 },
+      select: { id: true },
+    });
+    await prisma.accFiscalPeriod.update({ where: { id: march.id }, data: { status: "Open" } });
+    try {
+      const c = await check(induk, "periods_locked");
+      assert.equal(c.ok, false);
+      assert.match(c.detail, new RegExp(`Maret ${FY}`));
+    } finally {
+      await prisma.accFiscalPeriod.update({ where: { id: march.id }, data: { status: "Locked" } });
+    }
+    assert.equal((await check(induk, "periods_locked")).ok, true);
+  });
+
+  test("a year with no periods is not taken as all Locked", async () => {
+    const c = await check(induk, "periods_locked", nextYear);
+    assert.equal(c.ok, false);
+  });
+
+  test("another Company's year is not this one's to close", async () => {
+    assert.equal(await plan(induk, anakYear), null);
   });
 
   test("no fiscal year after this one", async () => {
@@ -546,13 +587,14 @@ describe("closing writes the journal, the snapshot and the record", () => {
    * put back to Draft after.
    */
   const carries = async (companyId: number) =>
-    (await carriedYearsBefore(companyId, `${FY + 1}-01-01`)).some((y) => y.id === fiscalYear);
+    (await carriedYearsBefore(companyId, `${FY + 1}-01-01`)).some((y) => y.id === own(companyId));
   const withNextYearOpen = async (fn: () => Promise<void>) => {
-    await prisma.accFiscalYear.update({ where: { id: nextYear }, data: { status: "Open" } });
+    const next = { id: { in: [nextYear, anakNextYear] } };
+    await prisma.accFiscalYear.updateMany({ where: next, data: { status: "Open" } });
     try {
       await fn();
     } finally {
-      await prisma.accFiscalYear.update({ where: { id: nextYear }, data: { status: "Draft" } });
+      await prisma.accFiscalYear.updateMany({ where: next, data: { status: "Draft" } });
     }
   };
 
@@ -563,7 +605,7 @@ describe("closing writes the journal, the snapshot and the record", () => {
     });
   });
 
-  test("the induk closes, and the year does not", async () => {
+  test("the induk closes its own year, and the anak's stays Open", async () => {
     const result = await executeClosing(induk, fiscalYear, actor);
     assert.equal(result.ok, true, JSON.stringify(result));
     if (!result.ok) return;
@@ -575,15 +617,25 @@ describe("closing writes the journal, the snapshot and the record", () => {
     assert.match(journalNo, /^CLS-\d{4}$/);
     assert.match(openingNo, /^OPB-\d{4}$/);
 
-    // The rollup: one Company of two is finished, so the year is still Open
-    // and the anak goes on posting into it. That is the whole reason closing
-    // is per Company.
-    assert.equal(result.yearClosed, false);
-    const year = await prisma.accFiscalYear.findUniqueOrThrow({
-      where: { id: fiscalYear },
-      select: { status: true },
-    });
-    assert.equal(year.status, "Open");
+    // Each Company keeps its own calendar: the induk's year and its periods
+    // are Closed, and the anak's 1990 goes on as it was.
+    assert.equal(result.yearClosed, true);
+    const [mine, theirs] = await Promise.all(
+      [fiscalYear, anakYear].map((id) =>
+        prisma.accFiscalYear.findUniqueOrThrow({ where: { id }, select: { status: true } })
+      )
+    );
+    assert.equal(mine.status, "Closed");
+    assert.equal(theirs.status, "Open");
+    assert.equal(
+      await prisma.accFiscalPeriod.count({ where: { fiscal_year_id: fiscalYear, status: { not: "Closed" } } }),
+      0,
+      "the close makes every period Closed"
+    );
+    assert.equal(
+      await prisma.accFiscalPeriod.count({ where: { fiscal_year_id: anakYear, status: "Locked" } }),
+      12
+    );
   });
 
   test("the Company that closed stops carrying the year, the other still does", async () => {
@@ -726,7 +778,8 @@ describe("closing writes the journal, the snapshot and the record", () => {
     const before = await counts(induk);
     const result = await executeClosing(induk, fiscalYear, actor);
     assert.equal(result.ok, false);
-    assert.match((result as { error: string }).error, /[Ss]udah ditutup/);
+    // The year itself is Closed now, which is the first thing refused.
+    assert.match((result as { error: string }).error, /berstatus Closed/);
     assert.deepEqual(await counts(induk), before, "and it wrote nothing");
   });
 
@@ -740,21 +793,21 @@ describe("closing writes the journal, the snapshot and the record", () => {
     );
   });
 
-  test("the year rolls to Closed only on the second Company's close", async () => {
-    const result = await executeClosing(anak, fiscalYear, actor);
+  test("the anak closes its own year", async () => {
+    const result = await executeClosing(anak, anakYear, actor);
     assert.equal(result.ok, true, JSON.stringify(result));
     if (!result.ok) return;
 
-    assert.equal(result.yearClosed, true);
     const year = await prisma.accFiscalYear.findUniqueOrThrow({
-      where: { id: fiscalYear },
+      where: { id: anakYear },
       select: { status: true },
     });
-    assert.equal(
-      year.status,
-      "Closed",
-      "the year's own status is a rollup over every Company's closing row"
-    );
+    assert.equal(year.status, "Closed");
+    const opening = await prisma.accOpeningBalance.findFirst({
+      where: { company_id: anak, source_fiscal_year_id: anakYear },
+      select: { fiscal_year_id: true },
+    });
+    assert.equal(opening?.fiscal_year_id, anakNextYear, "into the anak's own next year");
   });
 
   test("a closed year is reported back, with what it produced", async () => {

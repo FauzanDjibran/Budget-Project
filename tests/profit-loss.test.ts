@@ -260,6 +260,7 @@ before(async () => {
     await prisma.accFiscalYear.create({
       data: {
         year_code: YEAR_CODE,
+        company_id: induk,
         year_label: String(YEAR),
         year_name: `Tahun Buku ${YEAR}`,
         start_date: day(1, 1),

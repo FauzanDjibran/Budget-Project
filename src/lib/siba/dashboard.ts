@@ -333,7 +333,7 @@ async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[
       prisma.accBudgetCategoryAccount.findMany({
         select: { company_id: true, budget_category_id: true },
       }),
-      prisma.accFiscalPeriod.count(),
+      prisma.accFiscalPeriod.groupBy({ by: ["company_id"], _count: { _all: true } }),
       prisma.sysBudgetCategory.findMany({
         select: { id: true, category_label: true },
       }),
@@ -365,13 +365,15 @@ async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[
     });
   }
 
-  if (!periods) {
+  // Each Company keeps its own calendar, and posts only inside its own periods.
+  for (const company of companies) {
+    if (periods.some((p) => p.company_id === company.id)) continue;
     items.push({
-      href: "/accounting/fiscal-year",
-      title: "Belum ada Fiscal Period",
+      href: `/accounting/fiscal-year?company=${company.id}`,
+      title: `Belum ada Fiscal Period ${company.company_label}`,
       detail:
-        "Budget Month mengikuti Fiscal Period. Buat Fiscal Year lalu aktifkan — " +
-        "12 periode bulanan dibuat otomatis saat itu.",
+        "Setiap Company memposting hanya di dalam periode kalendernya sendiri. Buat " +
+        "Fiscal Year untuk Company ini lalu aktifkan — 12 periode bulanan dibuat saat itu.",
     });
   }
 

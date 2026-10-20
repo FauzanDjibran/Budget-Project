@@ -6,6 +6,7 @@ import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import { hasEntityPermissions } from "../src/lib/siba/entity-access";
 import { MODULES } from "../src/lib/siba/nav";
 import {
+  changeFiscalPeriodStatus,
   checkPostingPeriod,
   checkYearOpenable,
   ensureFiscalPeriods,
@@ -15,8 +16,11 @@ import {
   parseYear,
 } from "../src/lib/siba/fiscal";
 import {
+  FISCAL_PERIOD_TRANSITIONS,
   FISCAL_YEAR_TRANSITIONS,
   activationRefusal,
+  fiscalPeriodAbilities,
+  periodAction,
   availableActions,
   fiscalYearAbilities,
   transitionAllowed,
@@ -68,11 +72,14 @@ after(async () => {
   await disconnect();
 });
 
-async function makeYear(year: number, status: "Draft" | "Open" | "Closed") {
+/** One Company's year — the induk's unless named. Each Company keeps its own calendar. */
+async function makeYear(year: number, status: "Draft" | "Open" | "Closed", companyId?: number) {
+  const company = companyId ?? (await parentCompanyId());
   const shape = fiscalYearShape(year);
   const row = await prisma.accFiscalYear.create({
     data: {
-      year_code: `test.fyr.${year}`,
+      year_code: `test.fyr.${company}.${year}`,
+      company_id: company,
       year_label: String(year),
       ...shape,
       status,
@@ -137,14 +144,12 @@ describe("Fiscal Period is reachable only through Fiscal Year", () => {
     assert.ok(leaves.includes("fiscal-year"), "Fiscal Year is the top-level entity");
   });
 
-  test("it declares no permissions, because it has nothing to authorize", () => {
+  test("its only permissions are locking and unlocking, run from inside the year", () => {
     assert.equal(hasEntityPermissions("acc_fiscal_period"), false);
-    for (const code of PERMISSION_CODES) {
-      assert.ok(
-        !code.startsWith("FISCAL_PERIOD"),
-        `${code} governs a screen that no longer exists`
-      );
-    }
+    assert.deepEqual(
+      PERMISSION_CODES.filter((code) => code.startsWith("FISCAL_PERIOD")).sort(),
+      ["FISCAL_PERIOD_LOCK", "FISCAL_PERIOD_UNLOCK"]
+    );
   });
 });
 
@@ -421,13 +426,97 @@ describe("the calendar decides what may be posted into it", () => {
     );
   });
 
-  test("an Open year nobody has closed admits both Companies", async () => {
-    const id = await makeYear(LOCK_OPEN_YEAR, "Open");
-    for (const companyId of [await parentCompanyId(), await childCompanyId()]) {
-      const allowed = await checkPostingPeriod(companyId, `${LOCK_OPEN_YEAR}-05-20`);
-      assert.equal(allowed.ok, true);
-      assert.equal((allowed as { fiscalYearId: number }).fiscalYearId, id);
+  test("each Company posts only inside its own calendar", async () => {
+    const [induk, anak] = [await parentCompanyId(), await childCompanyId()];
+    const actorId = await systemUserId();
+    const mine = await makeYear(LOCK_OPEN_YEAR, "Open", induk);
+    await ensureFiscalPeriods(prisma, { fiscalYearId: mine, year: LOCK_OPEN_YEAR, actorId });
+
+    const allowed = await checkPostingPeriod(induk, `${LOCK_OPEN_YEAR}-05-20`);
+    assert.equal(allowed.ok, true);
+    assert.equal((allowed as { fiscalYearId: number }).fiscalYearId, mine);
+
+    assert.equal(
+      (await checkPostingPeriod(anak, `${LOCK_OPEN_YEAR}-05-20`)).ok,
+      false,
+      "the induk's year is not the anak's"
+    );
+
+    const theirs = await makeYear(LOCK_OPEN_YEAR, "Open", anak);
+    await ensureFiscalPeriods(prisma, { fiscalYearId: theirs, year: LOCK_OPEN_YEAR, actorId });
+    const now = await checkPostingPeriod(anak, `${LOCK_OPEN_YEAR}-05-20`);
+    assert.equal((now as { fiscalYearId: number }).fiscalYearId, theirs);
+  });
+
+  test("an Open year with no periods yet admits nothing", async () => {
+    const anak = await childCompanyId();
+    const bare = await makeYear(LOCK_OPEN_YEAR + 10, "Open", anak);
+    const refusal = await checkPostingPeriod(anak, `${LOCK_OPEN_YEAR + 10}-05-20`);
+    assert.equal(refusal.ok, false);
+    assert.match((refusal as { message: string }).message, /periode/);
+    await prisma.accFiscalYear.delete({ where: { id: bare } });
+  });
+
+  test("a Locked period refuses, the rest of the year and the other Company do not", async () => {
+    const [induk, anak] = [await parentCompanyId(), await childCompanyId()];
+    const actorId = await systemUserId();
+    const may = await prisma.accFiscalPeriod.findFirstOrThrow({
+      where: { company_id: induk, start_date: new Date(Date.UTC(LOCK_OPEN_YEAR, 4, 1)) },
+      select: { id: true },
+    });
+
+    const locked = await changeFiscalPeriodStatus(may.id, "lock", actorId, [induk, anak]);
+    assert.equal(locked.ok, true);
+
+    const refusal = await checkPostingPeriod(induk, `${LOCK_OPEN_YEAR}-05-20`);
+    assert.equal(refusal.ok, false);
+    assert.match((refusal as { message: string }).message, new RegExp(`Mei ${LOCK_OPEN_YEAR}.*dikunci`));
+    assert.equal((await checkPostingPeriod(induk, `${LOCK_OPEN_YEAR}-06-01`)).ok, true, "June is its own period");
+    assert.equal((await checkPostingPeriod(anak, `${LOCK_OPEN_YEAR}-05-20`)).ok, true, "the anak's May is its own");
+
+    const again = await changeFiscalPeriodStatus(may.id, "lock", actorId, [induk, anak]);
+    assert.equal(again.ok, false, "a Locked period cannot be locked twice");
+
+    const unlocked = await changeFiscalPeriodStatus(may.id, "unlock", actorId, [induk, anak]);
+    assert.equal(unlocked.ok, true, "a lock is a state, not a close");
+    assert.equal((await checkPostingPeriod(induk, `${LOCK_OPEN_YEAR}-05-20`)).ok, true);
+    assert.equal(
+      await prisma.auditLog.count({ where: { entity_key: "acc_fiscal_period", row_id: may.id } }),
+      2,
+      "both moves are in the history"
+    );
+    await prisma.auditLog.deleteMany({ where: { entity_key: "acc_fiscal_period", row_id: may.id } });
+  });
+
+  test("a period is moved only by someone who may act for its Company", async () => {
+    const [induk, anak] = [await parentCompanyId(), await childCompanyId()];
+    const may = await prisma.accFiscalPeriod.findFirstOrThrow({
+      where: { company_id: induk, start_date: new Date(Date.UTC(LOCK_OPEN_YEAR, 4, 1)) },
+      select: { id: true, status: true },
+    });
+    const refused = await changeFiscalPeriodStatus(may.id, "lock", await systemUserId(), [anak]);
+    assert.equal(refused.ok, false);
+    assert.equal(
+      (await prisma.accFiscalPeriod.findUniqueOrThrow({ where: { id: may.id } })).status,
+      may.status
+    );
+  });
+
+  test("Kunci and Buka Kunci are the two moves, inside an Open year only", () => {
+    assert.equal(FISCAL_PERIOD_TRANSITIONS.lock.from, "Open");
+    assert.equal(FISCAL_PERIOD_TRANSITIONS.lock.to, "Locked");
+    assert.equal(FISCAL_PERIOD_TRANSITIONS.unlock.from, "Locked");
+    assert.equal(FISCAL_PERIOD_TRANSITIONS.unlock.to, "Open");
+    for (const t of Object.values(FISCAL_PERIOD_TRANSITIONS)) {
+      assert.notEqual(t.to, "Closed", "only a year's close closes a period");
+      assert.ok(PERMISSION_CODES.includes(t.permission as never));
     }
+    const all = fiscalPeriodAbilities(["FISCAL_PERIOD_LOCK", "FISCAL_PERIOD_UNLOCK"]);
+    assert.equal(periodAction("Open", "Open", all), "lock");
+    assert.equal(periodAction("Open", "Locked", all), "unlock");
+    assert.equal(periodAction("Open", "Closed", all), null);
+    assert.equal(periodAction("Closed", "Locked", all), null);
+    assert.equal(periodAction("Open", "Open", fiscalPeriodAbilities([])), null);
   });
 
   test("one Company closing a year does not close it for the other", async () => {
@@ -451,7 +540,7 @@ describe("the calendar decides what may be posted into it", () => {
     assert.equal(
       allowed.ok,
       true,
-      "the calendar is shared; closing it is not — the anak is still working in the year"
+      "each Company closes its own year — the anak is still working in its own"
     );
 
     await reopen();
@@ -515,6 +604,15 @@ describe("any number of years stand Open, never one behind a close", () => {
       "three Open years do not stop a fourth — there is no limit any more"
     );
 
+    // Another Company's close is its own calendar's business.
+    const anakLater = await makeYear(LOCK_FILLER_YEAR, "Open", await childCompanyId());
+    const anakReopen = await closeYearFor(anakLater, await childCompanyId());
+    try {
+      assert.equal((await checkYearOpenable(candidate)).ok, true, "the anak's close does not freeze the induk's calendar");
+    } finally {
+      await anakReopen();
+    }
+
     const reopen = await closeYearFor(later[0], induk);
     try {
       const refused = await checkYearOpenable(candidate);
@@ -534,7 +632,9 @@ describe("any number of years stand Open, never one behind a close", () => {
   test("the oldest unclosed year is each Company's own", async () => {
     const [induk, anak] = [await parentCompanyId(), await childCompanyId()];
     const ids = await prisma.accFiscalYear.findMany({
-      where: { year_code: { in: [LOCK_FILLER_YEAR, LOCK_FILLER_YEAR + 1].map((y) => `test.fyr.${y}`) } },
+      where: {
+        year_code: { in: [LOCK_FILLER_YEAR, LOCK_FILLER_YEAR + 1].map((y) => `test.fyr.${induk}.${y}`) },
+      },
       orderBy: { start_date: "asc" },
       select: { id: true },
     });
@@ -551,8 +651,8 @@ describe("any number of years stand Open, never one behind a close", () => {
       assert.deepEqual(await mine(induk), [newer], "the induk has closed the older year");
       assert.deepEqual(
         await mine(anak),
-        [older, newer],
-        "the anak still owes the older one, and that must not hold the induk back"
+        [],
+        "the induk's years are not in the anak's calendar at all"
       );
     } finally {
       await reopen();

@@ -785,19 +785,20 @@ table acc_budget_category_account {
   }
 }
 
-// The fiscal calendar, shared by both Companies — there is no company_id here
-// and there is not meant to be. Everything that genuinely differs per Company —
-// the chart, the journal, the equity accounts, the closing state, the posting
-// lock — already lives somewhere that is per Company, and a Budget transcends
-// Company, so a cross-Company Budget grouped by a cross-Company calendar is the
-// coherent shape.
+// One Company's fiscal year. Each Company keeps its own calendar, so it
+// activates, locks and closes its years without waiting on the other
+// (migration 20261021090000_fiscal_calendar_per_company split every shared year
+// into one per Company). Every year still runs 01/01–31/12 — the shape is
+// generated, never typed. Budget Month stays one list across both Companies,
+// one row per calendar month.
 //
-// At most two years stand Open at once: the overlap at a year-end is real, a
-// third open year is just one nobody has closed. status is a rollup over
-// acc_fiscal_closing — Closed once every Company has closed the year.
+// Any number of years may stand Open. status is the Company's own: Closed when
+// its close has run, which also makes every period Closed.
 
 table acc_fiscal_year {
   id                          int [pk, increment, not null]
+
+  company_id                  int [not null, ref : > sys_company.id]
 
   year_code                   varchar(255) [not null, unique]
 
@@ -816,12 +817,25 @@ table acc_fiscal_year {
 
   created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (company_id, year_label) [unique]
+  }
 }
+
+// One month of one Company's year, generated when the year is activated.
+// A posting's date must fall in an Open period of its Company's calendar.
+// Locked refuses postings and may be unlocked again — a state, not a close;
+// a year closes only once all twelve are Locked, and its close makes them
+// Closed for good.
 
 table acc_fiscal_period {
   id                          int [pk, increment, not null]
 
   fiscal_year_id              int [not null, ref : > acc_fiscal_year.id]
+  // The year's Company, copied when the periods are generated, so a date
+  // resolves to one Company's period by a unique key.
+  company_id                  int [not null, ref : > sys_company.id]
   sequence_no                 int [not null]
 
   period_code                 varchar(255) [not null, unique]
@@ -834,7 +848,7 @@ table acc_fiscal_period {
 
   note                        text
 
-  status                      enum('Draft', 'Open', 'Closed') [not null, default: 'Draft']
+  status                      enum('Open', 'Locked', 'Closed') [not null, default: 'Open']
 
   created_by                  int [not null]
   updated_by                  int
@@ -843,24 +857,23 @@ table acc_fiscal_period {
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 
   indexes {
+    (company_id, start_date) [unique]
     fiscal_year_id
   }
 }
 
 // One Company's closing state for one fiscal year.
 //
-// The calendar itself is global — one set of years and periods shared by both
-// Companies — but closing is not: the induk can shut 2026 while the anak is
-// still finishing it. That is why this is a table and not a column on
-// acc_fiscal_year, and it is also why acc_fiscal_year.status is a *rollup*: the
-// year reads Closed once every Company has closed it.
+// A year belongs to one Company, so this row's company_id is always its year's.
+// It records what the close produced and who ran it; acc_fiscal_year.status
+// turns Closed in the same transaction.
 //
 // An explicit record rather than a status inferred from the existence of an
 // Opening Balance document. Inferring a fact from a row in another table works
 // until somebody writes that row for a second reason, and then nothing fails.
 //
-// The lock reads this table: a posting is allowed only when the year containing
-// its date is Open and the posting's Company has no Closed row against it.
+// The lock reads this table beside the period: a posting is allowed only when
+// its date falls in an Open period of an Open year its Company has not closed.
 // Closing is irreversible — Closed means never again, not "not yet".
 
 table acc_fiscal_closing {

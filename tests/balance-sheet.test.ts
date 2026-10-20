@@ -22,6 +22,7 @@ import {
   prisma,
   systemUserId,
   systemAccountFixture,
+  lockYearForClose,
 } from "./helpers";
 
 /**
@@ -171,6 +172,7 @@ async function makeYear(year: number): Promise<number> {
     await prisma.accFiscalYear.create({
       data: {
         year_code: `${YEAR_PREFIX}${year}`,
+        company_id: induk,
         year_label: String(year),
         year_name: `Tahun Buku ${year}`,
         start_date: new Date(Date.UTC(year, 0, 1)),
@@ -438,6 +440,7 @@ describe("the Neraca across the close", () => {
     before1980 = await neraca([december1980()]);
     before1981 = await neraca([march1981()]);
     before1982 = await neraca([march1982()]);
+    await lockYearForClose(year1980);
     const result = await executeClosing(induk, year1980, actor);
     assert.equal(result.ok, true, JSON.stringify(result));
   });

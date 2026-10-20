@@ -321,7 +321,7 @@ async function statementPage(
 ) {
   const companyId = company.id;
   const runAt = new Date().toISOString();
-  const years = await reportableFiscalYears();
+  const years = await reportableFiscalYears(companyId);
   const companyFilter = <ReportCompany options={companyOptions} selectedId={companyId} />;
 
   if (!years.length) {

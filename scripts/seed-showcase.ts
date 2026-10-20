@@ -718,18 +718,21 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
 }
 
 /**
- * Every year of the showcase, opened oldest first so each has its twelve
- * periods and Budget Month works. All four are opened **before** anything is
- * closed: a year may never be activated behind a close (§12).
+ * Every year of the showcase, for each Company's own calendar, opened oldest
+ * first so each has its twelve periods and Budget Month works. All are opened
+ * **before** anything is closed: a year may never be activated behind a close (§12).
  */
 async function ensureFiscalYears(actor: number) {
-  for (const year of ALL_YEARS) await ensureFiscalYear(year, actor);
+  const companies = await prisma.sysCompany.findMany({ orderBy: { id: "asc" }, select: { id: true } });
+  for (const company of companies) {
+    for (const year of ALL_YEARS) await ensureFiscalYear(company.id, year, actor);
+  }
 }
 
-async function ensureFiscalYear(year: number, actor: number) {
+async function ensureFiscalYear(companyId: number, year: number, actor: number) {
   const label = String(year);
   let row = await prisma.accFiscalYear.findFirst({
-    where: { year_label: label },
+    where: { company_id: companyId, year_label: label },
     select: { id: true, status: true },
   });
   if (!row) {
@@ -738,6 +741,7 @@ async function ensureFiscalYear(year: number, actor: number) {
     row = await prisma.accFiscalYear.create({
       data: {
         year_code: await nextCode("fisc", codes.map((c) => c.year_code)),
+        company_id: companyId,
         year_label: label,
         year_name: shape.year_name,
         start_date: shape.start_date,
@@ -775,21 +779,18 @@ async function ensureFiscalYear(year: number, actor: number) {
  * Buku Kas & Bank does. Skipped once the year is closed.
  */
 async function injectClosedYear(actor: number) {
-  const [closed, current] = await Promise.all(
-    [CLOSED_YEAR, YEAR].map((y) =>
-      prisma.accFiscalYear.findFirstOrThrow({
-        where: { year_label: String(y) },
-        select: { id: true, status: true, start_date: true },
-      })
-    )
-  );
-  if (closed.status === "Closed") return;
-
   const companies = await prisma.sysCompany.findMany({
     orderBy: { is_parent: "desc" },
     select: { id: true, is_parent: true },
   });
   const induk = companies.find((c) => c.is_parent)!;
+  const yearOf = (companyId: number, y: number) =>
+    prisma.accFiscalYear.findFirstOrThrow({
+      where: { company_id: companyId, year_label: String(y) },
+      select: { id: true, status: true, start_date: true },
+    });
+  const [closed, current] = await Promise.all([yearOf(induk.id, CLOSED_YEAR), yearOf(induk.id, YEAR)]);
+  if (closed.status === "Closed") return;
 
   const balances = await prisma.cashBankBalance.findMany({
     where: { cash_bank: { company_id: induk.id } },
@@ -822,7 +823,7 @@ async function injectClosedYear(actor: number) {
       : null;
     for (const company of companies) {
       await recordFiscalClosing(tx, {
-        fiscalYearId: closed.id,
+        fiscalYearId: company.is_parent ? closed.id : (await yearOf(company.id, CLOSED_YEAR)).id,
         companyId: company.id,
         closingJournalId: null,
         openingBalanceId: company.is_parent ? opening?.id ?? null : null,

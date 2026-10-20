@@ -10,6 +10,7 @@ import {
   fiscalYearAfter,
   fiscalYearForClosing,
   openFiscalYears,
+  unlockedPeriods,
   recordFiscalClosing,
   carriedYearsBefore,
   type FiscalYearForClosing,
@@ -95,6 +96,7 @@ export type ClosingCheckKey =
   | "year_open"
   | "oldest_open"
   | "not_yet_closed"
+  | "periods_locked"
   | "next_year"
   | "accumulated_account"
   | "no_draft_journal"
@@ -218,6 +220,24 @@ async function runChecks(
       state.status === "Closed"
         ? `Sudah ditutup pada ${formatDate(state.closedAt ?? new Date())}. Penutupan tidak dapat diulang.`
         : "Belum ditutup.",
+  });
+
+  // 3b. Every period must be Locked first. A lock is reversible and refuses
+  //     postings, so the close works on a year nobody is still posting into;
+  //     the close itself then makes the twelve periods Closed for good.
+  const periods = await unlockedPeriods(year.id);
+  checks.push({
+    key: "periods_locked",
+    label: "Seluruh periode tahun buku sudah dikunci",
+    ok: year.status === "Open" && periods.total > 0 && periods.unlocked.length === 0,
+    detail:
+      year.status !== "Open"
+        ? "Tahun buku tidak Open."
+        : !periods.total
+          ? "Tahun buku belum memiliki periode."
+          : periods.unlocked.length
+            ? `Belum dikunci: ${periods.unlocked.join(", ")}. Kunci di Accounting › Fiscal Year.`
+            : `${periods.total} periode terkunci.`,
   });
 
   // 4. The next year must exist. It is **refused, not created**: a fiscal year
@@ -360,7 +380,8 @@ export async function closingPlan(
     }),
     fiscalYearForClosing(fiscalYearId),
   ]);
-  if (!company || !year) return null;
+  // A year is one Company's; another Company's year is not this one's to close.
+  if (!company || !year || year.companyId !== company.id) return null;
 
   const next = await fiscalYearAfter(year);
 
@@ -649,7 +670,7 @@ export async function closableYears(
   companyId: number
 ): Promise<{ id: number; label: string; name: string; closed: boolean }[]> {
   const [open, closed] = await Promise.all([
-    openFiscalYears(),
+    openFiscalYears(companyId),
     closedFiscalYearsFor(companyId),
   ]);
 

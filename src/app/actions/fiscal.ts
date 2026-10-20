@@ -4,10 +4,18 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
-import { checkYearOpenable, ensureFiscalPeriods, parseYear } from "@/lib/siba/fiscal";
+import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import {
+  changeFiscalPeriodStatus,
+  checkYearOpenable,
+  ensureFiscalPeriods,
+  parseYear,
+} from "@/lib/siba/fiscal";
+import {
+  FISCAL_PERIOD_TRANSITIONS,
   FISCAL_YEAR_TRANSITIONS,
   transitionAllowed,
+  type FiscalPeriodAction,
   type FiscalYearAction,
   type FiscalYearStatus,
 } from "@/lib/siba/fiscal-workflow";
@@ -38,9 +46,11 @@ export async function transitionFiscalYear(
   if (!transition) return { ok: false, message: "Aksi tidak dikenal." };
 
   let actorId: number;
+  let companyIds: number[];
   try {
     const actor = await authorizeAction(transition.permission);
     actorId = actor.user.id;
+    companyIds = await accessibleCompanyIds(actor.permissions);
   } catch (error) {
     if (isAccessDenied(error)) return { ok: false, message: error.message };
     throw error;
@@ -48,9 +58,11 @@ export async function transitionFiscalYear(
 
   const year = await prisma.accFiscalYear.findUnique({
     where: { id },
-    select: { id: true, year_label: true, status: true },
+    select: { id: true, year_label: true, status: true, company_id: true },
   });
-  if (!year) return { ok: false, message: "Tahun buku tidak ditemukan." };
+  if (!year || !companyIds.includes(year.company_id)) {
+    return { ok: false, message: "Tahun buku tidak ditemukan." };
+  }
 
   if (!transitionAllowed(action, year.status as FiscalYearStatus)) {
     return {
@@ -101,4 +113,35 @@ export async function transitionFiscalYear(
   revalidatePath("/dashboard");
 
   return { ok: true, status: transition.to, message: transition.done, periods };
+}
+
+/**
+ * Locks or unlocks one period of an Open year — the period list's one action.
+ * Permission and Company scope are asked here; the state rules and the lock
+ * against a concurrent posting live in `changeFiscalPeriodStatus`.
+ */
+export async function transitionFiscalPeriod(
+  periodId: number,
+  action: FiscalPeriodAction
+): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+  const transition = FISCAL_PERIOD_TRANSITIONS[action];
+  if (!transition) return { ok: false, message: "Aksi tidak dikenal." };
+
+  let actorId: number;
+  let companyIds: number[];
+  try {
+    const actor = await authorizeAction(transition.permission);
+    actorId = actor.user.id;
+    companyIds = await accessibleCompanyIds(actor.permissions);
+  } catch (error) {
+    if (isAccessDenied(error)) return { ok: false, message: error.message };
+    throw error;
+  }
+
+  const result = await changeFiscalPeriodStatus(periodId, action, actorId, companyIds);
+  if (!result.ok) return result;
+
+  revalidatePath("/accounting/fiscal-year/[id]", "page");
+  revalidatePath("/budget/budget");
+  return { ok: true, message: `${transition.done}: ${result.periodName}` };
 }

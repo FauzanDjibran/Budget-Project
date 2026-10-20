@@ -12,6 +12,7 @@ import {
   prisma,
   systemUserId,
   systemAccountFixture,
+  lockYearForClose,
 } from "./helpers";
 
 /**
@@ -60,6 +61,7 @@ async function makeYear(
   const row = await prisma.accFiscalYear.create({
     data: {
       year_code: `${YEAR_PREFIX}${year}`,
+      company_id: company,
       year_label: String(year),
       year_name: `Tahun Buku ${year}`,
       start_date: new Date(Date.UTC(year, 0, 1)),
@@ -255,6 +257,7 @@ before(async () => {
   ]);
 
   // Closing 1980 writes the snapshot dated 01/01/1981.
+  await lockYearForClose(year1980);
   const closed = await executeClosing(company, year1980, actor);
   assert.equal(closed.ok, true, JSON.stringify(closed));
 
@@ -456,6 +459,7 @@ describe("the latest snapshot on or before the date is the one used", () => {
       data: { status: "Closed" },
     });
 
+    await lockYearForClose(year1981);
     const closed = await executeClosing(company, year1981, actor);
     assert.equal(closed.ok, true, JSON.stringify(closed));
 

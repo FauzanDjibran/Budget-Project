@@ -204,6 +204,8 @@ async function main() {
     await tx.accOpeningBalanceLine.deleteMany({ where: { opening_id: { in: snapshotIds } } });
     await tx.accOpeningBalance.deleteMany({ where: { id: { in: snapshotIds } } });
     await tx.accFiscalYear.updateMany({ where: { status: "Closed" }, data: { status: "Open" } });
+    // A close made its periods Closed; they return Locked, as a close found them.
+    await tx.accFiscalPeriod.updateMany({ where: { status: "Closed" }, data: { status: "Locked" } });
 
     await tx.subLedger.deleteMany();
     await tx.subLedgerBalance.deleteMany();

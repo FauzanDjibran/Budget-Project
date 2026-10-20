@@ -98,6 +98,8 @@ before(async () => {
       await prisma.accFiscalYear.create({
         data: {
           year_code: FIXTURE_YEAR_CODE,
+          // The snapshots this suite writes are the anak's, so the year is too.
+          company_id: anak,
           year_label: String(FIXTURE_YEAR),
           year_name: `Tahun Buku ${FIXTURE_YEAR}`,
           start_date: new Date(Date.UTC(FIXTURE_YEAR, 0, 1)),

@@ -98,7 +98,7 @@ or invariants that assume a particular row exists.
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is created Draft, activated into Open, and its twelve periods are generated at that moment. |
 | Backdating | Done — every posting document carries a Tanggal Dokumen chosen on the draft, any day up to today inside a year every Company it writes into still has open. All its book entries and its journal are dated by it; the moment of posting is kept beside it. A posting and a close hold one lock per year and Company, so neither can land inside the other. The book reports read by date and carry no running balance (§12) |
-| Period control (lock, closing, Opening Balance) | Done — a posting is allowed only inside an Open year its Company has not closed, enforced on all four posting paths. **Fiscal Year Closing** moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, and stamps `acc_fiscal_closing`; the year itself reads Closed only once every Company has closed it. Any number of years may stand Open; each Company closes its own oldest first, and no year opens behind a close. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
+| Period control (lock, closing, Opening Balance) | Done — **each Company keeps its own fiscal calendar**, and a posting's date must fall in an **Open period** of its Company's calendar, enforced on every posting path. A period is **locked and unlocked** from its row in the Fiscal Year's period list (`FISCAL_PERIOD_LOCK` / `_UNLOCK`); Locked refuses postings and is only a state. **Fiscal Year Closing** is refused until all twelve periods are Locked; it moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, stamps `acc_fiscal_closing`, and makes the year and its periods Closed. Any number of years may stand Open; each Company closes its own oldest first, and no year opens behind its own Company's close. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
 | Budget module | Done for create → approve → classify — two menus. **Pengajuan Budget**: Budget Month, the register with status tabs and checkbox selection, create/edit, and the Draft → Submit → Approve/Reject lifecycle, each transition one Budget or many at once. **Klasifikasi Budget**: the classifier's queue of Approved Budgets, grouped Company · Arah · Currency, one Category and Partner for a whole selection. Bulk actions are all-or-nothing. Bespoke, not registry-driven. |
 | Finance module — Realisasi Budget | Done for draft → post — two menus (**Realisasi Penerimaan** `RBM-`, **Realisasi Pengeluaran** `RBK-`) over one document and one table. The header is Company · Cash & Bank · Currency · kurs and nothing else: no Purpose, no Partner, so one document settles Budgets of every category and every Partner. Post writes **one Cash Bank Book entry and one subject-book entry per Budget**, each reading the Budget's own description, and one journal: a cash line, a counter line per Budget on its own mapped account and Partner, and an FX line per Budget where one arises. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak's document is an ordinary Realisasi that does not name its cash: its Budgets and the open items each line settles are chosen on its draft, exactly as on the induk's. Ajukan Dana checks the lines (mapping, items) and freezes it at `Pending`, raising an `Open` request. The induk confirms by stating the cash side — resource, and its layer or kurs — and sees both journals first. One transaction then writes what a Realisasi Post writes (a Cash Bank Book entry per Budget on the induk's resource, the anak's subject-book entries per Budget or per settled item), a journal each — the bridge line carries the cash line's own figures, and every Selisih Kurs is the anak's — every Budget's realization, the Posted status and the request's closure. Foreign currency works as on the direct route. No rejection and no partial funding. Intercompany settlement is not built |
@@ -198,7 +198,7 @@ of its own.
 | Record naming | `src/lib/siba/record-title.ts` | How a record names itself, for forms, lists and the audit log; client-safe |
 | Audit vocabulary | `src/lib/siba/audit-events.ts` | An `event` key -> its past-tense label, icon and tone, read from the owning workflow table; client-safe |
 | Audit reading | `src/lib/siba/audit.ts` | `entity_key` -> subject, `row_id` -> title, each resolved by the owning module; `server-only` |
-| Fiscal calendar | `src/lib/siba/fiscal.ts` | Fiscal Year shape, generation of its twelve periods, reading them back, the posting lock (`checkPostingPeriod`), and the per-Company closing record with the year's `Closed` rollup over it; `server-only` |
+| Fiscal calendar | `src/lib/siba/fiscal.ts` | One calendar per Company: Fiscal Year shape, generation of its twelve periods, reading them back, the posting lock (`checkPostingPeriod` — an Open period of the Company's calendar), locking and unlocking a period (`changeFiscalPeriodStatus`), and the closing record; `server-only` |
 | Fiscal Year lifecycle | `src/lib/siba/fiscal-workflow.ts` | Draft → Open → Closed, each transition's permission, the no-opening-behind-a-close rule, and the `runAt` that sends closing to its own screen; client-safe |
 | Startup check | `src/lib/siba/startup-check.ts` | Is the database the one this build expects; read at boot by `instrumentation-node.ts`; `server-only` |
 | System Default catalogue | `src/lib/siba/system-defaults.ts` | Every value the app prefills with; client-safe |
@@ -964,11 +964,12 @@ Implemented and enforced:
    resolves to exactly one postable, active account of that same company. The Partner
    Category applies only where the Budget Category takes one, and must
    be one it accepts.
-17. **A fiscal period is generated, never authored.** A Fiscal Year is created by
-   choosing a year; its name, 01/01 start and 31/12 end all follow. Activating it
-   generates exactly twelve periods, one per calendar month, and they are read from
-   inside the year that owns them. Fiscal Period has no menu, no route and no
-   permissions of its own — see §12.
+17. **A fiscal period is generated, never authored.** A Fiscal Year belongs to one
+   Company and is created by choosing a year; its name, 01/01 start and 31/12 end
+   all follow. Activating it generates exactly twelve periods, one per calendar
+   month, and they are read from inside the year that owns them. Fiscal Period has
+   no menu, no route and no form; its one action is **Kunci / Buka Kunci** on its
+   row, under `FISCAL_PERIOD_LOCK` / `FISCAL_PERIOD_UNLOCK` — see §12.
 
 47. **Every journal balances, or nothing is written.** `postJournal` refuses a
    journal whose debits and credits differ, whose lines carry value on both
@@ -1235,9 +1236,11 @@ Implemented and enforced:
    which partner categories are valid and which directions (In/Out) make sense.
    Direction follows balance-sheet logic, not cash direction. Rule 16 above is the
    Accounting half of this chain; rule 26 below is the Budget half. Both are enforced.
-20. **Budget Month is derived, not stored.** It groups budgets by `acc_fiscal_period`
-    and has no independent lifecycle or table. A budget belongs to the period its
-    `budget_date` falls inside, resolved by a date-range query at read time.
+20. **Budget Month is derived, not stored.** It groups budgets by the calendar months
+    the Companies' `acc_fiscal_period` rows cover — one row per month across both
+    calendars, because a Budget transcends Company — and has no independent
+    lifecycle or table. A budget belongs to the month its `budget_date` falls
+    inside, resolved by a date-range query at read time.
 25. **A budget is created without classification.** Date, Company, Currency, Type,
     Amount and Description are all a planner supplies. `category_id` and `partner_id`
     stay null until classification — concept doc §6.2 and §6.3.
@@ -3307,9 +3310,35 @@ they relate. Keep the table; keep it out of the UI's write path.
   table, and never make `cash_bank_ledger` editable.**
 - **Status:** Frozen, current.
 
+### Each Company keeps its own fiscal calendar, and a period is locked, not closed (FROZEN)
+- **Decision:** `acc_fiscal_year` and `acc_fiscal_period` carry `company_id`: each
+  Company activates, locks and closes its own years (migration
+  `20261021090000_fiscal_calendar_per_company` split every shared year into one per
+  Company and moved each Company's closing record, Opening Balance and `CLS-`
+  source onto its own). A period is `Open`, `Locked` or `Closed`. **A posting's
+  date must fall in an Open period of its Company's calendar** — `checkPostingPeriod`
+  is the one rule, asked on every posting path. **Locked is only a state**: Kunci /
+  Buka Kunci on the period's row in an Open year, in any order, under its own two
+  permissions, holding the same `(year, Company)` advisory lock postings hold.
+  **A year closes only once all twelve periods are Locked**, and its close makes the
+  year and its periods Closed for good.
+- **Reason:** the user's (21/10/2026). Each Company runs its own validation and
+  checking, and the ultimate goal is that no transaction lands outside an available
+  period. It reverses `Initialization/Opening & Closing Update Phase.md` §3.6
+  ("the calendar stays global"), knowingly: Budget Month now reads calendar months
+  across both calendars, and the year shape stays 01/01–31/12 by construction.
+- **Not yet:** no transaction or book table references its fiscal period
+  (`cash_bank_period` keeps its month date), on the user's instruction — to be
+  discussed. The Cash & Bank registration Opening is still not period-checked.
+- **Do not change unless:** explicitly instructed. **Never let a posting land outside
+  an Open period of its own Company's calendar, never make a lock close anything,
+  never close a year with an unlocked period, and never resolve a date to a year or
+  period without its Company.**
+- **Status:** Frozen, current.
+
 ### Fiscal Year is the only fiscal entity; its periods are generated (FROZEN)
 - **Decision:** Fiscal Year is a top-level menu entry. **Fiscal Period is not** — no
-  menu, no route, no form, no permissions of its own. A Fiscal Year is created by
+  menu, no route, no form; its only permissions are Kunci / Buka Kunci (above). A Fiscal Year is created by
   choosing a year from a list; `year_name`, `start_date` (01/01) and `end_date`
   (31/12) are `derived` fields the Server Action writes. A year is always created
   **Draft** and is **activated** into `Open` by a deliberate act — which is what
@@ -3327,8 +3356,8 @@ they relate. Keep the table; keep it out of the UI's write path.
   out from under periods that already exist. Adding `derived` to a field means the
   action must fill it — see `derive()` in `app/actions/master.ts`.
 - **Do not change unless:** explicitly instructed. **Do not give Fiscal Period a menu
-  entry, a route, a registry config, or permissions**, and do not let a period's dates
-  be edited by hand.
+  entry, a route, a registry config, or permissions beyond locking**, and do not let a
+  period's dates be edited by hand.
 - **Status:** Frozen, current.
 
 ### A Fiscal Year has a lifecycle, not a status field (FROZEN)
@@ -3357,19 +3386,17 @@ they relate. Keep the table; keep it out of the UI's write path.
     close writes is what the next year opens from. It is asked **per Company**
     (`carriedYearsBefore` in the `oldest_open` check), so the anak still working in
     2025 never stops the induk closing 2026 — a global "oldest Open year" would have.
-  - **No year opens behind a close.** A year older than one any Company has closed is
+  - **No year opens behind a close.** A year older than one its Company has closed is
     refused activation, because that close froze the Opening Balance every later report
     stands on, and a posting into the older year would move a figure it already froze.
     `activationRefusal` in `fiscal-workflow.ts` is the rule, `checkYearOpenable` asks
     it, and the refusal **names the closes in the way**.
   Gaps are allowed: 2028 may be opened while 2027 does not exist, and closing 2026 is
   refused until 2027 does.
-- **`Closed` is reachable now, and it is a rollup rather than a status anybody sets.**
-  Closing happens **per Company** — the induk can shut 2026 while the anak is still
-  finishing it — and that state lives in `acc_fiscal_closing`, one row per
-  `(fiscal_year, company)`. `AccFiscalYear.status` reads `Closed` only once **every**
-  Company has closed it, written in the same transaction as the last Company's close
-  (`recordFiscalClosing` in `fiscal.ts`). An explicit record rather than a status
+- **`Closed` is reached only by the close, never set.** A year is one Company's, so
+  its close is that Company's: `recordFiscalClosing` in `fiscal.ts` writes the
+  `acc_fiscal_closing` row and turns the year and its twelve periods Closed in one
+  transaction. An explicit record rather than a status
   inferred from the existence of an Opening Balance document: inferring a fact from a
   row in another table works until somebody writes that row for a second reason, and
   then nothing fails.
@@ -3692,8 +3719,10 @@ below in outline because the half of it that still holds is easy to lose.**
 - **Status:** Frozen, current — and already how the code behaves.
 
 ### Budget Month is derived from fiscal period
-- **Decision:** No Budget Month table. Budgets group by `acc_fiscal_period`. The menu or
-  container may exist in the UI, but it reads fiscal periods.
+- **Decision:** No Budget Month table. Budgets group by the calendar months the
+  Companies' `acc_fiscal_period` rows cover, one row per month across both calendars
+  (any period id of the month names it). The menu or container may exist in the UI,
+  but it reads fiscal periods.
 - **Reason:** It has no independent lifecycle or business purpose — it is purely a
   grouping concept.
 - **Impact:** Implemented as
@@ -4764,15 +4793,18 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
   mode, write a minus sign or a hand-made dash in one of its money cells, or move
   the currency off the figures into a column header (§8).
 - Do **not** give Fiscal Period a menu entry, a route, a registry config, or
-  permissions, and do **not** let a period's dates be edited by hand. Periods are
-  generated when a Fiscal Year is activated (§12).
+  permissions beyond Kunci / Buka Kunci, and do **not** let a period's dates be edited
+  by hand. Periods are generated when a Fiscal Year is activated (§12).
+- Do **not** let a posting land outside an Open period of its own Company's calendar,
+  close a year with a period still Open, or resolve a date to a year without its
+  Company (§12).
 - Do **not** make a Fiscal Year's `status` an editable field, add a transition back
-  to Draft, or add a path that reopens a closed year. `Closed` is a rollup over
-  `acc_fiscal_closing`, never a value anybody sets (§12).
+  to Draft, or add a path that reopens a closed year. `Closed` is written by the
+  close, never a value anybody sets (§12).
 - Do **not** put a limit back on how many Fiscal Years stand Open, and do **not**
   let a Company close any but its own oldest unclosed year — the newer would have
   no successor to inherit its snapshot. Do **not** activate a year older than one
-  any Company has closed; that close froze its Opening Balance (§12).
+  its Company has closed; that close froze its Opening Balance (§12).
 - Do **not** offer `close` as a header confirm button. It carries a `runAt` because
   it needs a Company, a checklist and a preview of the journal it is about to post
   (§12).

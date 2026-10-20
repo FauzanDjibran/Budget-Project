@@ -986,13 +986,24 @@ export const ENTITIES: Entity[] = [
     module: "accounting",
     name: "Fiscal Year",
     icon: "cal",
-    desc: "Tahun buku. Periode bulanan di dalamnya dibuat otomatis saat tahun buku diaktifkan.",
+    desc: "Tahun buku per Company. Periode bulanan di dalamnya dibuat otomatis saat tahun buku diaktifkan.",
     codeField: "year_code",
     codePrefix: "fyr",
     labelField: "year_label",
     nameField: "year_name",
     statusModel: FISCAL_STATUS,
+    // Each Company keeps its own calendar, so the list shows one at a time.
+    scope: "company_id",
     fields: [
+      {
+        name: "company_id",
+        label: "Company",
+        type: "ref",
+        ref: "sys_company",
+        required: true,
+        locked: true,
+        help: "setiap Company memiliki kalender sendiri",
+      },
       {
         name: "year_label",
         label: "Tahun",
@@ -1000,6 +1011,7 @@ export const ENTITIES: Entity[] = [
         options: YEAR_OPTIONS,
         required: true,
         unique: true,
+        uniqueWithin: "company_id",
         ident: true,
         locked: true,
         help:

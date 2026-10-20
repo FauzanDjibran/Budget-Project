@@ -100,6 +100,15 @@ enum FiscalStatus {
   Closed
 }
 
+/// A fiscal period's state within its Company's calendar. `Open` accepts
+/// postings; `Locked` refuses them and may be unlocked again — it is a state,
+/// not a close; `Closed` is reached only when the year closes, and is final.
+enum FiscalPeriodStatus {
+  Open
+  Locked
+  Closed
+}
+
 /// Whether one Company has closed one fiscal year.
 ///
 /// Deliberately not `FiscalStatus`: a closing has no Draft. A year is either
@@ -371,6 +380,8 @@ model SysCompany {
   journals AccJournal[]
 
   fiscal_closings  AccFiscalClosing[]
+  fiscal_years     AccFiscalYear[]
+  fiscal_periods   AccFiscalPeriod[]
   opening_balances AccOpeningBalance[]
   system_accounts  AccSystemAccount[]
 
@@ -1178,8 +1189,11 @@ model AccBudgetCategoryAccount {
   @@map("acc_budget_category_account")
 }
 
+/// One Company's fiscal year. Each Company keeps its own calendar, so it
+/// activates, locks and closes its years without waiting on the other.
 model AccFiscalYear {
   id         Int          @id @default(autoincrement())
+  company_id Int
   year_code  String       @unique
   year_label String
   year_name  String
@@ -1193,6 +1207,7 @@ model AccFiscalYear {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
+  company  SysCompany         @relation(fields: [company_id], references: [id])
   periods  AccFiscalPeriod[]
   closings AccFiscalClosing[]
 
@@ -1202,20 +1217,24 @@ model AccFiscalYear {
   opening_balances         AccOpeningBalance[] @relation("OpeningBalanceYear")
   sourced_opening_balances AccOpeningBalance[] @relation("OpeningBalanceSource")
 
+  @@unique([company_id, year_label])
   @@map("acc_fiscal_year")
 }
 
 model AccFiscalPeriod {
-  id             Int          @id @default(autoincrement())
+  id             Int                @id @default(autoincrement())
   fiscal_year_id Int
+  /// The year's Company, copied when the periods are generated so a date can
+  /// be resolved to one Company's period by a unique key.
+  company_id     Int
   sequence_no    Int
-  period_code    String       @unique
+  period_code    String             @unique
   period_label   String
   period_name    String
-  start_date     DateTime     @db.Date
-  end_date       DateTime     @db.Date
+  start_date     DateTime           @db.Date
+  end_date       DateTime           @db.Date
   note           String?
-  status         FiscalStatus @default(Draft)
+  status         FiscalPeriodStatus @default(Open)
 
   created_by Int
   updated_by Int?
@@ -1223,7 +1242,9 @@ model AccFiscalPeriod {
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   fiscal_year AccFiscalYear @relation(fields: [fiscal_year_id], references: [id])
+  company     SysCompany    @relation(fields: [company_id], references: [id])
 
+  @@unique([company_id, start_date])
   @@index([fiscal_year_id])
   @@map("acc_fiscal_period")
 }

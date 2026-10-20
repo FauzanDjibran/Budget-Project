@@ -12,7 +12,7 @@ import { revaluationNumbersByIds } from "./cash-bank-revaluation";
 import { conversionNumbersByIds } from "./item-conversion";
 import { reclassNumbersByIds } from "./item-reclass";
 import { fundingRequestNumbersByIds } from "./funding";
-import { fiscalClosingLabels } from "./fiscal";
+import { fiscalClosingLabels, fiscalPeriodLabels } from "./fiscal";
 import { journalNumbersByIds } from "./journal";
 import { openingBalanceNumbersByIds } from "./opening-balance";
 import { userLabels, roleLabels } from "./users";
@@ -115,6 +115,10 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
   acc_fiscal_closing: {
     label: "Penutupan Fiscal Year",
     resolve: fiscalClosingLabels,
+  },
+  acc_fiscal_period: {
+    label: "Fiscal Period",
+    resolve: fiscalPeriodLabels,
   },
   sys_user: { label: "User", resolve: userLabels },
   sys_role: { label: "Role", resolve: roleLabels },

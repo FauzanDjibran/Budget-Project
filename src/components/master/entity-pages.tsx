@@ -25,6 +25,7 @@ import { cashBankBookSummary } from "@/lib/siba/cash-bank";
 import { fiscalYearPeriods } from "@/lib/siba/fiscal";
 import { defaultCurrencyId } from "@/lib/siba/system-settings";
 import {
+  fiscalPeriodAbilities,
   fiscalYearAbilities,
   availableActions as availableFiscalActions,
   type FiscalYearStatus,
@@ -225,6 +226,7 @@ export async function EntityDetailPage({
           periods={await fiscalYearPeriods(row.id)}
           yearLabel={String(row.year_label ?? "")}
           yearStatus={String(row.status ?? "")}
+          can={fiscalPeriodAbilities(actor.permissions)}
         />
         <RecordHistoryCard entityKey={entity.key} rowId={row.id} />
       </>

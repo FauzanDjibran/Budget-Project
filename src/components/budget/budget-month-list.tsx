@@ -173,7 +173,7 @@ function MonthRow({
       </td>
       <td>
         <span className={`bdg ${PERIOD_CLASS[month.status] ?? "s-mute"}`}>
-          {month.status}
+          {PERIOD_TEXT[month.status] ?? month.status}
         </span>
       </td>
       <td style={{ textAlign: "right", paddingRight: 9 }}>
@@ -186,7 +186,9 @@ function MonthRow({
 }
 
 const PERIOD_CLASS: Record<string, string> = {
-  Draft: "s-warn",
   Open: "s-ok",
+  Locked: "s-warn",
   Closed: "s-mute",
 };
+
+const PERIOD_TEXT: Record<string, string> = { Locked: "Terkunci" };

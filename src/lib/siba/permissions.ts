@@ -132,10 +132,22 @@ export const PERMISSIONS = [
     description: "Menentukan ke account mana posting otomatis ditulis.",
   },
 
-  // Fiscal Period carries no permissions of its own: it has no menu and no
-  // form. Periods are generated when a Fiscal Year is opened and are read from
-  // inside it, so seeing and opening a year is the whole capability.
+  // A Fiscal Period has no menu and no form: periods are generated when a
+  // Fiscal Year is opened and read from inside it. Locking one is its only
+  // action, run from the year's period list.
   { code: "FISCAL_YEAR_VIEW", name: "Lihat Fiscal Year", module: "accounting", description: "Termasuk Fiscal Period di dalamnya." },
+  {
+    code: "FISCAL_PERIOD_LOCK",
+    name: "Kunci Fiscal Period",
+    module: "accounting",
+    description: "Menolak posting bertanggal di dalam periode itu sampai kuncinya dibuka.",
+  },
+  {
+    code: "FISCAL_PERIOD_UNLOCK",
+    name: "Buka Kunci Fiscal Period",
+    module: "accounting",
+    description: "Periode yang terkunci kembali menerima posting.",
+  },
   { code: "FISCAL_YEAR_CREATE", name: "Tambah Fiscal Year", module: "accounting" },
   { code: "FISCAL_YEAR_EDIT", name: "Ubah Fiscal Year", module: "accounting", description: "Catatan tahun buku. Status bukan isian dan tidak berubah lewat Ubah." },
   {
@@ -144,7 +156,7 @@ export const PERMISSIONS = [
     module: "accounting",
     description:
       "Memindahkan hasil tahun berjalan ke ekuitas dan membuat Opening Balance " +
-      "tahun berikutnya, untuk satu Company. Tidak dapat dibatalkan.",
+      "tahun berikutnya. Seluruh periodenya harus terkunci. Tidak dapat dibatalkan.",
   },
 
   // Viewing is the whole capability. An Opening Balance is written by a
