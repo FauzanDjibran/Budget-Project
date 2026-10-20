@@ -1,8 +1,11 @@
 # SIBA 3.0 — Fiscal Calendar per Company, and Period Closing
 
-> **Status: proposed, not executed.** Drafted 20/10/2026 at the user's request.
-> No code, schema or KB has been changed. Section 1 needs the user's decision
-> before anything starts.
+> **Status: built as option A, 21/10/2026 (commit `ee694a8`), with the user's
+> answers replacing §1.2:** a period is Open or **Locked** — locked and unlocked
+> freely, in any order, from its row; Locked is only a state, never a close. A year
+> closes only once all twelve periods are Locked, and its close makes them Closed.
+> No transaction or book table references a fiscal period yet, `cash_bank_period`
+> included — to be discussed. Still open: the KB question (§1.3) and Neon.
 
 ## Goal
 
