@@ -314,6 +314,7 @@ describe("the defaults a new Budget and a new Realisasi start from", () => {
       assert.equal(await defaultRealizationCashBank(), null);
     } finally {
       await writeSystemDefaults({ default_realization_cash_bank: previous.default_realization_cash_bank ?? null }, actor);
+      await prisma.cashBankPeriod.deleteMany({ where: { cash_bank_id: { in: [rupiah, foreign, retired] } } });
       await prisma.mCashBank.deleteMany({ where: { id: { in: [rupiah, foreign, retired] } } });
     }
   });

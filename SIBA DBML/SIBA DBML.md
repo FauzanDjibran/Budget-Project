@@ -456,6 +456,39 @@ table cash_bank_balance {
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 }
 
+// One row per resource per calendar month, written by `recordCashBankEntry`
+// with the entry, so a backdated movement is checked without reading the book
+// from its first entry. The months form an unbroken chain from the first
+// entry's to the latest's; each `opening` is the previous `closing`. Keyed on
+// the month, not on acc_fiscal_period: a fiscal year may be missing, and a
+// book depends on no module.
+table cash_bank_period {
+  cash_bank_id                int [not null, ref : > m_cash_bank.id]
+  period                      date [not null, note: 'first day of the month']
+
+  opening                     decimal(18,2) [not null, default: 0]
+  total_in                    decimal(18,2) [not null, default: 0]
+  total_out                   decimal(18,2) [not null, default: 0]
+  closing                     decimal(18,2) [not null, default: 0]
+  // The lowest the balance stands in the month, opening included. A backdated
+  // movement shifts every later month by itself, so MIN(min_balance) + movement
+  // over them is the whole check.
+  min_balance                 decimal(18,2) [not null, default: 0]
+
+  // Base measure, for reports; not validated. A nil movement (revaluation)
+  // counts on the out side.
+  base_opening                decimal(18,2) [not null, default: 0]
+  base_total_in               decimal(18,2) [not null, default: 0]
+  base_total_out              decimal(18,2) [not null, default: 0]
+  base_closing                decimal(18,2) [not null, default: 0]
+
+  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (cash_bank_id, period) [pk]
+  }
+}
+
 table cash_bank_layer {
   id                          int [pk, increment, not null]
 

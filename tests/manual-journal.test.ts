@@ -350,6 +350,7 @@ describe("a manual journal may not touch a control account", () => {
       "the second resource still reconciles against it"
     );
 
+    await prisma.cashBankPeriod.deleteMany({ where: { cash_bank_id: { in: [moving, staying] } } });
     await prisma.mCashBank.deleteMany({ where: { id: { in: [moving, staying] } } });
   });
 

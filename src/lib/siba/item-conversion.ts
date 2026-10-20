@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney, formatRate, sumByCurrency, type MoneyTotal } from "@/lib/format";
-import { InsufficientFunds, recordCashBankEntry } from "./cash-bank";
+import { InsufficientFunds, lockCashBanks, recordCashBankEntry } from "./cash-bank";
 import {
   LayerNotAvailable,
   drawFromLayer,
@@ -912,6 +912,7 @@ export async function applyConversion(
       // settling this Partner's foreign items waits here, and reads what this
       // one left.
       await lockSubledgerPosition(tx, book.categoryId, doc.partner_id, doc.currency_id);
+      await lockCashBanks(tx, [doc.from_cash_bank_id, ...doc.lines.map((l) => l.to_cash_bank_id)]);
 
       // The items as they stand under the lock, tracked across lines so an
       // item split between two lines relieves its second part from what the

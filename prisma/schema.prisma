@@ -644,6 +644,7 @@ model MCashBank {
   ledger           CashBankLedger[]
   layers           CashBankLayer[]
   book_balance     CashBankBalance?
+  book_periods     CashBankPeriod[]
   funding_requests FinFundingRequest[]
 
   @@index([company_id])
@@ -752,6 +753,46 @@ model CashBankBalance {
   cash_bank MCashBank @relation(fields: [cash_bank_id], references: [id])
 
   @@map("cash_bank_balance")
+}
+
+/// One row per resource per calendar month, so a backdated movement can be
+/// checked without reading the book from its first entry. Written only by
+/// `recordCashBankEntry`, in the same transaction as the entry; the months of
+/// one resource form an unbroken chain from its first entry's month to its
+/// latest. Keyed on the month rather than on `acc_fiscal_period`: a fiscal year
+/// may be missing (2028 open without 2027), and a book depends on no module.
+model CashBankPeriod {
+  cash_bank_id Int
+  /// The first day of the month.
+  period       DateTime @db.Date
+
+  /// In the resource's own currency. `closing = opening + total_in - total_out`,
+  /// and the next month's `opening` is this `closing`.
+  opening     Decimal @default(0) @db.Decimal(18, 2)
+  total_in    Decimal @default(0) @db.Decimal(18, 2)
+  total_out   Decimal @default(0) @db.Decimal(18, 2)
+  closing     Decimal @default(0) @db.Decimal(18, 2)
+  /// The lowest the balance stands at any moment of the month, the opening
+  /// included. A backdated movement shifts every later month by the same
+  /// amount, so `MIN(min_balance) + movement` over them answers whether any of
+  /// them would go below zero without reading their entries.
+  min_balance Decimal @default(0) @db.Decimal(18, 2)
+
+  /// The same four in base currency, for the reports. Not validated: a
+  /// revaluation moves base alone, and what may not go negative is the money.
+  /// A movement of nil (a revaluation) counts on the out side, as the Buku
+  /// Kas & Bank report places it.
+  base_opening   Decimal @default(0) @db.Decimal(18, 2)
+  base_total_in  Decimal @default(0) @db.Decimal(18, 2)
+  base_total_out Decimal @default(0) @db.Decimal(18, 2)
+  base_closing   Decimal @default(0) @db.Decimal(18, 2)
+
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  cash_bank MCashBank @relation(fields: [cash_bank_id], references: [id])
+
+  @@id([cash_bank_id, period])
+  @@map("cash_bank_period")
 }
 
 // ------------------------------------------------------------- rate layers

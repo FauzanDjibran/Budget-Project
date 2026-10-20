@@ -264,7 +264,7 @@ source scan and needs no database.
 | Pencairan Open Item | `fin_item_conversion(_line, _line_item)` | `lib/siba/item-conversion.ts`, `app/actions/item-conversion.ts` |
 | Reklasifikasi Open Item | `fin_item_reclass(_line, _line_source, _line_target)` | `lib/siba/item-reclass.ts`, `app/actions/item-reclass.ts` |
 | Revaluasi Kurs | `fin_cash_bank_revaluation(_layer)` | `lib/siba/cash-bank-revaluation.ts`, `app/actions/cash-bank-revaluation.ts` |
-| Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
+| Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_period`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` (+ `subledger-data.ts`, which reads the Budget Categories the books are) |
 | Journal | `acc_journal(_line)` | `lib/siba/journal.ts` (`ledger.ts` reads them — rule 22); the manual journal's rules sit above it in `lib/siba/manual-journal.ts` + `app/actions/journal.ts` |
 | Fiscal | `acc_fiscal_year`, `acc_fiscal_period`, `acc_fiscal_closing` | `lib/siba/fiscal.ts` |
@@ -4050,11 +4050,20 @@ below in outline because the half of it that still holds is easy to lose.**
   `(entry_date, id)`, state only the period's opening and closing, and
   `reconciles` compares the whole book, summed, with its `_balance` row. The
   user's choice: the materialised `_balance` tables are what is read.
-- **What does not change.** The zero rules are asked of the balance **as it
-  stands when the posting is written**, not as of the backdated day — accepted
-  by the user for base currency; a foreign resource is still protected by its
-  layer, which cannot go below zero. A payment may draw on a layer acquired
-  after its own date (the user's decision). Journal numbers run in the order
+- **A Cash & Bank may not go below nothing on any day.** Superseding the
+  earlier "as it stands when posted" rule, on the user's decision
+  (2026-10-20): `recordCashBankEntry` checks a movement against the balance on
+  every day from its own date to now, using `cash_bank_period` — one row per
+  resource per month with opening, in, out, closing and **`min_balance`**, the
+  month's lowest point. It reads the entry's own month of entries and one
+  aggregate over later months (`min_balance + movement ≥ 0`), never the book
+  from its first entry, under a per-resource advisory lock (`lockCashBanks`,
+  taken in id order and after the period and subject-book locks). The refusal
+  names the day, or the month, it would break. The two Cash & Bank reports
+  open from the same table. A payment may still draw on a layer acquired
+  after its own date (the user's decision), as long as the account holds the
+  money that day. Subject-book items are not checked by date yet. Journal
+  numbers run in the order
   journals were written, so `JRN-0102` may be dated before `JRN-0101` —
   accepted. A closed year is sealed exactly as before, so an Opening Balance
   snapshot can never go stale.
@@ -5048,7 +5057,7 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
 | A backdated settlement draws on today's cash layer | A subject-book relief now releases at its open item's own kurs, which never changes, so the obligation side no longer depends on when a backdated document is posted. The cash side still draws on its layer as it stands at posting (§12). |
-| The zero rules ignore the backdated day | A backdated payment is checked against the balance as it stands when posted, so a base-currency book can have been below zero in between. Accepted for base currency; a foreign resource is held by its layers (§12). |
+| A subject-book item is not checked by date | A Cash & Bank is checked on every day from a backdated movement on (§12), but an open item may still be settled by a document dated before it opened (§10 rule 106), so Saldo Buku Subjek can show an item below zero between the two dates. Tahap 2 of the period work closes it. |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
 | Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |

@@ -84,6 +84,8 @@ async function makeCashBank(options: {
   companyId?: number;
   currencyId?: number;
   opening?: number;
+  /** When the opening is dated; today by default. */
+  openedOn?: string;
   status?: "Active" | "Inactive";
 }): Promise<number> {
   const companyId = options.companyId ?? induk;
@@ -107,7 +109,7 @@ async function makeCashBank(options: {
     cashBankId: row.id,
     openingBalance: options.opening ?? 0,
     rate: 1,
-    date: today,
+    date: options.openedOn ?? today,
     actorId: actor,
   });
   cashBanks.push(row.id);
@@ -339,6 +341,7 @@ after(async () => {
     await prisma.cashBankBalance.deleteMany({
       where: { cash_bank_id: { in: cashBanks } },
     });
+    await prisma.cashBankPeriod.deleteMany({ where: { cash_bank_id: { in: cashBanks } } });
     await prisma.mCashBank.deleteMany({ where: { id: { in: cashBanks } } });
   }
   // Fixtures first: a subledger entry points at both a Partner and a
@@ -2176,7 +2179,7 @@ describe("a document may be backdated inside an open year", () => {
   const canBackdate = backdate < today;
 
   test("every book is dated by the document, not by the day it was posted", { skip: !canBackdate }, async () => {
-    const cashBank = await makeCashBank({ opening: 2_000_000 });
+    const cashBank = await makeCashBank({ opening: 2_000_000, openedOn: backdate });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 300_000 });
     const doc = await makeDraft({
       transaction_type: "Out" as const,

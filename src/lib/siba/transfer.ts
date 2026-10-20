@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
-import { InsufficientFunds, cashBankBalanceMap, recordCashBankEntry } from "./cash-bank";
+import { InsufficientFunds, cashBankBalanceMap, lockCashBanks, recordCashBankEntry } from "./cash-bank";
 import { drawFromLayer, openLayer, openLayersFor, type LayerOption } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL, consumesLayer, isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
@@ -1044,6 +1044,7 @@ export async function applyTransfer(
       // The year this is dated in, held against a close and re-asked under
       // the hold: the check above was before the transaction opened.
       await holdPostingPeriod(tx, [doc.company_id], date);
+      await lockCashBanks(tx, [doc.from_cash_bank_id, ...doc.lines.map((l) => l.to_cash_bank_id)]);
 
       // The layers are drawn inside the transaction, which is why the plan is
       // built in here rather than before it opens: a plan that spent a layer

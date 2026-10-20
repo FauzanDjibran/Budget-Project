@@ -383,6 +383,7 @@ after(async () => {
     await prisma.cashBankBalance.deleteMany({
       where: { cash_bank_id: { in: cashBanks } },
     });
+    await prisma.cashBankPeriod.deleteMany({ where: { cash_bank_id: { in: cashBanks } } });
     await prisma.mCashBank.deleteMany({ where: { id: { in: cashBanks } } });
   }
 

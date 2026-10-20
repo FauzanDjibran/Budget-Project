@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   cashBankBalanceMap,
+  cashBankBalanceReport,
+  cashBankLedgerReport,
   cashBookSummary,
   openCashBankBook,
   rebuildCashBankBalance,
@@ -73,6 +75,7 @@ after(async () => {
   if (made.length) {
     await prisma.cashBankLedger.deleteMany({ where: { cash_bank_id: { in: made } } });
     await prisma.cashBankBalance.deleteMany({ where: { cash_bank_id: { in: made } } });
+    await prisma.cashBankPeriod.deleteMany({ where: { cash_bank_id: { in: made } } });
     await prisma.mCashBank.deleteMany({ where: { id: { in: made } } });
   }
   await cleanupFixtures();
@@ -479,5 +482,122 @@ describe("a resource can never hold less than nothing", () => {
       /tidak boleh negatif/,
       "the one path that used to reach a negative balance is closed too"
     );
+  });
+});
+
+describe("a backdated movement is checked on every day from its date on", () => {
+  async function emptyResource(): Promise<number> {
+    const account = await makeAccount({ companyId: company, subcategoryLabel: CASH_BANK_SUBCATEGORY });
+    const key = `${FIXTURE_PREFIX}CBP${made.length + 1}${Date.now() % 100000}`;
+    const row = await prisma.mCashBank.create({
+      data: {
+        cash_bank_code: `test.${key}`,
+        cash_bank_label: key,
+        cash_bank_name: `Fixture ${key}`,
+        company_id: company,
+        cash_bank_type: "Cash",
+        currency_id: currency,
+        account_id: account,
+        created_by: actor,
+      },
+      select: { id: true },
+    });
+    await openCashBankBook(prisma, { cashBankId: row.id, openingBalance: 0, rate: 1, date: today, actorId: actor });
+    made.push(row.id);
+    return row.id;
+  }
+  const move = (id: number, date: string, signed: number) =>
+    recordCashBankEntry(prisma, {
+      cashBankId: id,
+      date,
+      type: "Transaction",
+      direction: signed > 0 ? "In" : "Out",
+      amount: Math.abs(signed),
+      rate: 1,
+      actorId: actor,
+    });
+
+  /** Every month row equals what the entries, read in date order, say it is. */
+  async function assertChainMatchesBook(id: number) {
+    const [periods, entries] = await Promise.all([
+      prisma.cashBankPeriod.findMany({ where: { cash_bank_id: id }, orderBy: { period: "asc" } }),
+      prisma.cashBankLedger.findMany({
+        where: { cash_bank_id: id },
+        orderBy: [{ entry_date: "asc" }, { id: "asc" }],
+      }),
+    ]);
+    let run = 0;
+    for (const p of periods) {
+      const next = new Date(Date.UTC(p.period.getUTCFullYear(), p.period.getUTCMonth() + 1, 1));
+      const inMonth = entries.filter((e) => e.entry_date >= p.period && e.entry_date < next);
+      assert.equal(p.opening.toNumber(), run, `opening ${p.period.toISOString()}`);
+      let min = run;
+      let tin = 0;
+      let tout = 0;
+      for (const e of inMonth) {
+        const m = e.movement.toNumber();
+        run += m;
+        min = Math.min(min, run);
+        if (m > 0) tin += m;
+        else tout -= m;
+      }
+      assert.equal(p.total_in.toNumber(), tin);
+      assert.equal(p.total_out.toNumber(), tout);
+      assert.equal(p.closing.toNumber(), run);
+      assert.equal(p.min_balance.toNumber(), min, `min ${p.period.toISOString()}`);
+    }
+    const months = new Set(entries.map((e) => e.entry_date.toISOString().slice(0, 7)));
+    for (const m of months) {
+      assert.ok(periods.some((p) => p.period.toISOString().startsWith(m)), `month ${m} has a row`);
+    }
+  }
+
+  test("a payment that would take an earlier day below nothing is refused, though the month closes positive", async () => {
+    const id = await emptyResource();
+    await move(id, "2020-01-01", 100);
+    await move(id, "2020-01-05", -80);
+    await move(id, "2020-01-20", 200);
+    await assert.rejects(() => move(id, "2020-01-03", -50), /tidak mencukupi pada 05\/01\/2020: tersedia 20/);
+    await move(id, "2020-01-03", -20);
+    await assertChainMatchesBook(id);
+  });
+
+  test("a payment that would take a later month's lowest point below nothing is refused", async () => {
+    const id = await emptyResource();
+    await move(id, "2020-01-01", 220);
+    await move(id, "2020-02-02", -210);
+    await move(id, "2020-02-25", 500);
+    await assert.rejects(() => move(id, "2020-01-15", -50), /tidak mencukupi pada bulan 02\/2020: tersedia 10/);
+    await move(id, "2020-01-15", -10);
+    await assertChainMatchesBook(id);
+  });
+
+  test("a movement dated before the first entry extends the chain backwards", async () => {
+    const id = await emptyResource();
+    await move(id, "2020-03-10", 100);
+    await assert.rejects(() => move(id, "2020-01-10", -1), /tidak mencukupi pada 10\/01\/2020: tersedia 0/);
+    await move(id, "2020-01-10", 40);
+    await move(id, "2020-02-10", -30);
+    await move(id, "2020-06-10", -100);
+    await assertChainMatchesBook(id);
+    const rows = await prisma.cashBankPeriod.count({ where: { cash_bank_id: id } });
+    assert.equal(rows, 6, "January to June, unbroken");
+  });
+
+  test("the reports open from the month row and agree with the full scan", async () => {
+    const id = await emptyResource();
+    await move(id, "2020-01-05", 1_000);
+    await move(id, "2020-02-03", -300);
+    await move(id, "2020-02-20", 50);
+    await move(id, "2020-01-25", -100);
+    const ledger = await cashBankLedgerReport(id, { from: "2020-02-10", to: "2020-02-28" }, [company]);
+    assert.equal(ledger?.opening, 600);
+    assert.equal(ledger?.closing, 650);
+    const later = await cashBankLedgerReport(id, { from: "2020-05-01", to: "2020-05-31" }, [company]);
+    assert.equal(later?.opening, 650, "a month after the chain carries its last closing");
+    const earlier = await cashBankLedgerReport(id, { from: "2019-12-01", to: "2019-12-31" }, [company]);
+    assert.equal(earlier?.opening, 0);
+    const summary = await cashBankBalanceReport({ from: "2020-02-10", to: "2020-02-28" }, [company], id);
+    assert.equal(summary.groups[0]?.rows[0]?.opening, 600);
   });
 });

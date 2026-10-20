@@ -484,6 +484,7 @@ export async function cleanupFixtures(): Promise<void> {
     }
     await prisma.cashBankLayer.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.cashBankLedger.deleteMany({ where: { cash_bank_id: { in: ids } } });
+    await prisma.cashBankPeriod.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.cashBankBalance.deleteMany({ where: { cash_bank_id: { in: ids } } });
     await prisma.mCashBank.deleteMany({ where: { id: { in: ids } } });
   }

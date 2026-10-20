@@ -210,6 +210,7 @@ async function main() {
 
     await tx.cashBankLedger.deleteMany();
     await tx.cashBankLayer.deleteMany();
+    await tx.cashBankPeriod.deleteMany();
 
     // Reset rather than delete — see the note at the top of this file.
     await tx.cashBankBalance.updateMany({

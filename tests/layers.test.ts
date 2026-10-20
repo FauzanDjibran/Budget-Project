@@ -112,6 +112,7 @@ after(async () => {
     await prisma.cashBankLayer.deleteMany({ where: { cash_bank_id: { in: made } } });
     await prisma.cashBankLedger.deleteMany({ where: { cash_bank_id: { in: made } } });
     await prisma.cashBankBalance.deleteMany({ where: { cash_bank_id: { in: made } } });
+    await prisma.cashBankPeriod.deleteMany({ where: { cash_bank_id: { in: made } } });
     await prisma.mCashBank.deleteMany({ where: { id: { in: made } } });
   }
   await cleanupFixtures();
