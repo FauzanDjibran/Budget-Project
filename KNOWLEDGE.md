@@ -31,8 +31,8 @@ in **Note** to stay on an older version on purpose.
 | engineering/code-conventions | 2.1 | core | — | §7; §6 applied 04/10/2026 (vercel.json sin1, relationJoins) |
 | engineering/data-conventions | 1.0 | doc-numbering=prefix-seq | — | §9 |
 | engineering/security-rbac | 1.0 | core | — | §10 rules 9–13, §11. pinned: 2.0 (SSO, decided 05/10/2026) is adopted when the Portal identity provider exists; plan: AKUI-Project-Example/SSO-Portal-Plan.md |
-| accounting/books-and-posting | 3.0 | core | — | §10 rules 22, 47–51; §6 is `npm run db:reconcile`; 3.0 §1.3 signed movement is CLAUDE.md §9 (origin) |
-| accounting/subject-books | 1.0 | core | — | §10 rules 52–56, 103–107; origin |
+| accounting/books-and-posting | 3.1 | core | — | §10 rules 22, 47–51; §6 is `npm run db:reconcile`; 3.0 §1.3 signed movement is CLAUDE.md §9 (origin); 3.1 §3.4 per-day Cash & Bank check is `cash_bank_period` (origin) |
+| accounting/subject-books | 2.0 | core | — | §10 rules 52–56, 103–107; origin; 2.0 §2.6 is rule 106 |
 | accounting/chart-of-accounts | 1.1 | control-account=derived | — | §10 rules 44–46, 77–80 |
 | accounting/fiscal-periods-and-statements | 1.0 | core | — | §12; Initialization/Opening & Closing Update Phase.md |
 | accounting/multi-currency | 1.1 | core | knowledge/CORE Multi Currency Concept.md | Extended by the variant below |

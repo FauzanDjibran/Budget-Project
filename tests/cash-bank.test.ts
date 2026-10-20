@@ -584,6 +584,22 @@ describe("a backdated movement is checked on every day from its date on", () => 
     assert.equal(rows, 6, "January to June, unbroken");
   });
 
+  test("backdated money in lifts every later month, and a payment it covers then passes", async () => {
+    const id = await emptyResource();
+    await move(id, "2020-01-10", 100);
+    await move(id, "2020-03-10", -100);
+    await move(id, "2020-04-10", 20);
+    await assert.rejects(() => move(id, "2020-02-15", -50), /tidak mencukupi/);
+    await move(id, "2020-01-20", 70);
+    const march = await prisma.cashBankPeriod.findUniqueOrThrow({
+      where: { cash_bank_id_period: { cash_bank_id: id, period: new Date("2020-03-01") } },
+    });
+    assert.equal(march.opening.toNumber(), 170);
+    assert.equal(march.min_balance.toNumber(), 70, "March's lowest point moved with the money");
+    await move(id, "2020-02-15", -50);
+    await assertChainMatchesBook(id);
+  });
+
   test("the reports open from the month row and agree with the full scan", async () => {
     const id = await emptyResource();
     await move(id, "2020-01-05", 1_000);

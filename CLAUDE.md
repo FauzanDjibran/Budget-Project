@@ -86,7 +86,7 @@ or invariants that assume a particular row exists.
 | --- | --- |
 | Scaffold, DB, migration | Done |
 | Seed | Done — **system data only**, idempotent, destroys nothing (§12) |
-| Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered |
+| Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered. A chain of months (`cash_bank_period`, each with its lowest point) lets a movement be checked against every day from its date to now without reading the book from its start |
 | Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. A foreign Cash & Bank is restated by **Revaluasi Kurs**; standing foreign subject-book positions are never retranslated (§13) |
 | Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows them and says when they stop reconciling with the book |
 | Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
@@ -368,10 +368,11 @@ scripts/
                          what reconciles against the account for the second.
                          Idempotent, sets and clears. Run by hand, never by
                          install or CI
-  reconcile-books.ts     Read-only: eighteen checks that Budget realization,
-                         the Cash Bank Book, the subject books and their open
-                         items, and the journals agree with each other and
-                         with the General Ledger. Each selects only the rows
+  reconcile-books.ts     Read-only: nineteen checks that Budget realization,
+                         the Cash Bank Book and its chain of months, the
+                         subject books and their open items, and the
+                         journals agree with each other and with the
+                         General Ledger. Each selects only the rows
                          that disagree; exits 1 if any does. Runs inside a
                          READ ONLY transaction. Run by hand after touching a
                          posting path, never by install or CI

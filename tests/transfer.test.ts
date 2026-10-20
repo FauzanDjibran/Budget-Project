@@ -7,6 +7,7 @@ import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
   applyTransfer,
   checkTransferHeader,
+  previewTransfer,
   checkTransferLines,
   nextTransferNo,
   type TransferLineInput,
@@ -114,6 +115,7 @@ async function makeTransfer(options: {
   from: number;
   currencyId: number;
   layerId?: number | null;
+  date?: string;
   lines: { to: number; amount: number; rate?: number }[];
 }): Promise<number> {
   const row = await prisma.finCashBankTransfer.create({
@@ -124,6 +126,7 @@ async function makeTransfer(options: {
       from_cash_bank_id: options.from,
       currency_id: options.currencyId,
       cash_bank_layer_id: options.layerId ?? null,
+      document_date: options.date ? new Date(`${options.date}T00:00:00Z`) : null,
       transfer_amount: options.lines.reduce((t, l) => t + l.amount, 0),
       transfer_base_amount: 0,
       status: "Draft",
@@ -933,6 +936,34 @@ describe("a posting that refuses leaves nothing behind", () => {
     assert.match(result.ok ? "" : result.errors._form ?? "", /tidak mencukupi/);
     assert.equal((await balanceOf(from)).balance.toNumber(), 100_000);
     assert.equal((await balanceOf(to)).balance.toNumber(), 0);
+  });
+
+  // The opening is dated today, so on the first of the year the source held nothing.
+  test("a backdated transfer the source could not cover that day is refused in its preview", { skip: today.endsWith("-01-01") }, async () => {
+    const from = await makeResource({ currencyId: baseCurrency, opening: 1_000_000 });
+    const to = await makeResource({ currencyId: baseCurrency });
+    const id = await makeTransfer({
+      purpose: "Transfer",
+      from,
+      currencyId: baseCurrency,
+      date: `${today.slice(0, 4)}-01-01`,
+      lines: [{ to, amount: 500_000 }],
+    });
+    const preview = await previewTransfer(id);
+    assert.equal(preview.ok, false);
+    assert.match(preview.ok ? "" : preview.errors._form ?? "", /tidak mencukupi pada 01\/01/);
+    assert.equal((await balanceOf(from)).balance.toNumber(), 1_000_000, "the preview wrote nothing");
+  });
+
+  test("two transfers crossing the same pair post at once without waiting on each other", async () => {
+    const a = await makeResource({ currencyId: baseCurrency, opening: 1_000_000 });
+    const b = await makeResource({ currencyId: baseCurrency, opening: 1_000_000 });
+    const ab = await makeTransfer({ purpose: "Transfer", from: a, currencyId: baseCurrency, lines: [{ to: b, amount: 300_000 }] });
+    const ba = await makeTransfer({ purpose: "Transfer", from: b, currencyId: baseCurrency, lines: [{ to: a, amount: 100_000 }] });
+    const [one, two] = await Promise.all([applyTransfer(ab, actor), applyTransfer(ba, actor)]);
+    assert.ok(one.ok && two.ok, JSON.stringify([one, two]));
+    assert.equal((await balanceOf(a)).balance.toNumber(), 800_000);
+    assert.equal((await balanceOf(b)).balance.toNumber(), 1_200_000);
   });
 });
 

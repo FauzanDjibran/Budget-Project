@@ -32,6 +32,10 @@
  *         source item became holds exactly what the source released
  *   18    a revaluation's one new layer holds what the layers it closed held,
  *         restated by exactly the difference its book entry records
+ *   19    each Cash & Bank's chain of months (`cash_bank_period`) is its
+ *         entries regrouped — every month from the first entry's to the
+ *         latest's, no gap and no extra, on both measures — and no month's
+ *         lowest point is below nothing
  *
  * WHAT IT LEAVES OUT, ON PURPOSE
  *   An `Opening` Cash Bank Book entry writes no journal (CLAUDE.md §12), so
@@ -406,6 +410,53 @@ WHERE r.status = 'Posted'
        OR opened.rate IS DISTINCT FROM r.exchange_rate
        OR r.base_after - r.base_before <> r.fx_difference
        OR COALESCE(entry.base_movement, 0) <> r.fx_difference)`,
+  },
+  {
+    no: 19,
+    name: "Rantai bulan Cash & Bank = entrinya, tanpa bolong, titik terendah tidak di bawah nol",
+    sql: `
+, e AS (
+  SELECT cash_bank_id, date_trunc('month', entry_date)::date AS period, movement, base_movement,
+         SUM(movement) OVER (PARTITION BY cash_bank_id ORDER BY entry_date, id) AS run
+  FROM cash_bank_ledger
+), m AS (
+  SELECT cash_bank_id, period,
+         COALESCE(SUM(movement) FILTER (WHERE movement > 0), 0) AS total_in,
+         COALESCE(-SUM(movement) FILTER (WHERE movement <= 0), 0) AS total_out,
+         COALESCE(SUM(base_movement) FILTER (WHERE movement > 0), 0) AS base_in,
+         COALESCE(-SUM(base_movement) FILTER (WHERE movement <= 0), 0) AS base_out,
+         MIN(run) AS min_run
+  FROM e GROUP BY cash_bank_id, period
+), months AS (
+  SELECT b.cash_bank_id, gs::date AS period
+  FROM (SELECT cash_bank_id, MIN(period) AS lo, MAX(period) AS hi FROM m GROUP BY cash_bank_id) b,
+       generate_series(b.lo, b.hi, interval '1 month') gs
+), x AS (
+  SELECT mo.cash_bank_id, mo.period,
+         COALESCE(m.total_in, 0) AS total_in, COALESCE(m.total_out, 0) AS total_out,
+         COALESCE(m.base_in, 0) AS base_in, COALESCE(m.base_out, 0) AS base_out, m.min_run,
+         COALESCE(SUM(m.total_in - m.total_out) OVER w, 0) AS opening,
+         COALESCE(SUM(m.base_in - m.base_out) OVER w, 0) AS base_opening
+  FROM months mo LEFT JOIN m USING (cash_bank_id, period)
+  WINDOW w AS (PARTITION BY mo.cash_bank_id ORDER BY mo.period ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
+), want AS (
+  SELECT cash_bank_id, period, opening, total_in, total_out, opening + total_in - total_out AS closing,
+         LEAST(opening, COALESCE(min_run, opening)) AS min_balance,
+         base_opening, base_in, base_out, base_opening + base_in - base_out AS base_closing
+  FROM x
+)
+SELECT cb.cash_bank_label, COALESCE(w.period, p.period) AS period,
+       p.opening, w.opening AS want_opening, p.closing, w.closing AS want_closing,
+       p.min_balance, w.min_balance AS want_min, p.base_closing, w.base_closing AS want_base_closing
+FROM want w
+FULL JOIN cash_bank_period p ON p.cash_bank_id = w.cash_bank_id AND p.period = w.period
+JOIN m_cash_bank cb ON cb.id = COALESCE(w.cash_bank_id, p.cash_bank_id)
+WHERE p.cash_bank_id IS NULL OR w.cash_bank_id IS NULL
+   OR p.opening <> w.opening OR p.total_in <> w.total_in OR p.total_out <> w.total_out
+   OR p.closing <> w.closing OR p.min_balance <> w.min_balance OR p.min_balance < 0
+   OR p.base_opening <> w.base_opening OR p.base_total_in <> w.base_in
+   OR p.base_total_out <> w.base_out OR p.base_closing <> w.base_closing
+ORDER BY 1, 2`,
   },
 ];
 

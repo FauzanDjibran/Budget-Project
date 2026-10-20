@@ -132,14 +132,15 @@ async function makeItem(
   book: SubledgerDef,
   partnerId: number,
   amount: number,
-  rate: number
+  rate: number,
+  date = today
 ): Promise<number> {
   const entry = await prisma.$transaction((tx) =>
     recordSubledgerEntry(tx, {
       book,
       partnerId,
       currencyId: usd,
-      date: today,
+      date,
       type: "Transaction",
       direction: book.raises,
       amount,
@@ -162,6 +163,7 @@ async function makeConversion(options: {
   from: number;
   book: SubledgerDef;
   partnerId: number;
+  date?: string;
   lines: { to: number; rate: number; items: [itemId: number, amount: number][] }[];
 }): Promise<number> {
   const layer = await layerOf(options.from);
@@ -172,7 +174,7 @@ async function makeConversion(options: {
   const row = await prisma.finItemConversion.create({
     data: {
       conversion_no: await nextConversionNo(),
-      document_date: new Date(`${today}T00:00:00Z`),
+      document_date: new Date(`${options.date ?? today}T00:00:00Z`),
       company_id: induk,
       from_cash_bank_id: options.from,
       currency_id: usd,
@@ -503,6 +505,26 @@ describe("the preview is the journal", () => {
       preview.lines.map((l) => [l.debit, l.credit]),
       journal.lines.map((l) => [num(l.debit_amount), num(l.kredit_amount)])
     );
+  });
+
+  // The cash opens today and the item on the 1st, so on the 2nd only the cash falls short.
+  test("a backdated sale the source could not cover that day is refused in its preview", { skip: today.slice(5) <= "01-02" }, async () => {
+    const year = today.slice(0, 4);
+    const partnerId = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
+    const itemId = await makeItem(titipan, partnerId, 300_000, 17150, `${year}-01-01`);
+    const usdBank = await makeResource({ currencyId: usd, opening: 500_000, rate: 17100 });
+    const idrBank = await makeResource({ currencyId: idr });
+    const id = await makeConversion({
+      from: usdBank,
+      book: titipan,
+      partnerId,
+      date: `${year}-01-02`,
+      lines: [{ to: idrBank, rate: 17300, items: [[itemId, 100_000]] }],
+    });
+    const preview = await previewConversion(id);
+    assert.equal(preview.ok, false);
+    assert.match(String(!preview.ok && preview.errors._form), /tidak mencukupi pada 02\/01/);
+    assert.equal(num((await layerOf(usdBank)).foreign_remaining), 500_000, "the preview wrote nothing");
   });
 });
 
