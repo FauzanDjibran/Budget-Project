@@ -8,7 +8,7 @@ import {
   openBudgetsMatching,
   realizeBudgets,
 } from "./budget";
-import { InsufficientFunds, recordCashBankEntry } from "./cash-bank";
+import { InsufficientFunds, cashBankShortfall, recordCashBankEntry } from "./cash-bank";
 import {
   LayerNotAvailable,
   drawFromLayer,
@@ -2070,6 +2070,8 @@ export async function applyPosting(
 
   const entries = await journalEntries(doc, plan);
   if (!entries.ok) return { ok: false, errors: entries.errors };
+  const short = await cashShortfall(doc.cash_bank_id, doc.transaction_type, date, plan);
+  if (short) return short;
   if (dryRun) return { ok: true, closed: 0, journal: entries.lines };
 
   try {
@@ -2746,6 +2748,8 @@ export async function prepareFundedPosting(
   );
   if (!planned.ok) return planned;
   const posting = planned.plan;
+  const short = await cashShortfall(input.cash.cashBankId, direction, dated.date, posting);
+  if (short) return short;
 
   const cash = await cashJournalLine(input.cash.cashBankId, doc.transaction_type, posting);
   if (!cash) {
@@ -2804,6 +2808,24 @@ export async function prepareFundedPosting(
       })),
     },
   };
+}
+
+/**
+ * Money leaving the resource, refused here when the day it is dated on, or any
+ * day since, would leave less than nothing. The dry run stops before the book
+ * is written, so without this a preview would pass a Post that then refuses.
+ * The lines are entries on one day, so their total is the whole question.
+ */
+async function cashShortfall(
+  cashBankId: number,
+  direction: string,
+  date: string,
+  plan: { lines: { accountAmount: number }[] }
+): Promise<{ ok: false; errors: { _form: string } } | null> {
+  if (direction !== "Out") return null;
+  const total = plan.lines.reduce((sum, l) => sum + l.accountAmount, 0);
+  const short = await cashBankShortfall(cashBankId, date, total);
+  return short ? { ok: false, errors: { _form: short.message } } : null;
 }
 
 /**

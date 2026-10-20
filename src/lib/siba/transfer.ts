@@ -1056,7 +1056,6 @@ export async function applyTransfer(
 
       const entries = await transferJournalLines(doc, plan, label);
       if (!entries.ok) throw new TransferRefused(entries.errors);
-      if (dryRun) throw new TransferDryRun(entries.lines);
 
       // The source gives up once, however many destinations there are.
       await recordCashBankEntry(tx, {
@@ -1072,6 +1071,9 @@ export async function applyTransfer(
         note: `${doc.transfer_no} — ${label}`,
         actorId,
       });
+      // Stopped after the source's entry, so the preview is refused exactly
+      // where Post would be — on a day the source would go below nothing.
+      if (dryRun) throw new TransferDryRun(entries.lines);
 
       for (const [i, line] of plan.lines.entries()) {
         await recordCashBankEntry(tx, {

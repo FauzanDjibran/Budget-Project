@@ -149,13 +149,109 @@ async function ensurePeriod(db: Db, cashBankId: number, period: Date) {
 
 /**
  * Checks a movement dated `date` against the balance on every day from then
- * to now, and moves the month chain with it. Reads one month of entries and
- * one aggregate over the later months — never the book from its start.
+ * to now, and returns the month's new lowest point (null for a nil movement).
+ * Reads one month of entries and one aggregate over the later months — never
+ * the book from its start — and writes nothing, so a preview asks the very
+ * check a posting does.
  *
  * Within the month the entry is placed last on its day, as the reports order
  * it. Every later month shifts by the whole movement, so its lowest point does
  * too: `min_balance + movement ≥ 0` over them is the whole check.
  */
+async function checkMovement(
+  db: Db,
+  cashBankId: number,
+  date: string,
+  movement: number
+): Promise<number | null> {
+  const period = monthOf(date);
+  const row = await db.cashBankPeriod.findUnique({
+    where: { cash_bank_id_period: { cash_bank_id: cashBankId, period } },
+    select: { opening: true },
+  });
+  // A month outside the chain holds no entries: before the first it opens at
+  // nil, after the last at the last closing.
+  const opening = row
+    ? row.opening.toNumber()
+    : ((
+        await db.cashBankPeriod.findFirst({
+          where: { cash_bank_id: cashBankId, period: { lt: period } },
+          orderBy: { period: "desc" },
+          select: { closing: true },
+        })
+      )?.closing.toNumber() ?? 0);
+
+  if (movement === 0) return null;
+  const day = asDate(date);
+  const entries = await db.cashBankLedger.findMany({
+    where: { cash_bank_id: cashBankId, entry_date: { gte: period, lt: addMonths(period, 1) } },
+    orderBy: [{ entry_date: "asc" }, { id: "asc" }],
+    select: { entry_date: true, movement: true },
+  });
+  const m = cents(movement);
+  let run = cents(opening);
+  let min = run;
+  // The lowest the balance stood, before this movement, from its day on.
+  let lowest: { at: Date; balance: number } | null = null;
+  const pass = (at: Date) => {
+    if (!lowest || run < lowest.balance) lowest = { at, balance: run };
+    min = Math.min(min, run + m);
+  };
+  let placed = false;
+  for (const e of entries) {
+    if (!placed && e.entry_date > day) {
+      placed = true;
+      pass(day);
+    }
+    run += cents(e.movement.toNumber());
+    if (placed) pass(e.entry_date);
+    else min = Math.min(min, run);
+  }
+  if (!placed) pass(day);
+
+  if (m < 0) {
+    const found = lowest as { at: Date; balance: number } | null;
+    if (found && found.balance + m < 0) {
+      throw new InsufficientFunds(cashBankId, found.balance / 100, -movement, formatDate(found.at));
+    }
+    const later = await db.cashBankPeriod.findFirst({
+      where: { cash_bank_id: cashBankId, period: { gt: period } },
+      orderBy: [{ min_balance: "asc" }, { period: "asc" }],
+      select: { period: true, min_balance: true },
+    });
+    if (later && cents(later.min_balance.toNumber()) + m < 0) {
+      throw new InsufficientFunds(
+        cashBankId,
+        later.min_balance.toNumber(),
+        -movement,
+        `bulan ${formatDate(later.period).slice(3)}`
+      );
+    }
+  }
+  return min / 100;
+}
+
+/**
+ * Would paying `amount` out of this resource on `date` take it below nothing on
+ * any day since? The posting's own check, asked without a lock or a write, so a
+ * Post confirmation can say so before it is pressed. Only an early warning:
+ * `recordCashBankEntry` asks again under the lock.
+ */
+export async function cashBankShortfall(
+  cashBankId: number,
+  date: string,
+  amount: number
+): Promise<InsufficientFunds | null> {
+  try {
+    await checkMovement(prisma, cashBankId, date, -amount);
+    return null;
+  } catch (error) {
+    if (error instanceof InsufficientFunds) return error;
+    throw error;
+  }
+}
+
+/** `checkMovement`, then moves the month chain with it. Throws before writing. */
 async function movePeriods(
   db: Db,
   cashBankId: number,
@@ -163,62 +259,9 @@ async function movePeriods(
   movement: number,
   baseMovement: number
 ) {
+  const newMin = await checkMovement(db, cashBankId, date, movement);
   const period = monthOf(date);
   await ensurePeriod(db, cashBankId, period);
-  const row = await db.cashBankPeriod.findUniqueOrThrow({
-    where: { cash_bank_id_period: { cash_bank_id: cashBankId, period } },
-  });
-
-  let newMin: number | null = null;
-  if (movement !== 0) {
-    const day = asDate(date);
-    const entries = await db.cashBankLedger.findMany({
-      where: { cash_bank_id: cashBankId, entry_date: { gte: period, lt: addMonths(period, 1) } },
-      orderBy: [{ entry_date: "asc" }, { id: "asc" }],
-      select: { entry_date: true, movement: true },
-    });
-    const m = cents(movement);
-    let run = cents(row.opening.toNumber());
-    let min = run;
-    // The lowest the balance stood, before this movement, from its day on.
-    let lowest: { at: Date; balance: number } | null = null;
-    const pass = (at: Date) => {
-      if (!lowest || run < lowest.balance) lowest = { at, balance: run };
-      min = Math.min(min, run + m);
-    };
-    let placed = false;
-    for (const e of entries) {
-      if (!placed && e.entry_date > day) {
-        placed = true;
-        pass(day);
-      }
-      run += cents(e.movement.toNumber());
-      if (placed) pass(e.entry_date);
-      else min = Math.min(min, run);
-    }
-    if (!placed) pass(day);
-    newMin = min / 100;
-
-    if (m < 0) {
-      const found = lowest as { at: Date; balance: number } | null;
-      if (found && found.balance + m < 0) {
-        throw new InsufficientFunds(cashBankId, found.balance / 100, -movement, formatDate(found.at));
-      }
-      const later = await db.cashBankPeriod.findFirst({
-        where: { cash_bank_id: cashBankId, period: { gt: period } },
-        orderBy: [{ min_balance: "asc" }, { period: "asc" }],
-        select: { period: true, min_balance: true },
-      });
-      if (later && cents(later.min_balance.toNumber()) + m < 0) {
-        throw new InsufficientFunds(
-          cashBankId,
-          later.min_balance.toNumber(),
-          -movement,
-          `bulan ${formatDate(later.period).slice(3)}`
-        );
-      }
-    }
-  }
 
   const inSide = movement > 0;
   await db.cashBankPeriod.update({

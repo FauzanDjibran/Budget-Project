@@ -1095,8 +1095,6 @@ export async function applyConversion(
         });
       }
 
-      if (dryRun) throw new ConversionDryRun(entries);
-
       // The source gives up once, however many destinations there are.
       await recordCashBankEntry(tx, {
         cashBankId: doc.from_cash_bank_id,
@@ -1111,6 +1109,9 @@ export async function applyConversion(
         note: `${label} · ${header.partnerLabel}`,
         actorId,
       });
+      // Stopped after the source's entry, so the preview is refused exactly
+      // where Post would be — on a day the source would go below nothing.
+      if (dryRun) throw new ConversionDryRun(entries);
 
       for (const l of planned) {
         await recordCashBankEntry(tx, {

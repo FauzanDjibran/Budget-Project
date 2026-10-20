@@ -2694,9 +2694,13 @@ Specified in the concept doc, **not yet implemented** (see §13):
   show, inside their Post `ConfirmDialog` (`wide`), the journal Post is about
   to write — account, Partner, foreign face, debit and kredit in base, total.
   `applyPosting`, `applyTransfer` and `applyItemAdjustment` take a `dryRun` flag:
-  Realisasi stops once its journal is known, before its transaction opens;
-  Transfer and Penyesuaian Open Item run their whole transaction and roll it back, because
-  they draw layers and read positions under a lock inside it.
+  Realisasi (and a Funding confirmation) stops once its journal is known, before
+  its transaction opens, after asking `cashBankShortfall` — the Cash Bank Book's
+  own per-day check, read-only — for money leaving;
+  Transfer, Pencairan and Penyesuaian Open Item run their transaction and roll it
+  back, because they draw layers and read positions under a lock inside it —
+  Transfer and Pencairan only after the source's book entry, so a backdated
+  shortfall refuses in the preview exactly as at Post.
   `previewPosting` / `previewTransfer` / `previewItemAdjustment` name the lines through
   `describeJournalLines`, and each Server Action asks the Post permission.
   **Ya, Post** stays disabled until the preview has loaded, and a Post that

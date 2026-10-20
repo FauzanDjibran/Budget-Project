@@ -2214,6 +2214,28 @@ describe("a document may be backdated inside an open year", () => {
     assert.equal(row.posting_date?.toISOString().slice(0, 10), today);
   });
 
+  test("the Post preview refuses a backdated payment the cash did not hold that day", { skip: !canBackdate }, async () => {
+    // Opened today, so on the first of January it held nothing — though
+    // today's balance covers the payment twice over.
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const budget = await makeBudget({ categoryLabel: "Biaya", amount: 400_000 });
+    const doc = await makeDraft({
+      transaction_type: "Out" as const,
+      cashBankId: cashBank,
+      documentDate: backdate,
+      lines: [{ budgetId: budget, amount: 400_000, outstanding: 400_000 }],
+    });
+
+    const preview = await previewPosting(doc);
+    const refused = await applyPosting(doc, actor);
+    assert.equal(preview.ok, false);
+    assert.equal(refused.ok, false);
+    const message = refused.ok ? "" : refused.errors._form ?? "";
+    assert.match(message, /tidak mencukupi pada .*tersedia 0/);
+    assert.equal(preview.ok ? "" : preview.errors._form, message, "the preview says what Post says");
+    assert.equal(await prisma.cashBankLedger.count({ where: { cash_bank_id: cashBank } }), 1);
+  });
+
   test("a day that has not happened yet is refused, and nothing moves", async () => {
     const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     const cashBank = await makeCashBank({ opening: 1_000_000 });
@@ -2268,7 +2290,7 @@ describe("a document may be backdated inside an open year", () => {
   });
 
   test("a close committed while a posting waits on the lock wins, and the posting writes nothing", { skip: !canBackdate }, async () => {
-    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const cashBank = await makeCashBank({ opening: 1_000_000, openedOn: backdate });
     const budget = await makeBudget({ categoryLabel: "Biaya", amount: 100_000 });
     const doc = await makeDraft({
       transaction_type: "Out" as const,
