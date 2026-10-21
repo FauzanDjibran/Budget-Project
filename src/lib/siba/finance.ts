@@ -1520,6 +1520,8 @@ export type PostingItem = {
   allocationId: number;
   itemId: number;
   itemNo: string;
+  /** The kurs the item was raised at — its own, never derived from the relief. */
+  rate: number;
   /** In the document's currency. */
   amount: number;
   /** What the item released, at its own kurs. */
@@ -1728,6 +1730,7 @@ async function planPosting(
           allocationId: allocation.id,
           itemId: item.id,
           itemNo: item.itemNo,
+          rate: item.rate,
           amount: share,
           settlementBase: relief.base,
           transactionBase: cashShares[k],
@@ -1870,8 +1873,9 @@ async function cashJournalLine(
 }
 
 /**
- * Per Budget: its counter line on its own mapped account and Partner, and its
- * own FX lines where its two base values disagree. The same on both routes —
+ * Per Budget: its counter line on its own mapped account and Partner — one per
+ * open item it settles — and its own FX lines where its two base values
+ * disagree. The same on both routes —
  * the funded one writes them into the anak's journal.
  */
 async function counterJournalLines(
@@ -1883,18 +1887,37 @@ async function counterJournalLines(
   const lines: JournalLineInput[] = [];
 
   for (const l of plan.lines) {
-    // The counter side, in the document's currency and at the rate this
-    // line's obligation was carried at — which is what makes the two differ.
-    lines.push({
-      accountId: l.counterAccountId,
-      partnerId: l.partnerId,
-      currencyId: doc.currency_id,
-      rate: l.amount ? l.settlementBase / l.amount : plan.rate,
-      debit: incoming ? 0 : l.amount,
-      credit: incoming ? l.amount : 0,
-      baseAmount: l.settlementBase,
-      description: l.description,
-    });
+    // The counter side, in the document's currency and at the rate the
+    // obligation was carried at — which is what makes the two differ. A line
+    // settling open items writes one per item at that item's own kurs: one
+    // line for several would carry their average, a rate nobody dealt at.
+    const counters = l.items.length
+      ? l.items.map((it) => ({
+          amount: it.amount,
+          rate: it.rate,
+          base: it.settlementBase,
+          description: `${l.description} · ${it.itemNo}`,
+        }))
+      : [
+          {
+            amount: l.amount,
+            rate: l.amount ? l.settlementBase / l.amount : plan.rate,
+            base: l.settlementBase,
+            description: l.description,
+          },
+        ];
+    for (const c of counters) {
+      lines.push({
+        accountId: l.counterAccountId,
+        partnerId: l.partnerId,
+        currencyId: doc.currency_id,
+        rate: c.rate,
+        debit: incoming ? 0 : c.amount,
+        credit: incoming ? c.amount : 0,
+        baseAmount: c.base,
+        description: c.description,
+      });
+    }
 
     // The residuals, and only where there is one. A line settling open items
     // has one per item — never netted, so an item settled at a gain and one at

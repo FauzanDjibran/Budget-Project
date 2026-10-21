@@ -100,7 +100,7 @@ or invariants that assume a particular row exists.
 | Backdating | Done — every posting document carries a Tanggal Dokumen chosen on the draft, any day up to today inside a year every Company it writes into still has open. All its book entries and its journal are dated by it; the moment of posting is kept beside it. A posting and a close hold one lock per year and Company, so neither can land inside the other. The book reports read by date and carry no running balance (§12) |
 | Period control (lock, closing, Opening Balance) | Done — **each Company keeps its own fiscal calendar**, and a posting's date must fall in an **Open period** of its Company's calendar, enforced on every posting path. A period is **locked and unlocked** from its row in the Fiscal Year's period list (`FISCAL_PERIOD_LOCK` / `_UNLOCK`); Locked refuses postings and is only a state. **Fiscal Year Closing** is refused until all twelve periods are Locked; it moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, stamps `acc_fiscal_closing`, and makes the year and its periods Closed. Any number of years may stand Open; each Company closes its own oldest first, and no year opens behind its own Company's close. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
 | Budget module | Done for create → approve → classify — two menus. **Pengajuan Budget**: Budget Month, the register with status tabs and checkbox selection, create/edit, and the Draft → Submit → Approve/Reject lifecycle, each transition one Budget or many at once. **Klasifikasi Budget**: the classifier's queue of Approved Budgets, grouped Company · Arah · Currency, one Category and Partner for a whole selection. Bulk actions are all-or-nothing. Bespoke, not registry-driven. |
-| Finance module — Realisasi Budget | Done for draft → post — two menus (**Realisasi Penerimaan** `RBM-`, **Realisasi Pengeluaran** `RBK-`) over one document and one table. The header is Company · Cash & Bank · Currency · kurs and nothing else: no Purpose, no Partner, so one document settles Budgets of every category and every Partner. Post writes **one Cash Bank Book entry and one subject-book entry per Budget**, each reading the Budget's own description, and one journal: a cash line, a counter line per Budget on its own mapped account and Partner, and an FX line per Budget where one arises. Bespoke, not registry-driven. |
+| Finance module — Realisasi Budget | Done for draft → post — two menus (**Realisasi Penerimaan** `RBM-`, **Realisasi Pengeluaran** `RBK-`) over one document and one table. The header is Company · Cash & Bank · Currency · kurs and nothing else: no Purpose, no Partner, so one document settles Budgets of every category and every Partner. Post writes **one Cash Bank Book entry and one subject-book entry per Budget**, each reading the Budget's own description, and one journal: a cash line, a counter line per Budget on its own mapped account and Partner (one per settled open item, at its kurs), and an FX line per Budget where one arises. Bespoke, not registry-driven. |
 | Funding Request | Done — the anak's document is an ordinary Realisasi that does not name its cash: its Budgets and the open items each line settles are chosen on its draft, exactly as on the induk's. Ajukan Dana checks the lines (mapping, items) and freezes it at `Pending`, raising an `Open` request. The induk confirms by stating the cash side — resource, and its layer or kurs — and sees both journals first. One transaction then writes what a Realisasi Post writes (a Cash Bank Book entry per Budget on the induk's resource, the anak's subject-book entries per Budget or per settled item), a journal each — the bridge line carries the cash line's own figures, and every Selisih Kurs is the anak's — every Budget's realization, the Posted status and the request's closure. Foreign currency works as on the direct route. No rejection and no partial funding. Intercompany settlement is not built |
 | Cash Bank Transfer | Done — the Company's own money moving between its own Cash & Bank resources. One source on the header, several destinations on the lines, and three Purposes: `Transfer` (same currency), `Pencairan` (foreign → base) and `Pembelian Valas` (base → foreign). Base value is conserved and layers propagate one-for-one; **Pencairan is the only one that can recognise an FX difference**. Post writes both books, each destination's layer and one balanced journal in one transaction. Its own module, not a third `transaction_type` — a transfer settles no Budget |
 | Penyesuaian Open Item | Done — the adjustment document for a Partner's position in a subject book: no cash, no Budget (`PYO-`). It replaced Debit / Credit Note and works like one: every line names one **existing** open item and the **new value** it should hold; the difference beside it is a **Penambahan** (a Debit Note) or a **Pengurangan** (a Credit Note), never chosen, and one document may hold both. The difference moves at the item's own kurs, as a new ledger line on the same item — no item is ever opened — and the line's keterangan is written by the system. Post refuses an item that moved since the draft. The book's own `raises` turns each line's effect into a journal side, so one document serves every book. Which books may be adjusted is `allows_item_adjustment` on the Budget Category (Titipan, Hutang, Piutang). Post writes the `Adjustment` entries and one balanced journal against the Company's Pendapatan or Beban Penyesuaian account, under a lock on the position; the draft is valued as Post will write it |
@@ -1037,8 +1037,11 @@ Implemented and enforced:
    on the same position are settled in line order, the second against what the
    first left. Supersedes "one entry per document". **A line settling several
    open items writes one subject-book entry per item** — an entry names exactly
-   one item — each still reading the Budget's description; the Cash Bank Book
-   entry and the journal's counter line stay one per Budget.
+   one item — each still reading the Budget's description — **and one journal
+   counter line per item, at that item's own kurs**: one line for several would
+   carry their average, a rate nobody dealt at (the user's rule, 21/10/2026).
+   The Cash Bank Book entry stays one per Budget. The line's own
+   `settlement_exchange_rate` is that same average and is read by nothing.
 55. **A subject book is append-only and immutable, like every other book.** No
    update path, no delete path, no cascade. A correction is a further entry,
    which is what keeps `rebuildSubledgerBalance` able to re-derive the
@@ -2397,7 +2400,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
   journal could never have been written unbalanced in the first place.
 - **Impact:** A realization journals its Cash & Bank resource's own account
   against each line's own mapped account — one cash line, one counter line per
-  Budget and an FX line per Budget where one arises, so a ledger entry reads back
+  Budget (per settled open item, where it settles several) and an FX line per
+  Budget or per item where one arises, so a ledger entry reads back
   to the Budget it settled. **Posting now requires the mapping** (rule 50), which approval does
   not. `unbalancedJournals` exists so the Trial Balance can say "this is a
   system fault" rather than print a difference nobody can act on.
@@ -3264,8 +3268,9 @@ they relate. Keep the table; keep it out of the UI's write path.
   each with the **Budget's own description** as its keterangan — never one summed
   entry per document or per Partner. A foreign resource's layer is drawn line by
   line, and money arriving opens one layer per line. The journal is one cash line,
-  then per Budget its own counter line (its own mapped account and Partner) and
-  its own FX line where its two base values disagree — never summed. The user's
+  then per Budget its own counter line (its own mapped account and Partner) —
+  one per open item it settles, each at the item's own kurs — and its own FX
+  line where its two base values disagree — never summed. The user's
   rules, for history and traceability.
 - **Reason:** the user's first big update after the posting engine: a single
   payment often settles plans of several categories and Partners, and a header

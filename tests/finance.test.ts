@@ -2745,6 +2745,17 @@ describe("a line lowering a position settles the open item it names", () => {
       ],
       "a gain on the credit side and a loss on the debit side, never netted"
     );
+    const counters = journal.lines.filter((l) => l.partner_id === partner);
+    assert.deepEqual(
+      counters
+        .map((l) => [l.trx_amount.toNumber(), l.exchange_rate.toNumber(), l.debit_amount.toNumber()])
+        .sort((a, b) => b[1] - a[1]),
+      [
+        [1_000, 15_000, 15_000_000],
+        [1_000, 13_000, 13_000_000],
+      ],
+      "one counter line per item at that item's own kurs, never their average"
+    );
     const debit = journal.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0);
     const credit = journal.lines.reduce((t, l) => t + l.kredit_amount.toNumber(), 0);
     assert.equal(debit, credit);
