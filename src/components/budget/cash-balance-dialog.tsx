@@ -1,9 +1,31 @@
 "use client";
 
+import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { Dialog } from "@/components/ui/dialog";
+import { KpiTile } from "@/components/ui/kpi-tile";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { CashBookSummary } from "@/lib/siba/cash-bank";
+
+/** The "Saldo Kas & Bank" tile — one line per currency — and its Rincian. */
+export function CashBalanceTile({ cash }: { cash: CashBookSummary }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <KpiTile
+        icon="wallet2"
+        tone="t-ok"
+        label="Saldo Kas & Bank"
+        more="Rincian"
+        wide
+        lines={cash.byCurrency.map((c) => formatMoney(c.balance, c.currencyLabel))}
+        detail={`${cash.resources} resource aktif`}
+        onClick={() => setOpen(true)}
+      />
+      {open && <CashBalanceDialog cash={cash} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
 
 /**
  * The breakdown behind the "Saldo Kas & Bank" card.

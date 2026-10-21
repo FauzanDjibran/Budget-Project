@@ -789,6 +789,115 @@ export async function approvedCommitments(
   );
 }
 
+/**
+ * How the Budgets dated inside one month were realized against their nominal:
+ * one row per direction × currency, each Budget in exactly one outcome.
+ *
+ * Only Open and Closed Budgets count — the ones that can be realized. A Budget
+ * whose realization reaches its nominal closes on that Post, so an Open one is
+ * always **Kurang**, and **Sesuai** and **Lebih** are found among the Closed.
+ * The outcome is read off the two figures rather than the status, so a Closed
+ * Budget somehow short of its nominal still reads as Kurang.
+ */
+export type RealizationOutcome = "under" | "match" | "over";
+
+export type OutcomeBudget = {
+  id: number;
+  budgetNo: string;
+  description: string;
+  companyLabel: string;
+  categoryName: string | null;
+  planned: number;
+  realized: number;
+  outcome: RealizationOutcome;
+};
+
+export type OutcomeBucket = {
+  count: number;
+  /** Kurang: what is still unrealized. Sesuai: the nominal. Lebih: the excess. */
+  amount: number;
+};
+
+export type RealizationOutcomeRow = {
+  budgetType: "In" | "Out";
+  currencyId: number;
+  currencyLabel: string;
+  under: OutcomeBucket;
+  match: OutcomeBucket;
+  over: OutcomeBucket;
+  budgets: OutcomeBudget[];
+};
+
+export const outcomeOf = (planned: number, realized: number): RealizationOutcome => {
+  const gap = Math.round((realized - planned) * 100);
+  return gap < 0 ? "under" : gap === 0 ? "match" : "over";
+};
+
+export async function realizationOutcomes(
+  companyIds: number[],
+  from: string,
+  to: string
+): Promise<RealizationOutcomeRow[]> {
+  if (!companyIds.length) return [];
+  const rows = await prisma.budBudget.findMany({
+    where: {
+      company_id: { in: companyIds },
+      status: { in: ["Open", "Closed"] },
+      budget_date: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) },
+    },
+    orderBy: [{ budget_date: "asc" }, { id: "asc" }],
+    select: {
+      id: true,
+      budget_no: true,
+      description: true,
+      budget_type: true,
+      currency_id: true,
+      budget_amount: true,
+      realized_amount: true,
+      company: { select: { company_label: true } },
+      category: { select: { category_name: true } },
+      currency: { select: { currency_label: true } },
+    },
+  });
+
+  const out = new Map<string, RealizationOutcomeRow>();
+  for (const b of rows) {
+    const key = `${b.budget_type}|${b.currency_id}`;
+    const row = out.get(key) ?? {
+      budgetType: b.budget_type as "In" | "Out",
+      currencyId: b.currency_id,
+      currencyLabel: b.currency.currency_label,
+      under: { count: 0, amount: 0 },
+      match: { count: 0, amount: 0 },
+      over: { count: 0, amount: 0 },
+      budgets: [],
+    };
+    const planned = b.budget_amount.toNumber();
+    const realized = b.realized_amount.toNumber();
+    const outcome = outcomeOf(planned, realized);
+    row[outcome].count += 1;
+    row[outcome].amount +=
+      outcome === "under" ? planned - realized : outcome === "over" ? realized - planned : planned;
+    row.budgets.push({
+      id: b.id,
+      budgetNo: b.budget_no,
+      description: b.description,
+      companyLabel: b.company.company_label,
+      categoryName: b.category?.category_name ?? null,
+      planned,
+      realized,
+      outcome,
+    });
+    out.set(key, row);
+  }
+  // Pengeluaran first, then by currency.
+  return [...out.values()].sort(
+    (a, b) =>
+      (a.budgetType === b.budgetType ? 0 : a.budgetType === "Out" ? -1 : 1) ||
+      a.currencyLabel.localeCompare(b.currencyLabel)
+  );
+}
+
 // ------------------------------------------------------------ bulk writes
 
 /**

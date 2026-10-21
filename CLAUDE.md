@@ -92,7 +92,7 @@ or invariants that assume a particular row exists.
 | Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
-| Dashboard | Done — the commitment funnel (submitted → awaiting classification → approved-not-executed → awaiting the induk), the cash position and what it is already committed to, the subject books' and the intercompany bridge's standing positions, and system health. MECE: no figure is stated twice, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds the partition. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
+| Dashboard | Done — tiles that open a Rincian: cash per currency, the intercompany net, Laba Rugi per Company, the three Budget queues (Persetujuan → Klasifikasi → Direalisasi, Pengeluaran and Penerimaan apart), Realisasi vs Rencana for a chosen month, and one tile per subject book. MECE: the queues partition committed money, Draft records are counted nowhere, and `tests/dashboard.test.ts` holds it. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
 | Master module (Partner, Cash & Bank, Currency) | Done — list, detail, create, edit, status toggle |
 | Klasifikasi (Budget Category, Partner Category) | Done — the Budget Category rules are rows now, not a constant: which directions a category allows, whether it names a Partner, and which Partner Categories it admits — **the last chosen on the category's own form and written in the same transaction**, so a new category is usable in one save. Under Pengaturan › Klasifikasi, each deactivable. Retiring a pair stops Budget approval offering it while leaving every record already classified by it readable |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
@@ -236,7 +236,7 @@ of its own.
 | Document links | `src/lib/siba/document-links.ts` | `documentHref` — a `(doc_table, doc_id)` pair to the page that shows it, so a journal can link its source without the book knowing any route; client-safe |
 | Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and the three builders — `buildProfitLoss`, `buildBalanceSheet` and `buildTrialBalance` over one shared tree — chart + figures to rows, pure; client-safe |
 | Financial statements | `src/lib/siba/statements.ts` | Resolves a year and period to a column, reads the chart and the Partners, asks `ledger.ts` for the figures, computes the Neraca's two equity lines and places them, and lays the Trial Balance out on the chart (`trialBalanceStatement`); `server-only` |
-| Dashboard composition | `src/lib/siba/dashboard.ts` | The commitment funnel, the cash position and the setup gaps, asked of each owning module; names no table itself; `server-only` |
+| Dashboard composition | `src/lib/siba/dashboard.ts` | The Budget queues, the positions, the month's plan and each Company's Laba Rugi, asked of each owning module; names no table itself; `server-only` |
 | Write path | `src/app/actions/master.ts` | Validation, create, update, status toggle, audit |
 | Budget writes | `src/app/actions/budget.ts` | Create, edit, and the lifecycle transitions |
 | Finance writes | `src/app/actions/finance.ts` | Create, edit, the eligible-Budget query, and Post / Cancel |
@@ -498,7 +498,7 @@ src/
                          Balance (Saldo Buku Subjek), the one
                          statement body the Laba Rugi and the Neraca share,
                          and the Trial Balance, on that body's tree and fold
-    dashboard/           Dashboard — the funnel, the cash table, the positions
+    dashboard/           Dashboard — tiles and their Rincian dialogs
     settings/            UserList, UserForm, RoleList, RoleForm, ProfileView
     auth/                LoginForm, AccessDenied
     accounting/          FiscalPeriods (shown inside a Fiscal Year),
@@ -1844,10 +1844,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
   if it were canonical. It was demo content in a file with no database. Now that the
   application runs on PostgreSQL, that data belongs to whoever uses it, and reseeding
   it would wipe real records and reimpose demo content.
-- **Impact:** A fresh installation has system data and nothing else. The dashboard's
-  "Perlu Perhatian" card is the setup path — it names the chart of accounts, the
-  fiscal calendar, the mappings and the missing cash resources in dependency order.
-  Tests build their own business fixtures (`tests/helpers.ts`) and clean them up.
+- **Impact:** A fresh installation has system data and nothing else; each posting
+  path refuses by name until the setup it needs exists. Tests build their own business fixtures (`tests/helpers.ts`) and clean them up.
 - **Sample business data has its own script, outside the seed.**
   `scripts/seed-showcase.ts` (`npm run db:seed-showcase`) fills a development
   database with a year of it. The goal is that **no menu is empty**, so a
@@ -3975,60 +3973,57 @@ below in outline because the half of it that still holds is easy to lose.**
   writable, and do not claim in it what changed — the log holds no snapshot.
 - **Status:** Frozen, current.
 
-### The dashboard is MECE, and a Draft is not on it (FROZEN)
-- **Decision:** The dashboard answers four questions and no more — what is
-  waiting and on whom, where the money is, what the company owes and is owed,
-  and what is broken. Every figure appears **exactly once**, and the four
-  funnel stages **partition** committed money: `Menunggu Persetujuan` (Budget
-  `Submitted`), `Menunggu Klasifikasi` (Budget `Approved`, its whole plan —
-  nothing can be realized against it yet), `Siap Direalisasi` (classified
-  outstanding **minus** what a
-  `Pending` document already holds), and `Menunggu Konfirmasi Induk` (those
-  pending documents). **No Draft record appears anywhere** — not a Draft
-  Budget, not a Draft document.
-- **Reason:** The old page was six master-row counts, the same counts again
-  broken down per Company, and an audit feed — a statement of the master data
-  rather than of the business, and useless to somebody opening the app to find
-  out what to do. The MECE requirement is the user's, and it has teeth:
-  `realized_amount` is written only at Post (§10 rule 35), so an approved
-  Budget still reports its whole outstanding while a pending document is
-  holding part of it. Printing both unadjusted states the same money twice in
-  two costumes. Drafts are excluded on the user's reasoning that a draft "may
-  or may not happen yet" and so is not a business metric — which is also what
-  keeps a draft document's claim correctly inside the approved stage rather
-  than needing a stage of its own.
-- **Impact:** `src/lib/siba/dashboard.ts` composes the page by asking each
-  module about its own records — `submittedCommitments` / `approvedCommitments`
-  on Budget, `pendingCommitments` on Finance (which returns the per-Budget
-  claim map the subtraction needs), `openFundingRequests` on Funding,
-  `cashBookSummary`, `subledgerPositions`, `accountPositions`,
-  `unbalancedJournals`. It names no other module's table, which is what removed
-  the dashboard from `KNOWN_CROSSINGS`. It is a **leaf**: it depends on every
-  module and nothing depends on it. `tests/dashboard.test.ts` holds the
-  partition outright — stage two plus stage three equals the approved pool,
-  exactly — because that is the property a summary lives or dies by and it
-  cannot be seen by looking at the screen.
-- **The projection uses the approved pool only** — stages two to four, since an
-  approved Budget is a claim on cash whether or not it is classified yet. Cash is stated per currency
-  as `Saldo · Komitmen Keluar · Ekspektasi Masuk · Proyeksi`. Stage one is
-  deliberately not in it: a Budget nobody has approved is not yet a claim on
-  anyone's cash. The commitment figure is the funnel's total and is **not**
-  re-broken by stage there, because the tiles above already did that.
-- **The audit feed is gone from the dashboard, not from the system.**
-  `audit_log`, `lib/siba/audit.ts`, `recentActivity()` and the `.alog` CSS are
-  all untouched; `recentActivity()` simply has no caller for now, pending the
-  user's own placement for it.
-- **Permission is deliberately unfinished.** The page checks
-  `MENU_DASHBOARD_ACCESS` and shows every section to whoever holds it, by the
-  user's instruction to settle the content before the permission model. Reads
-  are still Company-scoped through `accessibleCompanyIds`, and each section is
-  composed separately so gating later is a filter in `dashboardData` rather
-  than a rewrite.
+### The dashboard is tiles with a Rincian, MECE, and a Draft is not on it (FROZEN)
+- **Decision:** Every figure is a tile (`KpiTile` in `components/ui/kpi-tile.tsx`)
+  whose press opens its **Rincian** dialog, the shape the Pengajuan Budget cash
+  tile set. Four rows: **position today** — Saldo Kas & Bank (one line per
+  currency, `CashBalanceTile`, the same tile Pengajuan Budget and Realisasi
+  show), Posisi Intercompany (one net figure from the four bridge accounts, red
+  when the induk's and the anak's sides stop mirroring), and **one Laba Rugi
+  tile with a line per Company** (Laba Bersih year to date, read through
+  `profitLossReport` on that Company's own period for the month; its Rincian sets
+  the Companies side by side); **Budget queues** — Menunggu Persetujuan,
+  Menunggu Klasifikasi, Menunggu Direalisasi, always shown, each with
+  Pengeluaran and Penerimaan on their own lines and `Rp 0` rather than a dash
+  where nothing waits; then two tables side by side — **Realisasi vs Rencana**
+  for the chosen month (`realizationOutcomes` in `budget.ts`: the Open and
+  Closed Budgets dated in it, per direction × currency, each in exactly one
+  outcome — **Kurang** (realized below nominal, stating the shortfall),
+  **Sesuai** (equal, stating the nominal), **Lebih** (above, stating the
+  excess) — read off the two figures, not the status; the user's definition.
+  An Open Budget is always Kurang, since reaching its nominal closes it, so
+  Sesuai and Lebih come from the Closed; Approved Budgets cannot be realized
+  and are left out; a row's Rincian lists its Budgets) and **Posisi Buku Subjek**, one row per book with a balance
+  and one column per currency, each row opening its Partners, their open items
+  and the oldest one. A tile is used where one figure is read; a table where
+  figures are compared. The page is **two sections**: *Posisi Saat Ini* (the
+  queues, cash, intercompany, the books — today's position) and *Periode*,
+  whose heading carries the picker (`?period=`, the Budget Month list) and
+  which holds only what that month changes: the Laba Rugi tile and the plan card.
+- **MECE.** The three Budget queues **partition** committed money: Submitted,
+  Approved, and Open outstanding. They read **the Budget table alone** — on the
+  user's rule, Menunggu Direalisasi is what is not realized yet, and a pending
+  Funding Request does not change it. **No Draft record appears anywhere.**
+  `tests/dashboard.test.ts` holds the partition and the plan figures.
+- **Reason:** the user's (21/10/2026): the funnel tiles summed Penerimaan and
+  Pengeluaran into one meaningless figure, the mixed action queue served no one
+  role, and positions read as raw tables. Dropped on the same instruction: the
+  action queue, the cash projection table, the funding stage tile, the
+  *Lewat Tanggal Rencana* tile (deferred), and **Perlu Perhatian** — so a fresh
+  installation's setup gaps are no longer listed anywhere; each posting still
+  refuses by name.
+- **Impact:** `lib/siba/dashboard.ts` still names no other module's table
+  (`sys_company` is master data) and stays a leaf. `subledgerPositions` now
+  also returns each standing Partner.
+- **Permission is deliberately unfinished.** `MENU_DASHBOARD_ACCESS` shows every
+  section, by the user's instruction; reads are Company-scoped through
+  `accessibleCompanyIds`.
 - **Do not change unless:** explicitly instructed. **Never put a Draft record
-  on the dashboard**, never state one figure in two cards, do not restore the
-  master-data counts or the per-Company spread of them, and do not add a stage
-  to the funnel without showing that it still partitions.
-- **Status:** Frozen, current.
+  on the dashboard**, never state one figure in two tiles, never sum a
+  direction into the other, and do not add a queue without showing that the
+  three still partition.
+- **Status:** Frozen, current. Supersedes "The dashboard is MECE, and a Draft is
+  not on it".
 
 ### The Cash Bank Book is a report, not part of the master record
 - **Decision:** `Buku Kas & Bank` and `Saldo Kas & Bank` are their own menu entries

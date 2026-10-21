@@ -1,28 +1,25 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { sumByCurrency, type MoneyTotal } from "@/lib/format";
+import { type MoneyTotal } from "@/lib/format";
 import {
   approvedCommitments,
   awaitingClassificationCommitments,
+  budgetMonths,
+  realizationOutcomes,
   submittedCommitments,
+  type CommitmentQueue,
   type CommitmentRow,
+  type RealizationOutcomeRow,
 } from "./budget";
 import { cashBookSummary, type CashBookSummary } from "./cash-bank";
-import { pendingCommitments } from "./finance";
-import { openFundingRequests } from "./funding";
-import { unbalancedJournals } from "./journal";
+import { reportableFiscalYears } from "./fiscal";
 import { accountPositions, type AccountPosition } from "./ledger";
-import { companyStructure } from "./records";
+import { reportHref } from "./reports";
+import { profitLossReport, resolveColumn } from "./statements";
 import { subledgerPositions, type SubledgerPosition } from "./subledger";
 import { loadSubledgers } from "./subledger-data";
-import { isCarryingUnclosedYear } from "./fiscal";
-import { realizationHref, realizationOf } from "./realization";
-import {
-  intercompanyBridge,
-  missingClosingAccounts,
-  missingNeracaAccounts,
-} from "./system-account-data";
+import { intercompanyBridge } from "./system-account-data";
 
 /**
  * The dashboard's data, composed from what each module says about its own
@@ -34,447 +31,219 @@ import {
  * about all of it.
  *
  * It is a **leaf**: it depends on every module and nothing depends on it, so
- * it can be deleted without disturbing anything. That is the acceptable shape
- * for a cross-cutting screen (CLAUDE.md §3).
+ * it can be deleted without disturbing anything (CLAUDE.md §3).
  *
- * ## The one rule the page is built on
+ * ## The one rule the queues are built on
  *
- * Every rupiah of committed money sits in **exactly one** stage, and the
- * stages together are the whole of what has been committed but has not yet
- * reached a book. That is not automatic: `realized_amount` is written only at
- * Post, so an approved Budget still reports its full outstanding even while a
- * `Pending` document is holding part of it and waiting on the induk. Stating
- * both unadjusted would print the same money twice in two different costumes.
- * `executionStage` below is where the subtraction happens.
+ * Every rupiah of committed money sits in **exactly one** Budget stage —
+ * waiting for approval, waiting for classification, or waiting to be realized
+ * — and the three together are the whole of what has been committed but has
+ * not reached a book. Money a `Pending` document holds is still unrealized
+ * (`realized_amount` is written only at Post), so it stays inside the third
+ * stage and is marked there, never counted as a stage of its own.
  *
- * Draft records — of a Budget or of a document — appear nowhere. A draft is a
- * preparation document that may or may not ever happen, so counting it would
- * inflate every figure that follows it.
+ * Draft records — of a Budget or of a document — appear nowhere.
  */
 
 // ------------------------------------------------------------------- stages
 
-export type StageKey = "approval" | "classification" | "execution" | "funding";
+export type StageKey = "approval" | "classification" | "execution";
+
+export type StageRow = CommitmentRow & {
+  href: string;
+};
 
 export type FunnelStage = {
   key: StageKey;
   name: string;
-  /** What this stage is waiting on, in one phrase. */
-  blockedOn: string;
   href: string;
   count: number;
   totals: MoneyTotal[];
-  /** Split by direction, so the cash projection can use it. */
   inTotals: MoneyTotal[];
   outTotals: MoneyTotal[];
-};
-
-/** One thing to open, wherever in the funnel it happens to sit. */
-export type TaskRow = {
-  key: string;
-  stage: StageKey;
-  href: string;
-  /** Document number. */
-  title: string;
-  subtitle: string;
-  companyLabel: string;
-  direction: "In" | "Out";
-  amount: number;
-  currencyLabel: string;
-  since: string;
-};
-
-export type Funnel = {
-  stages: FunnelStage[];
-  /** Every stage's records in one list, longest-waiting first. */
-  tasks: TaskRow[];
-  /**
-   * Approved money that has not yet moved — stages 2 to 4, per direction.
-   * Stage 1 is deliberately excluded: an unapproved request is not yet a
-   * claim on anybody's cash.
-   */
-  committedOut: MoneyTotal[];
-  committedIn: MoneyTotal[];
+  /** Oldest first. */
+  rows: StageRow[];
 };
 
 // -------------------------------------------------------------------- shape
 
 export type IntercompanyPosition = {
   ok: boolean;
-  /** Missing System Default names, when the bridge is not fully set. */
+  /** Missing Mapping Account System names, when the bridge is not fully set. */
   missing: string[];
   sides: AccountPosition[];
 };
 
-export type AttentionItem = { href: string; title: string; detail: string };
+export type CompanyProfitLoss = {
+  companyId: number;
+  companyLabel: string;
+  companyName: string;
+  /** Null when the Company's calendar holds no period for the month. */
+  column: { yearName: string; periodName: string; href: string } | null;
+  /** The multi-step statement's step and result lines. */
+  lines: { key: string; name: string; result: boolean; value: number }[];
+  net: number;
+};
 
-export type Health = {
-  unbalanced: { id: number; journalNo: string; debit: number; credit: number }[];
-  attention: AttentionItem[];
+export type DashboardMonth = {
+  periodId: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  current: boolean;
 };
 
 export type DashboardData = {
-  funnel: Funnel;
+  months: DashboardMonth[];
+  month: DashboardMonth | null;
   cash: CashBookSummary;
-  positions: SubledgerPosition[];
   intercompany: IntercompanyPosition;
-  health: Health;
+  profitLoss: CompanyProfitLoss[];
+  stages: FunnelStage[];
+  plan: RealizationOutcomeRow[];
+  books: SubledgerPosition[];
 };
-
-// ------------------------------------------------------------------ helpers
-
-const moneyOf = (r: {
-  currencyLabel: string;
-  amount: number;
-  currencyId: number;
-}) => ({
-  currencyId: r.currencyId,
-  currencyLabel: r.currencyLabel,
-  amount: r.amount,
-});
-
-function directional<T extends { currencyId: number; currencyLabel: string; amount: number }>(
-  rows: T[],
-  isOut: (row: T) => boolean
-) {
-  return {
-    totals: sumByCurrency(rows.map(moneyOf)),
-    outTotals: sumByCurrency(rows.filter(isOut).map(moneyOf)),
-    inTotals: sumByCurrency(rows.filter((r) => !isOut(r)).map(moneyOf)),
-  };
-}
-
-const budgetTask = (
-  r: CommitmentRow,
-  stage: StageKey
-): TaskRow => ({
-  key: `budget-${r.id}`,
-  stage,
-  href: `/budget/budget/${r.id}`,
-  title: r.budgetNo,
-  subtitle: r.description,
-  companyLabel: r.companyLabel,
-  direction: r.budgetType,
-  amount: r.amount,
-  currencyLabel: r.currencyLabel,
-  since: r.since,
-});
 
 // --------------------------------------------------------------------- read
 
 export async function dashboardData(
-  companyIds: number[]
+  companyIds: number[],
+  periodId: number | null = null
 ): Promise<DashboardData> {
-  const [submitted, awaiting, approved, pending, requests, cash, positions, bridge] =
+  const [months, submitted, awaiting, approved, cash, books, bridge] =
     await Promise.all([
+      budgetMonths(companyIds),
       submittedCommitments(companyIds),
       awaitingClassificationCommitments(companyIds),
       approvedCommitments(companyIds),
-      pendingCommitments(companyIds),
-      openFundingRequests(companyIds),
       cashBookSummary(companyIds),
-      loadSubledgers().then((books) => subledgerPositions(books, companyIds)),
+      loadSubledgers().then((defs) => subledgerPositions(defs, companyIds)),
       intercompanyBridge(),
     ]);
 
-  // Stage 2 is what is approved *minus* what a pending document is already
-  // holding — the subtraction this whole page depends on. Per budget rather
-  // than per currency, so a plan half-claimed reports only the half that is
-  // genuinely still free to be executed.
-  const executionRows = approved.rows
-    .map((r) => ({ ...r, amount: r.amount - (pending.claims.get(r.id) ?? 0) }))
-    .filter((r) => r.amount > 0);
+  const monthList: DashboardMonth[] = months.map((m) => ({
+    periodId: m.periodId,
+    name: m.name,
+    startDate: m.startDate,
+    endDate: m.endDate,
+    current: m.current,
+  }));
+  const month =
+    monthList.find((m) => m.periodId === periodId) ??
+    monthList.find((m) => m.current) ??
+    monthList[0] ??
+    null;
 
-  const execution = directional(executionRows, (r) => r.budgetType === "Out");
-
-  // A Pending document *is* an open Funding Request, so the queue is stated
-  // once: the amounts come from the documents, and the request supplies the
-  // number and the link, because confirming is what the induk actually does.
-  const requestOf = new Map(
-    requests
-      .filter((r) => r.transaction)
-      .map((r) => [r.transaction!.id, r] as const)
-  );
-
-  const fundingTasks: TaskRow[] = pending.rows.map((d) => {
-    const request = requestOf.get(d.id);
-    return {
-      key: `funding-${d.id}`,
-      stage: "funding" as const,
-      href: request
-        ? `/finance/funding-request/${request.id}`
-        : realizationHref(d.transactionType, d.id),
-      title: request?.funding_request_no ?? d.transactionNo,
-      subtitle: `${realizationOf(d.transactionType).title} · ${d.transactionNo}`,
-      companyLabel: d.companyLabel,
-      direction: d.transactionType,
-      amount: d.amount,
-      currencyLabel: d.currencyLabel,
-      since: d.since,
-    };
+  const stage = (
+    key: StageKey,
+    name: string,
+    href: string,
+    queue: CommitmentQueue
+  ): FunnelStage => ({
+    key,
+    name,
+    href,
+    count: queue.count,
+    totals: queue.totals,
+    inTotals: queue.inTotals,
+    outTotals: queue.outTotals,
+    rows: queue.rows.map((r) => ({ ...r, href: `/budget/budget/${r.id}` })),
   });
 
-  const stages: FunnelStage[] = [
-    {
-      key: "approval",
-      name: "Menunggu Persetujuan",
-      blockedOn: "Budget sudah diajukan dan menunggu keputusan approver.",
-      href: "/budget/budget/month/all?status=Submitted",
-      count: submitted.count,
-      totals: submitted.totals,
-      inTotals: submitted.inTotals,
-      outTotals: submitted.outTotals,
-    },
-    {
-      key: "classification",
-      name: "Menunggu Klasifikasi",
-      blockedOn:
-        "Budget sudah disetujui dan menunggu Budget Category serta Partner.",
-      href: "/budget/klasifikasi",
-      count: awaiting.count,
-      totals: awaiting.totals,
-      inTotals: awaiting.inTotals,
-      outTotals: awaiting.outTotals,
-    },
-    {
-      key: "execution",
-      name: "Siap Direalisasi",
-      blockedOn:
-        "Budget sudah disetujui dan dananya belum dieksekusi menjadi dokumen.",
-      href: "/budget/budget/month/all?status=Open",
-      count: executionRows.length,
-      totals: execution.totals,
-      inTotals: execution.inTotals,
-      outTotals: execution.outTotals,
-    },
-    {
-      key: "funding",
-      name: "Menunggu Konfirmasi Induk",
-      blockedOn:
-        "Company anak sudah mengajukan dana dan menunggu induk mengonfirmasi.",
-      href: "/finance/funding-request?status=Open",
-      count: pending.count,
-      totals: pending.totals,
-      inTotals: pending.inTotals,
-      outTotals: pending.outTotals,
-    },
+  const stages = [
+    stage("approval", "Menunggu Persetujuan", "/budget/budget/month/all?status=Submitted", submitted),
+    stage("classification", "Menunggu Klasifikasi", "/budget/klasifikasi", awaiting),
+    stage("execution", "Menunggu Direalisasi", "/budget/budget/month/all?status=Open", approved),
   ];
 
-  const tasks = [
-    ...submitted.rows.map((r) => budgetTask(r, "approval")),
-    ...awaiting.rows.map((r) => budgetTask(r, "classification")),
-    ...executionRows.map((r) => budgetTask(r, "execution")),
-    ...fundingTasks,
-  ].sort((a, b) => a.since.localeCompare(b.since));
-
-  // An approved Budget is a claim on cash from the moment it is approved;
-  // classifying it only decides which book the money will reach.
-  const committedOut = sumByCurrency([
-    ...awaiting.outTotals,
-    ...execution.outTotals,
-    ...pending.outTotals,
-  ]);
-  const committedIn = sumByCurrency([
-    ...awaiting.inTotals,
-    ...execution.inTotals,
-    ...pending.inTotals,
-  ]);
-
-  const sides = bridge.ok
-    ? await accountPositions([
+  const bridgeIds = bridge.ok
+    ? [
         bridge.induk.arAccountId,
         bridge.induk.apAccountId,
         bridge.anak.arAccountId,
         bridge.anak.apAccountId,
-      ])
+      ]
     : [];
+  // In the order asked for — induk AR, induk AP, anak AR, anak AP — which the
+  // tile reads by position.
+  const sides = (await accountPositions(bridgeIds)).sort(
+    (a, b) => bridgeIds.indexOf(a.id) - bridgeIds.indexOf(b.id)
+  );
+
+  const [plan, profitLoss] = await Promise.all([
+    month ? realizationOutcomes(companyIds, month.startDate, month.endDate) : [],
+    month ? companyProfitLoss(companyIds, month.startDate) : [],
+  ]);
 
   return {
-    funnel: { stages, tasks, committedOut, committedIn },
+    months: monthList,
+    month,
     cash,
-    positions,
-    intercompany: {
-      ok: bridge.ok,
-      missing: bridge.ok ? [] : bridge.missing,
-      sides,
-    },
-    health: {
-      unbalanced: await unbalancedJournals(companyIds),
-      attention: await setupGaps(bridge.ok ? null : bridge.missing),
-    },
+    intercompany: { ok: bridge.ok, missing: bridge.ok ? [] : bridge.missing, sides },
+    profitLoss,
+    stages,
+    plan,
+    books: books.filter((b) => b.subjects > 0),
   };
 }
 
-// ------------------------------------------------------------- setup checks
-
 /**
- * What a fresh installation still has to do, in the order the modules depend
- * on each other.
- *
- * The seed plants system data and nothing else (CLAUDE.md §12), so these are
- * the path from an empty database to one that can post — not a health check on
- * a working system. They disappear as they are satisfied, and the whole
- * section disappears with the last of them.
- *
- * Referential problems Postgres already makes impossible are deliberately not
- * checked here.
+ * Each Company's Laba Rugi from its year's first day to the end of the month,
+ * read through the report itself so the tile and the report cannot disagree.
+ * Each Company keeps its own calendar, so the month is resolved per Company.
  */
-async function setupGaps(bridgeMissing: string[] | null): Promise<AttentionItem[]> {
-  const [companies, cashBanks, accounts, mappings, periods, categories, structure] =
-    await Promise.all([
-      prisma.sysCompany.findMany({ orderBy: { id: "asc" } }),
-      prisma.mCashBank.findMany({
-        select: {
-          company_id: true,
-          account: { select: { company_id: true } },
-        },
-      }),
-      prisma.accAccount.count(),
-      prisma.accBudgetCategoryAccount.findMany({
-        select: { company_id: true, budget_category_id: true },
-      }),
-      prisma.accFiscalPeriod.groupBy({ by: ["company_id"], _count: { _all: true } }),
-      prisma.sysBudgetCategory.findMany({
-        select: { id: true, category_label: true },
-      }),
-      companyStructure(),
-    ]);
+async function companyProfitLoss(
+  companyIds: number[],
+  monthStart: string
+): Promise<CompanyProfitLoss[]> {
+  const companies = await prisma.sysCompany.findMany({
+    where: { id: { in: companyIds } },
+    orderBy: [{ is_parent: "desc" }, { id: "asc" }],
+    select: { id: true, company_label: true, company_name: true },
+  });
 
-  const items: AttentionItem[] = [];
-
-  // Exactly one induk and one anak is foundational, and nothing in the
-  // application can create or edit a Company — so a mismatch here means the
-  // database was changed outside the seed.
-  if (!structure.ok) {
-    items.push({
-      href: "/master/company",
-      title: "Struktur Company tidak sesuai",
-      detail:
-        `Ditemukan ${structure.total} Company (${structure.parents} induk, ${structure.children} anak). ` +
-        "Sistem mengharuskan tepat satu induk dan satu anak — perbaiki langsung pada database.",
-    });
-  }
-
-  if (!accounts) {
-    items.push({
-      href: "/accounting/account",
-      title: "Bagan akun belum dibuat",
-      detail:
-        "Account adalah dasar seluruh modul: Cash & Bank, mapping Budget Category, " +
-        "dan Journal. Susun bagan akun tiap Company terlebih dahulu.",
-    });
-  }
-
-  // Each Company keeps its own calendar, and posts only inside its own periods.
-  for (const company of companies) {
-    if (periods.some((p) => p.company_id === company.id)) continue;
-    items.push({
-      href: `/accounting/fiscal-year?company=${company.id}`,
-      title: `Belum ada Fiscal Period ${company.company_label}`,
-      detail:
-        "Setiap Company memposting hanya di dalam periode kalendernya sendiri. Buat " +
-        "Fiscal Year untuk Company ini lalu aktifkan — 12 periode bulanan dibuat saat itu.",
-    });
-  }
-
-  const crossCompany = cashBanks.filter(
-    (cb) => cb.account && cb.account.company_id !== cb.company_id
-  );
-  if (crossCompany.length) {
-    items.push({
-      href: "/master/cash-bank",
-      title: `${crossCompany.length} Cash & Bank memakai Account milik Company lain`,
-      detail: "Account harus berada pada Company yang sama dengan resource-nya.",
-    });
-  }
-
-  // Only worth raising once a chart of accounts exists — before that, the
-  // missing accounts are the thing to fix and this would just repeat it.
-  if (accounts) {
-    const unmapped: string[] = [];
-    for (const c of companies) {
-      for (const bc of categories) {
-        const has = mappings.some(
-          (m) => m.company_id === c.id && m.budget_category_id === bc.id
-        );
-        if (!has) unmapped.push(`${c.company_label} · ${bc.category_label}`);
+  return Promise.all(
+    companies.map(async (c) => {
+      const base = {
+        companyId: c.id,
+        companyLabel: c.company_label,
+        companyName: c.company_name,
+      };
+      const years = await reportableFiscalYears(c.id);
+      const year = years.find((y) =>
+        y.periods.some((p) => p.startDate <= monthStart && monthStart <= p.endDate)
+      );
+      const period = year?.periods.find(
+        (p) => p.startDate <= monthStart && monthStart <= p.endDate
+      );
+      const column = year && period ? resolveColumn(years, year.id, period.id, "ytd") : null;
+      if (!year || !period || !column) {
+        return { ...base, column: null, lines: [], net: 0 };
       }
-    }
-    if (unmapped.length) {
-      items.push({
-        href: "/accounting/budget-category-account",
-        title: `${unmapped.length} Budget Category belum dipetakan ke Account`,
-        detail:
-          "Belum dipetakan: " +
-          unmapped.slice(0, 4).join(", ") +
-          (unmapped.length > 4 ? `, dan ${unmapped.length - 4} lainnya.` : "."),
-      });
-    }
-  }
 
-  const withoutCashBank = companies.filter(
-    (c) => !cashBanks.some((cb) => cb.company_id === c.id)
+      const report = await profitLossReport(c.id, [column]);
+      return {
+        ...base,
+        column: {
+          yearName: year.name,
+          periodName: period.name,
+          href: reportHref("profit-loss", {
+            company: c.id,
+            year: year.id,
+            period: period.id,
+            mode: "ytd",
+          }),
+        },
+        lines: report.rows
+          .filter((r) => r.depth === 0 && (r.kind === "step" || r.kind === "subtotal"))
+          .map((r) => ({
+            key: r.key,
+            name: r.name,
+            result: r.kind === "subtotal",
+            value: r.values[0] ?? 0,
+          })),
+        net: report.result[0] ?? 0,
+      };
+    })
   );
-  if (withoutCashBank.length) {
-    items.push({
-      href: "/master/cash-bank",
-      title: `${withoutCashBank.map((c) => c.company_name).join(", ")} belum memiliki Cash & Bank`,
-      detail:
-        "Company tanpa resource kas bergantung pada Company induk untuk setiap " +
-        "realisasi, melalui Funding Request.",
-    });
-  }
-
-  if (accounts && bridgeMissing?.length) {
-    items.push({
-      href: "/accounting/system-account",
-      title: "Bridge intercompany belum lengkap",
-      detail:
-        "Belum diatur: " +
-        bridgeMissing.join(", ") +
-        ". Funding Request Company anak tidak dapat dikonfirmasi sebelum ini lengkap.",
-    });
-  }
-
-  // Same shape as the bridge above, and for the same reason: an account a
-  // posting engine needs is named, never guessed. Raised only once a chart of
-  // accounts exists, because before that the missing accounts are the thing to
-  // fix and this would only repeat it.
-  if (accounts) {
-    const closingMissing = await missingClosingAccounts();
-    if (closingMissing.length) {
-      items.push({
-        href: "/accounting/system-account",
-        title: "Account Laba/Rugi Tahun Sebelumnya belum diatur",
-        detail:
-          "Belum diatur: " +
-          closingMissing.join(", ") +
-          ". Fiscal Year tidak dapat ditutup sebelum tiap Company menunjuk " +
-          "account tempat hasil tahun berjalan dipindahkan.",
-      });
-    }
-
-    // The Neraca refuses to run without the accounts its computed lines sit
-    // on. Tahun Sebelumnya anchors the per-year lines, so it is asked for
-    // only from a Company still carrying an unclosed year, whose Neraca prints them.
-    const induk = companies.find((c) => c.is_parent);
-    const anak = companies.find((c) => !c.is_parent);
-    const neracaMissing = await missingNeracaAccounts({
-      induk: induk ? await isCarryingUnclosedYear(induk.id) : false,
-      anak: anak ? await isCarryingUnclosedYear(anak.id) : false,
-    });
-    if (neracaMissing.length) {
-      items.push({
-        href: "/accounting/system-account",
-        title: "Account Laba/Rugi pada Neraca belum diatur",
-        detail:
-          "Belum diatur: " +
-          neracaMissing.join(", ") +
-          ". Neraca tidak dapat ditampilkan sebelum account tempat laba/rugi " +
-          "yang dihitung diletakkan ditunjuk.",
-      });
-    }
-  }
-
-  return items;
 }

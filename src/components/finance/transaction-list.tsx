@@ -30,7 +30,7 @@ import {
 } from "@/lib/siba/transaction-workflow";
 import { realizationHref, realizationOf } from "@/lib/siba/realization";
 import { menuButtonClass } from "@/lib/siba/header-actions";
-import { CashBalanceDialog } from "@/components/budget/cash-balance-dialog";
+import { CashBalanceTile } from "@/components/budget/cash-balance-dialog";
 
 /**
  * The register of one Realisasi Budget menu — Penerimaan or Pengeluaran.
@@ -79,7 +79,6 @@ export function TransactionList({
     { row: TransactionRow; action: TransactionAction } | null
   >(null);
   const [busy, setBusy] = useState(false);
-  const [showCash, setShowCash] = useState(false);
 
   const currencyOf = useMemo(() => {
     const byId = new Map(refs.currencies.map((c) => [c.id, c.label]));
@@ -171,43 +170,7 @@ export function TransactionList({
       </DocumentHeader>
 
       <div className="kpis bud">
-        <button
-          className="kpi wide"
-          onClick={() => setShowCash(true)}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span
-              className="i t-ok"
-            >
-              <Icon name="wallet2" size={14} />
-            </span>
-            <span className="l">Saldo Kas &amp; Bank</span>
-            <span className="more">
-              Rincian <Icon name="chev" size={11} />
-            </span>
-          </div>
-          <div className="v">
-            {cash.byCurrency.length
-              ? formatMoney(
-                  cash.byCurrency[0].balance,
-                  cash.byCurrency[0].currencyLabel
-                )
-              : "—"}
-          </div>
-          <div className="d">
-            {cash.resources} resource aktif
-            {cash.byCurrency.length > 1 && (
-              <>
-                {" · "}
-                {cash.byCurrency
-                  .slice(1)
-                  .map((c) => formatMoney(c.balance, c.currencyLabel))
-                  .join(" · ")}
-              </>
-            )}
-          </div>
-        </button>
+        <CashBalanceTile cash={cash} />
 
         <button
           className="kpi"
@@ -508,9 +471,6 @@ export function TransactionList({
         />
       )}
 
-      {showCash && (
-        <CashBalanceDialog cash={cash} onClose={() => setShowCash(false)} />
-      )}
     </>
   );
 }

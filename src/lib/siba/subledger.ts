@@ -835,6 +835,17 @@ export type SubledgerPosition = {
   /** How many subjects still stand in this book. */
   subjects: number;
   totals: MoneyTotal[];
+  /** Each standing subject, largest first within its currency. */
+  partners: {
+    partnerId: number;
+    partnerLabel: string;
+    partnerName: string;
+    currencyLabel: string;
+    balance: number;
+    openItems: number;
+    /** `YYYY-MM-DD` — when its oldest open item was raised. */
+    oldest: string;
+  }[];
 };
 
 export async function subledgerPositions(
@@ -845,19 +856,33 @@ export async function subledgerPositions(
   const grouped = companyIds.length
     ? await prisma.subLedgerBalance.groupBy({
         by: ["budget_category_id", "partner_id", "currency_id"],
-        where: { partner: { company_id: { in: companyIds } } },
+        // A cleared item holds nil, so only open ones move the sum — and the
+        // oldest date then names an item still waiting.
+        where: { status: "Open", partner: { company_id: { in: companyIds } } },
         _sum: { balance: true },
+        _count: { id: true },
+        _min: { opened_date: true },
       })
     : [];
-  const currencies = grouped.length
-    ? await prisma.refCurrency.findMany({ select: { id: true, currency_label: true } })
-    : [];
+  const [currencies, partnerRows] = grouped.length
+    ? await Promise.all([
+        prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
+        prisma.mPartner.findMany({
+          where: { id: { in: [...new Set(grouped.map((g) => g.partner_id))] } },
+          select: { id: true, partner_label: true, partner_name: true },
+        }),
+      ])
+    : [[], []];
   const labelOf = new Map(currencies.map((c) => [c.id, c.currency_label]));
+  const partnerOf = new Map(partnerRows.map((p) => [p.id, p]));
   const balances = grouped.map((g) => ({
     bookId: g.budget_category_id,
+    partnerId: g.partner_id,
     currency_id: g.currency_id,
     currency: { currency_label: labelOf.get(g.currency_id) ?? "" },
     balance: g._sum.balance ?? { toNumber: () => 0 },
+    openItems: g._count.id,
+    oldest: g._min.opened_date?.toISOString().slice(0, 10) ?? "",
   }));
 
   return books.map((def) => {
@@ -878,6 +903,20 @@ export async function subledgerPositions(
           amount: b.balance.toNumber(),
         }))
       ),
+      partners: mine
+        .map((b) => ({
+          partnerId: b.partnerId,
+          partnerLabel: partnerOf.get(b.partnerId)?.partner_label ?? "",
+          partnerName: partnerOf.get(b.partnerId)?.partner_name ?? "",
+          currencyLabel: b.currency.currency_label,
+          balance: b.balance.toNumber(),
+          openItems: b.openItems,
+          oldest: b.oldest,
+        }))
+        .sort(
+          (a, b) =>
+            a.currencyLabel.localeCompare(b.currencyLabel) || b.balance - a.balance
+        ),
     };
   });
 }

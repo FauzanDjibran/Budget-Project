@@ -31,7 +31,7 @@ import {
   menuButtonClass,
   orderForHeader,
 } from "@/lib/siba/header-actions";
-import { CashBalanceDialog } from "./cash-balance-dialog";
+import { CashBalanceTile } from "./cash-balance-dialog";
 import { ReportPicker } from "./report-picker";
 
 /**
@@ -104,7 +104,6 @@ export function BudgetList({
   const [menuFor, setMenuFor] = useState<{ row: BudgetRow; x: number; y: number } | null>(null);
   const [confirm, setConfirm] = useState<{ ids: number[]; action: BudgetAction } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [showCash, setShowCash] = useState(false);
   const [showReport, setShowReport] = useState(false);
 
   const companyOf = useMemo(() => {
@@ -346,38 +345,7 @@ export function BudgetList({
       </DocumentHeader>
 
       <div className="kpis bud">
-        <button
-          className="kpi wide"
-          onClick={() => setShowCash(true)}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span className="i t-ok">
-              <Icon name="wallet2" size={14} />
-            </span>
-            <span className="l">Saldo Kas &amp; Bank</span>
-            <span className="more">
-              Rincian <Icon name="chev" size={11} />
-            </span>
-          </div>
-          <div className="v">
-            {cash.byCurrency.length
-              ? formatMoney(cash.byCurrency[0].balance, cash.byCurrency[0].currencyLabel)
-              : "—"}
-          </div>
-          <div className="d">
-            {cash.resources} resource aktif
-            {cash.byCurrency.length > 1 && (
-              <>
-                {" · "}
-                {cash.byCurrency
-                  .slice(1)
-                  .map((c) => formatMoney(c.balance, c.currencyLabel))
-                  .join(" · ")}
-              </>
-            )}
-          </div>
-        </button>
+        <CashBalanceTile cash={cash} />
 
         <button
           className="kpi"
@@ -734,9 +702,6 @@ export function BudgetList({
         />
       )}
 
-      {showCash && (
-        <CashBalanceDialog cash={cash} onClose={() => setShowCash(false)} />
-      )}
 
       {showReport && (
         <ReportPicker

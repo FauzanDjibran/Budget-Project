@@ -2,7 +2,11 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { dashboardData, type StageKey } from "../src/lib/siba/dashboard";
-import { approvedCommitments, submittedCommitments } from "../src/lib/siba/budget";
+import {
+  approvedCommitments,
+  realizationOutcomes,
+  submittedCommitments,
+} from "../src/lib/siba/budget";
 import { budgetDocTypeId } from "../src/lib/siba/finance";
 import {
   FIXTURE_PREFIX,
@@ -54,11 +58,16 @@ const AMOUNT = {
   draft: 700_000,
   rejected: 300_000,
   awaiting: 600_000,
+  closedMatch: 800_000,
+  closedOver: 300_000,
+  overBy: 150_000,
+  /** Already realized against the plain Open plan. */
+  realized: 200_000,
 };
 
 async function makeBudget(options: {
   companyId: number;
-  status: "Draft" | "Submitted" | "Rejected" | "Approved" | "Open";
+  status: "Draft" | "Submitted" | "Rejected" | "Approved" | "Open" | "Closed";
   amount: number;
   realized?: number;
 }): Promise<number> {
@@ -153,14 +162,13 @@ const stageOf = (
   key: StageKey
 ) => stages.find((s) => s.key === key)!;
 
-let openPlainId = 0;
+const OUTSTANDING = AMOUNT.openPlain - AMOUNT.realized + AMOUNT.openClaimed;
+
 let openClaimedId = 0;
 let submittedId = 0;
 let draftId = 0;
 let rejectedId = 0;
 let awaitingId = 0;
-let requestId = 0;
-let pendingDocumentId = 0;
 
 before(async () => {
   induk = await parentCompanyId();
@@ -183,10 +191,11 @@ before(async () => {
     status: "Submitted",
     amount: AMOUNT.submitted,
   });
-  openPlainId = await makeBudget({
+  await makeBudget({
     companyId: induk,
     status: "Open",
     amount: AMOUNT.openPlain,
+    realized: AMOUNT.realized,
   });
   draftId = await makeBudget({
     companyId: induk,
@@ -203,16 +212,25 @@ before(async () => {
     status: "Approved",
     amount: AMOUNT.awaiting,
   });
+  await makeBudget({
+    companyId: induk,
+    status: "Closed",
+    amount: AMOUNT.closedMatch,
+    realized: AMOUNT.closedMatch,
+  });
+  await makeBudget({
+    companyId: induk,
+    status: "Closed",
+    amount: AMOUNT.closedOver,
+    realized: AMOUNT.closedOver + AMOUNT.overBy,
+  });
   // The anak's, because a Pending document is one the anak raised.
   openClaimedId = await makeBudget({
     companyId: anak,
     status: "Open",
     amount: AMOUNT.openClaimed,
   });
-  ({ requestId, documentId: pendingDocumentId } = await makePendingDocument(
-    openClaimedId,
-    AMOUNT.claim
-  ));
+  await makePendingDocument(openClaimedId, AMOUNT.claim);
 });
 
 after(async () => {
@@ -237,165 +255,110 @@ after(async () => {
   await disconnect();
 });
 
-describe("the funnel is a partition", () => {
-  test("approved money is split between execution and funding, never counted twice", async () => {
+describe("the three Budget stages are a partition", () => {
+  test("each stage holds its own money, and together they are everything committed", async () => {
     const both = [induk, anak];
     const data = await dashboardData(both);
+    const approval = mine(stageOf(data.stages, "approval").totals);
+    const classification = mine(stageOf(data.stages, "classification").totals);
+    const execution = mine(stageOf(data.stages, "execution").totals);
 
-    const execution = mine(stageOf(data.funnel.stages, "execution").totals);
-    const funding = mine(stageOf(data.funnel.stages, "funding").totals);
-
-    // What is approved and not yet cash, read straight from Budget.
-    const approved = mine((await approvedCommitments(both)).totals);
-
+    assert.equal(approval, AMOUNT.submitted);
+    assert.equal(classification, AMOUNT.awaiting, "the whole plan, nothing realizable yet");
     assert.equal(
-      approved,
-      AMOUNT.openPlain + AMOUNT.openClaimed,
-      "the raw approved figure still holds the whole of both plans"
+      execution,
+      OUTSTANDING,
+      "an Open plan states what is left to realize"
     );
     assert.equal(
       execution,
-      AMOUNT.openPlain + (AMOUNT.openClaimed - AMOUNT.claim),
-      "what a pending document holds is taken out of the execution stage"
+      mine((await approvedCommitments(both)).totals),
+      "the realization stage is exactly Budget's own outstanding — no subtraction, no gap"
     );
-    assert.equal(funding, AMOUNT.claim, "and is stated once, in the funding stage");
     assert.equal(
-      execution + funding,
-      approved,
-      "the two stages together are exactly the approved pool — no gap, no overlap"
+      approval,
+      mine((await submittedCommitments(both)).totals)
     );
   });
 
-  test("the approval stage is separate money, not part of the approved pool", async () => {
+  test("a pending Funding Request does not move a Budget out of the realization stage", async () => {
     const data = await dashboardData([induk, anak]);
+    const claimed = data.stages
+      .find((s) => s.key === "execution")!
+      .rows.find((r) => r.id === openClaimedId);
     assert.equal(
-      mine(stageOf(data.funnel.stages, "approval").totals),
-      AMOUNT.submitted
-    );
-    assert.equal(
-      mine((await submittedCommitments([induk, anak])).totals),
-      AMOUNT.submitted
-    );
-  });
-
-  test("a Budget awaiting classification is its own stage, outside the realizable pool", async () => {
-    const data = await dashboardData([induk, anak]);
-    assert.equal(
-      mine(stageOf(data.funnel.stages, "classification").totals),
-      AMOUNT.awaiting,
-      "the whole plan waits, since nothing can be realized against it yet"
-    );
-    assert.equal(
-      mine((await approvedCommitments([induk, anak])).totals),
-      AMOUNT.openPlain + AMOUNT.openClaimed,
-      "and it is not part of the realizable pool the execution stage splits"
-    );
-    const task = data.funnel.tasks.find((t) => t.key === `budget-${awaitingId}`);
-    assert.equal(task?.stage, "classification");
-  });
-
-  test("only approved money reduces the cash projection", async () => {
-    const data = await dashboardData([induk, anak]);
-    assert.equal(
-      mine(data.funnel.committedOut),
-      AMOUNT.awaiting +
-        AMOUNT.openPlain +
-        (AMOUNT.openClaimed - AMOUNT.claim) +
-        AMOUNT.claim,
-      "committed cash is everything approved: stages two to four, once each"
-    );
-    assert.equal(
-      mine(data.funnel.committedIn),
-      0,
-      "every fixture here is an Out budget"
+      claimed?.amount,
+      AMOUNT.openClaimed,
+      "the stage reads the Budget table alone: what is not realized yet"
     );
   });
 });
 
 describe("a draft never reaches the dashboard", () => {
-  test("Draft and Rejected budgets are in no stage and no queue", async () => {
+  test("Draft and Rejected budgets are in no stage", async () => {
     const data = await dashboardData([induk, anak]);
-    const keys = data.funnel.tasks.map((t) => t.key);
-
-    assert.equal(keys.includes(`budget-${draftId}`), false, "a Draft budget");
-    assert.equal(keys.includes(`budget-${rejectedId}`), false, "a Rejected budget");
-
-    const counted =
-      mine(stageOf(data.funnel.stages, "approval").totals) +
-      mine(stageOf(data.funnel.stages, "classification").totals) +
-      mine(stageOf(data.funnel.stages, "execution").totals) +
-      mine(stageOf(data.funnel.stages, "funding").totals);
+    const ids = data.stages.flatMap((s) => s.rows.map((r) => r.id));
+    assert.equal(ids.includes(draftId), false, "a Draft budget");
+    assert.equal(ids.includes(rejectedId), false, "a Rejected budget");
     assert.equal(
-      counted,
-      AMOUNT.submitted + AMOUNT.awaiting + AMOUNT.openPlain + AMOUNT.openClaimed,
-      "and neither amount is anywhere in the totals"
+      new Set(ids).size,
+      ids.length,
+      "a Budget in two stages would be the same money twice"
     );
+    assert.ok(ids.includes(submittedId));
+    assert.ok(ids.includes(awaitingId));
+    for (const stage of data.stages) {
+      const ages = stage.rows.map((r) => r.since);
+      assert.deepEqual([...ages].sort(), ages, `${stage.key} is longest-waiting first`);
+    }
   });
 });
 
-describe("the queue names records, and names them once", () => {
-  test("each stage's records appear exactly once, oldest first", async () => {
-    const data = await dashboardData([induk, anak]);
-    const keys = data.funnel.tasks.map((t) => t.key);
-
-    assert.equal(
-      new Set(keys).size,
-      keys.length,
-      "a record in two stages would be the same defect in another form"
-    );
-    assert.ok(keys.includes(`budget-${submittedId}`));
-    assert.ok(keys.includes(`budget-${openPlainId}`));
-    assert.ok(keys.includes(`budget-${openClaimedId}`));
-
-    const ages = data.funnel.tasks.map((t) => t.since);
-    assert.deepEqual([...ages].sort(), ages, "longest-waiting first");
-  });
-
-  test("a funding task opens the request, which is what the induk answers", async () => {
-    const data = await dashboardData([induk, anak]);
-    // By this fixture’s own document, never "the first funding task": a
-    // database that already holds a pending document — the showcase seed
-    // leaves one — would otherwise hand back somebody else’s.
-    const task = data.funnel.tasks.find((t) => t.key === `funding-${pendingDocumentId}`);
-    assert.ok(task, "the pending document must be in the queue");
-    assert.equal(task.stage, "funding");
-    assert.equal(task.href, `/finance/funding-request/${requestId}`);
-  });
-});
-
-describe("a queue never reaches outside the reader's Companies", () => {
+describe("a stage never reaches outside the reader's Companies", () => {
   test("the anak's commitments are absent from an induk-only dashboard", async () => {
     const data = await dashboardData([induk]);
-    const keys = data.funnel.tasks.map((t) => t.key);
-
-    assert.equal(keys.includes(`budget-${openClaimedId}`), false);
+    const ids = data.stages.flatMap((s) => s.rows.map((r) => r.id));
+    assert.equal(ids.includes(openClaimedId), false);
     assert.equal(
-      mine(stageOf(data.funnel.stages, "funding").totals),
-      0,
-      "and so is the request raised against them"
-    );
-    assert.equal(
-      mine(stageOf(data.funnel.stages, "execution").totals),
-      AMOUNT.openPlain,
-      "leaving only the induk's own"
+      mine(stageOf(data.stages, "execution").totals),
+      AMOUNT.openPlain - AMOUNT.realized
     );
   });
 
   test("no Company at all summarises nothing rather than everything", async () => {
     const data = await dashboardData([]);
-    assert.deepEqual(data.funnel.tasks, []);
     assert.equal(data.cash.rows.length, 0);
-    for (const stage of data.funnel.stages) assert.equal(stage.count, 0);
+    assert.deepEqual(data.books, []);
+    assert.deepEqual(data.profitLoss, []);
+    for (const stage of data.stages) assert.equal(stage.count, 0);
+  });
+});
+
+describe("plan against realization", () => {
+  test("each realizable Budget lands in one outcome: kurang, sesuai or lebih", async () => {
+    const [row] = (await realizationOutcomes([induk, anak], today, today)).filter(
+      (r) => r.currencyId === currency
+    );
+    assert.ok(row, "the fixture currency has its own row");
+    assert.deepEqual(
+      row.under,
+      { count: 2, amount: AMOUNT.openPlain - AMOUNT.realized + AMOUNT.openClaimed },
+      "Open Budgets are short by what is left to realize"
+    );
+    assert.deepEqual(row.match, { count: 1, amount: AMOUNT.closedMatch });
+    assert.deepEqual(row.over, { count: 1, amount: AMOUNT.overBy }, "Lebih states the excess");
+    assert.equal(
+      row.budgets.length,
+      4,
+      "Approved, Submitted, Draft and Rejected Budgets cannot be realized and are not counted"
+    );
   });
 
-  test("a pending claim is only subtracted inside the same scope", async () => {
-    // The anak alone: its one approved plan, minus what its own pending
-    // document holds, plus that document stated once in the funding stage.
-    const data = await dashboardData([anak]);
-    assert.equal(
-      mine(stageOf(data.funnel.stages, "execution").totals),
-      AMOUNT.openClaimed - AMOUNT.claim
+  test("a Laba Rugi tile is offered for every Company the reader may see", async () => {
+    const data = await dashboardData([induk, anak]);
+    assert.deepEqual(
+      data.profitLoss.map((p) => p.companyId).sort(),
+      [induk, anak].sort()
     );
-    assert.equal(mine(stageOf(data.funnel.stages, "funding").totals), AMOUNT.claim);
   });
 });
