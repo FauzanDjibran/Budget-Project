@@ -353,6 +353,11 @@ describe("the book is append-only, and its total is derived", () => {
       SubledgerItemUnavailable,
       "an item cannot be settled by a document dated before it opened"
     );
+    await assert.rejects(
+      entry("2026-01-05", "In", 20, item),
+      (e: Error) => e instanceof SubledgerItemUnavailable && /dibuka pada 10\/01\/2026/.test(e.message),
+      "nor raised by one — it would hold value before it existed"
+    );
     const fits = await entry("2026-02-01", "Out", 20, item);
     assert.equal(fits.balance_after.toNumber(), 50, "what the lowest day allows still posts");
   });

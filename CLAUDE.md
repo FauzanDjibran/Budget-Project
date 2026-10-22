@@ -1679,7 +1679,9 @@ ERP, the name stays SIBA's.
     item and the day. The user's decision (2026-10-20), reversing the earlier
     permission to settle an item before it opened. An item has few entries, so
     they are read whole; no period chain like the Cash Bank Book's. A raise
-    (Penambahan) is not checked — it cannot go below nothing.
+    (Penambahan) cannot go below nothing, but it may not be dated before its
+    item opened either — it would put value on days the item did not exist —
+    so `raiseItem` refuses it at Post and the draft check at save.
 107. **Each settled item has its own FX difference, on its own journal line.** What
     the line's cash cost is split across its items in proportion (`allocateBase`
     in `fx.ts`, the last item taking the rounding, so the shares add up to what

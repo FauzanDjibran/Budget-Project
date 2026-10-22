@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { formatMoney, sumByCurrency, type MoneyTotal } from "@/lib/format";
+import { formatDate, formatMoney, sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
 import {
@@ -675,6 +675,16 @@ export async function checkItemAdjustmentLines(
           _lines:
             `Nilai Baru ${item.itemNo} sama dengan nilainya sekarang ` +
             `(${formatMoney(item.remaining, header.currencyLabel)}), jadi tidak ada yang disesuaikan.`,
+        },
+      };
+    }
+    if (date < item.date) {
+      return {
+        ok: false,
+        errors: {
+          _lines:
+            `Open item ${item.itemNo} baru dibuka pada ${formatDate(item.date)}, ` +
+            "sehingga tidak dapat disesuaikan dengan tanggal dokumen sebelumnya.",
         },
       };
     }

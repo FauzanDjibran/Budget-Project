@@ -352,6 +352,13 @@ async function raiseItem(
       `Open item ${item.item_no} sudah selesai dan tidak dapat ditambah.`
     );
   }
+  // An item holds nothing before it opened, raised or lowered (§10 rule 106).
+  if (asDate(entry.date) < item.opened_date) {
+    throw new SubledgerItemUnavailable(
+      `Open item ${item.item_no} baru dibuka pada ${formatDate(item.opened_date)}, ` +
+        "tidak dapat ditambah dengan tanggal sebelumnya."
+    );
+  }
   const base = roundBase(amount * item.rate.toNumber());
   if (entry.baseAmount != null && roundBase(entry.baseAmount) !== base) {
     throw new SubledgerItemUnavailable(
