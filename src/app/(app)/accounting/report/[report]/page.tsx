@@ -228,6 +228,12 @@ async function trialBalancePage(
         />
       }
       runAt={runAt}
+      exportHref={`/accounting/report/${slug}/export?${new URLSearchParams({
+        company: String(company.id),
+        from: range.from,
+        to: range.to,
+        ...(includeAll ? { all: "1" } : {}),
+      })}`}
       title={
         <StatementTitle
           name={report.name}

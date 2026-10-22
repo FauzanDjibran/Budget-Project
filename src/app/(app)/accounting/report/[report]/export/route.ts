@@ -9,8 +9,10 @@ import {
   balanceSheetReport,
   profitLossReport,
   resolveStatementRun,
+  trialBalanceStatement,
   type StatementColumn,
 } from "@/lib/siba/statements";
+import { trialBalanceWorkbook } from "@/lib/siba/trial-balance-export";
 import { formatDate, formatMoney, formatTimestamp } from "@/lib/format";
 import { generalLedgerReport } from "@/lib/siba/ledger";
 import { ledgerWorkbook } from "@/lib/siba/ledger-export";
@@ -20,7 +22,7 @@ import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 export const dynamic = "force-dynamic";
 
 /**
- * Unduh XLSX for the Laba Rugi, the Neraca and the General Ledger.
+ * Unduh XLSX for the Laba Rugi, the Neraca, the General Ledger and the Trial Balance.
  *
  * A file download, which a Server Action cannot return — the second instance of
  * the Route Handler exception CLAUDE.md §12 reserves for report export. It takes
@@ -34,7 +36,11 @@ export async function GET(
 ) {
   const { report: slug } = await params;
   const report = reportBySlug(slug);
-  if (!report || report.module !== "accounting" || (report.params !== "fiscal-period" && report.key !== "general_ledger")) {
+  if (
+    !report ||
+    report.module !== "accounting" ||
+    (report.params !== "fiscal-period" && report.key !== "general_ledger" && report.key !== "trial_balance")
+  ) {
     return new Response("Tidak ditemukan", { status: 404 });
   }
 
@@ -59,6 +65,32 @@ export async function GET(
       companyName: company.name,
       subtitle: `Untuk periode ${formatDate(range.from)} s.d. ${formatDate(range.to)}`,
       accounts: data.accounts,
+      footnotes: notes,
+      printedBy: actor.user.name,
+      printedAt: formatTimestamp(new Date()),
+    });
+    return xlsxResponse(file, `${report.name} ${company.label} ${range.from} - ${range.to}.xlsx`);
+  }
+
+  if (report.key === "trial_balance") {
+    const range = resolveRange(query.from, query.to);
+    const data = await trialBalanceStatement(company.id, range, query.all === "1");
+    const notes = [`Seluruh angka dalam mata uang dasar (${BASE_CURRENCY_LABEL}); saldo mengikuti normal balance tipe account.`];
+    if (data.openingFrom) {
+      notes.push(`Saldo awal diambil dari Opening Balance ${data.openingFrom.openingNo} per ${formatDate(data.openingFrom.date)}.`);
+    }
+    if (!data.balanced) {
+      notes.push(`Mutasi debit tidak sama dengan mutasi kredit: selisih ${formatMoney(Math.abs(data.totalDebit - data.totalCredit))}.`);
+    }
+    if (data.unbalanced.length) {
+      notes.push(`Journal tidak seimbang: ${data.unbalanced.map((j) => j.journalNo).join(", ")}.`);
+    }
+    const file = await trialBalanceWorkbook({
+      companyName: company.name,
+      subtitle: `Untuk periode ${formatDate(range.from)} s.d. ${formatDate(range.to)}`,
+      rows: data.rows,
+      totalDebit: data.totalDebit,
+      totalCredit: data.totalCredit,
       footnotes: notes,
       printedBy: actor.user.name,
       printedAt: formatTimestamp(new Date()),
