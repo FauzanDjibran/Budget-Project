@@ -610,7 +610,7 @@ describe("a backdated movement is checked on every day from its date on", () => 
     assert.equal(later?.opening, 650, "a month after the chain carries its last closing");
     const earlier = await cashBankLedgerReport(id, { from: "2019-12-01", to: "2019-12-31" }, [company]);
     assert.equal(earlier?.opening, 0);
-    const summary = await cashBankBalanceReport({ from: "2020-02-10", to: "2020-02-28" }, [company], id);
+    const summary = await cashBankBalanceReport({ from: "2020-02-10", to: "2020-02-28" }, [company], [id]);
     assert.equal(summary.groups[0]?.rows[0]?.opening, 600);
   });
 });

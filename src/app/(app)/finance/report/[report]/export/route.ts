@@ -1,6 +1,7 @@
 import { currentActor } from "@/lib/siba/auth";
 import { actorCan } from "@/lib/siba/access";
-import { cashBankLedgerReport } from "@/lib/siba/cash-bank";
+import { cashBankBalanceReport, cashBankLedgerReport } from "@/lib/siba/cash-bank";
+import { cashBankBalanceWorkbook } from "@/lib/siba/cash-bank-balance-export";
 import { cashBankLedgerWorkbook } from "@/lib/siba/cash-bank-export";
 import { companyScope } from "@/lib/siba/company-access";
 import { reportBySlug } from "@/lib/siba/reports";
@@ -15,7 +16,7 @@ import { formatDate, formatTimestamp } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 /**
- * Unduh XLSX for Buku Kas & Bank, Buku Subjek and Saldo Buku Subjek — the Finance twin of the
+ * Unduh XLSX for Buku Kas & Bank, Saldo Kas & Bank, Buku Subjek and Saldo Buku Subjek — the Finance twin of the
  * Accounting export route, the same Route Handler exception (CLAUDE.md §12).
  * It reads the page's own parameters through the page's own reader under the
  * page's own permission, so the file is the run on screen. A refusal says
@@ -30,7 +31,7 @@ export async function GET(
   if (
     !report ||
     report.module !== "finance" ||
-    !["cash_bank_ledger", "subledger", "subledger_balance"].includes(report.key)
+    !["cash_bank_ledger", "cash_bank_balance", "subledger", "subledger_balance"].includes(report.key)
   ) {
     return new Response("Tidak ditemukan", { status: 404 });
   }
@@ -84,6 +85,14 @@ export async function GET(
   }
 
   const ids = parseIds(query.cashBank);
+
+  if (report.key === "cash_bank_balance") {
+    const data = await cashBankBalanceReport(range, [company.id], ids);
+    const notes = ["Setiap mata uang direkap terpisah dan tidak pernah dijumlahkan menjadi satu angka."];
+    const file = await cashBankBalanceWorkbook({ companyName: company.name, report: data, footnotes: notes, ...printed });
+    return xlsxResponse(file, `${report.name} ${company.label} ${range.from} - ${range.to}.xlsx`);
+  }
+
   if (!ids.length) return new Response("Pilih Cash & Bank terlebih dahulu", { status: 400 });
   const books = (
     await Promise.all(ids.map((id) => cashBankLedgerReport(id, range, [company.id])))

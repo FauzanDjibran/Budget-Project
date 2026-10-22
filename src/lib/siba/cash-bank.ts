@@ -970,12 +970,13 @@ export type BalanceReport = {
 export async function cashBankBalanceReport(
   range: PeriodRange,
   companyIds: number[],
-  cashBankId?: number | null
+  /** Narrows to these resources; empty or absent reports every one. */
+  cashBankIds?: number[] | null
 ): Promise<BalanceReport> {
   const resources = await prisma.mCashBank.findMany({
     where: {
       company_id: { in: companyIds },
-      ...(cashBankId ? { id: cashBankId } : {}),
+      ...(cashBankIds?.length ? { id: { in: cashBankIds } } : {}),
     },
     orderBy: [{ company_id: "asc" }, { cash_bank_label: "asc" }],
     select: {

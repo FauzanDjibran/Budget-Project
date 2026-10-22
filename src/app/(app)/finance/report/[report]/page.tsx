@@ -102,9 +102,9 @@ export default async function Page({
 
   const resources = await cashBankOptions(company.id);
 
-  // Buku Kas & Bank reads several resources at once, like the General Ledger.
+  // Buku Kas & Bank and Saldo Kas & Bank read several resources at once, like the General Ledger.
   const cashBankIds = idList(query.cashBank);
-  const filterBar = report.key === "cash_bank_ledger" ? (
+  const filterBar = report.key !== "cash_bank_layer" ? (
     <SubjectParams
       lead={<ReportCompany options={scope.options} selectedId={company.id} />}
       slug={slug}
@@ -112,11 +112,11 @@ export default async function Page({
       selectedIds={cashBankIds}
       from={range.from}
       to={range.to}
-      subjectRequired
+      subjectRequired={report.subjectRequired}
       label="Cash & Bank"
       param="cashBank"
       addPlaceholder="Tambah Cash & Bank…"
-      allPlaceholder="Pilih Cash & Bank…"
+      allPlaceholder={report.subjectRequired ? "Pilih Cash & Bank…" : "Semua Cash & Bank"}
       missingHint="Pilih minimal satu Cash & Bank terlebih dahulu."
       companyId={company.id}
     />
@@ -131,9 +131,9 @@ export default async function Page({
         to={range.to}
         subjectRequired={report.subjectRequired}
         subjectLabel="Cash & Bank"
-        allLabel={report.subjectRequired ? undefined : "Semua resource"}
+        allLabel="Semua resource"
         companyId={company.id}
-        dateless={report.params === "cash-bank"}
+        dateless
       />
     </>
   );
@@ -204,13 +204,23 @@ export default async function Page({
 
   // -------------------------------------------------------------- balance
 
-  const data = await cashBankBalanceReport(range, companyIds, cashBankId);
+  const data = await cashBankBalanceReport(range, companyIds, cashBankIds);
 
   return (
     <ReportView
       report={report}
       filter={filterBar}
       runAt={runAt}
+      exportHref={
+        data.groups.length
+          ? `/finance/report/${slug}/export?${new URLSearchParams({
+              company: String(company.id),
+              cashBank: cashBankIds.join(","),
+              from: range.from,
+              to: range.to,
+            })}`
+          : undefined
+      }
       footnote={
         <>
           Setiap currency direkap terpisah dan tidak pernah dijumlahkan menjadi

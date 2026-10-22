@@ -579,7 +579,7 @@ describe("the balance report summarises every resource", () => {
     const report = await cashBankBalanceReport(
       { from: "2026-11-01", to: "2026-11-30" },
       scope,
-      cb
+      [cb]
     );
     assert.equal(report.resources, 1);
     assert.equal(report.groups.length, 1);
@@ -615,7 +615,7 @@ describe("the balance report summarises every resource", () => {
     const range = { from: "2026-12-01", to: "2026-12-31" };
 
     const ledger = await cashBankLedgerReport(cb, range, scope);
-    const balance = await cashBankBalanceReport(range, scope, cb);
+    const balance = await cashBankBalanceReport(range, scope, [cb]);
     const row = balance.groups[0].rows[0];
 
     assert.ok(ledger);
