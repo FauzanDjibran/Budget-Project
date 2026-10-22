@@ -12,11 +12,15 @@ import {
   type StatementColumn,
 } from "@/lib/siba/statements";
 import { formatDate, formatMoney, formatTimestamp } from "@/lib/format";
+import { generalLedgerReport } from "@/lib/siba/ledger";
+import { ledgerWorkbook } from "@/lib/siba/ledger-export";
+import { parseIds, resolveRange } from "@/lib/siba/report-params";
+import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Unduh XLSX for the Laba Rugi and the Neraca.
+ * Unduh XLSX for the Laba Rugi, the Neraca and the General Ledger.
  *
  * A file download, which a Server Action cannot return — the second instance of
  * the Route Handler exception CLAUDE.md §12 reserves for report export. It takes
@@ -30,7 +34,7 @@ export async function GET(
 ) {
   const { report: slug } = await params;
   const report = reportBySlug(slug);
-  if (!report || report.module !== "accounting" || report.params !== "fiscal-period") {
+  if (!report || report.module !== "accounting" || (report.params !== "fiscal-period" && report.key !== "general_ledger")) {
     return new Response("Tidak ditemukan", { status: 404 });
   }
 
@@ -41,6 +45,26 @@ export async function GET(
   const query = Object.fromEntries(new URL(request.url).searchParams);
   const company = (await companyScope(actor.permissions, query.company)).selected;
   if (!company) return new Response("Akses ditolak", { status: 403 });
+
+  if (report.key === "general_ledger") {
+    const ids = parseIds(query.accounts);
+    if (!ids.length) return new Response("Pilih account terlebih dahulu", { status: 400 });
+    const range = resolveRange(query.from, query.to);
+    const data = await generalLedgerReport(ids, range, [company.id]);
+    const notes = [`Seluruh angka dalam mata uang dasar (${BASE_CURRENCY_LABEL}); saldo bergerak mengikuti normal balance account.`];
+    if (data.openingFrom) {
+      notes.push(`Saldo awal diambil dari Opening Balance ${data.openingFrom.openingNo} per ${formatDate(data.openingFrom.date)}.`);
+    }
+    const file = await ledgerWorkbook({
+      companyName: company.name,
+      subtitle: `Untuk periode ${formatDate(range.from)} s.d. ${formatDate(range.to)}`,
+      accounts: data.accounts,
+      footnotes: notes,
+      printedBy: actor.user.name,
+      printedAt: formatTimestamp(new Date()),
+    });
+    return xlsx(file, `${report.name} ${company.label} ${range.from} - ${range.to}.xlsx`);
+  }
 
   const years = await reportableFiscalYears(company.id);
   if (!years.length) return new Response("Belum ada tahun buku aktif", { status: 404 });
@@ -110,6 +134,10 @@ export async function GET(
   });
 
   const name = `${report.name} ${company.label} ${main.range.to}${compare ? ` vs ${compare.range.to}` : ""}.xlsx`;
+  return xlsx(file, name);
+}
+
+function xlsx(file: Buffer, name: string): Response {
   return new Response(new Uint8Array(file), {
     headers: {
       "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

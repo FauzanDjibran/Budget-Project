@@ -10,6 +10,7 @@ import { companyScope } from "@/lib/siba/company-access";
 import { generalLedgerReport, ledgerAccountOptions } from "@/lib/siba/ledger";
 import { TrialBalanceParams } from "@/components/report/trial-balance-params";
 import type { PeriodRange } from "@/lib/siba/period";
+import { parseIds, resolveRange } from "@/lib/siba/report-params";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { formatDate } from "@/lib/format";
@@ -141,6 +142,16 @@ export default async function Page({
         report={report}
         filter={filterBar}
         runAt={runAt}
+        exportHref={
+          data
+            ? `/accounting/report/${slug}/export?${new URLSearchParams({
+                company: String(company.id),
+                accounts: accountIds.join(","),
+                from: range.from,
+                to: range.to,
+              })}`
+            : undefined
+        }
         footnote={
           <>
             Seluruh angka dalam mata uang dasar ({BASE_CURRENCY_LABEL}), dan saldo
@@ -182,45 +193,6 @@ export default async function Page({
 function openingSource(from: OpeningProvenance | null | undefined) {
   if (!from) return null;
   return `; saldo awal diambil dari Opening Balance ${from.openingNo} per ${formatDate(from.date)}`;
-}
-
-/** Defaults to the current month to date, like every other Report View. */
-function resolveRange(from?: string, to?: string): PeriodRange {
-  const today = new Date();
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const monthStart = new Date(
-    Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)
-  );
-
-  const start = isDate(from) ? from : iso(monthStart);
-  const end = isDate(to) ? to : iso(today);
-  return start <= end ? { from: start, to: end } : { from: end, to: start };
-}
-
-function isDate(value: string | undefined): value is string {
-  return Boolean(
-    value &&
-      /^\d{4}-\d{2}-\d{2}$/.test(value) &&
-      !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
-  );
-}
-
-/**
- * `accounts=3,17,42` — the subject of an `account-period` report.
- *
- * Duplicates are dropped and anything unparseable is ignored rather than
- * refused: a hand-edited URL should still answer with the accounts it does
- * name. Whether the reader may see them is decided by the query, which is
- * limited to the Companies their permissions open.
- */
-function parseIds(raw?: string): number[] {
-  if (!raw) return [];
-  const out: number[] = [];
-  for (const part of raw.split(",")) {
-    const n = Number(part.trim());
-    if (Number.isInteger(n) && n > 0 && !out.includes(n)) out.push(n);
-  }
-  return out;
 }
 
 // -------------------------------------------------------------- trial balance

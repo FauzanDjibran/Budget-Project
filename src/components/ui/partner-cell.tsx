@@ -1,5 +1,11 @@
 import type { PartnerMismatch } from "@/lib/siba/journal";
 
+/** The warning's words, which the General Ledger's export prints too. */
+export const PARTNER_MISMATCH_TEXT: Record<PartnerMismatch, string> = {
+  missing: "tanpa Partner",
+  unexpected: "account tanpa Partner",
+};
+
 /**
  * The Partner of one journal line — on the Journal and in the General Ledger.
  *
@@ -37,7 +43,7 @@ export function PartnerCell({
               : "Account ini tidak memakai Partner, tetapi baris journal ini mencatatnya."
           }
         >
-          {mismatch === "missing" ? "tanpa Partner" : "account tanpa Partner"}
+          {PARTNER_MISMATCH_TEXT[mismatch]}
         </span>
       )}
     </>
