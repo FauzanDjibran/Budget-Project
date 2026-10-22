@@ -76,7 +76,7 @@ or invariants that assume a particular row exists.
   one — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
   snapshot a close writes and the ledger reports then read their openings from.
-- **Not yet built** — report output (print, and export beyond the Laba Rugi and the Neraca), intercompany settlement (the
+- **Not yet built** — report output (print, and export beyond the Laba Rugi, the Neraca and Laporan Pengajuan), intercompany settlement (the
   anak paying the induk back), subledger opening balances, and revaluation of standing
   foreign subject-book positions. Full list in §13.
 
@@ -341,7 +341,7 @@ server→client boundary. Everything passed into a client component must go thro
 | Hashing | `bcryptjs` (seed only so far) | |
 | Lint | ESLint 9 + `eslint-config-next` | |
 | Seed runner | `tsx` | |
-| Spreadsheet | `exceljs` | The statements' Unduh XLSX (`statement-export.ts`). `jszip`, its own dependency, is declared as a dev dependency for the test that reads the raw sheet |
+| Spreadsheet | `exceljs` | The statements' and Laporan Pengajuan's Unduh XLSX (`statement-export.ts`, `budget-export.ts`). `jszip`, its own dependency, is declared as a dev dependency for the test that reads the raw sheet |
 | Tests | `node:test` via `tsx` — zero extra dependencies (`npm test`) | |
 
 Path alias: `@/*` → `./src/*`.
@@ -4599,15 +4599,25 @@ below in outline because the half of it that still holds is easy to lose.**
   resource is not spendable capacity.
 - **Status:** Current.
 
-### The submission report ships as UI without its export
-- **Decision:** "Laporan Pengajuan" renders the full picker — per-currency recap,
-  selection, totals — and its "Unduh XLSX" button is disabled with an explanation.
-- **Reason:** The user asked to see the feature working without the export yet, and
-  writing the spreadsheet is a sizeable piece of work in its own right.
-- **Impact:** No XLSX writer and no spreadsheet dependency in the tree. Building the
-  export is a follow-up task; its recap now rests on real balances, so nothing blocks
-  it but the work itself.
-- **Status:** Current, by agreement.
+### Laporan Pengajuan prints a running Saldo per currency (FROZEN)
+- **Decision:** The picker's **Unduh XLSX** downloads exactly the ticked Budgets
+  (`/budget/budget/export?ids=…`, `BUDGET_VIEW`; only Submitted Budgets of the
+  reader's Companies are printed, whatever ids arrive). `budget-export.ts` lays it
+  out: one section per currency — its active Cash & Bank, each with its balance,
+  and their Jumlah; then *Saldo Awal*, every Budget in date order (No · Tanggal ·
+  Keterangan · Co. · Pengeluaran · Penerimaan · Saldo) with the **Saldo after
+  it**; then one **JUMLAH PENGAJUAN** line per currency, the only summary. No daily
+  subtotals, no conversion between currencies, plain values only. It shares the
+  statement export's page, fonts, number format and footer.
+- **Reason:** the user's, from `Example report/CONTOH BUDGET 2020.xlsx`. It is
+  printed daily and handed to whoever approves, who marks it up by hand; the
+  paper comes back and the marked Budgets are approved by number, the rest wait
+  for the next day's printout. The running Saldo is what shows where the money
+  runs out.
+- **Do not change unless:** explicitly instructed. **Never add daily subtotals,
+  never sum across currencies, and never print a Budget that is not Submitted.**
+- **Status:** Frozen, current. Supersedes "The submission report ships as UI
+  without its export".
 
 ### `Initialization/` stays in the repository
 - **Decision:** The folder is intentionally committed and permanent. Do not remove,
@@ -4742,7 +4752,6 @@ decisions now that foreclose them.
 | Subject-book revaluation | CORE multi-currency §6.1: retranslate a Partner's open foreign items at a closing rate. Revaluasi Kurs covers Cash & Bank only (§10 rules 118–121); a Hutang or Piutang in USD keeps its items' kurs until settled (§10 rule 24) |
 | Multi-layer settlement | The source specification lets one payment draw on several layers (`Σ selected = account_amount`). SIBA takes one per document, refused at draft time with a message that says to split it. Widening this means a selection UI with a running total and per-layer relief, not a loosened check (§12) |
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
-| Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
 | Report output | A print sheet for Report Views, and an export for every one but the two statements, which have theirs. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
 | Penyesuaian Open Item tax | An adjustment carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
 | Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
@@ -5183,7 +5192,6 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | --- | --- |
 | Every subject book shares one permission | `REPORT_SUBLEDGER_VIEW` covers all of them, so whoever may read Hutang may also read Prive — the owners' drawings. It replaced six per-book permissions, which could not survive books being created through the GUI: a permission per book would be a permission created at runtime (§12). Nothing in the seeded roles relied on the distinction. If it is wanted back, the shape that fits is a `sensitive` flag on the category gated by one **further static** permission, which keeps a new category developer-free while re-fencing Prive. |
 | An audit entry names a record by its current name | `audit_log` stores no snapshot, so a record renamed since it changed reads under the name it has now. Inventing a snapshot would be worse than saying nothing, but it does mean the panel is not a record of what a thing was called at the time. |
-| Budget report has no export | The picker is complete; "Unduh XLSX" is disabled by agreement (§12). |
 | The subject books have no opening balance | A subledger entry is written by posting a Cash Bank Transaction or a Penyesuaian Open Item (`Adjustment`). `SubLedgerEntryType.Opening` exists and nothing writes it, so a position carried over from before the application cannot yet be stated (§13). |
 | Held money cannot be cleared into an expense or an asset | A Reklasifikasi target must keep a book, so a held payment that turns out to be Biaya or Asset has nowhere to go yet. Out of scope on the user's decision; it is a later adjustment purpose (§10 rule 115). |
 | Older Realisasi lines name no opened item | `fin_cash_bank_transaction_line.opened_item_id` is written from its migration on. A line posted before it is null, so its Budget's Realisasi card cannot follow that money into a reclassification. Not backfilled: matching items to lines by note would be a guess. |

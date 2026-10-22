@@ -17,9 +17,8 @@ import type { CashBookSummary } from "@/lib/siba/cash-bank";
  * and adding two of them would state a figure that is not what anybody holds
  * or intends to spend.
  *
- * **The XLSX export is deliberately not built.** The picker is here so the
- * feature is visible and its selection behaviour can be exercised; the download
- * button is inert and says so. Writing the spreadsheet is its own piece of work.
+ * Unduh XLSX downloads exactly the ticked Budgets (`/budget/budget/export`),
+ * laid out for printing in `budget-export.ts`.
  */
 const money = formatMoney;
 
@@ -128,14 +127,19 @@ export function ReportPicker({
           <button className="btn" onClick={onClose}>
             Tutup
           </button>
-          <button
-            className="btn primary"
-            disabled
-            title="Ekspor XLSX belum tersedia."
-          >
-            <Icon name="down" size={14} /> Unduh XLSX
-            {chosen.length > 0 && ` (${chosen.length})`}
-          </button>
+          {chosen.length ? (
+            <a
+              className="btn primary"
+              href={`/budget/budget/export?ids=${chosen.map((b) => b.id).join(",")}`}
+              download
+            >
+              <Icon name="down" size={14} /> Unduh XLSX ({chosen.length})
+            </a>
+          ) : (
+            <button className="btn primary" disabled>
+              <Icon name="down" size={14} /> Unduh XLSX
+            </button>
+          )}
         </>
       }
     >

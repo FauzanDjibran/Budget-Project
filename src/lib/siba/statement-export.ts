@@ -117,12 +117,12 @@ function titleCase(name: string): string {
 
 // ------------------------------------------------------------------ writer
 
-const FONT = "Arial";
-const MONEY = '#,##0.00;(#,##0.00);"-"';
+export const FONT = "Arial";
+export const MONEY = '#,##0.00;(#,##0.00);"-"';
 const PERCENT = '0.0%;(0.0%);"-"';
 const COMPUTED = "FF1F3A68";
-const thin = { style: "thin" } as const;
-const double = { style: "double" } as const;
+export const thin = { style: "thin" } as const;
+export const double = { style: "double" } as const;
 /** Rows 1–5 are the title block; the column headers sit on 7–8 and repeat on every page. */
 const HEAD = 7;
 
@@ -246,6 +246,6 @@ export async function statementWorkbook(s: StatementExport): Promise<Buffer> {
 }
 
 /** A page header or footer reads `&` as a code; a literal one is doubled. */
-function esc(text: string): string {
+export function esc(text: string): string {
   return text.replace(/&/g, "&&");
 }
