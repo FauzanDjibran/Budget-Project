@@ -57,7 +57,7 @@ export function SubjectParams({
   /** What one subject is called, above the picker. */
   label: string;
   /** The query parameter the ids are written to. */
-  param: "accounts" | "partners";
+  param: "accounts" | "partners" | "cashBank";
   addPlaceholder: string;
   /** Copy for "no subject chosen", where the report allows it. */
   allPlaceholder: string;

@@ -249,3 +249,14 @@ export async function statementWorkbook(s: StatementExport): Promise<Buffer> {
 export function esc(text: string): string {
   return text.replace(/&/g, "&&");
 }
+
+/** An Unduh XLSX response: the file, named for the run, never cached. */
+export function xlsxResponse(file: Buffer, name: string): Response {
+  return new Response(new Uint8Array(file), {
+    headers: {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content-disposition": `attachment; filename="${name.replace(/[^\x20-\x7e]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      "cache-control": "no-store",
+    },
+  });
+}

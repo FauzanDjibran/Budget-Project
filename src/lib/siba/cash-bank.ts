@@ -843,7 +843,7 @@ export async function cashBankLedgerReport(
     note: r.note,
     sourceDocTable: r.source_doc_type?.doc_table ?? null,
     sourceDocId: r.source_doc_id,
-    sourceDocNo: r.source_doc_id ? docNumbers.get(r.source_doc_id) ?? null : null,
+    sourceDocNo: r.source_doc_id && r.source_doc_type?.doc_table === "fin_cash_bank_transaction" ? docNumbers.get(r.source_doc_id) ?? null : null,
   }));
 
   const cents = (n: number) => Math.round(n * 100);

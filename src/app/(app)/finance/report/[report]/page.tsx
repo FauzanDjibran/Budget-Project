@@ -102,7 +102,25 @@ export default async function Page({
 
   const resources = await cashBankOptions(company.id);
 
-  const filterBar = (
+  // Buku Kas & Bank reads several resources at once, like the General Ledger.
+  const cashBankIds = idList(query.cashBank);
+  const filterBar = report.key === "cash_bank_ledger" ? (
+    <SubjectParams
+      lead={<ReportCompany options={scope.options} selectedId={company.id} />}
+      slug={slug}
+      subjects={resources}
+      selectedIds={cashBankIds}
+      from={range.from}
+      to={range.to}
+      subjectRequired
+      label="Cash & Bank"
+      param="cashBank"
+      addPlaceholder="Tambah Cash & Bank…"
+      allPlaceholder="Pilih Cash & Bank…"
+      missingHint="Pilih minimal satu Cash & Bank terlebih dahulu."
+      companyId={company.id}
+    />
+  ) : (
     <>
       <ReportParams
         lead={<ReportCompany options={scope.options} selectedId={company.id} />}
@@ -144,15 +162,26 @@ export default async function Page({
   // --------------------------------------------------------------- ledger
 
   if (report.key === "cash_bank_ledger") {
-    const data = cashBankId
-      ? await cashBankLedgerReport(cashBankId, range, companyIds)
-      : null;
+    const books = await Promise.all(
+      cashBankIds.map((id) => cashBankLedgerReport(id, range, companyIds))
+    );
+    const data = cashBankIds.length ? books.filter((b) => b !== null) : null;
 
     return (
       <ReportView
         report={report}
         filter={filterBar}
         runAt={runAt}
+        exportHref={
+          data?.length
+            ? `/finance/report/${slug}/export?${new URLSearchParams({
+                company: String(company.id),
+                cashBank: cashBankIds.join(","),
+                from: range.from,
+                to: range.to,
+              })}`
+            : undefined
+        }
         footnote={
           <>
             Saldo awal adalah seluruh mutasi sebelum {formatDate(range.from)} dan
@@ -161,7 +190,7 @@ export default async function Page({
         }
       >
         {data ? (
-          <CashBankLedgerReport report={data} />
+          <CashBankLedgerReport books={data} range={range} />
         ) : (
           <ReportNeedsSubject
             icon="book"

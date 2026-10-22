@@ -1,28 +1,30 @@
-import Link from "next/link";
+"use client";
+
+import { useState } from "react";
 import { Icon } from "@/components/icon";
+import { Drill } from "@/components/report/drill";
 import { ReportSummary } from "@/components/report/report-summary";
+import { ExpandAll } from "@/components/ui/expand-all";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { LedgerReport } from "@/lib/siba/cash-bank";
-import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { documentHref } from "@/lib/siba/document-links";
+import type { PeriodRange } from "@/lib/siba/period";
 
 /**
- * Buku Kas & Bank — every movement of one resource across a period.
+ * Buku Kas & Bank — every movement of one or more resources across a period,
+ * one block per resource, the way the General Ledger stacks its accounts.
+ *
+ * Each block opens **rolled up**: its header states the resource, its currency,
+ * and the book's own arithmetic — opening + masuk − keluar = saldo akhir — and
+ * the entries are one click away. Every figure is in the resource's own
+ * currency and says so; nothing is totalled across resources, because a USD
+ * account and a rupiah one do not add up to anything.
  *
  * Read the way a book is read: oldest first, opening balance carried in at the
- * top, closing balance struck at the bottom, and a running balance in the last
- * column that the rows above it actually produce.
- *
- * The block header states the report's own arithmetic — opening + masuk −
- * keluar = saldo akhir — as the same labelled strip the General Ledger uses, so
- * the two books read as one screen type. It replaces the separate recap table
- * that used to sit above the rows: a four-figure summary does not need a table
- * of its own, and that table was a second header competing with this one.
- *
- * That the totals must add up is also why **there is no entry-type filter**:
- * dropping `Penyesuaian` rows would leave a page whose figures no longer
- * reconcile, which is worse than a page with a marker to scan. The type is
- * shown where it is not the ordinary case — an opening entry or an adjustment
+ * top, closing balance struck at the bottom. That the totals must add up is
+ * why **there is no entry-type filter**: dropping `Penyesuaian` rows would
+ * leave a page whose figures no longer reconcile. The type is shown where it is
+ * not the ordinary case — an opening entry, an adjustment or a revaluation
  * carries a badge, a plain transaction carries none.
  */
 const TYPE_TEXT: Record<string, string> = {
@@ -37,185 +39,228 @@ const TYPE_CLASS: Record<string, string> = {
   Revaluation: "t-acc",
 };
 
-export function CashBankLedgerReport({ report }: { report: LedgerReport }) {
-  const cur = report.resource.currencyLabel;
-  const money = (n: number) => formatMoney(n, cur);
+export function CashBankLedgerReport({
+  books,
+  range,
+}: {
+  books: LedgerReport[];
+  range: PeriodRange;
+}) {
+  // Open keys rather than closed ones: a resource added to the URL arrives
+  // folded like the rest, as the General Ledger's accounts do.
+  const [open, setOpen] = useState<Set<number>>(new Set());
+
+  const toggle = (id: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // A hand-edited URL can name resources of another Company, or none at all.
+  if (books.length === 0) {
+    return (
+      <div className="empty sm">
+        <div className="ic">
+          <Icon name="book" size={20} />
+        </div>
+        <h4>Cash & Bank tidak ditemukan</h4>
+        <p>
+          Cash & Bank yang diminta tidak ada pada Company ini. Pilih ulang Cash
+          & Bank di atas.
+        </p>
+      </div>
+    );
+  }
+
+  const unreconciled = books.filter((b) => !b.reconciles);
 
   return (
     <>
-      <div className="cblock">
-        <div className="cbh">
-          <b>{report.resource.label}</b>
-          <span className="cbn">
-            {report.resource.name} · {report.resource.companyLabel} ·{" "}
-            {report.entries.length} mutasi
-          </span>
-          <ReportSummary
-            figures={[
-              {
-                label: "Saldo Awal",
-                value: money(report.opening),
-                zero: !report.opening,
-              },
-              {
-                label: "Penerimaan",
-                value: money(report.totalIn),
-                zero: !report.totalIn,
-              },
-              {
-                label: "Pengeluaran",
-                value: money(report.totalOut),
-                zero: !report.totalOut,
-              },
-              {
-                label: "Saldo Akhir",
-                value: money(report.closing),
-                key: true,
-                negative: report.closing < 0,
-              },
-            ]}
-          />
-        </div>
-
-        <div className="tw">
-          <table className="grid">
-            <thead>
-              <tr>
-                <th style={{ width: 92 }}>Tanggal</th>
-                <th style={{ width: 116 }}>Entri</th>
-                <th>Keterangan</th>
-                <th className="num" style={{ width: 126 }}>
-                  Masuk
-                </th>
-                <th className="num" style={{ width: 126 }}>
-                  Keluar
-                </th>
-                <th className="num" style={{ width: 134 }}>
-                  Saldo
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="totrow">
-                <td colSpan={3}>
-                  Saldo awal per {formatDate(report.range.from)}
-                </td>
-                <td className="num mut">—</td>
-                <td className="num mut">—</td>
-                <td className="num">{money(report.opening)}</td>
-              </tr>
-
-              {report.entries.map((e) => {
-                const inn = e.movement > 0;
-                // A revaluation moves no currency, only what it is worth in
-                // base — so neither column carries it and the restated value
-                // is read under the description.
-                const restated = e.type === "Revaluation";
-                const linked =
-                  e.sourceDocNo &&
-                  e.sourceDocTable === "fin_cash_bank_transaction";
-                return (
-                  <tr key={e.id} style={{ cursor: "default" }}>
-                    <td className="mono mut" style={{ fontSize: "11.5px" }}>
-                      {formatDate(e.date)}
-                    </td>
-                    <td>
-                      <span className="lab">{e.entryNo}</span>
-                      {linked && (
-                        <Link
-                          className="rsub"
-                          href={documentHref(e.sourceDocTable, e.sourceDocId) ?? "#"}
-                          title="Buka dokumen sumber"
-                        >
-                          {e.sourceDocNo}
-                        </Link>
-                      )}
-                    </td>
-                    <td className="pri wrapok">
-                      {TYPE_TEXT[e.type] && (
-                        <span
-                          className={`bdg ${TYPE_CLASS[e.type]}`}
-                          style={{ marginRight: 6 }}
-                        >
-                          {TYPE_TEXT[e.type]}
-                        </span>
-                      )}
-                      {e.note ?? <span className="dash">—</span>}
-                      {restated && (
-                        <span className="rsub">
-                          Nilai {BASE_CURRENCY_LABEL} {e.baseMovement > 0 ? "naik" : "turun"}{" "}
-                          {formatMoney(Math.abs(e.baseMovement), BASE_CURRENCY_LABEL)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="num">
-                      {inn ? (
-                        <span className="mny in">{money(Math.abs(e.movement))}</span>
-                      ) : (
-                        <span className="dash">–</span>
-                      )}
-                    </td>
-                    <td className="num">
-                      {!inn && !restated ? (
-                        <span className="mny">{money(Math.abs(e.movement))}</span>
-                      ) : (
-                        <span className="dash">–</span>
-                      )}
-                    </td>
-                    {/* No running balance: an entry may be backdated in among
-                        entries written before it, so only the period's opening
-                        and closing are balances this report can state. */}
-                    <td className="num" />
-                  </tr>
-                );
-              })}
-
-              {report.entries.length === 0 && (
-                // Not an empty state: no movement is a real answer, and the
-                // opening and closing figures are the report. This says so.
-                <tr>
-                  <td colSpan={6} className="mut" style={{ textAlign: "center" }}>
-                    Tidak ada mutasi pada rentang tanggal ini. Saldo akhir sama
-                    dengan saldo awal.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            <tfoot>
-              <tr className="totrow">
-                <td colSpan={3}>
-                  Saldo akhir per {formatDate(report.range.to)}
-                </td>
-                <td className="num">
-                  <span className="mny in">{money(report.totalIn)}</span>
-                </td>
-                <td className="num">
-                  <span className="mny">{money(report.totalOut)}</span>
-                </td>
-                <td className="num">
-                  <b>{money(report.closing)}</b>
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
-
-      {!report.reconciles && (
-        <div className="nbox warn slim">
-          <span className="ni">
-            <Icon name="warn" size={14} />
-          </span>
+      {unreconciled.length > 0 && (
+        <div className="nbox warn slim" style={{ margin: "0 0 12px" }}>
+          <Icon name="warn" size={14} />
           <div>
             <b>Saldo tersimpan tidak cocok dengan jumlah mutasi.</b>
             <p>
-              Saldo Cash & Bank yang tersimpan berbeda dari hasil penjumlahan
-              seluruh mutasinya. Laporan tetap ditampilkan apa adanya; selisih
-              ini perlu diperiksa sebelum angkanya dipakai.
+              Saldo yang tersimpan berbeda dari hasil penjumlahan seluruh
+              mutasinya pada {unreconciled.map((b) => b.resource.label).join(", ")}.
+              Laporan tetap ditampilkan apa adanya; selisih ini perlu diperiksa
+              sebelum angkanya dipakai.
             </p>
           </div>
         </div>
       )}
+
+      {books.length > 1 && (
+        <div className="rhead">
+          <span className="count">
+            <b>{books.length}</b> Cash & Bank · {formatDate(range.from)} –{" "}
+            {formatDate(range.to)}
+          </span>
+          <div className="tspace" />
+          <ExpandAll
+            onExpand={() => setOpen(new Set(books.map((b) => b.resource.id)))}
+            onCollapse={() => setOpen(new Set())}
+            allOpen={open.size === books.length}
+            allClosed={open.size === 0}
+          />
+        </div>
+      )}
+
+      {books.map((book) => {
+        const res = book.resource;
+        const isOpen = open.has(res.id);
+        const money = (n: number) => formatMoney(n, res.currencyLabel);
+        return (
+          <div className="cblock" key={res.id}>
+            <div
+              className="cbh"
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
+              onClick={() => toggle(res.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggle(res.id);
+                }
+              }}
+              style={{ cursor: "pointer" }}
+            >
+              <span className={`chev${isOpen ? " o" : ""}`}>
+                <Icon name="chev" size={12} />
+              </span>
+              <b>{res.label}</b>
+              <span className="bdg t-slate">{res.currencyLabel}</span>
+              <span className="cbn">
+                {res.name} · {book.entries.length} mutasi
+                {!res.active && " · nonaktif"}
+              </span>
+              <ReportSummary
+                figures={[
+                  { label: "Saldo Awal", value: money(book.opening), zero: !book.opening },
+                  { label: "Masuk", value: money(book.totalIn), zero: !book.totalIn },
+                  { label: "Keluar", value: money(book.totalOut), zero: !book.totalOut },
+                  {
+                    label: "Saldo Akhir",
+                    value: money(book.closing),
+                    key: true,
+                    negative: book.closing < 0,
+                  },
+                ]}
+              />
+            </div>
+
+            {isOpen && (
+              <div className="tw">
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 92 }}>Tanggal</th>
+                      <th style={{ width: 116 }}>Entri</th>
+                      <th>Keterangan</th>
+                      <th className="num" style={{ width: 140 }}>
+                        Masuk
+                      </th>
+                      <th className="num" style={{ width: 140 }}>
+                        Keluar
+                      </th>
+                      <th className="num" style={{ width: 148 }}>
+                        Saldo
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="totrow">
+                      <td colSpan={3}>Saldo awal per {formatDate(range.from)}</td>
+                      <td className="num mut">—</td>
+                      <td className="num mut">—</td>
+                      <td className="num">{money(book.opening)}</td>
+                    </tr>
+
+                    {book.entries.map((e) => {
+                      // A revaluation moves no currency, only its base value,
+                      // so neither column carries it.
+                      const restated = e.type === "Revaluation";
+                      const href =
+                        e.sourceDocNo && documentHref(e.sourceDocTable, e.sourceDocId);
+                      return (
+                        <tr key={e.id} style={{ cursor: "default" }}>
+                          <td className="mono mut" style={{ fontSize: "11.5px" }}>
+                            {formatDate(e.date)}
+                          </td>
+                          <td>
+                            <span className="lab">{e.entryNo}</span>
+                            {href && (
+                              <Drill href={href} title="Buka dokumen sumber">
+                                <span className="rsub">{e.sourceDocNo}</span>
+                              </Drill>
+                            )}
+                          </td>
+                          <td className="pri wrapok">
+                            {TYPE_TEXT[e.type] && (
+                              <span
+                                className={`bdg ${TYPE_CLASS[e.type]}`}
+                                style={{ marginRight: 6 }}
+                              >
+                                {TYPE_TEXT[e.type]}
+                              </span>
+                            )}
+                            {e.note ?? <span className="dash">—</span>}
+                          </td>
+                          <td className="num">
+                            {e.movement > 0 ? (
+                              <span className="mny in">{money(e.movement)}</span>
+                            ) : (
+                              <span className="dash">–</span>
+                            )}
+                          </td>
+                          <td className="num">
+                            {e.movement < 0 && !restated ? (
+                              <span className="mny">{money(-e.movement)}</span>
+                            ) : (
+                              <span className="dash">–</span>
+                            )}
+                          </td>
+                          {/* No running balance: an entry may be backdated in
+                              among entries written before it, so only the
+                              period's opening and closing are stated. */}
+                          <td className="num" />
+                        </tr>
+                      );
+                    })}
+
+                    {book.entries.length === 0 && (
+                      // Not an empty state: no movement is a real answer.
+                      <tr>
+                        <td colSpan={6} className="mut" style={{ textAlign: "center" }}>
+                          Tidak ada mutasi pada rentang tanggal ini. Saldo akhir
+                          sama dengan saldo awal.
+                        </td>
+                      </tr>
+                    )}
+
+                    <tr className="totrow">
+                      <td colSpan={3}>Saldo akhir per {formatDate(range.to)}</td>
+                      <td className="num">
+                        <span className="mny in">{money(book.totalIn)}</span>
+                      </td>
+                      <td className="num">
+                        <span className="mny">{money(book.totalOut)}</span>
+                      </td>
+                      <td className="num">
+                        <b>{money(book.closing)}</b>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }

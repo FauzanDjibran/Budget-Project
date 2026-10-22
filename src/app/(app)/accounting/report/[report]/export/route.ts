@@ -4,7 +4,7 @@ import { companyScope } from "@/lib/siba/company-access";
 import { carriedYearsBefore, reportableFiscalYears } from "@/lib/siba/fiscal";
 import { reportBySlug } from "@/lib/siba/reports";
 import { STATEMENT_MODES, type StatementRow } from "@/lib/siba/statement-layout";
-import { statementWorkbook } from "@/lib/siba/statement-export";
+import { statementWorkbook, xlsxResponse } from "@/lib/siba/statement-export";
 import {
   balanceSheetReport,
   profitLossReport,
@@ -63,7 +63,7 @@ export async function GET(
       printedBy: actor.user.name,
       printedAt: formatTimestamp(new Date()),
     });
-    return xlsx(file, `${report.name} ${company.label} ${range.from} - ${range.to}.xlsx`);
+    return xlsxResponse(file, `${report.name} ${company.label} ${range.from} - ${range.to}.xlsx`);
   }
 
   const years = await reportableFiscalYears(company.id);
@@ -134,15 +134,5 @@ export async function GET(
   });
 
   const name = `${report.name} ${company.label} ${main.range.to}${compare ? ` vs ${compare.range.to}` : ""}.xlsx`;
-  return xlsx(file, name);
-}
-
-function xlsx(file: Buffer, name: string): Response {
-  return new Response(new Uint8Array(file), {
-    headers: {
-      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "content-disposition": `attachment; filename="${name.replace(/[^\x20-\x7e]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}`,
-      "cache-control": "no-store",
-    },
-  });
+  return xlsxResponse(file, name);
 }
