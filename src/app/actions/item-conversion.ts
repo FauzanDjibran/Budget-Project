@@ -41,7 +41,7 @@ export type ConversionValues = {
   budget_category_id: string;
   partner_id: string;
   /** `YYYY-MM-DD` — the day the document belongs to in the books. */
-  document_date: string;
+  accounting_date: string;
   note: string;
 };
 
@@ -84,7 +84,7 @@ const headerOf = (values: ConversionValues) => ({
   cash_bank_layer_id: num(values.cash_bank_layer_id),
   budget_category_id: num(values.budget_category_id),
   partner_id: num(values.partner_id),
-  document_date: values.document_date || null,
+  accounting_date: values.accounting_date || null,
 });
 
 const asLines = (lines: ConversionLineValues[]): ConversionLineInput[] =>
@@ -128,8 +128,8 @@ async function checkDraft(
 
   // Any day up to today, inside a year this Company may still write into.
   // Asked again at Post, since a year can close in between.
-  const dated = await checkTransactionDate(values.document_date, [header.companyId]);
-  if (!dated.ok) return { ok: false as const, errors: { document_date: dated.message } };
+  const dated = await checkTransactionDate(values.accounting_date, [header.companyId]);
+  if (!dated.ok) return { ok: false as const, errors: { accounting_date: dated.message } };
 
   const settled = await checkConversionLines(header, asLines(lines), dated.date);
   if (!settled.ok) return { ok: false as const, errors: settled.errors };
@@ -152,8 +152,8 @@ export async function createConversion(
   const created = await prisma.finItemConversion.create({
     data: {
       conversion_no,
-      document_date: new Date(`${date}T00:00:00Z`),
-      posting_date: null,
+      accounting_date: new Date(`${date}T00:00:00Z`),
+      posted_at: null,
       company_id: header.companyId,
       from_cash_bank_id: header.fromCashBankId,
       currency_id: header.currencyId,
@@ -214,7 +214,7 @@ export async function updateConversion(
     await tx.finItemConversion.update({
       where: { id },
       data: {
-        document_date: new Date(`${date}T00:00:00Z`),
+        accounting_date: new Date(`${date}T00:00:00Z`),
         company_id: header.companyId,
         from_cash_bank_id: header.fromCashBankId,
         currency_id: header.currencyId,

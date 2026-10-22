@@ -297,8 +297,8 @@ export function TransferList({
                           </Link>
                         </td>
                         <td>
-                          {t.document_date ? (
-                            formatDate(t.document_date)
+                          {t.accounting_date ? (
+                            formatDate(t.accounting_date)
                           ) : (
                             <span className="dash">belum diposting</span>
                           )}

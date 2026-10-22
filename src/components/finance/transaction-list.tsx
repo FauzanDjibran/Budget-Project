@@ -296,8 +296,8 @@ export function TransactionList({
                           </Link>
                         </td>
                         <td>
-                          {t.document_date ? (
-                            formatDate(t.document_date)
+                          {t.accounting_date ? (
+                            formatDate(t.accounting_date)
                           ) : (
                             <span className="dash">belum diposting</span>
                           )}
@@ -428,7 +428,7 @@ export function TransactionList({
       </div>
 
       <p className="foot-note">
-        Realisasi tidak melihat Tanggal Budget: selisih Tanggal Dokumen dan
+        Realisasi tidak melihat Tanggal Budget: selisih Tanggal Akuntansi dan
         Tanggal Budget adalah bahan laporan realisasi lebih awal atau
         terlambat, bukan penghalang eligibility.
       </p>

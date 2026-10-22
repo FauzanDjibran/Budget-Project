@@ -87,8 +87,8 @@ const day = (d: Date): string => d.toISOString().slice(0, 10);
 export type TransactionRow = {
   id: number;
   transaction_no: string;
-  document_date: string | null;
-  posting_date: string | null;
+  accounting_date: string | null;
+  posted_at: string | null;
   transaction_type: "In" | "Out";
   company_id: number;
   cash_bank_id: number | null;
@@ -137,8 +137,8 @@ export type LineItemRow = {
 type TxRecord = {
   id: number;
   transaction_no: string;
-  document_date: Date | null;
-  posting_date: Date | null;
+  accounting_date: Date | null;
+  posted_at: Date | null;
   transaction_type: string;
   company_id: number;
   cash_bank_id: number | null;
@@ -159,8 +159,8 @@ function toRow(t: TxRecord): TransactionRow {
   return {
     id: t.id,
     transaction_no: t.transaction_no,
-    document_date: t.document_date ? day(t.document_date) : null,
-    posting_date: t.posting_date ? t.posting_date.toISOString() : null,
+    accounting_date: t.accounting_date ? day(t.accounting_date) : null,
+    posted_at: t.posted_at ? t.posted_at.toISOString() : null,
     transaction_type: t.transaction_type as "In" | "Out",
     company_id: t.company_id,
     cash_bank_id: t.cash_bank_id,
@@ -298,7 +298,7 @@ export async function budgetRealizations(budgetId: number): Promise<
   return lines.map((l) => ({
     transactionId: l.transaction.id,
     transactionNo: l.transaction.transaction_no,
-    date: l.transaction.document_date ? day(l.transaction.document_date) : null,
+    date: l.transaction.accounting_date ? day(l.transaction.accounting_date) : null,
     status: l.transaction.status as TransactionStatus,
     direction: l.transaction.transaction_type as "In" | "Out",
     amount: l.settlement_amount.toNumber(),
@@ -1291,7 +1291,7 @@ async function resolveValuation(doc: {
   transaction_type: string;
   exchange_rate: { toNumber(): number };
   cash_bank_layer_id: number | null;
-  document_date: Date | null;
+  accounting_date: Date | null;
   currency: { currency_label: string };
   cash_bank: { currency: { currency_label: string } } | null;
   amounts: number[];
@@ -1386,8 +1386,8 @@ async function resolveValuation(doc: {
       },
     };
   }
-  const tooNew = doc.document_date
-    ? layerDateRefusal(layer, doc.document_date.toISOString().slice(0, 10))
+  const tooNew = doc.accounting_date
+    ? layerDateRefusal(layer, doc.accounting_date.toISOString().slice(0, 10))
     : null;
   if (tooNew) return { ok: false, errors: { cash_bank_layer_id: tooNew } };
   if (total > layer.foreign_remaining.toNumber()) {
@@ -1580,7 +1580,7 @@ async function planPosting(
     cash_bank_layer_id: number | null;
     company_id: number;
     currency_id: number;
-    document_date: Date | null;
+    accounting_date: Date | null;
     currency: { currency_label: string };
     cash_bank: { currency: { currency_label: string } } | null;
     lines: {
@@ -1718,7 +1718,7 @@ async function planPosting(
         // document's own day as well as against today.
         const lowest = await itemLowestFrom(
           item.id,
-          doc.document_date ? day(doc.document_date) : todayDay()
+          doc.accounting_date ? day(doc.accounting_date) : todayDay()
         );
         if (cents(share) > cents(lowest.balance - (item.remaining - held.foreign))) {
           return {
@@ -1727,7 +1727,7 @@ async function planPosting(
               _form:
                 `Open item ${item.itemNo} tinggal ${lowest.balance} pada ${lowest.at}, ` +
                 `tidak cukup untuk ${budget.budget_no}. Posisi tidak boleh di bawah nol ` +
-                "pada hari mana pun — ubah tanggal dokumen atau nominalnya.",
+                "pada hari mana pun — ubah tanggal akuntansi atau nominalnya.",
             },
           };
         }
@@ -1992,7 +1992,7 @@ async function baseCurrencyId(): Promise<number> {
  *   4. the rate **layer** it draws on, or the one it opens;
  *   5. every Budget on the document has its `realized_amount` raised, and a
  *      Budget that reaches its planned amount closes itself (§6.5);
- *   6. the document acquires its document and posting dates and becomes Posted.
+ *   6. the document acquires its `posted_at` and becomes Posted.
  *
  * The books are written **straight from the document**, never derived from a
  * journal line: operational books are independent historical stores, and only
@@ -2079,14 +2079,14 @@ export async function applyPosting(
 
   // The day this document belongs to in the books — chosen on the draft, and
   // possibly earlier than today. Every book entry, the layer it opens and the
-  // journal are dated it; `posting_date` keeps the moment it was actually
+  // journal are dated it; `posted_at` keeps the moment it was actually
   // posted. A draft saved before drafts carried a date posts as today.
   //
   // Re-checked here rather than trusted from the save: a year can close in
   // between. Asked before anything is resolved, so a refusal costs nothing and
   // reads as what it is — not a fault, but a period that is shut.
   const dated = await checkTransactionDate(
-    doc.document_date ?? todayDay(),
+    doc.accounting_date ?? todayDay(),
     [doc.company_id]
   );
   if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
@@ -2148,7 +2148,7 @@ export async function applyPosting(
     // takes the whole posting down — which is the guarantee.
     await postJournal(tx, {
       companyId: doc.company_id,
-      postingDate: new Date(`${date}T00:00:00Z`),
+      accountingDate: new Date(`${date}T00:00:00Z`),
       description: `${doc.transaction_no} — ${realizationOf(doc.transaction_type).title}`,
       sourceDocTypeId: docTypeId,
       sourceDocId: doc.id,
@@ -2160,8 +2160,8 @@ export async function applyPosting(
       where: { id: transactionId },
       data: {
         status: "Posted",
-        document_date: new Date(`${date}T00:00:00Z`),
-        posting_date: new Date(),
+        accounting_date: new Date(`${date}T00:00:00Z`),
+        posted_at: new Date(),
         exchange_rate: plan.rate,
         transaction_base_amount: plan.base,
         updated_by: actorId,
@@ -2696,10 +2696,10 @@ export async function prepareFundedPosting(
   }
 
   // One business event, two Companies' books — so the date is checked for
-  // both. The day is the anak's document date, chosen when it was drafted and
+  // both. The day is the anak's accounting date, chosen when it was drafted and
   // possibly earlier than today: the realization happened then, whenever the
   // induk gets round to confirming it.
-  const dated = await checkTransactionDate(doc.document_date ?? todayDay(), [
+  const dated = await checkTransactionDate(doc.accounting_date ?? todayDay(), [
     induk.id,
     doc.company_id,
   ]);
@@ -2885,7 +2885,7 @@ export async function writeFundedPosting(
   actorId: number
 ): Promise<{ closed: number }> {
   const { date } = plan;
-  const postingDate = new Date(`${date}T00:00:00Z`);
+  const accountingDate = new Date(`${date}T00:00:00Z`);
 
   // Both Companies' years, held against a close and re-asked under the hold;
   // then every position the anak's lines lower.
@@ -2909,7 +2909,7 @@ export async function writeFundedPosting(
   // Journal A — the induk's. Its cause is the Funding Request it confirmed.
   await postJournal(tx, {
     companyId: plan.indukCompanyId,
-    postingDate,
+    accountingDate,
     description: `${plan.requestNo} — ${plan.transactionNo} — ${plan.title}`,
     sourceDocTypeId: plan.providerSource.docTypeId,
     sourceDocId: plan.providerSource.docId,
@@ -2921,7 +2921,7 @@ export async function writeFundedPosting(
   // ordinary Realisasi that happened to be funded (§10 rule 60).
   await postJournal(tx, {
     companyId: plan.anakCompanyId,
-    postingDate,
+    accountingDate,
     description: `${plan.transactionNo} — ${plan.title}`,
     sourceDocTypeId: plan.requesterSource.docTypeId,
     sourceDocId: plan.requesterSource.docId,
@@ -2933,8 +2933,8 @@ export async function writeFundedPosting(
     where: { id: plan.transactionId },
     data: {
       status: "Posted",
-      document_date: postingDate,
-      posting_date: new Date(),
+      accounting_date: accountingDate,
+      posted_at: new Date(),
       exchange_rate: plan.posting.rate,
       transaction_base_amount: plan.posting.base,
       updated_by: actorId,

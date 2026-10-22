@@ -176,7 +176,7 @@ async function makeAdjustment(options: {
   const row = await prisma.finItemAdjustment.create({
     data: {
       adjustment_no: await nextItemAdjustmentNo(),
-      document_date: new Date(`${today()}T00:00:00Z`),
+      accounting_date: new Date(`${today()}T00:00:00Z`),
       company_id: options.companyId ?? induk,
       budget_category_id: options.book.categoryId,
       partner_id: options.partnerId,

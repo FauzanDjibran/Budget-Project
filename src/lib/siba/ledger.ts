@@ -58,7 +58,7 @@ type Client = typeof prisma | Prisma.TransactionClient;
 const POSTED = { status: "Posted" } as const;
 
 /**
- * A Posted journal always carries its posting date — that is what Posted means.
+ * A Posted journal always carries its accounting date — that is what Posted means.
  * The column is nullable only so a manual journal can exist before it has been
  * written, and every read here filters those out, so this states the invariant
  * rather than papering over it.
@@ -100,7 +100,7 @@ type OpeningBasis = {
   /** `debit − credit` per account, strictly before `from`. Unsigned. */
   net: Map<number, number>;
   /** The snapshot it stood on, where there was one. */
-  snapshot: { openingNo: string; postingDate: Date } | null;
+  snapshot: { openingNo: string; accountingDate: Date } | null;
   /**
    * Transaction currencies seen in whatever was actually scanned.
    *
@@ -128,8 +128,8 @@ async function openingBasis(
         company_id: companyId,
         // A snapshot holds everything **before** its own date, so only what
         // came after it is still outstanding. Without one, the whole history is.
-        posting_date: snapshot
-          ? { gte: snapshot.postingDate, lt: from }
+        accounting_date: snapshot
+          ? { gte: snapshot.accountingDate, lt: from }
           : { lt: from },
       },
     },
@@ -170,7 +170,7 @@ async function openingBasis(
   return {
     net,
     snapshot: snapshot
-      ? { openingNo: snapshot.openingNo, postingDate: snapshot.postingDate }
+      ? { openingNo: snapshot.openingNo, accountingDate: snapshot.accountingDate }
       : null,
     currencies,
   };
@@ -221,7 +221,7 @@ function provenanceOf(bases: Map<number, OpeningBasis>): OpeningProvenance | nul
     if (basis.snapshot) {
       return {
         openingNo: basis.snapshot.openingNo,
-        date: basis.snapshot.postingDate.toISOString().slice(0, 10),
+        date: basis.snapshot.accountingDate.toISOString().slice(0, 10),
       };
     }
   }
@@ -350,11 +350,11 @@ export async function generalLedgerReport(
     prisma.accJournalLine.findMany({
       where: {
         account_id: { in: ids },
-        journal: { ...POSTED, posting_date: { gte: from, lte: to } },
+        journal: { ...POSTED, accounting_date: { gte: from, lte: to } },
       },
-      orderBy: [{ journal: { posting_date: "asc" } }, { journal_id: "asc" }, { sequence_no: "asc" }],
+      orderBy: [{ journal: { accounting_date: "asc" } }, { journal_id: "asc" }, { sequence_no: "asc" }],
       include: {
-        journal: { select: { id: true, journal_no: true, posting_date: true } },
+        journal: { select: { id: true, journal_no: true, accounting_date: true } },
         partner: { select: { partner_label: true, partner_name: true } },
         currency: { select: { currency_label: true } },
       },
@@ -385,7 +385,7 @@ export async function generalLedgerReport(
       entries.push({
         journalId: l.journal.id,
         journalNo: l.journal.journal_no,
-        date: postedOn(l.journal.posting_date).toISOString(),
+        date: postedOn(l.journal.accounting_date).toISOString(),
         description: l.description,
         partnerLabel: l.partner?.partner_label ?? null,
         partnerName: l.partner?.partner_name ?? null,
@@ -490,7 +490,7 @@ export async function trialBalanceReport(
         journal: {
           ...POSTED,
           company_id: { in: companyIds },
-          posting_date: { gte: from, lte: to },
+          accounting_date: { gte: from, lte: to },
         },
       },
       select: {
@@ -760,7 +760,7 @@ export async function closingBalances(
 
   const lines = await db.accJournalLine.findMany({
     where: {
-      journal: { ...POSTED, company_id: companyId, posting_date: { lte: to } },
+      journal: { ...POSTED, company_id: companyId, accounting_date: { lte: to } },
     },
     select: {
       account_id: true,
@@ -905,7 +905,7 @@ export async function statementMovements(
       journal: {
         ...POSTED,
         company_id: companyId,
-        posting_date: {
+        accounting_date: {
           gte: new Date(`${range.from}T00:00:00Z`),
           lte: new Date(`${range.to}T00:00:00Z`),
         },
@@ -977,8 +977,8 @@ export async function statementBalances(
         journal: {
           ...POSTED,
           company_id: companyId,
-          posting_date: {
-            ...(snapshot ? { gte: snapshot.postingDate } : {}),
+          accounting_date: {
+            ...(snapshot ? { gte: snapshot.accountingDate } : {}),
             lte: new Date(`${options.to}T00:00:00Z`),
           },
           ...(options.excludeClosingOf
@@ -1036,7 +1036,7 @@ export async function statementBalances(
     openingFrom: snapshot
       ? {
           openingNo: snapshot.openingNo,
-          date: snapshot.postingDate.toISOString().slice(0, 10),
+          date: snapshot.accountingDate.toISOString().slice(0, 10),
         }
       : null,
   };

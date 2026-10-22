@@ -97,7 +97,7 @@ or invariants that assume a particular row exists.
 | Klasifikasi (Budget Category, Partner Category) | Done — the Budget Category rules are rows now, not a constant: which directions a category allows, whether it names a Partner, and which Partner Categories it admits — **the last chosen on the category's own form and written in the same transaction**, so a new category is usable in one save. Under Pengaturan › Klasifikasi, each deactivable. Retiring a pair stops Budget approval offering it while leaving every record already classified by it readable |
 | Company master | List + detail done. Create and edit are locked at both the routes and the Server Actions. |
 | Accounting module (COA tree, mapping, journal, ledger, fiscal calendar) | Done — registry-driven, with Chart of Accounts rendered as a tree and numbered by lineage (`1` → `1.1` → `1.1.1` → `1.1.1.2`). Journal, General Ledger and Trial Balance are built: posting writes one balanced, immutable journal and both reports derive from its lines. **Manual journals** are drafted and posted through the same engine, and may not touch a control account. Fiscal Year is created Draft, activated into Open, and its twelve periods are generated at that moment. |
-| Backdating | Done — every posting document carries a Tanggal Dokumen chosen on the draft, any day up to today inside a year every Company it writes into still has open. All its book entries and its journal are dated by it; the moment of posting is kept beside it. A posting and a close hold one lock per year and Company, so neither can land inside the other. The book reports read by date and carry no running balance (§12) |
+| Backdating | Done — every posting document carries a Tanggal Akuntansi chosen on the draft, any day up to today inside a year every Company it writes into still has open. All its book entries and its journal are dated by it; the moment of posting is kept beside it. A posting and a close hold one lock per year and Company, so neither can land inside the other. The book reports read by date and carry no running balance (§12) |
 | Period control (lock, closing, Opening Balance) | Done — **each Company keeps its own fiscal calendar**, and a posting's date must fall in an **Open period** of its Company's calendar, enforced on every posting path. A period is **locked and unlocked** from its row in the Fiscal Year's period list (`FISCAL_PERIOD_LOCK` / `_UNLOCK`); Locked refuses postings and is only a state. **Fiscal Year Closing** is refused until all twelve periods are Locked; it moves a year's profit and loss into equity (`CLS-` journal, dated the year's last day), writes the next year's **Opening Balance** snapshot at `(account, partner?)` grain, stamps `acc_fiscal_closing`, and makes the year and its periods Closed. Any number of years may stand Open; each Company closes its own oldest first, and no year opens behind its own Company's close. The General Ledger and the Trial Balance compute their openings from the snapshot instead of scanning a Company's whole history, and say which document they read. Opening Balance is read-only — a close writes one, or a developer injects go-live figures with a null source. |
 | Budget module | Done for create → approve → classify — two menus. **Pengajuan Budget**: Budget Month, the register with status tabs and checkbox selection, create/edit, and the Draft → Submit → Approve/Reject lifecycle, each transition one Budget or many at once. **Klasifikasi Budget**: the classifier's queue of Approved Budgets, grouped Company · Arah · Currency, one Category and Partner for a whole selection. Bulk actions are all-or-nothing. Bespoke, not registry-driven. |
 | Finance module — Realisasi Budget | Done for draft → post — two menus (**Realisasi Penerimaan** `RBM-`, **Realisasi Pengeluaran** `RBK-`) over one document and one table. The header is Company · Cash & Bank · Currency · kurs and nothing else: no Purpose, no Partner, so one document settles Budgets of every category and every Partner. Post writes **one Cash Bank Book entry and one subject-book entry per Budget**, each reading the Budget's own description, and one journal: a cash line, a counter line per Budget on its own mapped account and Partner (one per settled open item, at its kurs), and an FX line per Budget where one arises. Bespoke, not registry-driven. |
@@ -827,6 +827,7 @@ so `globals.css` ends with an anchor reset. Keep shared classes working for both
 | Money | `Decimal @db.Decimal(18, 2)` |
 | Exchange rates | `Decimal @db.Decimal(18, 6)`. Six decimals, and the kurs field accepts exactly that many — `formatRate` in `src/lib/format.ts` is the only thing that renders one |
 | Base measures | `Decimal @db.Decimal(18, 2)`, beside the face amount on every book row and balance row. Written once, never recomputed |
+| Posting dates | `accounting_date` (`date`, the books' day, user-chosen) and `posted_at` (`timestamptz`, when Post ran; on the journal, book rows and snapshot the database default `transaction_timestamp()`, never a Prisma `now()`) on every row a Post writes. `created_at` is audit only (§12) |
 | Calendar dates | `@db.Date`, stored at UTC midnight. **Displayed `dd/mm/yyyy` everywhere** — always via `formatDate` in `src/lib/format.ts`, which reads UTC parts. ISO stays the wire and storage form |
 | Status | Enum `ActiveStatus` (`Active` / `Inactive`) on master tables |
 | Deletion | **None.** Master data is deactivated, never hard-deleted. Do not add delete actions or `onDelete: Cascade` to master tables. |
@@ -986,9 +987,9 @@ Implemented and enforced:
    There is no JOURNAL_CREATE, JOURNAL_EDIT or JOURNAL_DELETE — viewing is the
    whole capability.
 49. **A journal is dated by the document that produced it, never ahead.**
-   Its `posting_date` is the day the document belongs to in the books — which
-   may be earlier than today (a backdated document) and is never later; when it
-   was written is `created_at`. A **closing entry** is dated the last day of
+   Its `accounting_date` is the day the document belongs to in the books —
+   which may be earlier than today (a backdated document) and is never later;
+   when it was posted is `posted_at`. A **closing entry** is dated the last day of
    the fiscal year it closes: a `CLS-` journal belongs to the year it shuts.
    `postJournal` refuses a future date for everything but `CLS`; whether the
    day is inside an open period is `checkTransactionDate`'s question, asked by
@@ -1518,7 +1519,7 @@ the rules that follow from it.
     million and still cannot make one payment of one and a half. `checkLines`
     refuses it at draft time and says so.
 122. **A layer pays only for money that left on or after it arrived.** A
-    document may draw on a layer only when its Tanggal Dokumen is on or after
+    document may draw on a layer only when its Tanggal Akuntansi is on or after
     the layer's acquisition date — `layerDateRefusal` in `cash-bank-layers.ts`,
     asked by `drawFromLayer` at Post and dry run on every path, by the Realisasi
     and Funding valuation, by the Transfer and Pencairan header at save, and
@@ -1768,7 +1769,7 @@ rate-layers 2.0).
 118. **A revaluation is a document a user raises, for one foreign Cash & Bank.**
     It is its own menu (Finance › Penyesuaian › Revaluasi Kurs, `RVK-`), and
     nothing raises one automatically — not a period close, not a schedule. It
-    names the resource, a Tanggal Dokumen and the kurs the user states as
+    names the resource, a Tanggal Akuntansi and the kurs the user states as
     current, an input like any entered kurs (rule 68). The user's decision: when
     a rate is worth restating is somebody's call, the way which layer a payment
     consumes is. A base-currency resource has nothing to revalue.
@@ -1893,7 +1894,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   (§17).
 - **The year is a plan posted in date order.** A book refuses to go below zero
   and a layer to be overdrawn at the moment of posting, so the runner sorts the
-  events by Tanggal Dokumen and posts them in that order, exactly as a user
+  events by Tanggal Akuntansi and posts them in that order, exactly as a user
   entering them would have to. It holds every live state: Drafts, a Pending
   request, a Submitted Budget and Cancelled documents.
   It replaced `scripts/sample-data.ts` (`npm run db:sample`), which stopped at
@@ -2385,7 +2386,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   `lib/siba/journal.ts`, which **refuses** any journal whose two sides do not
   sum equal **in base currency**. A posted journal is immutable: nothing
   updates, deletes or reverses one, and a correction is a new journal. The
-  posting date is the document's date, never later than today (see "A
+  accounting date is the document's date, never later than today (see "A
   document may be backdated, never dated ahead"). An automatic journal —
   one a business document produced — is written by `postJournal` inside that
   document's posting transaction and is `Posted` the moment it exists;
@@ -2433,7 +2434,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   but is not a cash movement anybody could raise a Budget for. It is an
   `acc_journal` row like any other, distinguished by `is_manual`, and it is the
   **only** kind that is ever a `Draft`. Saving writes the draft; posting runs
-  the same validation an automatic posting does, stamps the posting date and
+  the same validation an automatic posting does, stamps `posted_at` and
   flips the status. `JUR-0001` is its own number series beside `JRN-0001`, so
   which kind of journal a number names is readable without opening it.
   `Cancelled` retires a draft that should not exist, because nothing here is
@@ -2479,7 +2480,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   `unbalancedJournals`, which would otherwise report every half-finished draft
   as a system fault. `tests/manual-journal.test.ts` pins that a draft reaches
   neither report.
-- **Impact:** `posting_date` is nullable — a draft has none, because the date is
+- **Impact:** `accounting_date` is nullable — a draft has none, because the date is
   written when the books are. Debit and kredit are base currency as they always
   were; a foreign line carries its own currency, kurs and face amount as extra
   information on the same row, which is the user's own statement of the rule. A
@@ -3081,7 +3082,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
 ### Schema deviations from the source DBML
 - **Decision:** Four intentional deviations, each commented in `schema.prisma`:
   `Int` ids instead of `bigint`; money normalised to `Decimal(18,2)` (the DBML used
-  `(18,6)` on budget amounts only — read as a typo); `document_date` nullable (the mockup
+  `(18,6)` on budget amounts only — read as a typo); `accounting_date` (then `document_date`) nullable (the mockup
   records it only at post time); added `SysUser`, `sys_company.is_parent`,
   `acc_account.partner_category_id`, `acc_budget_category_account.partner_category_id`,
   `audit_log`, the Cash Bank Book tables, and dropped `acc_account.partner_type`.
@@ -3668,7 +3669,7 @@ below in outline because the half of it that still holds is easy to lose.**
 - **Decision:** Revaluation of a foreign Cash & Bank is its own module
   (`fin_cash_bank_revaluation(_layer)`, `RVK-`, `CASH_BANK_REVALUATION_*`,
   Finance › Penyesuaian › Revaluasi Kurs). One resource per document, the kurs
-  typed, any Tanggal Dokumen up to today. Post collapses the resource's open
+  typed, any Tanggal Akuntansi up to today. Post collapses the resource's open
   layers into one at that kurs, writes a base-only `Revaluation` book entry and
   one journal against `fx_revaluation`. §10 rules 118–121 state it.
 - **Reason:** the user's (16/10/2026), after a review of mainstream ERP —
@@ -4063,15 +4064,52 @@ below in outline because the half of it that still holds is easy to lose.**
 - **Do not change unless:** explicitly instructed. **Do not re-embed a second copy of
   the book under the master record.**
 - **Status:** Frozen, current.
+### Two dates on every posting row: accounting_date and posted_at (FROZEN)
+- **Decision:** Every row a Post produces carries the same two dates, by the
+  same names. **`accounting_date`** (`date`) is the day the books record — chosen
+  by the user on the draft, possibly backdated; ledgers, the period lock and
+  every report read it. **`posted_at`** (`timestamptz`) is the moment Post ran.
+  Both are on the six posting documents, `acc_journal`, `acc_opening_balance`,
+  `cash_bank_ledger` and `sub_ledger`. A document sets `posted_at` at Post; the
+  journal, book rows and snapshot take it from their column default,
+  `transaction_timestamp()`, so one Post stamps them all alike — a database
+  default, never Prisma's `now()`, which Prisma fills per insert; a manual journal
+  draft writes null and its Post sets it. **`created_at` is audit only** and is
+  never read as a business date — one legacy fallback remains, for a manual
+  draft saved before drafts carried a date (`draftJournalsDatedBetween`).
+- **On screen:** the form's date picker is labelled **Tanggal Akuntansi**, on
+  every posting document, the journal, Funding Request and Opening Balance.
+  `posted_at` is not a field: it reaches the screen only as the *Diposting*
+  entry in the record's Riwayat, read from `audit_log`. Budget's date is a
+  plan's date and keeps its own label.
+- **Reason:** the user's (22/10/2026). A December posting dated 5 November has
+  two facts — when the books say it happened, and when it was entered — and the
+  columns named them three ways: documents had `document_date` and a timestamp
+  called `posting_date`, while the journal's `posting_date` held the *date*.
+  The names follow Oracle and Odoo (*Accounting Date*, *Posted*), chosen over
+  SAP's *Posting Date* / *Entry Date*, whose "posting date" reads as the
+  moment of Post. A row is backdated exactly when `posted_at` is later than
+  `accounting_date`. Migrations `20261022120000` (renames in place, backfills
+  `posted_at` from `created_at`, and a manual journal's from its `post` audit
+  row), `20261022121000` and `20261022122000` (the defaults).
+- **Not renamed:** `cash_bank_layer.acquisition_date` and
+  `sub_ledger_balance.opened_date` (they say what the date does for the row),
+  `last_entry_date` on the balance tables, `bud_budget.budget_date`, and
+  `fin_funding_request.request_date` / `confirmed_at`.
+- **Do not change unless:** explicitly instructed. **Never read `created_at`
+  as a business date, never add a third name for either date, and never show
+  `posted_at` as a form field.**
+- **Status:** Frozen, current.
+
 ### A document may be backdated, never dated ahead (FROZEN)
 - **Decision:** Every posting document — Cash Bank Transaction, Cash Bank
   Transfer, Penyesuaian Open Item and the manual journal — carries a **Tanggal
-  Dokumen** the user chooses while it is a Draft: any day up to today, starting
-  on today (§10 rule 33). Post dates **everything it writes by that day**: the
-  Cash Bank Book and subject-book entries, the rate layer it opens, and the
-  journal's `posting_date`. When the posting actually happened is kept
-  separately — the document's `posting_date` timestamp and the journal's
-  `created_at`. A funded document is posted on the anak's document date, for
+  Akuntansi** (`accounting_date`) the user chooses while it is a Draft: any
+  day up to today, starting on today (§10 rule 33). Post dates **everything it
+  writes by that day**: the Cash Bank Book and subject-book entries, the rate
+  layer it opens, and the journal's `accounting_date`. When the posting
+  actually happened is `posted_at` — see "Two dates on every posting row".
+  A funded document is posted on the anak's accounting date, for
   both Companies. `checkTransactionDate` in `fiscal.ts` is the one rule: a
   real date, not after today, inside an Open year **every Company the posting
   writes into** has not closed (`checkDocumentDate` in `finance.ts` adds the
@@ -4107,7 +4145,7 @@ below in outline because the half of it that still holds is easy to lose.**
   them, so they were dropped from `cash_bank_ledger` and `sub_ledger` (migration
   `20261022090000`, the user's decision). A balance on a date is summed from
   `movement`; the current one is the `_balance` row. Both reports now order by
-  `(entry_date, id)`, state only the period's opening and closing, and
+  `(accounting_date, id)`, state only the period's opening and closing, and
   `reconciles` compares the whole book, summed, with its `_balance` row. The
   user's choice: the materialised `_balance` tables are what is read.
 - **A Cash & Bank may not go below nothing on any day.** Superseding the
@@ -4135,7 +4173,7 @@ below in outline because the half of it that still holds is easy to lose.**
   transaction, never let a close write without the lock and the re-check, and
   never restate a base figure to value a backdated settlement as of its date.**
 - **Status:** Frozen, current. Supersedes rule 49's "never back-dated" and the
-  statements that a Draft has no document date.
+  statements that a Draft has no accounting date.
 
 ### Post is the actual boundary, and it is one transaction (FROZEN)
 - **Decision:** A Cash Bank Transaction in Draft moves **nothing** — no ledger entry,
@@ -4836,6 +4874,8 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
   A backdated posting and a close must never interleave (§12).
 - Do **not** print a running balance on a book report again, order one by id,
   or bring back a stored `balance_after` on a book.
+- Do **not** read `created_at` as a business date, or name a posting row's two
+  dates anything but `accounting_date` and `posted_at` (§12).
 - Do **not** create a table without a single `id` primary key, bridge and cache
   tables included; keep a natural key as a unique constraint (§9).
   An entry may be backdated in among entries written before it (§12).

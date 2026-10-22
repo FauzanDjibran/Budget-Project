@@ -341,7 +341,7 @@ describe("a Fiscal Year is activated, not edited into Open", () => {
 /**
  * A book is writable only inside an Open year its Company has not closed.
  *
- * Every posting date in SIBA is today, so a closed past year is currently
+ * Every accounting date in SIBA is today, so a closed past year is currently
  * unreachable by arithmetic alone. The guard exists anyway, deliberately: the
  * rule has to be *enforced* rather than incidental before the no-back-dating
  * rule is ever relaxed, and it is what refuses a second close.

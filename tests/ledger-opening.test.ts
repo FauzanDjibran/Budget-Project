@@ -88,7 +88,7 @@ async function postFixtureJournal(
   await prisma.accJournal.create({
     data: {
       journal_no: `ZZE-${Date.now() % 100000}-${Math.floor(Math.random() * 10000)}`,
-      posting_date: new Date(`${date}T00:00:00Z`),
+      accounting_date: new Date(`${date}T00:00:00Z`),
       created_at: new Date(`${date}T00:00:00Z`),
       company_id: company,
       description: "Fixture",
@@ -126,7 +126,7 @@ async function fullScanOpening(accountId: number, from: string): Promise<number>
       journal: {
         status: "Posted",
         company_id: company,
-        posting_date: { lt: new Date(`${from}T00:00:00Z`) },
+        accounting_date: { lt: new Date(`${from}T00:00:00Z`) },
       },
     },
     select: { debit_amount: true, kredit_amount: true },

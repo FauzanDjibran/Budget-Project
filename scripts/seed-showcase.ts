@@ -813,7 +813,7 @@ async function injectClosedYear(actor: number) {
           companyId: induk.id,
           fiscalYearId: current.id,
           sourceFiscalYearId: closed.id,
-          postingDate: current.start_date,
+          accountingDate: current.start_date,
           lines: [
             ...[...perAccount].map(([accountId, base]) => ({ accountId, debit: base, credit: 0 })),
             { accountId: equity.id, debit: 0, credit: total },
@@ -949,7 +949,7 @@ async function draftDocument(options: {
   rate?: number;
   layerId?: number | null;
   note?: string;
-  /** The Tanggal Dokumen, `YYYY-MM-DD` — what every book entry and the journal are dated by. */
+  /** The Tanggal Akuntansi, `YYYY-MM-DD` — what every book entry and the journal are dated by. */
   date: string;
   lines: { budgetId: number; amount: number }[];
 }): Promise<number | null> {
@@ -1017,7 +1017,7 @@ async function draftDocument(options: {
         return last?.transaction_no ?? null;
       }),
       transaction_type: direction,
-      document_date: new Date(`${options.date}T00:00:00Z`),
+      accounting_date: new Date(`${options.date}T00:00:00Z`),
       company_id: companyId,
       cash_bank_id: resource?.id ?? null,
       currency_id: currencyId,
@@ -1172,7 +1172,7 @@ type TransferSpec = {
   currency: "IDR" | "USD";
   /** Values the foreign side into base; `1` where both sides are rupiah. */
   rate: number;
-  /** The Tanggal Dokumen, `YYYY-MM-DD`. */
+  /** The Tanggal Akuntansi, `YYYY-MM-DD`. */
   date: string;
   note: string;
   lines: { to: string; amount: number }[];
@@ -1229,8 +1229,8 @@ async function draftTransfer(spec: TransferSpec, actor: number): Promise<number 
   const row = await prisma.finCashBankTransfer.create({
     data: {
       transfer_no: await nextTransferNo(),
-      document_date: new Date(`${spec.date}T00:00:00Z`),
-      posting_date: null,
+      accounting_date: new Date(`${spec.date}T00:00:00Z`),
+      posted_at: null,
       company_id: from.company_id,
       purpose: spec.purpose,
       from_cash_bank_id: from.id,
@@ -1271,7 +1271,7 @@ async function postTransfer(spec: TransferSpec, actor: number) {
 // were bought earlier, at another kurs, which is what leaves a difference.
 
 type ConversionSpec = {
-  /** The Tanggal Dokumen, `YYYY-MM-DD`. */
+  /** The Tanggal Akuntansi, `YYYY-MM-DD`. */
   date: string;
   from: string;
   /** The day the layer drawn on must have been acquired by. */
@@ -1345,7 +1345,7 @@ async function postConversion(spec: ConversionSpec, actor: number) {
   const row = await prisma.finItemConversion.create({
     data: {
       conversion_no: await nextConversionNo(),
-      document_date: new Date(`${spec.date}T00:00:00Z`),
+      accounting_date: new Date(`${spec.date}T00:00:00Z`),
       company_id: from.company_id,
       from_cash_bank_id: from.id,
       currency_id: from.currency_id,
@@ -1449,7 +1449,7 @@ async function postReclass(spec: ReclassSpec, budgets: Map<string, number>, acto
   const row = await prisma.finItemReclass.create({
     data: {
       reclass_no: await nextReclassNo(),
-      document_date: new Date(`${spec.date}T00:00:00Z`),
+      accounting_date: new Date(`${spec.date}T00:00:00Z`),
       company_id: header.companyId,
       budget_category_id: header.book.categoryId,
       partner_id: header.partnerId,
@@ -1497,7 +1497,7 @@ type FundingSpec = {
   note: string;
   budgetId: number;
   amount: number;
-  /** The anak's Tanggal Dokumen — the day both Companies' books are dated by. */
+  /** The anak's Tanggal Akuntansi — the day both Companies' books are dated by. */
   date: string;
   /** The induk resource that answers it; left Open when absent. */
   confirmFrom?: string;
@@ -1548,7 +1548,7 @@ async function fund(spec: FundingSpec, actor: number) {
 
 type ManualSpec = {
   description: string;
-  /** The day it is written for — the posting date once it is posted. */
+  /** The day it is written for — the accounting date once it is posted. */
   date: string;
   post: boolean;
   lines: { account: string; debit?: number; credit?: number; description: string }[];
@@ -1634,7 +1634,7 @@ type AdjustmentSpec = {
   reference?: string;
   /** This script's marker, as a document's note is elsewhere. */
   note: string;
-  /** The Tanggal Dokumen, `YYYY-MM-DD`. */
+  /** The Tanggal Akuntansi, `YYYY-MM-DD`. */
   date: string;
   status: "Posted" | "Draft" | "Cancelled";
 };
@@ -1697,7 +1697,7 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
     const created = await tx.finItemAdjustment.create({
       data: {
         adjustment_no: await nextItemAdjustmentNo(tx),
-        document_date: new Date(`${spec.date}T00:00:00Z`),
+        accounting_date: new Date(`${spec.date}T00:00:00Z`),
         company_id: partner.company_id,
         budget_category_id: category.id,
         partner_id: partner.id,
@@ -1742,7 +1742,7 @@ async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
 type RevaluationSpec = {
   cashBank: string;
   rate: number;
-  /** The Tanggal Dokumen, `YYYY-MM-DD`. */
+  /** The Tanggal Akuntansi, `YYYY-MM-DD`. */
   date: string;
   /** This script's marker, as a document's note is elsewhere. */
   note: string;
@@ -1773,7 +1773,7 @@ async function writeRevaluation(spec: RevaluationSpec, actor: number) {
     const created = await tx.finCashBankRevaluation.create({
       data: {
         revaluation_no: await nextRevaluationNo(tx),
-        document_date: new Date(`${spec.date}T00:00:00Z`),
+        accounting_date: new Date(`${spec.date}T00:00:00Z`),
         company_id: header.companyId,
         cash_bank_id: header.cashBankId,
         currency_id: header.currencyId,

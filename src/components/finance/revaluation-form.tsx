@@ -74,7 +74,7 @@ export function RevaluationForm({
     cash_bank_id: doc ? String(doc.cash_bank_id) : "",
     exchange_rate: doc ? String(doc.exchange_rate) : "",
     // Today, as every editable date starts (§10 rule 33).
-    document_date: doc?.document_date ?? todayIso(),
+    accounting_date: doc?.accounting_date ?? todayIso(),
     note: doc?.note ?? "",
   }));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -331,22 +331,22 @@ export function RevaluationForm({
                   </Field>
 
                   <Field
-                    label="Tanggal Dokumen"
+                    label="Tanggal Akuntansi"
                     span={3}
                     required={editing}
                     help={editing ? "boleh mundur" : undefined}
-                    error={errors.document_date}
+                    error={errors.accounting_date}
                   >
                     {editing ? (
                       <DateInput
-                        value={values.document_date}
-                        invalid={Boolean(errors.document_date)}
-                        onChange={(v) => set("document_date", v)}
+                        value={values.accounting_date}
+                        invalid={Boolean(errors.accounting_date)}
+                        onChange={(v) => set("accounting_date", v)}
                       />
                     ) : (
                       <div className="ro">
-                        {doc?.document_date ? (
-                          formatDate(doc.document_date)
+                        {doc?.accounting_date ? (
+                          formatDate(doc.accounting_date)
                         ) : (
                           <span className="dash">belum ditentukan</span>
                         )}

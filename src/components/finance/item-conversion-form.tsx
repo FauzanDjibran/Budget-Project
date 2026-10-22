@@ -95,7 +95,7 @@ export function ItemConversionForm({
     budget_category_id: conversion ? String(conversion.budget_category_id) : "",
     partner_id: conversion ? String(conversion.partner_id) : "",
     // Today, as every editable date starts (§10 rule 33).
-    document_date: conversion?.document_date ?? todayIso(),
+    accounting_date: conversion?.accounting_date ?? todayIso(),
     note: conversion?.note ?? "",
   }));
 
@@ -473,7 +473,7 @@ export function ItemConversionForm({
                       <KursSelect
                         value={values.cash_bank_layer_id ? Number(values.cash_bank_layer_id) : null}
                         layers={source.layers}
-                        asOf={values.document_date || undefined}
+                        asOf={values.accounting_date || undefined}
                         currencyLabel={currencyLabel}
                         invalid={Boolean(errors.cash_bank_layer_id)}
                         onChange={(v) => set("cash_bank_layer_id", v ? String(v) : "")}
@@ -497,22 +497,22 @@ export function ItemConversionForm({
                   </Field>
 
                   <Field
-                    label="Tanggal Dokumen"
+                    label="Tanggal Akuntansi"
                     span={4}
                     required={editing}
                     help={editing ? "boleh mundur, tidak ke depan" : undefined}
-                    error={errors.document_date}
+                    error={errors.accounting_date}
                   >
                     {editing ? (
                       <DateInput
-                        value={values.document_date}
-                        invalid={Boolean(errors.document_date)}
-                        onChange={(v) => set("document_date", v)}
+                        value={values.accounting_date}
+                        invalid={Boolean(errors.accounting_date)}
+                        onChange={(v) => set("accounting_date", v)}
                       />
                     ) : (
                       <div className="ro">
-                        {conversion?.document_date ? (
-                          formatDate(conversion.document_date)
+                        {conversion?.accounting_date ? (
+                          formatDate(conversion.accounting_date)
                         ) : (
                           <span className="dash">belum ditentukan</span>
                         )}

@@ -229,8 +229,8 @@ export function ItemReclassList({
                           </Link>
                         </td>
                         <td>
-                          {c.document_date ? (
-                            formatDate(c.document_date)
+                          {c.accounting_date ? (
+                            formatDate(c.accounting_date)
                           ) : (
                             <span className="dash">belum ditentukan</span>
                           )}

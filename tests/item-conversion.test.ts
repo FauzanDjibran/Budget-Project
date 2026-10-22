@@ -174,7 +174,7 @@ async function makeConversion(options: {
   const row = await prisma.finItemConversion.create({
     data: {
       conversion_no: await nextConversionNo(),
-      document_date: new Date(`${options.date ?? today}T00:00:00Z`),
+      accounting_date: new Date(`${options.date ?? today}T00:00:00Z`),
       company_id: induk,
       from_cash_bank_id: options.from,
       currency_id: usd,

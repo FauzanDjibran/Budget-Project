@@ -69,7 +69,7 @@ export type TransactionValues = {
   /** The rate layer a payment out of a foreign resource draws on. */
   cash_bank_layer_id: string;
   /** `YYYY-MM-DD` — the day the document belongs to in the books. */
-  document_date: string;
+  accounting_date: string;
   note: string;
 };
 
@@ -210,11 +210,11 @@ export async function createTransaction(
   // into may still be written. Asked again at Post, since a year can close in
   // between.
   const dated = await checkDocumentDate(
-    values.document_date,
+    values.accounting_date,
     checked.companyId,
     checked.route
   );
-  if (!dated.ok) return { ok: false, errors: { document_date: dated.message } };
+  if (!dated.ok) return { ok: false, errors: { accounting_date: dated.message } };
 
   const settled = await checkLines(header, asLines(lines));
   if (!settled.ok) return { ok: false, errors: settled.errors };
@@ -229,10 +229,10 @@ export async function createTransaction(
         data: {
           transaction_no,
           // The day it belongs to in the books, chosen on the draft and possibly
-          // earlier than today. `posting_date` stays empty until Post writes the
+          // earlier than today. `posted_at` stays empty until Post writes the
           // moment it actually happened.
-          document_date: new Date(`${dated.date}T00:00:00Z`),
-          posting_date: null,
+          accounting_date: new Date(`${dated.date}T00:00:00Z`),
+          posted_at: null,
           transaction_type: checked.direction,
           company_id: checked.companyId,
           cash_bank_id: checked.cashBankId,
@@ -306,11 +306,11 @@ export async function updateTransaction(
   // into may still be written. Asked again at Post, since a year can close in
   // between.
   const dated = await checkDocumentDate(
-    values.document_date,
+    values.accounting_date,
     checked.companyId,
     checked.route
   );
-  if (!dated.ok) return { ok: false, errors: { document_date: dated.message } };
+  if (!dated.ok) return { ok: false, errors: { accounting_date: dated.message } };
 
   const settled = await checkLines(header, asLines(lines), {
     excludeTransactionId: id,
@@ -336,7 +336,7 @@ export async function updateTransaction(
           currency_id: checked.currencyId,
           exchange_rate: checked.rate,
           cash_bank_layer_id: checked.layerId,
-          document_date: new Date(`${dated.date}T00:00:00Z`),
+          accounting_date: new Date(`${dated.date}T00:00:00Z`),
           transaction_amount: settled.total,
           transaction_base_amount: roundBase(settled.total * checked.rate),
           note: values.note?.trim() || null,

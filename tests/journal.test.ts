@@ -199,7 +199,7 @@ describe("a journal is refused unless its two sides agree", () => {
 });
 
 describe("a journal written without a date", () => {
-  test("is dated today, which a document date overrides", async () => {
+  test("is dated today, which an accounting date overrides", async () => {
     const today = new Date().toISOString().slice(0, 10);
     const result = await postJournal(
       prisma,
@@ -207,12 +207,12 @@ describe("a journal written without a date", () => {
     );
     const row = await prisma.accJournal.findUniqueOrThrow({
       where: { id: result.id },
-      select: { posting_date: true },
+      select: { accounting_date: true },
     });
     // The column is nullable only so a manual journal can be drafted before it
     // is written. A journal `postJournal` produced is Posted, so it has one.
-    assert.ok(row.posting_date, "a posted journal carries its posting date");
-    assert.equal(row.posting_date.toISOString().slice(0, 10), today);
+    assert.ok(row.accounting_date, "a posted journal carries its accounting date");
+    assert.equal(row.accounting_date.toISOString().slice(0, 10), today);
   });
 
   test("journal numbers are the document form and never repeat", async () => {

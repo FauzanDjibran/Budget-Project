@@ -106,7 +106,7 @@ export function ItemAdjustmentForm({
     exchange_rate: doc?.exchange_rate && doc.exchange_rate !== 1 ? String(doc.exchange_rate) : "",
     // Today, as every editable date starts (§10 rule 33); moved back for a
     // backdated document.
-    document_date: doc?.document_date ?? todayIso(),
+    accounting_date: doc?.accounting_date ?? todayIso(),
     reference: doc?.reference ?? "",
     note: doc?.note ?? "",
   }));
@@ -173,7 +173,7 @@ export function ItemAdjustmentForm({
       return next;
     });
     // The items the lines chose belong to one position.
-    if (key !== "exchange_rate" && key !== "document_date" && key !== "reference" && key !== "note") {
+    if (key !== "exchange_rate" && key !== "accounting_date" && key !== "reference" && key !== "note") {
       setDraftLines((rows) => rows.map((r) => (r.item_id ? { ...r, item_id: "", new_amount: "" } : r)));
     }
     setDirty(true);
@@ -509,22 +509,22 @@ export function ItemAdjustmentForm({
                   </Field>
 
                   <Field
-                    label="Tanggal Dokumen"
+                    label="Tanggal Akuntansi"
                     span={3}
                     required={editing}
                     help={editing ? "boleh mundur" : undefined}
-                    error={errors.document_date}
+                    error={errors.accounting_date}
                   >
                     {editing ? (
                       <DateInput
-                        value={values.document_date}
-                        invalid={Boolean(errors.document_date)}
-                        onChange={(v) => set("document_date", v)}
+                        value={values.accounting_date}
+                        invalid={Boolean(errors.accounting_date)}
+                        onChange={(v) => set("accounting_date", v)}
                       />
                     ) : (
                       <div className="ro">
-                        {doc?.document_date ? (
-                          formatDate(doc.document_date)
+                        {doc?.accounting_date ? (
+                          formatDate(doc.accounting_date)
                         ) : (
                           <span className="dash">belum ditentukan</span>
                         )}

@@ -90,8 +90,8 @@ export const CONVERSION_LABEL = "Pencairan Open Item";
 export type ConversionRow = {
   id: number;
   conversion_no: string;
-  document_date: string | null;
-  posting_date: string | null;
+  accounting_date: string | null;
+  posted_at: string | null;
   company_id: number;
   from_cash_bank_id: number;
   currency_id: number;
@@ -162,8 +162,8 @@ function toRow(c: ConversionRecord): ConversionRow {
   return {
     id: c.id,
     conversion_no: c.conversion_no,
-    document_date: c.document_date ? day(c.document_date) : null,
-    posting_date: c.posting_date ? c.posting_date.toISOString() : null,
+    accounting_date: c.accounting_date ? day(c.accounting_date) : null,
+    posted_at: c.posted_at ? c.posted_at.toISOString() : null,
     company_id: c.company_id,
     from_cash_bank_id: c.from_cash_bank_id,
     currency_id: c.currency_id,
@@ -438,7 +438,7 @@ export type ConversionHeader = {
   budget_category_id: number | null;
   partner_id: number | null;
   /** When given, a layer acquired after it is refused. */
-  document_date?: string | null;
+  accounting_date?: string | null;
 };
 
 /** A header that passed every rule — the shape the lines are checked against. */
@@ -516,7 +516,7 @@ export async function checkConversionHeader(
         acquisition_date: true,
       },
     });
-    const tooNew = layer && header.document_date ? layerDateRefusal(layer, header.document_date) : null;
+    const tooNew = layer && header.accounting_date ? layerDateRefusal(layer, header.accounting_date) : null;
     if (!layer || layer.cash_bank_id !== header.from_cash_bank_id) {
       errors.cash_bank_layer_id =
         "Layer kurs tersebut bukan milik Cash & Bank sumber yang dipilih.";
@@ -720,7 +720,7 @@ export async function checkConversionLines(
         return lineRefusal(
           `Open item ${item.itemNo} tinggal ${formatMoney(lowest.balance, header.currencyLabel)} ` +
             `pada ${lowest.at}, tidak cukup untuk ${formatMoney(total, header.currencyLabel)}. ` +
-            "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal dokumen."
+            "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal akuntansi."
         );
       }
       used.set(item.id, total);
@@ -845,7 +845,7 @@ export async function applyConversion(
     };
   }
 
-  const dated = await checkTransactionDate(doc.document_date ?? todayDay(), [doc.company_id]);
+  const dated = await checkTransactionDate(doc.accounting_date ?? todayDay(), [doc.company_id]);
   if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
   const date = dated.date;
 
@@ -1211,7 +1211,7 @@ export async function applyConversion(
       // throws unless it balances — which takes the whole posting down.
       await postJournal(tx, {
         companyId: doc.company_id,
-        postingDate: new Date(`${date}T00:00:00Z`),
+        accountingDate: new Date(`${date}T00:00:00Z`),
         description: `${label} · ${header.partnerLabel}`,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
@@ -1223,8 +1223,8 @@ export async function applyConversion(
         where: { id: doc.id },
         data: {
           status: "Posted",
-          document_date: new Date(`${date}T00:00:00Z`),
-          posting_date: new Date(),
+          accounting_date: new Date(`${date}T00:00:00Z`),
+          posted_at: new Date(),
           conversion_base_amount: sourceBase,
           fx_difference: fxDifference,
           updated_by: actorId,

@@ -184,9 +184,9 @@ async function checkMovement(
   if (movement === 0) return null;
   const day = asDate(date);
   const entries = await db.cashBankLedger.findMany({
-    where: { cash_bank_id: cashBankId, entry_date: { gte: period, lt: addMonths(period, 1) } },
-    orderBy: [{ entry_date: "asc" }, { id: "asc" }],
-    select: { entry_date: true, movement: true },
+    where: { cash_bank_id: cashBankId, accounting_date: { gte: period, lt: addMonths(period, 1) } },
+    orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
+    select: { accounting_date: true, movement: true },
   });
   const m = cents(movement);
   let run = cents(opening);
@@ -199,12 +199,12 @@ async function checkMovement(
   };
   let placed = false;
   for (const e of entries) {
-    if (!placed && e.entry_date > day) {
+    if (!placed && e.accounting_date > day) {
       placed = true;
       pass(day);
     }
     run += cents(e.movement.toNumber());
-    if (placed) pass(e.entry_date);
+    if (placed) pass(e.accounting_date);
     else min = Math.min(min, run);
   }
   if (!placed) pass(day);
@@ -348,7 +348,7 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
     data: {
       entry_no: await nextEntryNo(db),
       cash_bank_id: entry.cashBankId,
-      entry_date: asDate(entry.date),
+      accounting_date: asDate(entry.date),
       entry_type: entry.type,
       movement,
       rate: entry.rate,
@@ -368,14 +368,14 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
       base_balance: afterBase,
       entry_count: 1,
       last_entry_id: created.id,
-      last_entry_date: created.entry_date,
+      last_entry_date: created.accounting_date,
     },
     update: {
       balance: after,
       base_balance: afterBase,
       entry_count: (current?.entry_count ?? 0) + 1,
       last_entry_id: created.id,
-      last_entry_date: created.entry_date,
+      last_entry_date: created.accounting_date,
     },
   });
 
@@ -477,7 +477,7 @@ export async function rebuildCashBankBalance(
       id: true,
       movement: true,
       base_movement: true,
-      entry_date: true,
+      accounting_date: true,
     },
   });
   const balance = entries.reduce((t, e) => t + e.movement.toNumber(), 0);
@@ -494,7 +494,7 @@ export async function rebuildCashBankBalance(
     base_balance: baseBalance,
     entry_count: entries.length,
     last_entry_id: last?.id ?? null,
-    last_entry_date: last?.entry_date ?? null,
+    last_entry_date: last?.accounting_date ?? null,
   };
 
   await prisma.cashBankBalance.upsert({
@@ -677,7 +677,7 @@ async function openingsAt(
     }),
     prisma.cashBankLedger.groupBy({
       by: ["cash_bank_id"],
-      where: { cash_bank_id: { in: ids }, entry_date: { gte: month, lt: startOf(from) } },
+      where: { cash_bank_id: { in: ids }, accounting_date: { gte: month, lt: startOf(from) } },
       _sum: { movement: true, base_movement: true },
     }),
   ]);
@@ -793,11 +793,11 @@ export async function cashBankLedgerReport(
     prisma.cashBankLedger.findMany({
       where: {
         cash_bank_id: cashBankId,
-        entry_date: { gte: startOf(range.from), lte: startOf(range.to) },
+        accounting_date: { gte: startOf(range.from), lte: startOf(range.to) },
       },
       // Date first: a backdated entry has a later id than the entries it
       // precedes, and a book is read in the order things happened.
-      orderBy: [{ entry_date: "asc" }, { id: "asc" }],
+      orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
       include: { source_doc_type: { select: { doc_table: true } } },
     }),
     prisma.cashBankLedger.aggregate({
@@ -835,7 +835,7 @@ export async function cashBankLedgerReport(
   const entries: LedgerEntryRow[] = rows.map((r) => ({
     id: r.id,
     entryNo: r.entry_no,
-    date: r.entry_date.toISOString().slice(0, 10),
+    date: r.accounting_date.toISOString().slice(0, 10),
     type: r.entry_type,
     movement: r.movement.toNumber(),
     rate: r.rate.toNumber(),
@@ -1006,7 +1006,7 @@ export async function cashBankBalanceReport(
   // before the period, and the period itself is split by the movement's sign.
   const inPeriod = {
     cash_bank_id: { in: ids },
-    entry_date: { gte: startOf(range.from), lte: startOf(range.to) },
+    accounting_date: { gte: startOf(range.from), lte: startOf(range.to) },
   };
   const [openings, incoming, outgoing] = await Promise.all([
     openingsAt(ids, range.from),

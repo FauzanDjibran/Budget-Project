@@ -291,11 +291,11 @@ HAVING i.balance <> COALESCE(SUM(s.movement), 0)
     name: "Tidak ada open item di bawah nol, pada hari mana pun",
     sql: `
 , run AS (
-  SELECT balance_id, entry_date,
-         SUM(movement) OVER (PARTITION BY balance_id ORDER BY entry_date, id) AS balance
+  SELECT balance_id, accounting_date,
+         SUM(movement) OVER (PARTITION BY balance_id ORDER BY accounting_date, id) AS balance
   FROM sub_ledger
 )
-SELECT b.item_no, MIN(r.entry_date) AS first_below, b.balance, b.base_balance
+SELECT b.item_no, MIN(r.accounting_date) AS first_below, b.balance, b.base_balance
 FROM sub_ledger_balance b LEFT JOIN run r ON r.balance_id = b.id AND r.balance < 0
 WHERE r.balance_id IS NOT NULL OR b.balance < 0 OR b.base_balance < 0
 GROUP BY b.id, b.item_no, b.balance, b.base_balance`,
@@ -416,8 +416,8 @@ WHERE r.status = 'Posted'
     name: "Rantai bulan Cash & Bank = entrinya, tanpa bolong, titik terendah tidak di bawah nol",
     sql: `
 , e AS (
-  SELECT cash_bank_id, date_trunc('month', entry_date)::date AS period, movement, base_movement,
-         SUM(movement) OVER (PARTITION BY cash_bank_id ORDER BY entry_date, id) AS run
+  SELECT cash_bank_id, date_trunc('month', accounting_date)::date AS period, movement, base_movement,
+         SUM(movement) OVER (PARTITION BY cash_bank_id ORDER BY accounting_date, id) AS run
   FROM cash_bank_ledger
 ), m AS (
   SELECT cash_bank_id, period,

@@ -584,7 +584,7 @@ export async function executeClosing(
           // The one back-dated journal in the application: a closing entry
           // belongs to the year it closes, and one dated after it would fall
           // inside the year it opens and be the first thing inherited.
-          postingDate: year.endDate,
+          accountingDate: year.endDate,
           sourceDocTypeId: await closingDocTypeId(tx),
           sourceDocId: fiscalYearId,
           lines,
@@ -608,7 +608,7 @@ export async function executeClosing(
           fiscalYearId: next.id,
           sourceFiscalYearId: fiscalYearId,
           // The day the figures speak for: the first day of the year opened.
-          postingDate: next.startDate,
+          accountingDate: next.startDate,
           lines: remaining.map((p) => ({
             accountId: p.accountId,
             partnerId: p.partnerId,

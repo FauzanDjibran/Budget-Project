@@ -131,7 +131,7 @@ async function makeReclass(options: {
   const row = await prisma.finItemReclass.create({
     data: {
       reclass_no: await nextReclassNo(),
-      document_date: new Date(`${today}T00:00:00Z`),
+      accounting_date: new Date(`${today}T00:00:00Z`),
       company_id: induk,
       budget_category_id: options.book.categoryId,
       partner_id: options.partnerId,

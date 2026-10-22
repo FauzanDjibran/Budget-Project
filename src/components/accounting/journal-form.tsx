@@ -117,7 +117,7 @@ export function JournalForm({
   // The day it belongs to in the books, starting on today (§10 rule 33). A
   // draft saved before drafts carried a date starts on today too.
   const [journalDate, setJournalDate] = useState(
-    journal?.postingDate ? journal.postingDate.slice(0, 10) : todayIso()
+    journal?.accountingDate ? journal.accountingDate.slice(0, 10) : todayIso()
   );
   const [options, setOptions] = useState(initialOptions);
   const [lines, setLines] = useState<DraftLine[]>(() =>
@@ -261,7 +261,7 @@ export function JournalForm({
         : `belum seimbang · selisih ${formatMoney(Math.abs(difference), BASE_CURRENCY_LABEL)}`;
 
   const source = journal ? documentHref(journal.sourceDocTable, journal.sourceDocId) : null;
-  const viewDate = journal?.postingDate ? journal.postingDate.slice(0, 10) : null;
+  const viewDate = journal?.accountingDate ? journal.accountingDate.slice(0, 10) : null;
 
   return (
     <>
@@ -363,7 +363,7 @@ export function JournalForm({
                   </Field>
 
                   <Field
-                    label="Tanggal"
+                    label="Tanggal Akuntansi"
                     span={3}
                     required={editing}
                     help={editing ? "boleh mundur, tidak ke depan" : undefined}

@@ -192,7 +192,7 @@ async function journal(
   await prisma.accJournal.create({
     data: {
       journal_no: `ZZN-${Date.now() % 100000}-${Math.floor(Math.random() * 100000)}`,
-      posting_date: date,
+      accounting_date: date,
       company_id: induk,
       description: "Fixture",
       status: "Posted",

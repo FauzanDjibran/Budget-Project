@@ -441,11 +441,11 @@ describe("submitting raises a request and moves nothing", () => {
 
     const after = await prisma.finCashBankTransaction.findUniqueOrThrow({
       where: { id: doc },
-      select: { status: true, document_date: true, posting_date: true },
+      select: { status: true, accounting_date: true, posted_at: true },
     });
     assert.equal(after.status, "Pending");
-    assert.equal(after.document_date, null, "a Pending document has no date yet");
-    assert.equal(after.posting_date, null);
+    assert.equal(after.accounting_date, null, "a Pending document has no date yet");
+    assert.equal(after.posted_at, null);
 
     const request = await prisma.finFundingRequest.findFirstOrThrow({
       where: { transaction_id: doc },

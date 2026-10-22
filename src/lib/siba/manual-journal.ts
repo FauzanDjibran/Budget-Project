@@ -56,7 +56,7 @@ import { systemAccountsUsingAccount } from "./system-account-data";
  *
  * ## What it inherits unchanged
  *
- * The balance rule, the base-currency measure and the posting date all come
+ * The balance rule, the base-currency measure and the accounting date all come
  * from `journal.ts` and are not restated here. Debit and kredit are **always**
  * base currency; a foreign line carries its own currency, its kurs and its face
  * amount as extra information on the same row, exactly as an automatically

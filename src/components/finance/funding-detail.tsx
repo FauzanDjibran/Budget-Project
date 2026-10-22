@@ -189,10 +189,10 @@ export function FundingDetail({
                       )}
                     </div>
                   </Field>
-                  <Field label="Tanggal Dokumen" span={3}>
+                  <Field label="Tanggal Akuntansi" span={3}>
                     <div className="ro">
-                      {doc?.document_date ? (
-                        formatDate(doc.document_date)
+                      {doc?.accounting_date ? (
+                        formatDate(doc.accounting_date)
                       ) : (
                         <span className="dash">belum ditentukan</span>
                       )}
@@ -405,7 +405,7 @@ export function FundingDetail({
                   <KursSelect
                     value={layerId}
                     layers={resource?.layers ?? []}
-                    asOf={doc?.document_date?.slice(0, 10)}
+                    asOf={doc?.accounting_date?.slice(0, 10)}
                     currencyLabel={currencyLabel}
                     onChange={(v) => {
                       setLayerId(v);

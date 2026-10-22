@@ -24,7 +24,7 @@ import type { OpeningBalanceDetail as Detail } from "@/lib/siba/opening-balance"
  */
 export function OpeningBalanceDetail({ opening }: { opening: Detail }) {
   const difference = Math.round((opening.debit - opening.credit) * 100) / 100;
-  const day = opening.postingDate.slice(0, 10);
+  const day = opening.accountingDate.slice(0, 10);
 
   return (
     <>
@@ -61,8 +61,8 @@ export function OpeningBalanceDetail({ opening }: { opening: Detail }) {
                       <span>{opening.companyName}</span>
                     </div>
                   </Field>
-                  <Field label="Tanggal" span={3}>
-                    <div className="ro">{formatDate(opening.postingDate)}</div>
+                  <Field label="Tanggal Akuntansi" span={3}>
+                    <div className="ro">{formatDate(opening.accountingDate)}</div>
                   </Field>
                   <Field label="Tahun Buku" span={3}>
                     <div className="ro">{opening.fiscalYearName}</div>

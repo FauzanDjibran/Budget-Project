@@ -520,13 +520,13 @@ describe("a backdated movement is checked on every day from its date on", () => 
       prisma.cashBankPeriod.findMany({ where: { cash_bank_id: id }, orderBy: { period: "asc" } }),
       prisma.cashBankLedger.findMany({
         where: { cash_bank_id: id },
-        orderBy: [{ entry_date: "asc" }, { id: "asc" }],
+        orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
       }),
     ]);
     let run = 0;
     for (const p of periods) {
       const next = new Date(Date.UTC(p.period.getUTCFullYear(), p.period.getUTCMonth() + 1, 1));
-      const inMonth = entries.filter((e) => e.entry_date >= p.period && e.entry_date < next);
+      const inMonth = entries.filter((e) => e.accounting_date >= p.period && e.accounting_date < next);
       assert.equal(p.opening.toNumber(), run, `opening ${p.period.toISOString()}`);
       let min = run;
       let tin = 0;
@@ -543,7 +543,7 @@ describe("a backdated movement is checked on every day from its date on", () => 
       assert.equal(p.closing.toNumber(), run);
       assert.equal(p.min_balance.toNumber(), min, `min ${p.period.toISOString()}`);
     }
-    const months = new Set(entries.map((e) => e.entry_date.toISOString().slice(0, 7)));
+    const months = new Set(entries.map((e) => e.accounting_date.toISOString().slice(0, 7)));
     for (const m of months) {
       assert.ok(periods.some((p) => p.period.toISOString().startsWith(m)), `month ${m} has a row`);
     }
@@ -698,7 +698,7 @@ describe("a foreign resource: the month chain checks the account, the layer only
     // From 05/01 to 19/01 the account holds USD 0, and so Rp 0: A was drawn to
     // nothing, and a layer drawn to nothing hands back exactly the base it held.
     const upTo19 = await prisma.cashBankLedger.aggregate({
-      where: { cash_bank_id: id, entry_date: { lte: new Date("2020-01-19") } },
+      where: { cash_bank_id: id, accounting_date: { lte: new Date("2020-01-19") } },
       _sum: { movement: true, base_movement: true },
     });
     assert.equal(upTo19._sum.movement?.toNumber(), 0);

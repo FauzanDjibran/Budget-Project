@@ -128,16 +128,16 @@ export async function itemLowestFrom(
 ): Promise<{ balance: number; at: string }> {
   const entries = await db.subLedger.findMany({
     where: { balance_id: itemId },
-    orderBy: [{ entry_date: "asc" }, { id: "asc" }],
-    select: { entry_date: true, movement: true },
+    orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
+    select: { accounting_date: true, movement: true },
   });
   const day = asDate(date);
   let run = 0;
   let lowest: { run: number; at: Date } | null = null;
   for (const e of entries) {
-    if (!lowest && e.entry_date > day) lowest = { run, at: day };
+    if (!lowest && e.accounting_date > day) lowest = { run, at: day };
     run += cents(e.movement.toNumber());
-    if (lowest && run < lowest.run) lowest = { run, at: e.entry_date };
+    if (lowest && run < lowest.run) lowest = { run, at: e.accounting_date };
   }
   lowest ??= { run, at: day };
   return { balance: lowest.run / 100, at: formatDate(lowest.at) };
@@ -228,7 +228,7 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
         entry_no: await nextEntryNo(db),
         ...key,
         balance_id: item.id,
-        entry_date: asDate(entry.date),
+        accounting_date: asDate(entry.date),
         entry_type: entry.type,
         movement,
         rate: entry.rate,
@@ -241,7 +241,7 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
     });
     await db.subLedgerBalance.update({
       where: { id: item.id },
-      data: { last_entry_id: created.id, last_entry_date: created.entry_date },
+      data: { last_entry_id: created.id, last_entry_date: created.accounting_date },
     });
     return created;
   }
@@ -273,7 +273,7 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
   if (cents(amount) > cents(lowest.balance)) {
     throw new SubledgerItemUnavailable(
       `Open item ${item.item_no} tinggal ${lowest.balance} pada ${lowest.at}, tidak cukup untuk ${amount}. ` +
-        "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal dokumen atau kurangi nominalnya."
+        "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal akuntansi atau kurangi nominalnya."
     );
   }
   // Equal to the cent is the whole item, so the exact remaining is released
@@ -293,7 +293,7 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
       entry_no: await nextEntryNo(db),
       ...key,
       balance_id: item.id,
-      entry_date: asDate(entry.date),
+      accounting_date: asDate(entry.date),
       entry_type: entry.type,
       movement,
       // The item's own rate: relief keeps `base ÷ foreign` on it.
@@ -313,7 +313,7 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
       status: relief.exhausted ? "Cleared" : "Open",
       entry_count: item.entry_count + 1,
       last_entry_id: created.id,
-      last_entry_date: created.entry_date,
+      last_entry_date: created.accounting_date,
     },
   });
   return created;
@@ -370,7 +370,7 @@ async function raiseItem(
       entry_no: await nextEntryNo(db),
       ...key,
       balance_id: item.id,
-      entry_date: asDate(entry.date),
+      accounting_date: asDate(entry.date),
       entry_type: entry.type,
       movement,
       rate: item.rate,
@@ -388,7 +388,7 @@ async function raiseItem(
       base_balance: after.base,
       entry_count: item.entry_count + 1,
       last_entry_id: created.id,
-      last_entry_date: created.entry_date,
+      last_entry_date: created.accounting_date,
     },
   });
   return created;
@@ -420,7 +420,7 @@ export async function rebuildSubledgerItem(
   const entries = await prisma.subLedger.findMany({
     where: { balance_id: itemId },
     orderBy: { id: "asc" },
-    select: { id: true, movement: true, base_movement: true, entry_date: true },
+    select: { id: true, movement: true, base_movement: true, accounting_date: true },
   });
   const balance = entries.reduce((t, e) => t + e.movement.toNumber(), 0);
   const baseBalance = roundBase(
@@ -435,7 +435,7 @@ export async function rebuildSubledgerItem(
       status: cents(balance) === 0 ? "Cleared" : "Open",
       entry_count: entries.length,
       last_entry_id: last?.id ?? null,
-      last_entry_date: last?.entry_date ?? null,
+      last_entry_date: last?.accounting_date ?? null,
     },
   });
   return { balance, baseBalance };
@@ -569,17 +569,17 @@ export async function subledgerReport(
   const [before, within] = await Promise.all([
     prisma.subLedger.groupBy({
       by: ["partner_id", "currency_id"],
-      where: { ...scope, entry_date: { lt: startOf(range.from) } },
+      where: { ...scope, accounting_date: { lt: startOf(range.from) } },
       _sum: { movement: true, base_movement: true },
     }),
     prisma.subLedger.findMany({
       where: {
         ...scope,
-        entry_date: { gte: startOf(range.from), lte: startOf(range.to) },
+        accounting_date: { gte: startOf(range.from), lte: startOf(range.to) },
       },
       // Date first: a backdated entry has a later id than the entries it
       // precedes, and a book is read in the order things happened.
-      orderBy: [{ entry_date: "asc" }, { id: "asc" }],
+      orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
       include: { item: { select: { item_no: true } } },
     }),
   ]);
@@ -635,7 +635,7 @@ export async function subledgerReport(
     subject.entries.push({
       id: e.id,
       entryNo: e.entry_no,
-      date: e.entry_date.toISOString().slice(0, 10),
+      date: e.accounting_date.toISOString().slice(0, 10),
       type: e.entry_type,
       movement,
       rate: e.rate.toNumber(),
@@ -1172,7 +1172,7 @@ export async function subledgerBalanceReport(
     by: ["balance_id"],
     where: {
       budget_category_id: book.categoryId,
-      entry_date: { lt: startOf(range.from) },
+      accounting_date: { lt: startOf(range.from) },
       OR: subjects.map((s) => ({ partner_id: s.partnerId, currency_id: s.currencyId })),
     },
     _sum: { movement: true, base_movement: true },

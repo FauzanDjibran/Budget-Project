@@ -123,7 +123,7 @@ export function OpeningBalanceList({
                               <span className="lab">{o.openingNo}</span>
                             </Link>
                           </td>
-                          <td>{formatDate(o.postingDate)}</td>
+                          <td>{formatDate(o.accountingDate)}</td>
                           <td className="pri">{o.fiscalYearName}</td>
                           {/* A snapshot a close produced names the year it came
                               from. One with nothing behind it was injected at

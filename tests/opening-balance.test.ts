@@ -162,7 +162,7 @@ const snapshot = (
   companyId,
   fiscalYearId: fiscalYear,
   sourceFiscalYearId: null,
-  postingDate: new Date(Date.UTC(FIXTURE_YEAR, 0, 1)),
+  accountingDate: new Date(Date.UTC(FIXTURE_YEAR, 0, 1)),
   lines,
   actorId: actor,
 });
@@ -493,7 +493,7 @@ describe("a closing journal names its own date and series", () => {
       companyId: induk,
       description: "Fixture closing journal",
       series: "CLS",
-      postingDate: lastDay,
+      accountingDate: lastDay,
       lines: [line(indukCash, 1_000, 0), line(indukReceivable, 0, 1_000)],
       actorId: actor,
     });
@@ -501,9 +501,9 @@ describe("a closing journal names its own date and series", () => {
     assert.match(result.journalNo, /^CLS-\d{4}$/);
     const written = await prisma.accJournal.findUniqueOrThrow({
       where: { id: result.id },
-      select: { posting_date: true, status: true },
+      select: { accounting_date: true, status: true },
     });
-    assert.equal(written.posting_date?.toISOString(), lastDay.toISOString());
+    assert.equal(written.accounting_date?.toISOString(), lastDay.toISOString());
     assert.equal(written.status, "Posted");
   });
 
@@ -513,7 +513,7 @@ describe("a closing journal names its own date and series", () => {
         companyId: induk,
         description: "Fixture closing journal",
         series: "CLS",
-        postingDate: new Date(Date.UTC(FIXTURE_YEAR, 11, 31)),
+        accountingDate: new Date(Date.UTC(FIXTURE_YEAR, 11, 31)),
         lines: [line(indukCash, 1_000, 0), line(indukReceivable, 0, 999)],
         actorId: actor,
       }),
@@ -530,7 +530,7 @@ describe("a closing journal names its own date and series", () => {
       postJournal(prisma, {
         companyId: induk,
         description: "Fixture future journal",
-        postingDate: new Date(`${tomorrow.toISOString().slice(0, 10)}T00:00:00Z`),
+        accountingDate: new Date(`${tomorrow.toISOString().slice(0, 10)}T00:00:00Z`),
         lines: [line(indukCash, 1_000, 0), line(indukReceivable, 0, 1_000)],
         actorId: actor,
       }),

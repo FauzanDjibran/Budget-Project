@@ -44,7 +44,7 @@ export type RevaluationValues = {
   /** The kurs the user states as current, unformatted. */
   exchange_rate: string;
   /** `YYYY-MM-DD` — the day the revaluation belongs to in the books. */
-  document_date: string;
+  accounting_date: string;
   note: string;
 };
 
@@ -85,8 +85,8 @@ async function validate(actor: Actor, values: RevaluationValues) {
 
   // Any day up to today, inside a year this Company may still write into.
   // Asked again at Post, since a year can close in between.
-  const dated = await checkTransactionDate(values.document_date, [header.companyId]);
-  if (!dated.ok) return { ok: false as const, errors: { document_date: dated.message } };
+  const dated = await checkTransactionDate(values.accounting_date, [header.companyId]);
+  if (!dated.ok) return { ok: false as const, errors: { accounting_date: dated.message } };
 
   try {
     const valued = await valueRevaluation(header);
@@ -113,9 +113,9 @@ export async function createRevaluation(values: RevaluationValues): Promise<Reva
       data: {
         revaluation_no,
         // The day it belongs to in the books, chosen on the draft and possibly
-        // earlier than today. `posting_date` waits for Post.
-        document_date: new Date(`${date}T00:00:00Z`),
-        posting_date: null,
+        // earlier than today. `posted_at` waits for Post.
+        accounting_date: new Date(`${date}T00:00:00Z`),
+        posted_at: null,
         company_id: header.companyId,
         cash_bank_id: header.cashBankId,
         currency_id: header.currencyId,
@@ -172,7 +172,7 @@ export async function updateRevaluation(
         cash_bank_id: header.cashBankId,
         currency_id: header.currencyId,
         exchange_rate: header.rate,
-        document_date: new Date(`${date}T00:00:00Z`),
+        accounting_date: new Date(`${date}T00:00:00Z`),
         note: values.note?.trim() || null,
         updated_by: g.actor.user.id,
       },

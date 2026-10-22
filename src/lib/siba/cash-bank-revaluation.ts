@@ -32,7 +32,7 @@ import { baseCurrencyId } from "./system-settings";
  *
  * **A document of its own, raised by a user.** Nothing raises one
  * automatically — not a period close, not a schedule. It names one resource,
- * a Tanggal Dokumen and the kurs the user states as current.
+ * a Tanggal Akuntansi and the kurs the user states as current.
  *
  * **Post collapses the layers.** Every open layer of the resource is closed
  * (`ClosedByRevaluation`) and one layer is opened holding the whole foreign
@@ -58,8 +58,8 @@ const asDate = (d: string) => new Date(`${d}T00:00:00Z`);
 export type RevaluationRow = {
   id: number;
   revaluation_no: string;
-  document_date: string | null;
-  posting_date: string | null;
+  accounting_date: string | null;
+  posted_at: string | null;
   company_id: number;
   company_label: string;
   cash_bank_id: number;
@@ -103,8 +103,8 @@ function toRow(r: RevaluationRecord): RevaluationRow {
   return {
     id: r.id,
     revaluation_no: r.revaluation_no,
-    document_date: r.document_date ? day(r.document_date) : null,
-    posting_date: r.posting_date ? r.posting_date.toISOString() : null,
+    accounting_date: r.accounting_date ? day(r.accounting_date) : null,
+    posted_at: r.posted_at ? r.posted_at.toISOString() : null,
     company_id: r.company_id,
     company_label: r.company.company_label,
     cash_bank_id: r.cash_bank_id,
@@ -475,7 +475,7 @@ export async function applyRevaluation(
   // earlier than today, and re-checked here because a year can close in
   // between.
   const dated = await checkTransactionDate(
-    doc.document_date ? day(doc.document_date) : todayDay(),
+    doc.accounting_date ? day(doc.accounting_date) : todayDay(),
     [doc.company_id]
   );
   if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
@@ -603,7 +603,7 @@ export async function applyRevaluation(
       if (journal.length) {
         await postJournal(tx, {
           companyId: doc.company_id,
-          postingDate: asDate(date),
+          accountingDate: asDate(date),
           description,
           sourceDocTypeId: docTypeId,
           sourceDocId: doc.id,
@@ -627,8 +627,8 @@ export async function applyRevaluation(
         where: { id: doc.id },
         data: {
           status: "Posted",
-          document_date: asDate(date),
-          posting_date: new Date(),
+          accounting_date: asDate(date),
+          posted_at: new Date(),
           foreign_balance: valuation.foreign,
           base_before: valuation.baseBefore,
           base_after: valuation.baseAfter,

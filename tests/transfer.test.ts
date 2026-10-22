@@ -126,7 +126,7 @@ async function makeTransfer(options: {
       from_cash_bank_id: options.from,
       currency_id: options.currencyId,
       cash_bank_layer_id: options.layerId ?? null,
-      document_date: options.date ? new Date(`${options.date}T00:00:00Z`) : null,
+      accounting_date: options.date ? new Date(`${options.date}T00:00:00Z`) : null,
       transfer_amount: options.lines.reduce((t, l) => t + l.amount, 0),
       transfer_base_amount: 0,
       status: "Draft",

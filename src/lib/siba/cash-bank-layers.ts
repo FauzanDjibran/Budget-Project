@@ -137,7 +137,7 @@ export function layerDateRefusal(
   if (acquired <= date) return null;
   return (
     `Layer ${layer.layer_no} baru diperoleh pada ${formatDate(acquired)}, sesudah ` +
-    `Tanggal Dokumen ${formatDate(date)}. Pilih layer yang sudah ada pada tanggal ` +
+    `Tanggal Akuntansi ${formatDate(date)}. Pilih layer yang sudah ada pada tanggal ` +
     "dokumen, atau majukan tanggalnya."
   );
 }

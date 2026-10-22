@@ -27,8 +27,8 @@ table sys_user {
   created_by                  int
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 table sys_role {
@@ -48,8 +48,8 @@ table sys_role {
   created_by                  int
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 table sys_permission {
@@ -61,8 +61,8 @@ table sys_permission {
   module                      varchar(255) [not null]
   description                 text
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     module
@@ -77,7 +77,7 @@ table sys_user_role {
 
   created_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (user_id, role_id) [unique]
@@ -93,7 +93,7 @@ table sys_role_permission {
 
   created_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (role_id, permission_id) [unique]
@@ -109,10 +109,10 @@ table sys_session {
   user_id                     int [not null, ref : > sys_user.id]
 
   expires_at                  timestamptz [not null]
-  last_seen_at                timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  last_seen_at                timestamptz [not null, default: `transaction_timestamp()`]
   revoked_at                  timestamptz
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     user_id
@@ -132,8 +132,8 @@ table sys_setting {
 
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 table sys_company {
@@ -151,8 +151,8 @@ table sys_company {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 table sys_account_type {
@@ -182,8 +182,8 @@ table sys_account_type {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 table sys_doc_type {
@@ -201,8 +201,8 @@ table sys_doc_type {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 table sys_budget_category {
@@ -255,8 +255,8 @@ table sys_budget_category {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 table sys_partner_category {
@@ -274,8 +274,8 @@ table sys_partner_category {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 // sys_purpose was dropped with Realisasi Budget (migration
@@ -307,8 +307,8 @@ table sys_budget_partner_category_mapping {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (budget_category_id, partner_category_id) [unique]
@@ -335,8 +335,8 @@ table ref_currency {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 //----------------------------------
@@ -362,8 +362,8 @@ table m_partner {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -393,8 +393,8 @@ table m_cash_bank {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -412,7 +412,10 @@ table cash_bank_ledger {
 
   cash_bank_id                int [not null, ref : > m_cash_bank.id]
 
-  entry_date                  date [not null]
+  accounting_date             date [not null]
+  // When the document that wrote it was posted: the Post transaction's own
+  // time (transaction_timestamp()). Backdated when later than accounting_date.
+  posted_at                   timestamptz [not null, default: `transaction_timestamp()`]
   // Revaluation: a Revaluasi Kurs — movement nil, base_movement the restated
   // difference.
   entry_type                  enum('Opening', 'Transaction', 'Adjustment', 'Revaluation') [not null]
@@ -434,10 +437,10 @@ table cash_bank_ledger {
 
   created_by                  int [not null]
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
-    (cash_bank_id, entry_date)
+    (cash_bank_id, accounting_date)
     (source_doc_type_id, source_doc_id)
   }
 }
@@ -454,7 +457,7 @@ table cash_bank_balance {
   last_entry_id               int
   last_entry_date             date
 
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 }
 
 // One row per resource per calendar month, written by `recordCashBankEntry`
@@ -484,7 +487,7 @@ table cash_bank_period {
   base_total_out              decimal(18,2) [not null, default: 0]
   base_closing                decimal(18,2) [not null, default: 0]
 
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (cash_bank_id, period) [unique]
@@ -521,8 +524,8 @@ table cash_bank_layer {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (cash_bank_id, status, acquisition_date, acquisition_seq)
@@ -546,7 +549,9 @@ table sub_ledger {
   partner_id                  int [not null, ref : > m_partner.id]
   currency_id                 int [not null, ref : > ref_currency.id]
 
-  entry_date                  date [not null]
+  accounting_date             date [not null]
+  // As on cash_bank_ledger: the Post transaction's own time.
+  posted_at                   timestamptz [not null, default: `transaction_timestamp()`]
   // Conversion: a Pencairan Open Item — a foreign item released at its own
   // kurs, and the base-currency item it became, opened in the same book.
   // Reclass: a Reklasifikasi Open Item — an item released out of one position,
@@ -575,10 +580,10 @@ table sub_ledger {
 
   created_by                  int [not null]
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
-    (budget_category_id, partner_id, entry_date)
+    (budget_category_id, partner_id, accounting_date)
     balance_id
     (source_doc_type_id, source_doc_id)
   }
@@ -627,7 +632,7 @@ table sub_ledger_balance {
   source_doc_id               int
   note                        text
 
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (budget_category_id, partner_id, currency_id, status)
@@ -666,8 +671,8 @@ table acc_account_category {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     account_type_id
@@ -691,8 +696,8 @@ table acc_account_subcategory {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     account_category_id
@@ -728,8 +733,8 @@ table acc_account {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (company_id, account_label) [unique]
@@ -753,8 +758,8 @@ table acc_system_account {
 
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (company_id, account_key) [unique]
@@ -775,8 +780,8 @@ table acc_budget_category_account {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (company_id, budget_category_id, partner_category_id) [unique]
@@ -814,8 +819,8 @@ table acc_fiscal_year {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (company_id, year_label) [unique]
@@ -852,8 +857,8 @@ table acc_fiscal_period {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (company_id, start_date) [unique]
@@ -899,8 +904,8 @@ table acc_fiscal_closing {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (fiscal_year_id, company_id) [unique]
@@ -931,7 +936,8 @@ table acc_opening_balance {
   opening_no                  varchar(255) [not null, unique]
 
   // The day the figures speak for — the first day of the year being opened.
-  posting_date                date [not null]
+  accounting_date             date [not null]
+  posted_at                   timestamptz [not null, default: `transaction_timestamp()`, note: 'when the close or go-live wrote it']
 
   // The year this snapshot opens.
   fiscal_year_id              int [not null, ref : > acc_fiscal_year.id]
@@ -943,8 +949,8 @@ table acc_opening_balance {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     // One snapshot per Company per year. A second would be a second answer to
@@ -985,8 +991,8 @@ table acc_opening_balance_line {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     // Created NULLS NOT DISTINCT in the migration's own SQL, because Postgres
@@ -1005,7 +1011,9 @@ table acc_journal {
   // may be earlier than today (a backdated document) and never later. A manual
   // draft carries the date it is meant for; every reader filters Posted, so a
   // draft's date reaches no report. When it was written is created_at.
-  posting_date                date
+  accounting_date             date
+  // When Post ran; null while a manual journal is a draft.
+  posted_at                   timestamptz [default: `transaction_timestamp()`]
 
   source_doc_type_id          int [ref : >? sys_doc_type.id]
   source_doc_id               int
@@ -1020,11 +1028,11 @@ table acc_journal {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
-    (company_id, posting_date)
+    (company_id, accounting_date)
     (source_doc_type_id, source_doc_id)
   }
 }
@@ -1051,8 +1059,8 @@ table acc_journal_line {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     journal_id
@@ -1095,8 +1103,8 @@ table bud_budget {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -1119,9 +1127,9 @@ table fin_cash_bank_transaction {
   transaction_no              varchar(255) [not null, unique]
   // The day the document belongs to in the books, chosen on the draft — any day
   // up to today. Post dates every book entry and the journal by it;
-  // posting_date is when Post actually ran. Null only on an older draft.
-  document_date               date
-  posting_date                timestamptz
+  // posted_at is when Post actually ran. Null only on an older draft.
+  accounting_date             date
+  posted_at                   timestamptz
 
   transaction_type            enum('In', 'Out') [not null]
 
@@ -1144,8 +1152,8 @@ table fin_cash_bank_transaction {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -1186,8 +1194,8 @@ table fin_cash_bank_transaction_line {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (transaction_id, sequence_no) [unique]
@@ -1225,8 +1233,8 @@ table fin_cash_bank_transaction_line_item {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (line_id, sub_ledger_balance_id) [unique]
@@ -1240,8 +1248,8 @@ table fin_cash_bank_transfer {
 
   transfer_no                 varchar(255) [not null, unique]
   // As on fin_cash_bank_transaction: chosen on the draft, up to today.
-  document_date               date
-  posting_date                timestamptz
+  accounting_date             date
+  posted_at                   timestamptz
 
   company_id                  int [not null, ref : > sys_company.id]
 
@@ -1263,8 +1271,8 @@ table fin_cash_bank_transfer {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -1294,8 +1302,8 @@ table fin_cash_bank_transfer_line {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (transfer_id, sequence_no) [unique]
@@ -1318,8 +1326,8 @@ table fin_item_conversion {
   // POI-0001.
   conversion_no               varchar(255) [not null, unique]
   // Chosen on the draft, any day up to today; Post dates everything by it.
-  document_date               date
-  posting_date                timestamptz
+  accounting_date             date
+  posted_at                   timestamptz
 
   // The source's Company, derived rather than picked.
   company_id                  int [not null, ref : > sys_company.id]
@@ -1347,8 +1355,8 @@ table fin_item_conversion {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -1386,8 +1394,8 @@ table fin_item_conversion_line {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (conversion_id, sequence_no) [unique]
@@ -1416,8 +1424,8 @@ table fin_item_conversion_line_item {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (line_id, sub_ledger_balance_id) [unique]
@@ -1443,8 +1451,8 @@ table fin_item_reclass {
   // RKL-0001.
   reclass_no                  varchar(255) [not null, unique]
   // Chosen on the draft, any day up to today; Post dates everything by it.
-  document_date               date
-  posting_date                timestamptz
+  accounting_date             date
+  posted_at                   timestamptz
 
   // The source Partner's Company, derived rather than picked.
   company_id                  int [not null, ref : > sys_company.id]
@@ -1469,8 +1477,8 @@ table fin_item_reclass {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -1505,8 +1513,8 @@ table fin_item_reclass_line {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (reclass_id, sequence_no) [unique]
@@ -1534,8 +1542,8 @@ table fin_item_reclass_line_source {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (line_id, sub_ledger_balance_id) [unique]
@@ -1567,8 +1575,8 @@ table fin_item_reclass_line_target {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (line_id, sub_ledger_balance_id) [unique]
@@ -1606,8 +1614,8 @@ table fin_funding_request {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     status
@@ -1645,10 +1653,10 @@ table fin_item_adjustment {
   // PYO-0001; DN- / CN- for documents posted as Debit / Credit Notes.
   adjustment_no               varchar(255) [not null, unique]
 
-  // document_date is chosen on the draft, up to today, and dates what Post
-  // writes; posting_date stays null until Post runs.
-  document_date               date
-  posting_date                timestamptz
+  // accounting_date is chosen on the draft, up to today, and dates what Post
+  // writes; posted_at stays null until Post runs.
+  accounting_date             date
+  posted_at                   timestamptz
 
   // The Partner's Company, derived rather than picked.
   company_id                  int [not null, ref : > sys_company.id]
@@ -1681,8 +1689,8 @@ table fin_item_adjustment {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -1725,8 +1733,8 @@ table fin_item_adjustment_line {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     (adjustment_id, sequence_no) [unique]
@@ -1746,8 +1754,8 @@ table fin_cash_bank_revaluation {
   // RVK-0001.
   revaluation_no              varchar(255) [not null, unique]
 
-  document_date               date
-  posting_date                timestamptz
+  accounting_date             date
+  posted_at                   timestamptz
 
   // Derived from the resource.
   company_id                  int [not null, ref : > sys_company.id]
@@ -1773,8 +1781,8 @@ table fin_cash_bank_revaluation {
   created_by                  int [not null]
   updated_by                  int
 
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-  updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     company_id
@@ -1799,7 +1807,7 @@ table fin_cash_bank_revaluation_layer {
   base_amount                 decimal(18,2) [not null]
 
   created_by                  int [not null]
-  created_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
     revaluation_id
@@ -1819,7 +1827,7 @@ table audit_log {
   action                      enum('TAMBAH', 'UPDATE', 'HAPUS') [not null]
   event                       varchar(255)
 
-  at                          timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  at                          timestamptz [not null, default: `transaction_timestamp()`]
   by                          int [not null]
 
   indexes {

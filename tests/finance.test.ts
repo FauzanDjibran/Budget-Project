@@ -169,7 +169,7 @@ async function makeDraft(options: {
   /** The layer a payment out of a foreign resource draws on. */
   layerId?: number;
   /** `YYYY-MM-DD`; omitted, the draft carries none and posts as today. */
-  documentDate?: string;
+  accountingDate?: string;
   /**
    * `itemId` is shorthand for a line lowering a position that settles one open
    * item for its whole amount; `items` names several, each for its own amount.
@@ -199,8 +199,8 @@ async function makeDraft(options: {
       currency_id: options.currencyId ?? cashBank.currency_id,
       exchange_rate: rate,
       cash_bank_layer_id: options.layerId ?? null,
-      document_date: options.documentDate
-        ? new Date(`${options.documentDate}T00:00:00Z`)
+      accounting_date: options.accountingDate
+        ? new Date(`${options.accountingDate}T00:00:00Z`)
         : null,
       transaction_amount: total,
       transaction_base_amount: total * rate,
@@ -975,8 +975,8 @@ describe("a draft moves nothing; posting moves everything at once", () => {
       where: { id: doc },
     });
     assert.equal(after.status, "Posted");
-    assert.ok(after.document_date, "a document acquires its date at Post");
-    assert.ok(after.posting_date);
+    assert.ok(after.accounting_date, "a document acquires its date at Post");
+    assert.ok(after.posted_at);
   });
 
   test("the materialised balance still matches the ledger after posting", async () => {
@@ -2165,7 +2165,7 @@ describe("posting is refused outside an open period", () => {
  *
  * The date is chosen on the draft and every book the posting writes is dated
  * by it — the Cash Bank Book, the journal, the document itself — while
- * `posting_date` keeps the moment the posting actually happened. What decides
+ * `accounting_date` keeps the moment the posting actually happened. What decides
  * whether a day may be written is the fiscal calendar, asked when the draft is
  * saved, again before the posting transaction opens, and a third time inside
  * it under a lock a close also takes.
@@ -2182,34 +2182,39 @@ describe("a document may be backdated inside an open year", () => {
     const doc = await makeDraft({
       transaction_type: "Out" as const,
       cashBankId: cashBank,
-      documentDate: backdate,
+      accountingDate: backdate,
       lines: [{ budgetId: budget, amount: 300_000, outstanding: 300_000 }],
     });
     await post(doc);
 
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
       where: { cash_bank_id: cashBank, source_doc_id: doc },
-      select: { entry_date: true },
+      select: { accounting_date: true, posted_at: true },
     });
-    assert.equal(entry.entry_date.toISOString().slice(0, 10), backdate);
+    assert.equal(entry.accounting_date.toISOString().slice(0, 10), backdate);
 
     const journal = await prisma.accJournal.findFirstOrThrow({
       where: { source_doc_id: doc, journal_no: { startsWith: "JRN-" } },
-      select: { posting_date: true, created_at: true },
+      select: { accounting_date: true, posted_at: true },
     });
-    assert.equal(journal.posting_date?.toISOString().slice(0, 10), backdate);
+    assert.equal(journal.accounting_date?.toISOString().slice(0, 10), backdate);
     assert.equal(
-      journal.created_at.toISOString().slice(0, 10),
+      journal.posted_at?.toISOString().slice(0, 10),
       today,
-      "when it was actually written is kept"
+      "when it was actually posted is kept, and backdating reads off the pair"
+    );
+    assert.equal(
+      entry.posted_at.getTime(),
+      journal.posted_at?.getTime(),
+      "one Post stamps its book entry and its journal with the same moment"
     );
 
     const row = await prisma.finCashBankTransaction.findUniqueOrThrow({
       where: { id: doc },
-      select: { document_date: true, posting_date: true },
+      select: { accounting_date: true, posted_at: true },
     });
-    assert.equal(row.document_date?.toISOString().slice(0, 10), backdate);
-    assert.equal(row.posting_date?.toISOString().slice(0, 10), today);
+    assert.equal(row.accounting_date?.toISOString().slice(0, 10), backdate);
+    assert.equal(row.posted_at?.toISOString().slice(0, 10), today);
   });
 
   test("the Post preview refuses a backdated payment the cash did not hold that day", { skip: !canBackdate }, async () => {
@@ -2220,7 +2225,7 @@ describe("a document may be backdated inside an open year", () => {
     const doc = await makeDraft({
       transaction_type: "Out" as const,
       cashBankId: cashBank,
-      documentDate: backdate,
+      accountingDate: backdate,
       lines: [{ budgetId: budget, amount: 400_000, outstanding: 400_000 }],
     });
 
@@ -2241,7 +2246,7 @@ describe("a document may be backdated inside an open year", () => {
     const doc = await makeDraft({
       transaction_type: "Out" as const,
       cashBankId: cashBank,
-      documentDate: tomorrow,
+      accountingDate: tomorrow,
       lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
     });
 
@@ -2273,7 +2278,7 @@ describe("a document may be backdated inside an open year", () => {
     const doc = await makeDraft({
       transaction_type: "Out" as const,
       cashBankId: cashBank,
-      documentDate: backdate,
+      accountingDate: backdate,
       lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
     });
 
@@ -2293,7 +2298,7 @@ describe("a document may be backdated inside an open year", () => {
     const doc = await makeDraft({
       transaction_type: "Out" as const,
       cashBankId: cashBank,
-      documentDate: backdate,
+      accountingDate: backdate,
       lines: [{ budgetId: budget, amount: 100_000, outstanding: 100_000 }],
     });
 

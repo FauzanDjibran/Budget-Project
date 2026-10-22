@@ -35,7 +35,7 @@ import {
  *     live there rather than here so the test suite can exercise them: an
  *     action resolves its caller from a session cookie and a test has none.
  *
- * The balance and the posting date are not enforced here at all. They belong to
+ * The balance and the accounting date are not enforced here at all. They belong to
  * the posting engine, which every journal in this application goes through.
  */
 

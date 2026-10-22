@@ -96,8 +96,8 @@ export type ItemAdjustmentRow = {
   adjustment_no: string;
   /** What the lines do together — null on a document with no line. */
   kind: ItemAdjustmentKind | null;
-  document_date: string | null;
-  posting_date: string | null;
+  accounting_date: string | null;
+  posted_at: string | null;
   company_id: number;
   budget_category_id: number;
   partner_id: number;
@@ -149,8 +149,8 @@ export type ItemAdjustmentLineRow = {
 type AdjustmentRecord = {
   id: number;
   adjustment_no: string;
-  document_date: Date | null;
-  posting_date: Date | null;
+  accounting_date: Date | null;
+  posted_at: Date | null;
   company_id: number;
   budget_category_id: number;
   partner_id: number;
@@ -185,8 +185,8 @@ function toRow(n: AdjustmentRecord): ItemAdjustmentRow {
     id: n.id,
     adjustment_no: n.adjustment_no,
     kind: adjustmentKind(n.lines.map((l) => l.effect as ItemAdjustmentEffect)),
-    document_date: n.document_date ? day(n.document_date) : null,
-    posting_date: n.posting_date ? n.posting_date.toISOString() : null,
+    accounting_date: n.accounting_date ? day(n.accounting_date) : null,
+    posted_at: n.posted_at ? n.posted_at.toISOString() : null,
     company_id: n.company_id,
     budget_category_id: n.budget_category_id,
     partner_id: n.partner_id,
@@ -684,7 +684,7 @@ export async function checkItemAdjustmentLines(
         errors: {
           _lines:
             `Open item ${item.itemNo} baru dibuka pada ${formatDate(item.date)}, ` +
-            "sehingga tidak dapat disesuaikan dengan tanggal dokumen sebelumnya.",
+            "sehingga tidak dapat disesuaikan dengan tanggal akuntansi sebelumnya.",
         },
       };
     }
@@ -698,7 +698,7 @@ export async function checkItemAdjustmentLines(
             _lines:
               `Open item ${item.itemNo} tinggal ${formatMoney(lowest.balance, header.currencyLabel)} ` +
               `pada ${lowest.at}, tidak cukup untuk dikurangi ${formatMoney(amount, header.currencyLabel)}. ` +
-              "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal dokumen.",
+              "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal akuntansi.",
           },
         };
       }
@@ -845,7 +845,7 @@ export async function applyItemAdjustment(
   // The day this belongs to in the books — chosen on the draft, possibly
   // earlier than today, and re-checked here because a year can close in
   // between.
-  const dated = await checkTransactionDate(doc.document_date ?? todayDay(), [doc.company_id]);
+  const dated = await checkTransactionDate(doc.accounting_date ?? todayDay(), [doc.company_id]);
   if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
   const date = dated.date;
 
@@ -1009,7 +1009,7 @@ export async function applyItemAdjustment(
 
       await postJournal(tx, {
         companyId: doc.company_id,
-        postingDate: new Date(`${date}T00:00:00Z`),
+        accountingDate: new Date(`${date}T00:00:00Z`),
         description: `${doc.adjustment_no} — Penyesuaian Open Item`,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
@@ -1022,8 +1022,8 @@ export async function applyItemAdjustment(
         where: { id: doc.id },
         data: {
           status: "Posted",
-          document_date: new Date(`${date}T00:00:00Z`),
-          posting_date: new Date(),
+          accounting_date: new Date(`${date}T00:00:00Z`),
+          posted_at: new Date(),
           adjustment_amount: netChange(valued),
           adjustment_base_amount: baseAmount,
           updated_by: actorId,

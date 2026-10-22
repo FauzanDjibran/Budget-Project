@@ -113,7 +113,7 @@ export function TransferForm({
       : "",
     // Today, as every editable date starts (§10 rule 33); moved back for a
     // backdated transfer. A draft saved before drafts carried one starts there.
-    document_date: transfer?.document_date ?? todayIso(),
+    accounting_date: transfer?.accounting_date ?? todayIso(),
     note: transfer?.note ?? "",
   }));
 
@@ -741,7 +741,7 @@ export function TransferForm({
                               : null
                           }
                           layers={source?.layers ?? []}
-                          asOf={values.document_date || undefined}
+                          asOf={values.accounting_date || undefined}
                           currencyLabel={currencyLabel}
                           invalid={Boolean(errors.cash_bank_layer_id)}
                           onChange={(v) =>
@@ -760,22 +760,22 @@ export function TransferForm({
                   )}
 
                   <Field
-                    label="Tanggal Dokumen"
+                    label="Tanggal Akuntansi"
                     span={4}
                     required={editing}
                     help={editing ? "boleh mundur, tidak ke depan" : undefined}
-                    error={errors.document_date}
+                    error={errors.accounting_date}
                   >
                     {editing ? (
                       <DateInput
-                        value={values.document_date}
-                        invalid={Boolean(errors.document_date)}
-                        onChange={(v) => set("document_date", v)}
+                        value={values.accounting_date}
+                        invalid={Boolean(errors.accounting_date)}
+                        onChange={(v) => set("accounting_date", v)}
                       />
                     ) : (
                       <div className="ro">
-                        {transfer?.document_date ? (
-                          formatDate(transfer.document_date)
+                        {transfer?.accounting_date ? (
+                          formatDate(transfer.accounting_date)
                         ) : (
                           <span className="dash">belum ditentukan</span>
                         )}
@@ -807,7 +807,7 @@ export function TransferForm({
                 {transfer!.status === "Posted"
                   ? "Transfer sudah menjadi transaksi aktual: saldo kedua sisi sudah bergerak, entri Cash Bank Book dan Journal sudah tercatat. Historical record bersifat append-only — koreksi dilakukan sebagai dokumen baru."
                   : transfer!.status === "Draft"
-                    ? "Dokumen masih Draft. Belum ada saldo yang bergerak, dan Tanggal Dokumen belum dicatat."
+                    ? "Dokumen masih Draft. Belum ada saldo yang bergerak, dan Tanggal Akuntansi belum dicatat."
                     : "Dokumen dibatalkan sebelum Post, sehingga tidak pernah menyentuh saldo mana pun."}
               </p>
             )}

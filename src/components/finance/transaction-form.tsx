@@ -299,7 +299,7 @@ export function TransactionForm({
               // Eligibility turns on the document's currency, not on the kurs
               // or the date, so none of these narrows the pool.
               exchange_rate: "",
-              document_date: "",
+              accounting_date: "",
               cash_bank_layer_id: "",
               note: "",
             },
@@ -857,22 +857,22 @@ export function TransactionForm({
 
                 <FormRow>
                   <Field
-                    label="Tanggal Dokumen"
+                    label="Tanggal Akuntansi"
                     span={4}
                     required={editing}
                     help={editing ? "boleh mundur, tidak ke depan" : undefined}
-                    error={errors.document_date}
+                    error={errors.accounting_date}
                   >
                     {editing ? (
                       <DateInput
-                        value={values.document_date}
-                        invalid={Boolean(errors.document_date)}
-                        onChange={(v) => set("document_date", v)}
+                        value={values.accounting_date}
+                        invalid={Boolean(errors.accounting_date)}
+                        onChange={(v) => set("accounting_date", v)}
                       />
                     ) : (
                       <div className="ro">
-                        {transaction?.document_date ? (
-                          formatDate(transaction.document_date)
+                        {transaction?.accounting_date ? (
+                          formatDate(transaction.accounting_date)
                         ) : (
                           <span className="dash">belum ditentukan</span>
                         )}
@@ -901,7 +901,7 @@ export function TransactionForm({
                                 : null
                             }
                             layers={cashBank?.layers ?? []}
-                            asOf={values.document_date || undefined}
+                            asOf={values.accounting_date || undefined}
                             currencyLabel={currencyLabel}
                             invalid={Boolean(errors.cash_bank_layer_id)}
                             onChange={(v) =>
@@ -1414,7 +1414,7 @@ function initialValues(
       cash_bank_layer_id: "",
       // Today, as every editable date starts (§10 rule 33); moved back for a
       // backdated document.
-      document_date: todayIso(),
+      accounting_date: todayIso(),
       note: "",
     };
   }
@@ -1430,7 +1430,7 @@ function initialValues(
       ? String(transaction.cash_bank_layer_id)
       : "",
     // A draft saved before drafts carried a date starts on today.
-    document_date: transaction.document_date ?? todayIso(),
+    accounting_date: transaction.accounting_date ?? todayIso(),
     note: transaction.note ?? "",
   };
 }

@@ -24,7 +24,7 @@ import { roundBase } from "./fx";
  * a reclassification. It is saved `Draft` first, edited freely while it is one,
  * and reaches `Posted` through `postDraftJournal`, which runs **the same
  * validation** `postJournal` does. A draft is not accounting — it has no
- * posting date, and no report can see it — so the frozen guarantee is unchanged
+ * accounting date, and no report can see it — so the frozen guarantee is unchanged
  * in substance: nothing is in the books until a posting put it there, and once
  * it is there it never moves.
  *
@@ -166,7 +166,7 @@ export type JournalLineInput = {
  *
  * `JRN` is every journal a business document produced. `CLS` is a fiscal
  * year's closing entry, which is the one journal in the application that is
- * dated anything but today — see `postingDate` below. A manual journal's
+ * dated anything but today — see `accountingDate` below. A manual journal's
  * `JUR` is not here: it is numbered when its draft is created, not when it is
  * posted.
  */
@@ -190,9 +190,9 @@ export type JournalInput = {
    * happened that has not yet. Omitted, it is today. Whether the day is inside
    * a period this Company may still write into is the caller's question
    * (`checkTransactionDate`), asked before the posting transaction opens.
-   * When the journal was actually *written* is `created_at`, which is kept.
+   * When it was posted is `posted_at`, which the database stamps.
    */
-  postingDate?: Date;
+  accountingDate?: Date;
 };
 
 /**
@@ -306,13 +306,13 @@ function lineData(line: ResolvedLine, sequence: number, actorId: number) {
 }
 
 /** Today, at the UTC midnight a journal's date is stored as. */
-function postingDateToday(): Date {
+function accountingDateToday(): Date {
   return new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
 }
 
 /** A journal may be dated any day up to today, and never after it. */
 function assertNotAhead(date: Date): void {
-  if (date.getTime() > postingDateToday().getTime()) {
+  if (date.getTime() > accountingDateToday().getTime()) {
     throw new Error("Journal tidak boleh bertanggal di masa depan.");
   }
 }
@@ -338,12 +338,12 @@ export async function postJournal(
   const series = input.series ?? "JRN";
   // A closing entry is dated its year's last day by definition, and whether a
   // year may be closed early is the closing checklist's question, not this one.
-  if (input.postingDate && series !== "CLS") assertNotAhead(input.postingDate);
+  if (input.accountingDate && series !== "CLS") assertNotAhead(input.accountingDate);
 
   const journal = await tx.accJournal.create({
     data: {
       journal_no: await nextJournalNo(tx, series),
-      posting_date: input.postingDate ?? postingDateToday(),
+      accounting_date: input.accountingDate ?? accountingDateToday(),
       source_doc_type_id: input.sourceDocTypeId ?? null,
       source_doc_id: input.sourceDocId ?? null,
       company_id: input.companyId,
@@ -370,7 +370,7 @@ export async function postJournal(
 /**
  * A manual journal while it is still being written.
  *
- * It carries the date the person chose for it — stored in `posting_date` while
+ * It carries the date the person chose for it — stored in `accounting_date` while
  * it is a Draft, which is safe because every reader of journal lines filters
  * `status: "Posted"` — and no source document: nothing produced it but the
  * person typing. Its lines are validated
@@ -397,7 +397,9 @@ export async function createDraftJournal(
     const journal = await tx.accJournal.create({
       data: {
         journal_no: await nextJournalNo(tx, "JUR"),
-        posting_date: new Date(`${input.date}T00:00:00Z`),
+        accounting_date: new Date(`${input.date}T00:00:00Z`),
+        // A draft is not posted; the column's default is for journals Post writes.
+        posted_at: null,
         company_id: input.companyId,
         description: input.description,
         status: "Draft",
@@ -439,7 +441,7 @@ export async function updateDraftJournal(
       where: { id },
       data: {
         company_id: input.companyId,
-        posting_date: new Date(`${input.date}T00:00:00Z`),
+        accounting_date: new Date(`${input.date}T00:00:00Z`),
         description: input.description,
         updated_by: input.actorId,
         lines: {
@@ -457,7 +459,7 @@ export async function updateDraftJournal(
  * Post: the moment a manual journal becomes accounting.
  *
  * It runs the same `resolveJournalLines` an automatic posting does and refuses
- * the same imbalance, then stamps the posting date and flips the status — in
+ * the same imbalance, then stamps the accounting date and flips the status — in
  * one transaction, so a journal is never half-posted. Nothing about the lines
  * changes except their resolved base values being rewritten, which is what
  * makes the posted figures the engine's rather than the form's.
@@ -515,13 +517,13 @@ export async function postDraftJournal(
 
   // The date the draft was written for. A draft saved before drafts carried
   // one has none, and posts as today — which is what it would have done.
-  const postingDate = journal.posting_date ?? postingDateToday();
-  if (postingDate.getTime() > postingDateToday().getTime()) {
+  const accountingDate = journal.accounting_date ?? accountingDateToday();
+  if (accountingDate.getTime() > accountingDateToday().getTime()) {
     return { ok: false, error: "Journal tidak boleh bertanggal di masa depan." };
   }
 
   await prisma.$transaction(async (tx) => {
-    if (hold) await hold(tx, postingDate.toISOString().slice(0, 10));
+    if (hold) await hold(tx, accountingDate.toISOString().slice(0, 10));
     for (const [i, line] of resolved.entries()) {
       await tx.accJournalLine.update({
         where: { id: journal.lines[i].id },
@@ -536,7 +538,8 @@ export async function postDraftJournal(
       where: { id },
       data: {
         status: "Posted",
-        posting_date: postingDate,
+        accounting_date: accountingDate,
+        posted_at: new Date(),
         updated_by: actorId,
       },
     });
@@ -635,7 +638,7 @@ export async function readDraftJournal(
     id: journal.id,
     journalNo: journal.journal_no,
     companyId: journal.company_id,
-    date: journal.posting_date ? journal.posting_date.toISOString().slice(0, 10) : null,
+    date: journal.accounting_date ? journal.accounting_date.toISOString().slice(0, 10) : null,
     description: journal.description,
     status: journal.status,
     isManual: journal.is_manual,
@@ -781,7 +784,7 @@ export type JournalRow = {
   id: number;
   journalNo: string;
   /** Null while a manual journal is still a draft: nothing has been posted. */
-  postingDate: string | null;
+  accountingDate: string | null;
   companyLabel: string;
   companyId: number;
   description: string;
@@ -812,7 +815,7 @@ const totalOf = (lines: { debit_amount: { toNumber(): number }; kredit_amount: {
 export async function listJournals(companyIds: number[]): Promise<JournalRow[]> {
   const rows = await prisma.accJournal.findMany({
     where: { company_id: { in: companyIds } },
-    orderBy: [{ posting_date: { sort: "desc", nulls: "first" } }, { id: "desc" }],
+    orderBy: [{ accounting_date: { sort: "desc", nulls: "first" } }, { id: "desc" }],
     include: {
       company: { select: { company_label: true } },
       source_doc_type: { select: { doc_label: true, doc_table: true } },
@@ -833,7 +836,7 @@ export async function listJournals(companyIds: number[]): Promise<JournalRow[]> 
   return ordered.map((j) => ({
     id: j.id,
     journalNo: j.journal_no,
-    postingDate: j.posting_date ? j.posting_date.toISOString() : null,
+    accountingDate: j.accounting_date ? j.accounting_date.toISOString() : null,
     companyLabel: j.company.company_label,
     companyId: j.company_id,
     description: j.description,
@@ -873,7 +876,7 @@ export async function getJournal(
   return {
     id: j.id,
     journalNo: j.journal_no,
-    postingDate: j.posting_date ? j.posting_date.toISOString() : null,
+    accountingDate: j.accounting_date ? j.accounting_date.toISOString() : null,
     companyLabel: j.company.company_label,
     companyName: j.company.company_name,
     companyId: j.company_id,
@@ -963,9 +966,9 @@ export async function draftJournalsDatedBetween(
       company_id: companyId,
       status: "Draft",
       OR: [
-        { posting_date: { gte: from, lte: to } },
+        { accounting_date: { gte: from, lte: to } },
         {
-          posting_date: null,
+          accounting_date: null,
           // Inclusive of the year's last day: `to` is a date at UTC midnight
           // and `created_at` is a timestamp.
           created_at: { gte: from, lt: new Date(to.getTime() + 86_400_000) },

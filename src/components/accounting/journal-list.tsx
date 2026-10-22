@@ -218,8 +218,8 @@ export function JournalList({
                             </Link>
                           </td>
                           <td>
-                            {j.postingDate ? (
-                              formatDate(j.postingDate)
+                            {j.accountingDate ? (
+                              formatDate(j.accountingDate)
                             ) : (
                               <span className="dash">—</span>
                             )}

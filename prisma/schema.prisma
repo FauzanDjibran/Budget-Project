@@ -690,11 +690,15 @@ enum CashBankEntryType {
 }
 
 model CashBankLedger {
-  id           Int               @id @default(autoincrement())
-  entry_no     String            @unique
-  cash_bank_id Int
-  entry_date   DateTime          @db.Date
-  entry_type   CashBankEntryType
+  id              Int               @id @default(autoincrement())
+  entry_no        String            @unique
+  cash_bank_id    Int
+  accounting_date DateTime          @db.Date
+  /// When the document that wrote it was posted, by the default inside that
+  /// document's Post: `transaction_timestamp()`, so every row one Post writes
+  /// carries the same value. Backdating shows as `posted_at` after `accounting_date`.
+  posted_at       DateTime          @default(dbgenerated("transaction_timestamp()")) @db.Timestamptz(6)
+  entry_type      CashBankEntryType
 
   /// The movement, signed: positive money in, negative money out. The sign
   /// **is** the direction — one column, so the two can never disagree — and
@@ -703,7 +707,7 @@ model CashBankLedger {
   /// There is no running balance: an entry may be backdated in among entries
   /// written before it, so a balance "after" it would follow write order, not
   /// date. A balance on a date is summed from `movement`.
-  movement      Decimal @db.Decimal(18, 2)
+  movement Decimal @db.Decimal(18, 2)
 
   /// The kurs this movement was valued at, always converting the resource's
   /// own currency to the base currency.
@@ -718,13 +722,13 @@ model CashBankLedger {
   ///
   /// `1` means the money is base currency, and nothing else: a rate of 1
   /// between two foreign amounts would assert that USD 100 is IDR 100.
-  rate               Decimal @db.Decimal(18, 6)
+  rate          Decimal @db.Decimal(18, 6)
   /// `movement` in base currency, signed the same way. Stored rather than
   /// derived: base value is a record of how the balance was built, and
   /// re-deriving it at a current rate would destroy the only figure that says
   /// what currency movement cost. Summing it rebuilds the base balance exactly
   /// as `movement` rebuilds the foreign one.
-  base_movement      Decimal @db.Decimal(18, 2)
+  base_movement Decimal @db.Decimal(18, 2)
 
   /// What caused the movement. Null for an opening balance, which has no
   /// source document — the registration of the resource is the event.
@@ -739,7 +743,7 @@ model CashBankLedger {
   cash_bank       MCashBank   @relation(fields: [cash_bank_id], references: [id])
   source_doc_type SysDocType? @relation(fields: [source_doc_type_id], references: [id])
 
-  @@index([cash_bank_id, entry_date])
+  @@index([cash_bank_id, accounting_date])
   @@index([source_doc_type_id, source_doc_id])
   @@map("cash_bank_ledger")
 }
@@ -944,7 +948,11 @@ model SubLedger {
   budget_category_id Int
   partner_id         Int
   currency_id        Int
-  entry_date         DateTime           @db.Date
+  accounting_date    DateTime           @db.Date
+  /// When the document that wrote it was posted, by the default inside that
+  /// document's Post: `transaction_timestamp()`, so every row one Post writes
+  /// carries the same value. Backdating shows as `posted_at` after `accounting_date`.
+  posted_at          DateTime           @default(dbgenerated("transaction_timestamp()")) @db.Timestamptz(6)
   entry_type         SubLedgerEntryType
 
   /// The movement, signed in the **book's** direction: positive where the
@@ -954,7 +962,7 @@ model SubLedger {
   /// entry. Summing this column reconstructs the balance, which is how the
   /// total is verified. No running balance, for the reason `cash_bank_ledger`
   /// gives: an entry may be backdated.
-  movement      Decimal @db.Decimal(18, 2)
+  movement Decimal @db.Decimal(18, 2)
 
   /// **This book's own settlement rate**, converting the subject's currency to
   /// the base currency — not necessarily the rate the Cash Bank Book recorded
@@ -966,9 +974,9 @@ model SubLedger {
   /// a debt taken on when a dollar cost 15.000 and settled with dollars costing
   /// 16.000 releases at 15.000. The gap between the two books is the FX
   /// difference, and it lives in the journal rather than in either book.
-  rate               Decimal @db.Decimal(18, 6)
+  rate          Decimal @db.Decimal(18, 6)
   /// `movement` in base currency, signed the same way.
-  base_movement      Decimal @db.Decimal(18, 2)
+  base_movement Decimal @db.Decimal(18, 2)
 
   /// The open item this entry moved. An entry that raises a position opens a
   /// new item and names it; one that lowers a position names the item the user
@@ -992,7 +1000,7 @@ model SubLedger {
   source_doc_type SysDocType?       @relation(fields: [source_doc_type_id], references: [id])
   item            SubLedgerBalance  @relation(fields: [balance_id], references: [id])
 
-  @@index([budget_category_id, partner_id, entry_date])
+  @@index([budget_category_id, partner_id, accounting_date])
   @@index([balance_id])
   @@index([source_doc_type_id, source_doc_id])
   @@map("sub_ledger")
@@ -1310,10 +1318,12 @@ model AccFiscalClosing {
 /// one. A close writes the year it closed; a developer seeding go-live
 /// balances leaves it null, because nothing produced them.
 model AccOpeningBalance {
-  id           Int      @id @default(autoincrement())
-  opening_no   String   @unique
+  id              Int      @id @default(autoincrement())
+  opening_no      String   @unique
   /// The day the figures speak for — the first day of the year being opened.
-  posting_date DateTime @db.Date
+  accounting_date DateTime @db.Date
+  /// When the close (or the go-live injection) wrote it.
+  posted_at       DateTime @default(dbgenerated("transaction_timestamp()")) @db.Timestamptz(6)
 
   /// The year this snapshot opens.
   fiscal_year_id        Int
@@ -1427,10 +1437,10 @@ model FinCashBankTransaction {
   transaction_no     String        @unique
   /// The day the document belongs to in the books, chosen on the draft — any
   /// day up to today. Every book entry and the journal Post writes are dated
-  /// by it; `posting_date` is when Post actually ran. Nullable only for drafts
+  /// by it; `posted_at` is when Post actually ran. Nullable only for drafts
   /// saved before drafts carried a date, which post as today.
-  document_date      DateTime?     @db.Date
-  posting_date       DateTime?     @db.Timestamptz(6)
+  accounting_date    DateTime?     @db.Date
+  posted_at          DateTime?     @db.Timestamptz(6)
   transaction_type   FlowDirection
   company_id         Int
   cash_bank_id       Int?
@@ -1672,12 +1682,12 @@ enum TransferPurpose {
 /// lines out of one source layer create three destination layers, never one
 /// blended one.
 model FinCashBankTransfer {
-  id            Int       @id @default(autoincrement())
-  transfer_no   String    @unique
+  id              Int       @id @default(autoincrement())
+  transfer_no     String    @unique
   /// Null until the document is posted — a Draft has moved nothing and so has
   /// no date, exactly as a Cash Bank Transaction has none.
-  document_date DateTime? @db.Date
-  posting_date  DateTime? @db.Timestamptz(6)
+  accounting_date DateTime? @db.Date
+  posted_at       DateTime? @db.Timestamptz(6)
 
   /// The source resource's Company. Both legs belong to it: a movement between
   /// two Companies is the intercompany bridge, which is Funding Request's.
@@ -1792,12 +1802,12 @@ model FinCashBankTransferLine {
 /// Partner and writes no subject book (CLAUDE.md §10 rule 84), and this
 /// document exists to do both. One book and one Partner per document.
 model FinItemConversion {
-  id            Int       @id @default(autoincrement())
+  id              Int       @id @default(autoincrement())
   /// `POI-0001`.
-  conversion_no String    @unique
+  conversion_no   String    @unique
   /// Chosen on the draft, any day up to today; Post dates everything by it.
-  document_date DateTime? @db.Date
-  posting_date  DateTime? @db.Timestamptz(6)
+  accounting_date DateTime? @db.Date
+  posted_at       DateTime? @db.Timestamptz(6)
 
   /// The source's Company, derived rather than picked.
   company_id         Int
@@ -1947,12 +1957,12 @@ model FinItemConversionLineItem {
 /// classification is final (CLAUDE.md §10 rule 26), and this is what lets the
 /// money move on while the plan keeps saying what it said.
 model FinItemReclass {
-  id            Int       @id @default(autoincrement())
+  id              Int       @id @default(autoincrement())
   /// `RKL-0001`.
-  reclass_no    String    @unique
+  reclass_no      String    @unique
   /// Chosen on the draft, any day up to today; Post dates everything by it.
-  document_date DateTime? @db.Date
-  posting_date  DateTime? @db.Timestamptz(6)
+  accounting_date DateTime? @db.Date
+  posted_at       DateTime? @db.Timestamptz(6)
 
   /// The source Partner's Company, derived rather than picked.
   company_id         Int
@@ -2138,8 +2148,8 @@ model FinItemAdjustment {
   adjustment_no String @unique
 
   /// The day it belongs to in the books, chosen on the draft.
-  document_date DateTime? @db.Date
-  posting_date  DateTime? @db.Timestamptz(6)
+  accounting_date DateTime? @db.Date
+  posted_at       DateTime? @db.Timestamptz(6)
 
   /// The Partner's Company, derived rather than picked.
   company_id         Int
@@ -2261,9 +2271,12 @@ model AccJournal {
   /// may be earlier than today (a backdated document) and never later. A
   /// manual draft carries the date it is meant for; every reader filters
   /// `status: "Posted"`, so a draft's date reaches no report. When the journal
-  /// was actually written is `created_at`. Null only on a draft saved before
-  /// drafts carried a date.
-  posting_date       DateTime?     @db.Date
+  /// was posted is `posted_at`. Null only on a draft saved before drafts
+  /// carried a date.
+  accounting_date    DateTime?     @db.Date
+  /// When Post ran. Null while a manual journal is a draft. `created_at` is
+  /// audit only and is never read as a business date.
+  posted_at          DateTime?     @default(dbgenerated("transaction_timestamp()")) @db.Timestamptz(6)
   /// What produced this journal, for traceability back to the document.
   source_doc_type_id Int?
   source_doc_id      Int?
@@ -2284,7 +2297,7 @@ model AccJournal {
   source_doc_type SysDocType?      @relation(fields: [source_doc_type_id], references: [id])
   lines           AccJournalLine[]
 
-  @@index([company_id, posting_date])
+  @@index([company_id, accounting_date])
   @@index([source_doc_type_id, source_doc_id])
   @@map("acc_journal")
 }
@@ -2378,8 +2391,8 @@ model FinCashBankRevaluation {
   revaluation_no String @unique
 
   /// The day it belongs to in the books, chosen on the draft.
-  document_date DateTime? @db.Date
-  posting_date  DateTime? @db.Timestamptz(6)
+  accounting_date DateTime? @db.Date
+  posted_at       DateTime? @db.Timestamptz(6)
 
   /// The resource's Company, derived rather than picked.
   company_id   Int

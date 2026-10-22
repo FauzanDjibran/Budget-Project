@@ -54,7 +54,7 @@ import {
  * could be got round: the Server Action is reachable directly, so the picker
  * narrowing its list is not the protection.
  *
- * The second theme is that a draft is not accounting. It has no posting date,
+ * The second theme is that a draft is not accounting. It has no accounting date,
  * the General Ledger cannot see it, the Trial Balance does not count it, and it
  * is allowed not to balance — the balance is a rule about posting, not about
  * saving.
@@ -615,13 +615,13 @@ describe("a draft is not accounting", () => {
 
     const row = await prisma.accJournal.findUniqueOrThrow({
       where: { id: created.id },
-      select: { status: true, posting_date: true },
+      select: { status: true, accounting_date: true },
     });
     assert.equal(row.status, "Draft", "a refused post leaves the draft alone");
     // A draft carries the date it was written for (today, when a caller in
     // code names none) — a refused post neither clears nor moves it.
     assert.equal(
-      row.posting_date?.toISOString().slice(0, 10),
+      row.accounting_date?.toISOString().slice(0, 10),
       new Date().toISOString().slice(0, 10)
     );
   });
@@ -693,12 +693,12 @@ describe("post is the boundary, and it is the same engine", () => {
 
     const row = await prisma.accJournal.findUniqueOrThrow({
       where: { id: created.id },
-      select: { status: true, posting_date: true, is_manual: true, journal_no: true },
+      select: { status: true, accounting_date: true, is_manual: true, journal_no: true },
     });
     assert.equal(row.status, "Posted");
     assert.equal(row.is_manual, true);
     assert.equal(
-      row.posting_date?.toISOString().slice(0, 10),
+      row.accounting_date?.toISOString().slice(0, 10),
       new Date().toISOString().slice(0, 10),
       "a journal is dated the day it was posted, never back-dated"
     );
@@ -888,7 +888,7 @@ describe("a manual journal is refused outside an open period", () => {
         (
           await prisma.accJournal.findUniqueOrThrow({
             where: { id: created.id },
-            select: { status: true, posting_date: true },
+            select: { status: true, accounting_date: true },
           })
         ).status,
         "Draft",

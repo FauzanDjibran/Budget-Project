@@ -51,7 +51,7 @@ export type TransferValues = {
   currency_id: string;
   cash_bank_layer_id: string;
   /** `YYYY-MM-DD` — the day the transfer belongs to in the books. */
-  document_date: string;
+  accounting_date: string;
   note: string;
 };
 
@@ -101,7 +101,7 @@ const headerOf = (values: TransferValues) => ({
   from_cash_bank_id: num(values.from_cash_bank_id),
   currency_id: num(values.currency_id),
   cash_bank_layer_id: num(values.cash_bank_layer_id),
-  document_date: values.document_date || null,
+  accounting_date: values.accounting_date || null,
 });
 
 const asLines = (lines: TransferLineValues[]): TransferLineInput[] =>
@@ -152,8 +152,8 @@ export async function createTransfer(
 
   // Any day up to today, inside a year this Company may still write into.
   // Asked again at Post, since a year can close in between.
-  const dated = await checkTransactionDate(values.document_date, [checked.companyId]);
-  if (!dated.ok) return { ok: false, errors: { document_date: dated.message } };
+  const dated = await checkTransactionDate(values.accounting_date, [checked.companyId]);
+  if (!dated.ok) return { ok: false, errors: { accounting_date: dated.message } };
 
   const settled = await checkTransferLines(checked, asLines(lines));
   if (!settled.ok) return { ok: false, errors: settled.errors };
@@ -164,9 +164,9 @@ export async function createTransfer(
     data: {
       transfer_no,
       // The day it belongs to in the books, chosen on the draft and possibly
-      // earlier than today. `posting_date` waits for Post.
-      document_date: new Date(`${dated.date}T00:00:00Z`),
-      posting_date: null,
+      // earlier than today. `posted_at` waits for Post.
+      accounting_date: new Date(`${dated.date}T00:00:00Z`),
+      posted_at: null,
       company_id: checked.companyId,
       purpose: checked.purpose,
       from_cash_bank_id: checked.fromCashBankId,
@@ -238,8 +238,8 @@ export async function updateTransfer(
 
   // Any day up to today, inside a year this Company may still write into.
   // Asked again at Post, since a year can close in between.
-  const dated = await checkTransactionDate(values.document_date, [checked.companyId]);
-  if (!dated.ok) return { ok: false, errors: { document_date: dated.message } };
+  const dated = await checkTransactionDate(values.accounting_date, [checked.companyId]);
+  if (!dated.ok) return { ok: false, errors: { accounting_date: dated.message } };
 
   const settled = await checkTransferLines(checked, asLines(lines));
   if (!settled.ok) return { ok: false, errors: settled.errors };
@@ -258,7 +258,7 @@ export async function updateTransfer(
         from_cash_bank_id: checked.fromCashBankId,
         currency_id: checked.currencyId,
         cash_bank_layer_id: checked.layerId,
-        document_date: new Date(`${dated.date}T00:00:00Z`),
+        accounting_date: new Date(`${dated.date}T00:00:00Z`),
         transfer_amount: settled.total,
         transfer_base_amount: roundBase(
           settled.total * (checked.layerRate ?? 1)

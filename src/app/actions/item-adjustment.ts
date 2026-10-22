@@ -48,7 +48,7 @@ export type ItemAdjustmentValues = {
   currency_id: string;
   exchange_rate: string;
   /** `YYYY-MM-DD` — the day the adjustment belongs to in the books. */
-  document_date: string;
+  accounting_date: string;
   reference: string;
   note: string;
 };
@@ -110,9 +110,9 @@ async function validate(
 
   // Any day up to today, inside a year this Company may still write into.
   // Asked again at Post, since a year can close in between.
-  const dated = await checkTransactionDate(values.document_date, [header.companyId]);
+  const dated = await checkTransactionDate(values.accounting_date, [header.companyId]);
   if (!dated.ok) {
-    return { ok: false as const, errors: { document_date: dated.message } };
+    return { ok: false as const, errors: { accounting_date: dated.message } };
   }
 
   const settled = await checkItemAdjustmentLines(header, asLines(lines), dated.date);
@@ -140,9 +140,9 @@ export async function createItemAdjustment(
         data: {
           adjustment_no,
           // The day it belongs to in the books, chosen on the draft and
-          // possibly earlier than today. `posting_date` waits for Post.
-          document_date: new Date(`${date}T00:00:00Z`),
-          posting_date: null,
+          // possibly earlier than today. `posted_at` waits for Post.
+          accounting_date: new Date(`${date}T00:00:00Z`),
+          posted_at: null,
           company_id: header.companyId,
           budget_category_id: header.book.categoryId,
           partner_id: header.partnerId,
@@ -210,7 +210,7 @@ export async function updateItemAdjustment(
         where: { id },
         data: {
           company_id: header.companyId,
-          document_date: new Date(`${date}T00:00:00Z`),
+          accounting_date: new Date(`${date}T00:00:00Z`),
           budget_category_id: header.book.categoryId,
           partner_id: header.partnerId,
           currency_id: header.currencyId,

@@ -86,7 +86,7 @@ export type OpeningBalanceInput = {
    */
   sourceFiscalYearId?: number | null;
   /** The day the figures speak for — the first day of the year being opened. */
-  postingDate: Date;
+  accountingDate: Date;
   lines: OpeningBalanceLineInput[];
   actorId: number;
 };
@@ -202,7 +202,7 @@ export async function writeOpeningBalance(
   const opening = await tx.accOpeningBalance.create({
     data: {
       opening_no: await nextOpeningNo(tx),
-      posting_date: input.postingDate,
+      accounting_date: input.accountingDate,
       fiscal_year_id: input.fiscalYearId,
       source_fiscal_year_id: input.sourceFiscalYearId ?? null,
       company_id: input.companyId,
@@ -271,7 +271,7 @@ export type OpeningBalanceLineRow = {
 export type OpeningBalanceRow = {
   id: number;
   openingNo: string;
-  postingDate: string;
+  accountingDate: string;
   companyId: number;
   companyLabel: string;
   /** The year this snapshot opens. */
@@ -310,7 +310,7 @@ export async function listOpeningBalances(
 ): Promise<OpeningBalanceRow[]> {
   const rows = await prisma.accOpeningBalance.findMany({
     where: { company_id: { in: companyIds } },
-    orderBy: [{ posting_date: "desc" }, { id: "desc" }],
+    orderBy: [{ accounting_date: "desc" }, { id: "desc" }],
     include: {
       company: { select: { company_label: true } },
       fiscal_year: { select: { year_label: true, year_name: true } },
@@ -322,7 +322,7 @@ export async function listOpeningBalances(
   return rows.map((o) => ({
     id: o.id,
     openingNo: o.opening_no,
-    postingDate: o.posting_date.toISOString(),
+    accountingDate: o.accounting_date.toISOString(),
     companyId: o.company_id,
     companyLabel: o.company.company_label,
     fiscalYearLabel: o.fiscal_year.year_label,
@@ -363,7 +363,7 @@ export async function getOpeningBalance(
   return {
     id: o.id,
     openingNo: o.opening_no,
-    postingDate: o.posting_date.toISOString(),
+    accountingDate: o.accounting_date.toISOString(),
     companyId: o.company_id,
     companyLabel: o.company.company_label,
     companyName: o.company.company_name,
@@ -415,7 +415,7 @@ export type OpeningBasis = {
    * a starting point a report can add to rather than a figure it has to
    * reconcile against.
    */
-  postingDate: Date;
+  accountingDate: Date;
   /** `debit − credit` per account, rolled up from the snapshot's own lines. */
   byAccount: Map<number, number>;
   /**
@@ -449,14 +449,14 @@ export async function openingBasisFor(
   db: Client = prisma
 ): Promise<OpeningBasis | null> {
   const snapshot = await db.accOpeningBalance.findFirst({
-    where: { company_id: companyId, posting_date: { lte: on } },
+    where: { company_id: companyId, accounting_date: { lte: on } },
     // The *latest* one that is still not after the date asked about. An older
     // snapshot would be correct too — it just leaves more to scan.
-    orderBy: [{ posting_date: "desc" }, { id: "desc" }],
+    orderBy: [{ accounting_date: "desc" }, { id: "desc" }],
     select: {
       id: true,
       opening_no: true,
-      posting_date: true,
+      accounting_date: true,
       lines: {
         select: {
           account_id: true,
@@ -482,7 +482,7 @@ export async function openingBasisFor(
   return {
     id: snapshot.id,
     openingNo: snapshot.opening_no,
-    postingDate: snapshot.posting_date,
+    accountingDate: snapshot.accounting_date,
     byAccount,
     byPair: snapshot.lines.map((l) => ({
       accountId: l.account_id,

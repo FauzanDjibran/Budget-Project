@@ -87,8 +87,8 @@ const day = (d: Date): string => d.toISOString().slice(0, 10);
 export type TransferRow = {
   id: number;
   transfer_no: string;
-  document_date: string | null;
-  posting_date: string | null;
+  accounting_date: string | null;
+  posted_at: string | null;
   company_id: number;
   purpose: TransferPurposeKey;
   from_cash_bank_id: number;
@@ -121,8 +121,8 @@ export type TransferLineRow = {
 type TransferRecord = {
   id: number;
   transfer_no: string;
-  document_date: Date | null;
-  posting_date: Date | null;
+  accounting_date: Date | null;
+  posted_at: Date | null;
   company_id: number;
   purpose: string;
   from_cash_bank_id: number;
@@ -143,8 +143,8 @@ function toRow(t: TransferRecord): TransferRow {
   return {
     id: t.id,
     transfer_no: t.transfer_no,
-    document_date: t.document_date ? day(t.document_date) : null,
-    posting_date: t.posting_date ? t.posting_date.toISOString() : null,
+    accounting_date: t.accounting_date ? day(t.accounting_date) : null,
+    posted_at: t.posted_at ? t.posted_at.toISOString() : null,
     company_id: t.company_id,
     purpose: t.purpose as TransferPurposeKey,
     from_cash_bank_id: t.from_cash_bank_id,
@@ -342,7 +342,7 @@ export type TransferHeader = {
   currency_id: number | null;
   cash_bank_layer_id: number | null;
   /** When given, a layer acquired after it is refused. */
-  document_date?: string | null;
+  accounting_date?: string | null;
 };
 
 /** A header that passed every rule — the shape the lines are checked against. */
@@ -474,7 +474,7 @@ export async function checkTransferHeader(
           acquisition_date: true,
         },
       });
-      const tooNew = layer && header.document_date ? layerDateRefusal(layer, header.document_date) : null;
+      const tooNew = layer && header.accounting_date ? layerDateRefusal(layer, header.accounting_date) : null;
       if (!layer || layer.cash_bank_id !== header.from_cash_bank_id) {
         errors.cash_bank_layer_id =
           "Layer kurs tersebut bukan milik Cash & Bank sumber yang dipilih.";
@@ -1044,7 +1044,7 @@ export async function applyTransfer(
   // rolled back. Re-checked here rather than trusted from the save: a year can
   // close in between. A draft saved before drafts carried a date posts as today.
   const dated = await checkTransactionDate(
-    doc.document_date ?? todayDay(),
+    doc.accounting_date ?? todayDay(),
     [doc.company_id]
   );
   if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
@@ -1142,7 +1142,7 @@ export async function applyTransfer(
       // here takes the whole posting down — which is the guarantee.
       await postJournal(tx, {
         companyId: doc.company_id,
-        postingDate: new Date(`${date}T00:00:00Z`),
+        accountingDate: new Date(`${date}T00:00:00Z`),
         description: `${doc.transfer_no} — ${label}`,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
@@ -1154,8 +1154,8 @@ export async function applyTransfer(
         where: { id: transferId },
         data: {
           status: "Posted",
-          document_date: new Date(`${date}T00:00:00Z`),
-          posting_date: new Date(),
+          accounting_date: new Date(`${date}T00:00:00Z`),
+          posted_at: new Date(),
           transfer_base_amount: plan.sourceBase,
           updated_by: actorId,
         },

@@ -99,7 +99,7 @@ export function ItemReclassForm({
     partner_id: reclass ? String(reclass.partner_id) : "",
     currency_id: reclass ? String(reclass.currency_id) : "",
     // Today, as every editable date starts (§10 rule 33).
-    document_date: reclass?.document_date ?? todayIso(),
+    accounting_date: reclass?.accounting_date ?? todayIso(),
     note: reclass?.note ?? "",
   }));
 
@@ -493,22 +493,22 @@ export function ItemReclassForm({
                   </Field>
 
                   <Field
-                    label="Tanggal Dokumen"
+                    label="Tanggal Akuntansi"
                     span={4}
                     required={editing}
                     help={editing ? "boleh mundur, tidak ke depan" : undefined}
-                    error={errors.document_date}
+                    error={errors.accounting_date}
                   >
                     {editing ? (
                       <DateInput
-                        value={values.document_date}
-                        invalid={Boolean(errors.document_date)}
-                        onChange={(v) => set("document_date", v)}
+                        value={values.accounting_date}
+                        invalid={Boolean(errors.accounting_date)}
+                        onChange={(v) => set("accounting_date", v)}
                       />
                     ) : (
                       <div className="ro">
-                        {reclass?.document_date ? (
-                          formatDate(reclass.document_date)
+                        {reclass?.accounting_date ? (
+                          formatDate(reclass.accounting_date)
                         ) : (
                           <span className="dash">belum ditentukan</span>
                         )}

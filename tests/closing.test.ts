@@ -141,7 +141,7 @@ async function postFixtureJournal(
   const row = await prisma.accJournal.create({
     data: {
       journal_no: `ZZC-${Date.now() % 100000}-${Math.floor(Math.random() * 1000)}`,
-      posting_date: status === "Posted" ? date : null,
+      accounting_date: status === "Posted" ? date : null,
       created_at: date,
       company_id: companyId,
       description: "Fixture",
@@ -650,10 +650,10 @@ describe("closing writes the journal, the snapshot and the record", () => {
   test("the closing journal is dated the year's last day", async () => {
     const journal = await prisma.accJournal.findFirstOrThrow({
       where: { journal_no: journalNo },
-      select: { posting_date: true, status: true, source_doc_id: true },
+      select: { accounting_date: true, status: true, source_doc_id: true },
     });
     assert.equal(
-      journal.posting_date?.toISOString(),
+      journal.accounting_date?.toISOString(),
       new Date(Date.UTC(FY, 11, 31)).toISOString(),
       "a closing entry belongs to the year it closes, not to the day it was run"
     );

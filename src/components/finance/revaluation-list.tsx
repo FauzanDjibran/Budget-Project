@@ -248,8 +248,8 @@ export function RevaluationList({
                           </Link>
                         </td>
                         <td>
-                          {n.document_date ? (
-                            formatDate(n.document_date)
+                          {n.accounting_date ? (
+                            formatDate(n.accounting_date)
                           ) : (
                             <span className="dash">belum diposting</span>
                           )}

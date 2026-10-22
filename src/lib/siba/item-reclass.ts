@@ -76,8 +76,8 @@ export const RECLASS_LABEL = "Reklasifikasi Open Item";
 export type ReclassRow = {
   id: number;
   reclass_no: string;
-  document_date: string | null;
-  posting_date: string | null;
+  accounting_date: string | null;
+  posted_at: string | null;
   company_id: number;
   budget_category_id: number;
   partner_id: number;
@@ -160,8 +160,8 @@ function toRow(r: ReclassRecord): ReclassRow {
   return {
     id: r.id,
     reclass_no: r.reclass_no,
-    document_date: r.document_date ? day(r.document_date) : null,
-    posting_date: r.posting_date ? r.posting_date.toISOString() : null,
+    accounting_date: r.accounting_date ? day(r.accounting_date) : null,
+    posted_at: r.posted_at ? r.posted_at.toISOString() : null,
     company_id: r.company_id,
     budget_category_id: r.budget_category_id,
     partner_id: r.partner_id,
@@ -616,7 +616,7 @@ export async function checkReclassLines(
       return (
         `Open item ${item.itemNo} tinggal ${formatMoney(lowest.balance, header.currencyLabel)} ` +
         `pada ${lowest.at}, tidak cukup untuk ${formatMoney(total, header.currencyLabel)}. ` +
-        "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal dokumen."
+        "Posisi tidak boleh di bawah nol pada hari mana pun — ubah tanggal akuntansi."
       );
     }
     used.set(itemId, total);
@@ -890,7 +890,7 @@ export async function applyReclass(
     return { ok: false, errors: { _form: "Tambahkan minimal satu baris tujuan sebelum dokumen diposting." } };
   }
 
-  const dated = await checkTransactionDate(doc.document_date ?? todayDay(), [doc.company_id]);
+  const dated = await checkTransactionDate(doc.accounting_date ?? todayDay(), [doc.company_id]);
   if (!dated.ok) return { ok: false, errors: { _form: dated.message } };
   const date = dated.date;
 
@@ -1238,7 +1238,7 @@ export async function applyReclass(
       // throws unless it balances — which takes the whole posting down.
       await postJournal(tx, {
         companyId: doc.company_id,
-        postingDate: new Date(`${date}T00:00:00Z`),
+        accountingDate: new Date(`${date}T00:00:00Z`),
         description: `${label} · ${source.name} · ${header.partnerLabel}`,
         sourceDocTypeId: docTypeId,
         sourceDocId: doc.id,
@@ -1250,8 +1250,8 @@ export async function applyReclass(
         where: { id: doc.id },
         data: {
           status: "Posted",
-          document_date: new Date(`${date}T00:00:00Z`),
-          posting_date: new Date(),
+          accounting_date: new Date(`${date}T00:00:00Z`),
+          posted_at: new Date(),
           reclass_base_amount: roundBase(planned.reduce((t, l) => t + l.releasedBase, 0)),
           fx_difference: fxDifference,
           updated_by: actorId,
@@ -1314,7 +1314,7 @@ export async function reclassTrail(itemIds: number[]): Promise<ReclassMove[]> {
         select: {
           target_category: { select: { category_label: true } },
           target_partner: { select: { partner_label: true, partner_name: true } },
-          reclass: { select: { id: true, reclass_no: true, document_date: true } },
+          reclass: { select: { id: true, reclass_no: true, accounting_date: true } },
         },
       },
     },
@@ -1328,7 +1328,7 @@ export async function reclassTrail(itemIds: number[]): Promise<ReclassMove[]> {
     itemId: r.sub_ledger_balance_id,
     reclassId: r.line.reclass.id,
     reclassNo: r.line.reclass.reclass_no,
-    date: r.line.reclass.document_date ? day(r.line.reclass.document_date) : null,
+    date: r.line.reclass.accounting_date ? day(r.line.reclass.accounting_date) : null,
     amount: r.amount.toNumber(),
     targetBook: `Buku ${r.line.target_category.category_label}`,
     targetPartnerLabel: r.line.target_partner.partner_label,

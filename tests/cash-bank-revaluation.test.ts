@@ -133,7 +133,7 @@ async function makeRevaluation(cashBankId: number, rate: number, date = today): 
   const row = await prisma.finCashBankRevaluation.create({
     data: {
       revaluation_no: await nextRevaluationNo(),
-      document_date: new Date(`${date}T00:00:00Z`),
+      accounting_date: new Date(`${date}T00:00:00Z`),
       company_id: induk,
       cash_bank_id: cashBankId,
       currency_id: usd,
