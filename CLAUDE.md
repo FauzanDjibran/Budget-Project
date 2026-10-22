@@ -76,7 +76,7 @@ or invariants that assume a particular row exists.
   one — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
   snapshot a close writes and the ledger reports then read their openings from.
-- **Not yet built** — report output (print, and export beyond the Laba Rugi, the Neraca, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Buku Subjek, Saldo Buku Subjek and Laporan Pengajuan), intercompany settlement (the
+- **Not yet built** — report output (print, and export beyond the Laba Rugi, the Neraca, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek, Saldo Buku Subjek and Laporan Pengajuan), intercompany settlement (the
   anak paying the induk back), subledger opening balances, and revaluation of standing
   foreign subject-book positions. Full list in §13.
 
@@ -88,7 +88,7 @@ or invariants that assume a particular row exists.
 | Seed | Done — **system data only**, idempotent, destroys nothing (§12) |
 | Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered. A chain of months (`cash_bank_period`, each with its lowest point) lets a movement be checked against every day from its date to now without reading the book from its start |
 | Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. A foreign Cash & Bank is restated by **Revaluasi Kurs**; standing foreign subject-book positions are never retranslated (§13) |
-| Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows them and says when they stop reconciling with the book |
+| Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows the open ones, for one or several resources, and says when they stop reconciling with the book |
 | Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
@@ -107,7 +107,7 @@ or invariants that assume a particular row exists.
 | Pencairan Open Item | Done — foreign currency sold out of the Company's own Cash & Bank, and one Partner's open items in that currency converted to Rupiah **at the same kurs**, in one document (`POI-`). One book, one Partner and one layer per document. Each line's amount is the sum of the items it converts. Post writes both cash books, a `Conversion` entry releasing each foreign item at its own kurs, one new IDR item per line in the same book, and one balanced journal with **one** Selisih Kurs line for the whole document (§10 rules 109–112). Its own module, not a Transfer purpose |
 | Reklasifikasi Open Item | Done — an open item's value moved to another book, another Partner, or both, with no cash (`RKL-`). The header is the source position (book × Partner × currency); each line a target book and Partner and the source items it takes. The target is posted as the original movement would have been: a book running the same way **opens** one item per source item at its kurs and base, one running the other way has chosen items **settled**, each with its own Selisih Kurs line. Any category that names a Partner qualifies — no flag. Two holding categories, *Penerimaan* and *Pengeluaran Belum Teridentifikasi*, and Partner Category *Lainnya*, are seeded for money nobody can place yet (§10 rules 113–117). A Budget keeps its classification; its Realisasi card shows where the money went |
 | Revaluasi Kurs | Done — one foreign Cash & Bank restated at a kurs the user states (`RVK-`), raised from its own menu and never by a period close. Post closes every open layer of the resource (`ClosedByRevaluation`, recorded per layer in `fin_cash_bank_revaluation_layer`), opens one layer holding the whole foreign balance at the stated kurs, writes one base-only Cash Bank Book entry (`Revaluation`) and journals the difference against the Company's Laba/Rugi Revaluasi Kurs account (Mapping Account System `fx_revaluation`). Reads the layers as they stand when posted, whatever its date. Final: a wrong kurs is corrected by another revaluation (§10 rules 118–121) |
-| Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. The Laba Rugi, the Neraca, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Buku Subjek and Saldo Buku Subjek export to an A4 `.xlsx` (Unduh XLSX); the rest are on-screen only |
+| Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. The Laba Rugi, the Neraca, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek and Saldo Buku Subjek export to an A4 `.xlsx` (Unduh XLSX); the rest are on-screen only |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
@@ -341,7 +341,7 @@ server→client boundary. Everything passed into a client component must go thro
 | Hashing | `bcryptjs` (seed only so far) | |
 | Lint | ESLint 9 + `eslint-config-next` | |
 | Seed runner | `tsx` | |
-| Spreadsheet | `exceljs` | The statements', the General Ledger's, the Trial Balance's, Buku Kas & Bank's, Saldo Kas & Bank's, Buku Subjek's, Saldo Buku Subjek's and Laporan Pengajuan's Unduh XLSX (`statement-export.ts`, `ledger-export.ts`, `trial-balance-export.ts`, `book-export.ts` under `cash-bank-export.ts`, `cash-bank-balance-export.ts`, `subledger-export.ts` and `subledger-balance-export.ts`, `budget-export.ts`). `jszip`, its own dependency, is declared as a dev dependency for the test that reads the raw sheet |
+| Spreadsheet | `exceljs` | The statements', the General Ledger's, the Trial Balance's, Buku Kas & Bank's, Saldo Kas & Bank's, Posisi Layer Kurs's, Buku Subjek's, Saldo Buku Subjek's and Laporan Pengajuan's Unduh XLSX (`statement-export.ts`, `ledger-export.ts`, `trial-balance-export.ts`, `book-export.ts` under `cash-bank-export.ts`, `cash-bank-balance-export.ts`, `cash-bank-layer-export.ts`, `subledger-export.ts` and `subledger-balance-export.ts`, `budget-export.ts`). `jszip`, its own dependency, is declared as a dev dependency for the test that reads the raw sheet |
 | Tests | `node:test` via `tsx` — zero extra dependencies (`npm test`) | |
 
 Path alias: `@/*` → `./src/*`.
@@ -2841,6 +2841,17 @@ Specified in the concept doc, **not yet implemented** (see §13):
   currencies. It reads `cashBankBalanceReport`, the screen's own reader, which
   takes the same several Cash & Banks as Buku Kas & Bank (`?cashBank=2,4`);
   none chosen is every resource.
+- **Posisi Layer Kurs exports on the same page** (`cash-bank-layer-export.ts`,
+  the user's approval of `Example report/SIBA export sample/Posisi Layer Kurs …`):
+  dated *Per* the day it is printed, since a layer position has no period, one
+  block per foreign Cash & Bank chosen (`?cashBank=2,4`, none is every one), a
+  row per **open** layer — Perolehan · Layer · Keterangan · Kurs · Diperoleh ·
+  Sisa · Nilai IDR — closed by *Total layer terbuka* with the average kurs.
+  **Only open layers, on screen too, and the keterangan is the layer's own
+  note with nothing added** — no *habis terpakai*, on the user's rule, as for
+  open items: a layer that ran out holds nothing now, and the Cash Bank Book
+  says how it got there. Nilai IDR stays: a layer is a rupiah value at its own
+  kurs. It reads `layerReport`, the screen's own reader.
 - **Buku Subjek exports the same way** (`subledger-export.ts`, the user's approval
   of `Example report/SIBA export sample/Buku Titipan …`), through the same renderer
   (`book-export.ts`, which `cash-bank-export.ts` uses too, so the two books print
@@ -3203,7 +3214,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   be a Server Action, which returns serializable data rather than a `Response` with
   `Content-Disposition`. That is a second instance of the same exception, not a new rule.
   It exists: `accounting/report/[report]/export/route.ts`, for the Laba Rugi, the
-  Neraca, the General Ledger and the Trial Balance, and `finance/report/[report]/export/route.ts` for Buku Kas & Bank, Saldo Kas & Bank, Buku Subjek and Saldo Buku Subjek — each asks the report's own view permission and refuses with a bare status.
+  Neraca, the General Ledger and the Trial Balance, and `finance/report/[report]/export/route.ts` for Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek and Saldo Buku Subjek — each asks the report's own view permission and refuses with a bare status.
 - **Do not change unless:** an external consumer appears. **Adding a Route Handler for
   business CRUD is still the thing this decision forbids** — and if one ever lands, the
   authorization gate must stay `auth.ts`, never a second model (§11).
@@ -4021,7 +4032,7 @@ below in outline because the half of it that still holds is easy to lose.**
       `ReportView` draws **Unduh XLSX** there. It downloads **the run on screen** —
       the page resolves its own parameters, defaults included, into the link — never
       the filter's unsaved edits. Built for the Laba Rugi, the Neraca (see "A
-      statement exports to an A4 workbook"), the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Buku Subjek and Saldo Buku Subjek; print is still deferred.
+      statement exports to an A4 workbook"), the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek and Saldo Buku Subjek; print is still deferred.
   13. **The footnote is one sentence.** It says the single thing a reader needs in
       order to read the figures correctly, and nothing else. Each of the six had
       grown to four or five sentences restating rules the screen already obeys —
@@ -4807,7 +4818,7 @@ decisions now that foreclose them.
 | Subject-book revaluation | CORE multi-currency §6.1: retranslate a Partner's open foreign items at a closing rate. Revaluasi Kurs covers Cash & Bank only (§10 rules 118–121); a Hutang or Piutang in USD keeps its items' kurs until settled (§10 rule 24) |
 | Multi-layer settlement | The source specification lets one payment draw on several layers (`Σ selected = account_amount`). SIBA takes one per document, refused at draft time with a message that says to split it. Widening this means a selection UI with a running total and per-layer relief, not a loosened check (§12) |
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
-| Report output | A print sheet for Report Views, and an export for every one but the two statements, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Buku Subjek and Saldo Buku Subjek, which have theirs. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
+| Report output | A print sheet for Report Views, and an export for every one but the two statements, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek and Saldo Buku Subjek, which have theirs. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
 | Penyesuaian Open Item tax | An adjustment carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
 | Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
 
@@ -5265,7 +5276,7 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
 | A backdated settlement draws on today's cash layer | A subject-book relief now releases at its open item's own kurs, which never changes, so the obligation side no longer depends on when a backdated document is posted. The cash side still draws on its layer as it stands at posting (§12). |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
-| Reports are mostly on-screen only | No print stylesheet, and only the Laba Rugi, the Neraca, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Buku Subjek and Saldo Buku Subjek export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
+| Reports are mostly on-screen only | No print stylesheet, and only the Laba Rugi, the Neraca, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek and Saldo Buku Subjek export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | `recentActivity()` has no caller | The cross-record audit *feed* is still off the dashboard, pending the user's own plan for where it belongs. The per-record history is a separate reader (`recordHistory`) and is now on every form; `recentActivity()` itself remains unused. |
 | A history says who and when, never what | `audit_log` stores no field-level snapshot, so the panel reports that a record was edited and by whom, and cannot say which field moved. Adding a diff means storing one, which is a much larger change than the `event` column was. |

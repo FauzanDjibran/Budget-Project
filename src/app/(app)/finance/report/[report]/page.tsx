@@ -3,7 +3,6 @@ import { CashBankBalanceReport } from "@/components/report/cash-bank-balance-rep
 import { CashBankLayerReport } from "@/components/report/cash-bank-layer-report";
 import { CashBankLedgerReport } from "@/components/report/cash-bank-ledger-report";
 import { NoCompanyAccess } from "@/components/master/company-filter";
-import { ReportParams } from "@/components/report/report-params";
 import { SubjectParams } from "@/components/report/subject-params";
 import { SubledgerReport } from "@/components/report/subledger-report";
 import { ReportNeedsSubject, ReportView } from "@/components/report/report-view";
@@ -25,6 +24,7 @@ import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { BookFilter } from "@/components/report/book-filter";
 import { ReportCompany } from "@/components/report/report-run";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
+import { isBaseCurrency } from "@/lib/siba/currency";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 import { Icon } from "@/components/icon";
@@ -71,7 +71,6 @@ export default async function Page({
 
   const query = await searchParams;
   const range = resolveRange(query.from, query.to);
-  const cashBankId = positiveInt(query.cashBank);
   const scope = await companyScope(actor.permissions, query.company);
   const company = scope.selected;
   const runAt = new Date().toISOString();
@@ -100,11 +99,13 @@ export default async function Page({
     });
   }
 
-  const resources = await cashBankOptions(company.id);
+  // Rupiah holds no layers, so Posisi Layer Kurs offers only foreign resources.
+  const layered = report.key === "cash_bank_layer";
+  const resources = await cashBankOptions(company.id, layered);
 
-  // Buku Kas & Bank and Saldo Kas & Bank read several resources at once, like the General Ledger.
+  // Every Cash & Bank report reads several resources at once, like the General Ledger.
   const cashBankIds = idList(query.cashBank);
-  const filterBar = report.key !== "cash_bank_layer" ? (
+  const filterBar = (
     <SubjectParams
       lead={<ReportCompany options={scope.options} selectedId={company.id} />}
       slug={slug}
@@ -119,34 +120,27 @@ export default async function Page({
       allPlaceholder={report.subjectRequired ? "Pilih Cash & Bank…" : "Semua Cash & Bank"}
       missingHint="Pilih minimal satu Cash & Bank terlebih dahulu."
       companyId={company.id}
+      dateless={layered}
     />
-  ) : (
-    <>
-      <ReportParams
-        lead={<ReportCompany options={scope.options} selectedId={company.id} />}
-        slug={slug}
-        resources={resources}
-        cashBankId={cashBankId}
-        from={range.from}
-        to={range.to}
-        subjectRequired={report.subjectRequired}
-        subjectLabel="Cash & Bank"
-        allLabel="Semua resource"
-        companyId={company.id}
-        dateless
-      />
-    </>
   );
 
   // ---------------------------------------------------------- rate layers
 
-  if (report.key === "cash_bank_layer") {
-    const data = await layerReport(companyIds, cashBankId);
+  if (layered) {
+    const data = await layerReport(companyIds, cashBankIds);
     return (
       <ReportView
         report={report}
         filter={filterBar}
         runAt={runAt}
+        exportHref={
+          data.blocks.length
+            ? `/finance/report/${slug}/export?${new URLSearchParams({
+                company: String(company.id),
+                cashBank: cashBankIds.join(","),
+              })}`
+            : undefined
+        }
         footnote={
           <>
             Satu transaksi memakai tepat satu layer, sehingga nominalnya
@@ -445,11 +439,6 @@ function isDate(value: string | undefined): value is string {
   );
 }
 
-function positiveInt(value: string | undefined): number | null {
-  const n = Number(value);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
-
 /** `partners=3,17,42` — a set of subjects, in one linkable parameter. */
 function idList(value: string | undefined): number[] {
   if (!value) return [];
@@ -467,8 +456,8 @@ function idList(value: string | undefined): number[] {
  * resource that has since been deactivated still matters. The list marks them,
  * which is what `Combobox` does with `active: false` when the value is chosen.
  */
-async function cashBankOptions(companyId: number) {
-  const rows = await prisma.mCashBank.findMany({
+async function cashBankOptions(companyId: number, foreignOnly = false) {
+  const all = await prisma.mCashBank.findMany({
     where: { company_id: companyId },
     orderBy: [{ cash_bank_label: "asc" }],
     select: {
@@ -479,6 +468,7 @@ async function cashBankOptions(companyId: number) {
       currency: { select: { currency_label: true } },
     },
   });
+  const rows = foreignOnly ? all.filter((r) => !isBaseCurrency(r.currency.currency_label)) : all;
   return rows.map((r) => ({
     id: r.id,
     label: r.cash_bank_label,

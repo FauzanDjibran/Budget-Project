@@ -2,6 +2,8 @@ import { currentActor } from "@/lib/siba/auth";
 import { actorCan } from "@/lib/siba/access";
 import { cashBankBalanceReport, cashBankLedgerReport } from "@/lib/siba/cash-bank";
 import { cashBankBalanceWorkbook } from "@/lib/siba/cash-bank-balance-export";
+import { cashBankLayerWorkbook } from "@/lib/siba/cash-bank-layer-export";
+import { layerReport } from "@/lib/siba/cash-bank-layers";
 import { cashBankLedgerWorkbook } from "@/lib/siba/cash-bank-export";
 import { companyScope } from "@/lib/siba/company-access";
 import { reportBySlug } from "@/lib/siba/reports";
@@ -11,12 +13,12 @@ import { subledgerBalanceReport, subledgerReport } from "@/lib/siba/subledger";
 import { subledgerBalanceWorkbook } from "@/lib/siba/subledger-balance-export";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { subledgerWorkbook } from "@/lib/siba/subledger-export";
-import { formatDate, formatTimestamp } from "@/lib/format";
+import { formatDate, formatTimestamp, todayIso } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Unduh XLSX for Buku Kas & Bank, Saldo Kas & Bank, Buku Subjek and Saldo Buku Subjek — the Finance twin of the
+ * Unduh XLSX for Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek and Saldo Buku Subjek — the Finance twin of the
  * Accounting export route, the same Route Handler exception (CLAUDE.md §12).
  * It reads the page's own parameters through the page's own reader under the
  * page's own permission, so the file is the run on screen. A refusal says
@@ -31,7 +33,7 @@ export async function GET(
   if (
     !report ||
     report.module !== "finance" ||
-    !["cash_bank_ledger", "cash_bank_balance", "subledger", "subledger_balance"].includes(report.key)
+    !["cash_bank_ledger", "cash_bank_balance", "cash_bank_layer", "subledger", "subledger_balance"].includes(report.key)
   ) {
     return new Response("Tidak ditemukan", { status: 404 });
   }
@@ -85,6 +87,16 @@ export async function GET(
   }
 
   const ids = parseIds(query.cashBank);
+
+  if (report.key === "cash_bank_layer") {
+    const data = await layerReport([company.id], ids);
+    const asOf = todayIso();
+    const notes = ["Kurs pada baris total adalah kurs rata-rata layer terbuka — hanya informasi, tidak dipakai untuk menilai apa pun."];
+    const off = data.blocks.filter((b) => !b.reconciles).map((b) => b.label);
+    if (off.length) notes.push(`Jumlah layer terbuka tidak sama dengan saldo buku pada ${off.join(", ")}; perlu diperiksa.`);
+    const file = await cashBankLayerWorkbook({ companyName: company.name, asOf, report: data, footnotes: notes, ...printed });
+    return xlsxResponse(file, `${report.name} ${company.label} ${asOf}.xlsx`);
+  }
 
   if (report.key === "cash_bank_balance") {
     const data = await cashBankBalanceReport(range, [company.id], ids);

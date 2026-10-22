@@ -14,10 +14,8 @@ import type { LayerReport as Report } from "@/lib/siba/cash-bank-layers";
  * a user picks a layer and not a rate: with three layers at 15.000, "the
  * 15.000" names none of them.
  *
- * **Exhausted layers stay on the report.** A layer that has been spent is part
- * of how the account reached the position it is in, and dropping it would leave
- * a report that cannot explain its own closing figure. It is simply never
- * offered as something to spend.
+ * **Only open layers are listed**, each with its own keterangan as stored: a
+ * layer spent or closed by a revaluation holds nothing now (the user's rule).
  *
  * The weighted average at the foot of each block is **reporting only**. It
  * values nothing, it is never an input, and it will generally equal no rate
@@ -94,7 +92,7 @@ export function CashBankLayerReport({ report }: { report: Report }) {
                 <tr>
                   <th style={{ width: 92 }}>Perolehan</th>
                   <th style={{ width: 104 }}>Layer</th>
-                  <th>Asal</th>
+                  <th>Keterangan</th>
                   <th className="num" style={{ width: 110 }}>
                     Kurs
                   </th>
@@ -110,57 +108,37 @@ export function CashBankLayerReport({ report }: { report: Report }) {
                 </tr>
               </thead>
               <tbody>
-                {b.layers.map((l) => {
-                  const spent = l.status !== "Open";
-                  return (
-                    <tr key={l.id} className={spent ? "mut" : undefined}>
-                      <td className="mono mut" style={{ fontSize: "11.5px" }}>
-                        {formatDate(l.date)}
-                      </td>
-                      <td>
-                        <span className="lab">{l.layerNo}</span>
-                      </td>
-                      <td className="pri wrapok">
-                        {l.note ?? "—"}
-                        {spent && (
-                          <span className="rsub">
-                            {l.status === "Exhausted"
-                              ? "habis terpakai"
-                              : "ditutup oleh revaluasi"}
-                          </span>
-                        )}
-                      </td>
-                      <td className="num">{formatRate(l.rate)}</td>
-                      <td className="num">
-                        {formatMoney(l.foreignOriginal, b.currencyLabel)}
-                      </td>
-                      <td className="num">
-                        {l.foreignRemaining ? (
-                          <span className="mny">
-                            {formatMoney(l.foreignRemaining, b.currencyLabel)}
-                          </span>
-                        ) : (
-                          <span className="dash">–</span>
-                        )}
-                      </td>
-                      <td className="num">
-                        {l.baseRemaining ? (
-                          <span className="mny">
-                            {formatMoney(l.baseRemaining, BASE_CURRENCY_LABEL)}
-                          </span>
-                        ) : (
-                          <span className="dash">–</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {b.layers.map((l) => (
+                  <tr key={l.id}>
+                    <td className="mono mut" style={{ fontSize: "11.5px" }}>
+                      {formatDate(l.date)}
+                    </td>
+                    <td>
+                      <span className="lab">{l.layerNo}</span>
+                    </td>
+                    <td className="pri wrapok">{l.note ?? "—"}</td>
+                    <td className="num">{formatRate(l.rate)}</td>
+                    <td className="num">
+                      {formatMoney(l.foreignOriginal, b.currencyLabel)}
+                    </td>
+                    <td className="num">
+                      <span className="mny">
+                        {formatMoney(l.foreignRemaining, b.currencyLabel)}
+                      </span>
+                    </td>
+                    <td className="num">
+                      <span className="mny">
+                        {formatMoney(l.baseRemaining, BASE_CURRENCY_LABEL)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
 
                 {b.layers.length === 0 && (
                   <tr>
                     <td colSpan={7} className="mut" style={{ textAlign: "center" }}>
-                      Resource ini belum memegang currency. Layer terbentuk saat
-                      saldo awal diisi atau saat currency masuk.
+                      Tidak ada layer terbuka — resource ini tidak memegang
+                      currency saat ini.
                     </td>
                   </tr>
                 )}

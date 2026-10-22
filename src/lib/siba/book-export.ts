@@ -70,13 +70,15 @@ export function bookSheet(s: {
   measure: string;
   companyName: string;
   range: PeriodRange;
+  /** Replaces the period line, for a report of a standing position. */
+  period?: string;
   headers: string[];
   widths: number[];
   textCols: number;
   printedBy: string;
   printedAt: string;
 }) {
-  const period = `Untuk periode ${formatDate(s.range.from)} s.d. ${formatDate(s.range.to)}`;
+  const period = s.period ?? `Untuk periode ${formatDate(s.range.from)} s.d. ${formatDate(s.range.to)}`;
   const last = s.headers.length;
 
   const footer = `&L&"${FONT}"&7SIBA 3.0 · dicetak ${esc(s.printedAt)} oleh ${esc(s.printedBy)}&R&"${FONT}"&7Halaman &P dari &N`;

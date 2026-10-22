@@ -363,7 +363,7 @@ describe("the layers of an account are what it holds", () => {
       cashBankId: id, date: today, rate: 15_500, foreign: 300, actorId: actor,
     });
 
-    const report = await layerReport([company], id);
+    const report = await layerReport([company], [id]);
     const block = report.blocks[0];
     assert.equal(block.foreignRemaining, 500);
     assert.equal(block.baseRemaining, 3_000_000 + 4_650_000);
@@ -371,7 +371,7 @@ describe("the layers of an account are what it holds", () => {
     assert.equal(block.currencyLabel, foreignLabel);
   });
 
-  test("an exhausted layer stays on the report, marked", async () => {
+  test("a layer that has run out is not on the report", async () => {
     const id = await makeResource({ currencyId: foreignCurrency });
     const spent = await openLayer(prisma, {
       cashBankId: id, date: today, rate: 15_000, foreign: 100, actorId: actor,
@@ -384,13 +384,18 @@ describe("the layers of an account are what it holds", () => {
       layerId: spent.id, cashBankId: id, foreign: 100, actorId: actor,
     });
 
-    const block = (await layerReport([company], id)).blocks[0];
-    assert.equal(block.layers.length, 2, "a spent layer is part of the history");
-    assert.equal(
-      block.layers.find((l) => l.id === spent.id)!.status,
-      "Exhausted"
-    );
-    assert.equal(block.foreignRemaining, 100, "but it counts towards nothing");
+    const block = (await layerReport([company], [id])).blocks[0];
+    assert.deepEqual(block.layers.map((l) => l.rate), [16_000], "it holds nothing now");
+    assert.equal(block.foreignRemaining, 100);
+  });
+
+  test("several resources are read at once, and only those chosen", async () => {
+    const a = await makeResource({ currencyId: foreignCurrency, opening: 100, rate: 15_000 });
+    const b = await makeResource({ currencyId: foreignCurrency, opening: 200, rate: 15_500 });
+    const c = await makeResource({ currencyId: foreignCurrency, opening: 300, rate: 16_000 });
+    const ids = (await layerReport([company], [a, c])).blocks.map((x) => x.cashBankId);
+    assert.deepEqual(ids.sort(), [a, c].sort());
+    assert.ok((await layerReport([company])).blocks.some((x) => x.cashBankId === b), "none chosen is every resource");
   });
 
   test("a base-currency resource is not a block on this report", async () => {
@@ -412,7 +417,7 @@ describe("the layers of an account are what it holds", () => {
     const id = await makeResource({
       currencyId: foreignCurrency, opening: 1_000, rate: 15_000,
     });
-    assert.ok((await layerReport([company], id)).blocks[0].reconciles);
+    assert.ok((await layerReport([company], [id])).blocks[0].reconciles);
 
     // Move the book without touching the layers — which nothing in the
     // application does, and which is exactly why the check exists.
@@ -434,6 +439,6 @@ describe("the layers of an account are what it holds", () => {
       false,
       "a resource's balance IS the sum of its layers — a gap is a system fault"
     );
-    assert.equal((await layerReport([company], id)).blocks[0].reconciles, false);
+    assert.equal((await layerReport([company], [id])).blocks[0].reconciles, false);
   });
 });

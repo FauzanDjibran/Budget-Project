@@ -544,23 +544,23 @@ export type LayerReport = {
 };
 
 /**
- * Every foreign resource's layers, for the Report View.
+ * The open layers of every foreign resource chosen — all of them where none
+ * is — for the Report View and its export.
  *
- * Exhausted layers are included and marked: a layer that has been spent is part
- * of how the account got where it is, and dropping it would leave a report that
- * cannot explain its own closing figure. They are simply never offered as a
- * choice.
+ * Open layers only: the report states what an account holds now, and a layer
+ * spent or closed by a revaluation holds nothing (the user's rule). How the
+ * account got there is read in the Cash Bank Book.
  *
  * Scoped to the Companies the reader may see, like every other report here.
  */
 export async function layerReport(
   companyIds: number[],
-  cashBankId?: number | null
+  cashBankIds: number[] = []
 ): Promise<LayerReport> {
   const resources = await prisma.mCashBank.findMany({
     where: {
       company_id: { in: companyIds },
-      ...(cashBankId ? { id: cashBankId } : {}),
+      ...(cashBankIds.length ? { id: { in: cashBankIds } } : {}),
     },
     orderBy: [{ company_id: "asc" }, { cash_bank_label: "asc" }],
     select: {
@@ -572,6 +572,7 @@ export async function layerReport(
       currency: { select: { currency_label: true } },
       book_balance: { select: { balance: true, base_balance: true } },
       layers: {
+        where: { status: "Open" },
         orderBy: [{ acquisition_date: "asc" }, { acquisition_seq: "asc" }],
         select: {
           id: true,
@@ -610,9 +611,8 @@ export async function layerReport(
       note: l.note,
     }));
 
-    const open = layers.filter((l) => l.status === "Open");
-    const foreignRemaining = open.reduce((t, l) => t + l.foreignRemaining, 0);
-    const baseRemaining = open.reduce((t, l) => t + l.baseRemaining, 0);
+    const foreignRemaining = layers.reduce((t, l) => t + l.foreignRemaining, 0);
+    const baseRemaining = layers.reduce((t, l) => t + l.baseRemaining, 0);
     const bookBalance = r.book_balance?.balance.toNumber() ?? 0;
     const bookBase = r.book_balance?.base_balance.toNumber() ?? 0;
 
