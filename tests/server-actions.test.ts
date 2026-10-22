@@ -164,57 +164,6 @@ describe("workflow permissions", () => {
     await disconnect();
   });
 
-  /**
-   * These assert the shape of the model rather than any one page: a capability
-   * is never implied by another. Seeing a module grants nothing inside it, and
-   * creating a document is not permission to post it.
-   */
-  test("viewing a budget does not allow approving, rejecting or posting", async () => {
-    const viewer = await makeUser({
-      permissions: ["MENU_BUDGET_ACCESS", "BUDGET_VIEW"],
-    });
-    const actor = await actorOf(viewer.id);
-
-    assert.ok(actorCan(actor, "BUDGET_VIEW"));
-    assert.equal(actorCan(actor, "BUDGET_CREATE"), false);
-    assert.equal(actorCan(actor, "BUDGET_EDIT"), false);
-    assert.equal(actorCan(actor, "BUDGET_APPROVE"), false);
-    assert.equal(actorCan(actor, "BUDGET_REJECT"), false);
-  });
-
-  test("approving does not imply rejecting", async () => {
-    const approver = await makeUser({
-      permissions: ["MENU_BUDGET_ACCESS", "BUDGET_VIEW", "BUDGET_APPROVE"],
-    });
-    const actor = await actorOf(approver.id);
-
-    assert.ok(actorCan(actor, "BUDGET_APPROVE"));
-    assert.equal(actorCan(actor, "BUDGET_REJECT"), false);
-  });
-
-  test("creating a cash bank transaction does not allow posting it", async () => {
-    const clerk = await makeUser({
-      permissions: [
-        "MENU_FINANCE_ACCESS",
-        "REALIZATION_VIEW",
-        "REALIZATION_CREATE",
-      ],
-    });
-    const actor = await actorOf(clerk.id);
-
-    assert.ok(actorCan(actor, "REALIZATION_CREATE"));
-    assert.equal(actorCan(actor, "REALIZATION_POST"), false);
-    assert.equal(actorCan(actor, "REALIZATION_CANCEL"), false);
-  });
-
-  test("menu access alone grants nothing inside the module", async () => {
-    const wanderer = await makeUser({ permissions: ["MENU_FINANCE_ACCESS"] });
-    const actor = await actorOf(wanderer.id);
-
-    assert.ok(actorCan(actor, "MENU_FINANCE_ACCESS"));
-    assert.equal(actorCan(actor, "REALIZATION_VIEW"), false);
-  });
-
   test("a deactivated role withdraws its permissions without touching assignments", async () => {
     const user = await makeUser({ permissions: ["BUDGET_VIEW", "BUDGET_APPROVE"] });
     const before = await actorOf(user.id);

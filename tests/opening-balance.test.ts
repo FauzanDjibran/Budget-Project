@@ -537,23 +537,4 @@ describe("a closing journal names its own date and series", () => {
       /masa depan/
     );
   });
-
-  test("an ordinary posting is still dated today, in the JRN series", async () => {
-    const result = await postJournal(prisma, {
-      companyId: induk,
-      description: "Fixture ordinary journal",
-      lines: [line(indukCash, 1_000, 0), line(indukReceivable, 0, 1_000)],
-      actorId: actor,
-    });
-    assert.match(result.journalNo, /^JRN-\d{4}$/);
-
-    const written = await prisma.accJournal.findUniqueOrThrow({
-      where: { id: result.id },
-      select: { posting_date: true },
-    });
-    assert.equal(
-      written.posting_date?.toISOString().slice(0, 10),
-      new Date().toISOString().slice(0, 10)
-    );
-  });
 });

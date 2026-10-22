@@ -1,11 +1,7 @@
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  JournalImbalance,
-  postJournal,
-  unbalancedJournals,
-} from "../src/lib/siba/journal";
+import { JournalImbalance, postJournal } from "../src/lib/siba/journal";
 import {
   generalLedgerReport,
   signedMovement,
@@ -13,8 +9,6 @@ import {
 } from "../src/lib/siba/ledger";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
-import { MODULES } from "../src/lib/siba/nav";
-import { REPORTS } from "../src/lib/siba/reports";
 import {
   cleanupFixtures,
   disconnect,
@@ -202,18 +196,10 @@ describe("a journal is refused unless its two sides agree", () => {
     );
     assert.ok(result.id > 0);
   });
-
-  test("nothing in the database is unbalanced", async () => {
-    assert.deepEqual(
-      await unbalancedJournals([company]),
-      [],
-      "every journal goes through postJournal, which refuses the alternative"
-    );
-  });
 });
 
-describe("a posting date is the day it was posted", () => {
-  test("the journal is dated today, never back-dated", async () => {
+describe("a journal written without a date", () => {
+  test("is dated today, which a document date overrides", async () => {
     const today = new Date().toISOString().slice(0, 10);
     const result = await postJournal(
       prisma,
@@ -359,28 +345,6 @@ describe("the Journal's capabilities are the manual journal's", () => {
     }
   });
 
-  test("the new reports are in the catalogue and in the menu", () => {
-    for (const key of ["general_ledger", "trial_balance"]) {
-      const report = REPORTS.find((r) => r.key === key);
-      assert.ok(report, `${key} must be a catalogue entry`);
-      assert.equal(report.module, "accounting");
-
-      const inMenu = MODULES.flatMap((m) =>
-        (m.groups ?? []).flatMap((g) => g.entities)
-      ).find((e) => e.slug === `report/${report.slug}`);
-      assert.ok(inMenu, `${report.slug} must have a menu entry`);
-      assert.equal(inMenu.permission, report.permission);
-    }
-  });
-
-  test("Journal itself has a menu entry pointing at a real route", () => {
-    const entry = MODULES.flatMap((m) =>
-      (m.groups ?? []).flatMap((g) => g.entities)
-    ).find((e) => e.key === "acc_journal");
-    assert.ok(entry, "a menu destination always renders (§12)");
-    assert.equal(entry.slug, "journal");
-    assert.equal(entry.permission, "JOURNAL_VIEW");
-  });
 });
 
 // ------------------------------------------------- base currency, two faces

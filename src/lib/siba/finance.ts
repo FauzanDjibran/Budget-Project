@@ -12,6 +12,7 @@ import { InsufficientFunds, cashBankShortfall, recordCashBankEntry } from "./cas
 import {
   LayerNotAvailable,
   drawFromLayer,
+  layerDateRefusal,
   openLayer,
   openLayersFor,
   type LayerOption,
@@ -1290,6 +1291,7 @@ async function resolveValuation(doc: {
   transaction_type: string;
   exchange_rate: { toNumber(): number };
   cash_bank_layer_id: number | null;
+  document_date: Date | null;
   currency: { currency_label: string };
   cash_bank: { currency: { currency_label: string } } | null;
   amounts: number[];
@@ -1366,7 +1368,14 @@ async function resolveValuation(doc: {
   }
   const layer = await prisma.cashBankLayer.findUnique({
     where: { id: doc.cash_bank_layer_id },
-    select: { rate: true, foreign_remaining: true, base_remaining: true, status: true, layer_no: true },
+    select: {
+      rate: true,
+      foreign_remaining: true,
+      base_remaining: true,
+      status: true,
+      layer_no: true,
+      acquisition_date: true,
+    },
   });
   if (!layer || layer.status !== "Open") {
     return {
@@ -1377,6 +1386,10 @@ async function resolveValuation(doc: {
       },
     };
   }
+  const tooNew = doc.document_date
+    ? layerDateRefusal(layer, doc.document_date.toISOString().slice(0, 10))
+    : null;
+  if (tooNew) return { ok: false, errors: { cash_bank_layer_id: tooNew } };
   if (total > layer.foreign_remaining.toNumber()) {
     return {
       ok: false,
@@ -2235,6 +2248,7 @@ async function writeRealizationLines(
         layerId: plan.layerId,
         cashBankId: ctx.cashBankId,
         foreign: line.accountAmount,
+        date: ctx.date,
         actorId: ctx.actorId,
       });
       if (drawn.base !== line.transactionBase) {

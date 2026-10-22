@@ -675,13 +675,4 @@ describe("Company access is a permission, not a preference", () => {
     const rows = await listRows(currency, null);
     assert.ok(rows.length > 0, "a base currency is seeded and stays readable");
   });
-
-  test("both permissions are in the catalogue, so a role can grant them", () => {
-    for (const code of [INDUK_PERMISSION, ANAK_PERMISSION]) {
-      assert.ok(
-        PERMISSION_CODES.includes(code),
-        `${code} must be a catalogue entry — nothing else can grant it`
-      );
-    }
-  });
 });

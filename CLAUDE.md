@@ -1517,6 +1517,19 @@ the rules that follow from it.
     draw on several: a resource with five layers of a million each holds five
     million and still cannot make one payment of one and a half. `checkLines`
     refuses it at draft time and says so.
+122. **A layer pays only for money that left on or after it arrived.** A
+    document may draw on a layer only when its Tanggal Dokumen is on or after
+    the layer's acquisition date — `layerDateRefusal` in `cash-bank-layers.ts`,
+    asked by `drawFromLayer` at Post and dry run on every path, by the Realisasi
+    and Funding valuation, by the Transfer and Pencairan header at save, and
+    narrowed in `KursSelect` (`asOf`). Since a layer only goes down after it
+    opens, it then holds nothing less than nil on any day, at its own kurs, so a
+    foreign account at USD 0 is at Rp 0 on every day. The user's decision
+    (21/10/2026), reversing the earlier permission to draw a later layer: a
+    backdated payment from a newer layer left days holding USD 0 against a
+    negative rupiah. The rule open items already follow (rule 106). A payment
+    dated before a revaluation therefore draws on nothing — every older layer is
+    closed and the collapsed one is dated the revaluation's day (rule 121).
 71. **Layers are never merged, and a layer's rate is immutable.** Two receipts at
     an identical kurs stay two layers, whatever their source or timing — that is
     what makes "the layer from 28 January" name something where "the 15.000" would
@@ -1775,7 +1788,8 @@ rate-layers 2.0).
     when a difference arises.
 121. **It reads the present, and it is final.** Post works on the layers open
     when it runs, whatever its date; a document backdated before a revaluation
-    later sees only the layer it left — the user's rule, accepted. There is no
+    can draw on no layer at all, since the one it left is dated the
+    revaluation's day (rule 122) — the user's rule, accepted. There is no
     reversal: a wrong kurs is corrected by another revaluation, and a closed
     layer is never reopened.
 
@@ -3665,7 +3679,8 @@ below in outline because the half of it that still holds is easy to lose.**
   reversing a close).
 - **Accepted consequence:** rate selection has effect only across layers
   acquired since the last revaluation, plus its one carried layer; a document
-  backdated before a revaluation cannot choose the layers it closed. A Draft
+  backdated before a revaluation cannot choose the layers it closed, nor the
+  one it opened (§10 rule 122). A Draft
   holding a layer a revaluation closed is refused at Post by `drawFromLayer`,
   naming the layer, and is re-pointed by the user. A layer's write is guarded
   on what was read, so a draw and a collapse in different fiscal years cannot
@@ -4100,9 +4115,10 @@ below in outline because the half of it that still holds is easy to lose.**
   from its first entry, under a per-resource advisory lock (`lockCashBanks`,
   taken in id order and after the period and subject-book locks). The refusal
   names the day, or the month, it would break. The two Cash & Bank reports
-  open from the same table. A payment may still draw on a layer acquired
-  after its own date (the user's decision), as long as the account holds the
-  money that day. An open item is held to the same rule from its own entries
+  open from the same table. A payment may not draw on a layer acquired after
+  its own date (§10 rule 122, the user's decision of 21/10/2026, reversing
+  the earlier permission), so a foreign account's rupiah never stands below
+  nil while its currency stands at nil. An open item is held to the same rule from its own entries
   (§10 rule 106). Journal
   numbers run in the order
   journals were written, so `JRN-0102` may be dated before `JRN-0101` —

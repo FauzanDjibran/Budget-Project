@@ -492,7 +492,7 @@ describe("a subledger report reconciles on its own page", () => {
     assert.deepEqual(dates, ["2026-01-01", "2026-01-15", "2026-01-31"]);
   });
 
-  test("the stored running balance agrees with the report's arithmetic", async () => {
+  test("the summed book agrees with its stored balance", async () => {
     const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
       partnerIds: [partner],
       companyIds: [induk],

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { formatDate } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { isBaseCurrency } from "./currency";
@@ -122,6 +123,25 @@ export async function openLayer(db: Db, input: NewLayer) {
   });
 }
 
+/**
+ * A layer cannot pay for money that left before it arrived. Drawn only by a
+ * document dated on or after its acquisition, every layer holds nothing less
+ * than nil on every day, at its own kurs, so an account at nil foreign is at
+ * nil base on every day too. `date` is the document's, `YYYY-MM-DD`.
+ */
+export function layerDateRefusal(
+  layer: { layer_no: string; acquisition_date: Date },
+  date: string
+): string | null {
+  const acquired = layer.acquisition_date.toISOString().slice(0, 10);
+  if (acquired <= date) return null;
+  return (
+    `Layer ${layer.layer_no} baru diperoleh pada ${formatDate(acquired)}, sesudah ` +
+    `Tanggal Dokumen ${formatDate(date)}. Pilih layer yang sudah ada pada tanggal ` +
+    "dokumen, atau majukan tanggalnya."
+  );
+}
+
 export class LayerNotAvailable extends Error {
   constructor(message: string) {
     super(message);
@@ -146,7 +166,7 @@ export class LayerNotAvailable extends Error {
  */
 export async function drawFromLayer(
   db: Db,
-  input: { layerId: number; cashBankId: number; foreign: number; actorId: number }
+  input: { layerId: number; cashBankId: number; foreign: number; date: string; actorId: number }
 ): Promise<{ base: number; rate: number; exhausted: boolean }> {
   const row = await db.cashBankLayer.findUnique({
     where: { id: input.layerId },
@@ -158,6 +178,7 @@ export async function drawFromLayer(
       foreign_remaining: true,
       base_remaining: true,
       layer_no: true,
+      acquisition_date: true,
     },
   });
 
@@ -175,6 +196,9 @@ export async function drawFromLayer(
       `Layer ${row.layer_no} sudah habis dan tidak dapat dipakai lagi.`
     );
   }
+
+  const tooNew = layerDateRefusal(row, input.date);
+  if (tooNew) throw new LayerNotAvailable(tooNew);
 
   const layer: Layer = {
     foreign: row.foreign_remaining.toNumber(),

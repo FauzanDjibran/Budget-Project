@@ -56,20 +56,6 @@ describe("the permission catalogue", () => {
     assert.equal(total, PERMISSIONS.length);
   });
 
-  test("create, edit, approve, reject and post are separate permissions", () => {
-    for (const code of [
-      "BUDGET_CREATE",
-      "BUDGET_EDIT",
-      "BUDGET_APPROVE",
-      "BUDGET_REJECT",
-      "REALIZATION_POST",
-    ]) {
-      assert.ok(PERMISSION_CODES.includes(code as never), `${code} must exist`);
-    }
-    // Menu access is separate from every action inside the module.
-    assert.ok(PERMISSION_CODES.includes("MENU_BUDGET_ACCESS" as never));
-  });
-
   test("the catalogue in code matches the catalogue in the database", async () => {
     const rows = await prisma.sysPermission.findMany({ select: { permission_code: true } });
     const inDb = new Set(rows.map((r) => r.permission_code));

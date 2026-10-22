@@ -7,6 +7,7 @@ import { InsufficientFunds, lockCashBanks, recordCashBankEntry } from "./cash-ba
 import {
   LayerNotAvailable,
   drawFromLayer,
+  layerDateRefusal,
   openLayersFor,
   type LayerOption,
 } from "./cash-bank-layers";
@@ -436,6 +437,8 @@ export type ConversionHeader = {
   cash_bank_layer_id: number | null;
   budget_category_id: number | null;
   partner_id: number | null;
+  /** When given, a layer acquired after it is refused. */
+  document_date?: string | null;
 };
 
 /** A header that passed every rule — the shape the lines are checked against. */
@@ -504,13 +507,23 @@ export async function checkConversionHeader(
   } else {
     const layer = await prisma.cashBankLayer.findUnique({
       where: { id: header.cash_bank_layer_id },
-      select: { cash_bank_id: true, status: true, rate: true, foreign_remaining: true },
+      select: {
+        cash_bank_id: true,
+        status: true,
+        rate: true,
+        foreign_remaining: true,
+        layer_no: true,
+        acquisition_date: true,
+      },
     });
+    const tooNew = layer && header.document_date ? layerDateRefusal(layer, header.document_date) : null;
     if (!layer || layer.cash_bank_id !== header.from_cash_bank_id) {
       errors.cash_bank_layer_id =
         "Layer kurs tersebut bukan milik Cash & Bank sumber yang dipilih.";
     } else if (layer.status !== "Open") {
       errors.cash_bank_layer_id = "Layer kurs tersebut sudah habis dan tidak dapat dipakai lagi.";
+    } else if (tooNew) {
+      errors.cash_bank_layer_id = tooNew;
     } else {
       layerRate = layer.rate.toNumber();
       layerRemaining = layer.foreign_remaining.toNumber();
@@ -959,6 +972,7 @@ export async function applyConversion(
           layerId: doc.cash_bank_layer_id,
           cashBankId: doc.from_cash_bank_id,
           foreign: amount,
+          date,
           actorId,
         });
         sourceRate = drawn.rate;

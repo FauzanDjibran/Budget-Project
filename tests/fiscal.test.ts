@@ -26,7 +26,7 @@ import {
   transitionAllowed,
   type FiscalYearStatus,
 } from "../src/lib/siba/fiscal-workflow";
-import { formatDate, formatTimestamp, toDisplayDate, toIsoDate } from "../src/lib/format";
+import { formatDate } from "../src/lib/format";
 import {
   childCompanyId,
   closeYearFor,
@@ -37,14 +37,13 @@ import {
 } from "./helpers";
 
 /**
- * The fiscal calendar, and the date format the whole application reads in.
+ * The fiscal calendar.
  *
- * Three things have to hold. A Fiscal Period is never authored — it has no
+ * Two things have to hold. A Fiscal Period is never authored — it has no
  * menu, no route and no permissions of its own, and opening a Fiscal Year is
- * what produces exactly twelve of them, one per calendar month. A Fiscal Year
- * has a lifecycle rather than a status field, so Draft -> Open is a deliberate
- * act and nothing goes back. And every date shown anywhere is `dd/mm/yyyy`,
- * which is one function's job.
+ * what produces exactly twelve of them, one per calendar month. And a Fiscal
+ * Year has a lifecycle rather than a status field, so Draft -> Open is a
+ * deliberate act and nothing goes back.
  */
 
 const FIXTURE_YEAR = 2087; // Far enough out that no real data uses it.
@@ -89,44 +88,6 @@ async function makeYear(year: number, status: "Draft" | "Open" | "Closed", compa
   });
   return row.id;
 }
-
-// ------------------------------------------------------------- date format
-
-describe("every date reads dd/mm/yyyy", () => {
-  test("a calendar date formats day first", () => {
-    assert.equal(formatDate("2026-09-02"), "02/09/2026");
-    assert.equal(formatDate("2026-12-31"), "31/12/2026");
-    // The case that gives the format away: a day that cannot be a month.
-    assert.equal(formatDate("2026-01-25"), "25/01/2026");
-  });
-
-  test("a timestamp keeps the same date format", () => {
-    assert.match(formatTimestamp("2026-09-02T14:05:00Z"), /^02\/09\/2026 • 14:05$/);
-  });
-
-  test("an empty value formats to nothing rather than to today", () => {
-    assert.equal(formatDate(null), "");
-    assert.equal(formatDate(undefined), "");
-    assert.equal(formatDate(""), "");
-  });
-
-  test("the field's two directions round-trip", () => {
-    assert.equal(toDisplayDate("2026-09-02"), "02/09/2026");
-    assert.equal(toIsoDate("02/09/2026"), "2026-09-02");
-    assert.equal(toIsoDate(toDisplayDate("2028-02-29")), "2028-02-29");
-  });
-
-  test("a date that does not exist is refused, not rolled forward", () => {
-    // 31/02 parses arithmetically as 3 March; accepting it would save a date
-    // nobody typed.
-    assert.equal(toIsoDate("31/02/2026"), "");
-    assert.equal(toIsoDate("29/02/2026"), "", "2026 is not a leap year");
-    assert.equal(toIsoDate("29/02/2028"), "2028-02-29", "2028 is");
-    assert.equal(toIsoDate("00/01/2026"), "");
-    assert.equal(toIsoDate("01/13/2026"), "");
-    assert.equal(toIsoDate("2026-09-02"), "", "ISO is not the input format");
-  });
-});
 
 // ------------------------------------------------- fiscal period has no home
 

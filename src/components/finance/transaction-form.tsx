@@ -901,6 +901,7 @@ export function TransactionForm({
                                 : null
                             }
                             layers={cashBank?.layers ?? []}
+                            asOf={values.document_date || undefined}
                             currencyLabel={currencyLabel}
                             invalid={Boolean(errors.cash_bank_layer_id)}
                             onChange={(v) =>

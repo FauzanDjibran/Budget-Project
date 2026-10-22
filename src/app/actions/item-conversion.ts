@@ -84,6 +84,7 @@ const headerOf = (values: ConversionValues) => ({
   cash_bank_layer_id: num(values.cash_bank_layer_id),
   budget_category_id: num(values.budget_category_id),
   partner_id: num(values.partner_id),
+  document_date: values.document_date || null,
 });
 
 const asLines = (lines: ConversionLineValues[]): ConversionLineInput[] =>

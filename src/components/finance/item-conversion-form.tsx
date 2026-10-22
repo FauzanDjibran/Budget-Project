@@ -473,6 +473,7 @@ export function ItemConversionForm({
                       <KursSelect
                         value={values.cash_bank_layer_id ? Number(values.cash_bank_layer_id) : null}
                         layers={source.layers}
+                        asOf={values.document_date || undefined}
                         currencyLabel={currencyLabel}
                         invalid={Boolean(errors.cash_bank_layer_id)}
                         onChange={(v) => set("cash_bank_layer_id", v ? String(v) : "")}

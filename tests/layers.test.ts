@@ -227,6 +227,7 @@ describe("a layer is drawn down, and its rate does not move", () => {
     });
 
     const drawn = await drawFromLayer(prisma, {
+      date: today,
       layerId: layer.id, cashBankId: id, foreign: 100, actorId: actor,
     });
     assert.equal(drawn.base, 1_550_000);
@@ -262,6 +263,7 @@ describe("a layer is drawn down, and its rate does not move", () => {
     for (let i = 0; i < 3; i += 1) {
       released += (
         await drawFromLayer(prisma, {
+          date: today,
           layerId: layer.id, cashBankId: id, foreign: 1, actorId: actor,
         })
       ).base;
@@ -284,6 +286,7 @@ describe("a layer is drawn down, and its rate does not move", () => {
     await assert.rejects(
       () =>
         drawFromLayer(prisma, {
+          date: today,
           layerId: layer.id, cashBankId: id, foreign: 201, actorId: actor,
         }),
       LayerNotAvailable
@@ -302,6 +305,7 @@ describe("a layer is drawn down, and its rate does not move", () => {
       cashBankId: id, date: today, rate: 15_000, foreign: 100, actorId: actor,
     });
     await drawFromLayer(prisma, {
+      date: today,
       layerId: layer.id, cashBankId: id, foreign: 100, actorId: actor,
     });
 
@@ -309,6 +313,7 @@ describe("a layer is drawn down, and its rate does not move", () => {
     await assert.rejects(
       () =>
         drawFromLayer(prisma, {
+          date: today,
           layerId: layer.id, cashBankId: id, foreign: 1, actorId: actor,
         }),
       /sudah habis/
@@ -326,6 +331,7 @@ describe("a layer is drawn down, and its rate does not move", () => {
     await assert.rejects(
       () =>
         drawFromLayer(prisma, {
+          date: today,
           layerId: layer.id, cashBankId: mine, foreign: 100, actorId: actor,
         }),
       /bukan milik Cash & Bank/
@@ -337,6 +343,7 @@ describe("a layer is drawn down, and its rate does not move", () => {
     await assert.rejects(
       () =>
         drawFromLayer(prisma, {
+          date: today,
           layerId: -1, cashBankId: id, foreign: 1, actorId: actor,
         }),
       LayerNotAvailable
@@ -373,6 +380,7 @@ describe("the layers of an account are what it holds", () => {
       cashBankId: id, date: today, rate: 16_000, foreign: 100, actorId: actor,
     });
     await drawFromLayer(prisma, {
+      date: today,
       layerId: spent.id, cashBankId: id, foreign: 100, actorId: actor,
     });
 

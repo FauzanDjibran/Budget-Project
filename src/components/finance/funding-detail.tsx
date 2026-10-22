@@ -405,6 +405,7 @@ export function FundingDetail({
                   <KursSelect
                     value={layerId}
                     layers={resource?.layers ?? []}
+                    asOf={doc?.document_date?.slice(0, 10)}
                     currencyLabel={currencyLabel}
                     onChange={(v) => {
                       setLayerId(v);

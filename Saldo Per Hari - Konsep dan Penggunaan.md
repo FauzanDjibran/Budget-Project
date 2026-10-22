@@ -75,8 +75,62 @@ Untuk open item:
 
 - Dokumen tetap tidak boleh bertanggal **setelah hari ini**, dan harus berada dalam tahun buku yang masih Open untuk setiap Company yang ditulisinya.
 - Strip saldo di atas line (**Saldo Saat Ini · Total Digunakan · Sisa/Kekurangan**) tetap menunjukkan saldo **saat ini**. Untuk dokumen backdate, Sisa bisa terlihat cukup padahal hari yang lebih lama kurang. Penentunya adalah pesan di konfirmasi Post.
-- Rekening valas: pembayaran **boleh** memakai layer kurs yang diperoleh sesudah tanggal dokumennya, selama rekening punya cukup uang pada hari itu.
+- Rekening valas: pembayaran **tidak boleh** memakai layer kurs yang diperoleh sesudah tanggal dokumennya (lihat §2.5).
 - Selisih kurs dinilai saat Post, bukan menurut tanggal dokumen (keputusan "opsi B").
+
+### 2.5 Rekening valas (USD) dan layer kurs
+
+Sejak 21/10/2026 ada satu aturan tambahan untuk rekening valas:
+
+> **Layer kurs hanya boleh dipakai dokumen yang bertanggal sama dengan atau sesudah tanggal layer itu diperoleh.**
+
+Sama seperti open item yang tidak bisa dilunasi sebelum dibuka. Jadi pada rekening valas ada dua pengecekan:
+
+| Pengecekan | Yang dicek | Kapan |
+| --- | --- | --- |
+| **Tanggal layer** | Layer yang dipilih sudah ada pada Tanggal Dokumen | Saat simpan draft, di konfirmasi Post, dan saat Post |
+| **Sisa layer** | Sisa layer yang dipilih cukup untuk dokumen | Saat simpan draft dan saat Post |
+
+Pilih Layer Kurs juga **hanya menawarkan layer yang sudah ada pada Tanggal Dokumen**. Bila tanggal dokumen dimundurkan sesudah layer dipilih, layer yang terlalu baru tetap tampil di field tetapi ditolak dengan namanya.
+
+**Contoh (kasus 03 Jan versi USD):**
+
+| Tanggal | Mutasi | Layer | Saldo USD |
+| --- | --- | --- | --- |
+| 01/01 | Masuk USD 100 @ 15.000 | membuka **Layer A** (100) | 100 |
+| 05/01 | Keluar USD 80 dari Layer A | A tinggal 20 | 20 |
+| 20/01 | Masuk USD 200 @ 17.000 | membuka **Layer B** (200) | 220 |
+
+- Pembayaran **bertanggal 03/01 dari Layer B** → **ditolak**, berapa pun nominalnya:
+  > Layer CBLY-… baru diperoleh pada 20/01/2020, sesudah Tanggal Dokumen 03/01/2020. Pilih layer yang sudah ada pada tanggal dokumen, atau majukan tanggalnya.
+- **USD 50 bertanggal 03/01 dari Layer A** → ditolak, karena Layer A tinggal 20.
+- **USD 20 bertanggal 03/01 dari Layer A** → lolos. Layer A habis.
+- **USD 50 bertanggal 20/01 dari Layer B** → lolos. Layer boleh dipakai pada hari ia diperoleh.
+
+#### Mengapa: USD 0 harus berarti Rp 0
+
+Sebelum aturan ini, pembayaran USD 20 bertanggal 03/01 dari Layer B lolos. Akibatnya, dari 05/01 sampai 19/01:
+
+- USD: 100 − 80 − 20 = **0**
+- IDR: 1.500.000 − 1.200.000 − 340.000 (USD 20 × 17.000 dari Layer B) = **−40.000**
+
+Rekening tanpa dolar tercatat bernilai minus Rp 40.000, karena dolar yang keluar dinilai dengan kurs Layer B yang belum ada di rekening. Dengan aturan baru, sebuah layer tidak pernah minus pada hari mana pun. Sesudah dibuka, layer hanya berkurang, dan layer yang habis mengembalikan nilai IDR-nya persis. Jadi bila USD rekening 0 pada suatu hari, nilai IDR-nya juga 0.
+
+Akibatnya, rantai bulan pada rekening valas sekarang jarang menjadi penolak: sisa layer biasanya sudah menolak lebih dulu. Rantai bulan tetap dijalankan sebagai pengaman.
+
+#### Layer dan open item sekarang sama
+
+| | Open item (buku subjek) | Layer kurs (Cash & Bank valas) |
+| --- | --- | --- |
+| Boleh dipakai sebelum tanggal ia dibuka? | **Tidak** | **Tidak** |
+| Yang memilih | User | User |
+| Dinilai pada kurs | Kurs item itu sendiri | Kurs layer itu sendiri |
+
+#### Revaluasi Kurs
+
+Revaluasi menutup semua layer lama dan membuka satu layer baru bertanggal hari revaluasi. Akibatnya, **sesudah revaluasi, rekening itu tidak bisa lagi membayar dokumen yang bertanggal sebelum revaluasi.** Layer lama sudah ditutup, dan layer baru tanggalnya lebih baru. Dokumen seperti itu harus di-Post sebelum revaluasi dibuat, atau tanggal revaluasinya dibuat lebih awal.
+
+Laporan **Posisi Layer Kurs** tetap menampilkan sisa layer **saat ini**, bukan per tanggal.
 
 ## 3. Cara kerjanya (untuk developer)
 
@@ -102,6 +156,8 @@ Biayanya: satu bulan entri dan satu agregat, **tidak pernah** membaca buku dari 
 
 **Lock**: `lockCashBanks` mengambil advisory lock per rekening, **urut id**, supaya transfer A→B dan B→A yang di-Post bersamaan tidak saling menunggu. Urutan lock dalam satu posting: periode fiskal → posisi buku subjek → Cash & Bank.
 
+**Rekening valas**: rantai dicek pada `movement` (USD), sama seperti rekening IDR. `drawFromLayer` di `cash-bank-layers.ts` mengecek sisa layer saat Post (`foreign_remaining`, dijaga dengan update bersyarat) dan tanggalnya lewat `layerDateRefusal`: layer yang diperoleh sesudah Tanggal Dokumen ditolak. Aturan yang sama ditanyakan oleh valuasi Realisasi dan Funding, header Transfer dan Pencairan saat simpan, dan `KursSelect` (`asOf`) hanya menawarkan layer yang sudah ada. Keduanya jalan di transaksi yang sama, jadi bila salah satu menolak, draw layer ikut di-rollback. Dites di `tests/cash-bank.test.ts` › *a foreign resource*.
+
 **Preview**: `cashBankShortfall` menjalankan pengecekan yang sama tanpa lock dan tanpa menulis. Konfirmasi Post Realisasi dan Funding memakainya. Transfer, Pencairan Open Item dan Penyesuaian menjalankan posting aslinya lalu rollback (dry run), jadi otomatis kena pengecekan yang sama. Preview hanya peringatan dini: posting lain di antara preview dan Post tetap bisa membuat Post ditolak.
 
 ### 3.2 Open item: `itemLowestFrom`
@@ -125,12 +181,14 @@ Tidak ada `rebuildCashBankPeriods`, dan itu disengaja: cek 19 sudah menjadi peng
 ## 5. Bukti yang sudah dijalankan (20/10/2026)
 
 - `npm test`: 1030 lolos, termasuk kasus 03 Jan, kasus Februari, rantai yang memanjang ke belakang, uang masuk backdate, dua transfer bersilang yang di-Post bersamaan, item yang dilunasi sebelum dibuka, dan preview Realisasi / Transfer / Pencairan yang menolak kekurangan backdate.
+- Kasus 03 Jan versi USD (§2.5, 21/10/2026): pembayaran 03/01 dari Layer B ditolak oleh tanggal layer dan draw-nya di-rollback, USD 50 dari Layer A ditolak oleh sisa layer, USD 20 dari Layer A lolos, IDR rekening 05–19/01 = 0, dan Layer B boleh dipakai pada 20/01. `npm test` 1022/1022 lolos.
 - `db:reconcile` 19/19 di lokal (setelah reset + showcase setahun) dan di Neon. Data showcase setahun di-Post urut tanggal lewat engine asli tanpa satu pun penolakan.
 - Cek 19 dibuktikan dengan enam kesalahan yang sengaja ditanam di dalam transaksi yang di-rollback. Semuanya tertangkap.
 - Browser: konfirmasi Post RBK-0008 yang kekurangan saldo menampilkan penolakan di dialog, dan tombol **Ya, Post** tidak bisa ditekan.
 
 ## 6. Batasan yang diterima
 
+- **Sesudah Revaluasi Kurs**, rekening itu tidak bisa membayar dokumen bertanggal sebelum revaluasi (§2.5).
 - **Strip saldo** menunjukkan saldo hari ini, bukan saldo per tanggal dokumen (§2.4).
 - **Preview tanpa lock** bisa lolos lalu Post ditolak, jika ada posting lain di antaranya.
 - **Neon belum berisi dokumen ter-Post**, jadi di sana cek 19 baru membuktikan entri saldo awal.

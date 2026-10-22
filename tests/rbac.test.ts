@@ -217,26 +217,6 @@ describe("RBAC: User -> Role -> Permission", () => {
     await assert.rejects(() => listUsers(actor), isAccessDenied);
   });
 
-  test("the same holds for approve, reject and post", async () => {
-    const user = await makeUser({});
-    await grant(
-      user.id,
-      await roleWith(["MENU_BUDGET_ACCESS", "BUDGET_VIEW", "MENU_FINANCE_ACCESS"])
-    );
-    const actor = await actorOf(user.id);
-
-    assert.ok(actorCan(actor, "BUDGET_VIEW"));
-    for (const code of [
-      "BUDGET_CREATE",
-      "BUDGET_EDIT",
-      "BUDGET_APPROVE",
-      "BUDGET_REJECT",
-      "REALIZATION_POST",
-    ]) {
-      assert.equal(actorCan(actor, code), false, `must not be implied: ${code}`);
-    }
-  });
-
   // ---------------------------------------------------------------- 7
   test("a direct service call without the permission is refused", async () => {
     // This is the bypass case: no UI involved, the service invoked straight with

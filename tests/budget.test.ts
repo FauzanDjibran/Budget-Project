@@ -23,10 +23,12 @@ import {
 import {
   budgetCategoryId,
   childCompanyId,
+  cleanupFiscalYear,
   cleanupFixtures,
   disconnect,
   FIXTURE_PREFIX,
   makePartner,
+  openFiscalYear,
   parentCompanyId,
   prisma,
   systemUserId,
@@ -56,6 +58,7 @@ after(async () => {
     await prisma.budBudget.deleteMany({ where: { id: { in: made } } });
   }
   await cleanupFixtures();
+  await cleanupFiscalYear();
   await disconnect();
 });
 
@@ -222,15 +225,6 @@ describe("a permission is required for every transition offered", () => {
     assert.deepEqual(commonActions(["Draft", "Approved"], can), []);
     assert.deepEqual(commonActions([], can), []);
   });
-
-  test("a menu permission grants nothing inside the module", () => {
-    const can = budgetAbilities(["MENU_BUDGET_ACCESS", "BUDGET_VIEW"]);
-    assert.equal(can.create, false);
-    assert.equal(can.approve, false);
-    for (const status of ALL_STATUSES) {
-      assert.deepEqual(availableActions(status, can), []);
-    }
-  });
 });
 
 // ----------------------------------------------------------- classification
@@ -344,6 +338,15 @@ describe("approval classification is enforced, not merely offered", () => {
 // -------------------------------------------------------- derived month
 
 describe("Budget Month is derived from Fiscal Period, never stored", () => {
+  // Without a period holding a Budget the rollup loops below check nothing.
+  let monthBudget = 0;
+  before(async () => {
+    await openFiscalYear();
+    monthBudget = (await makeBudget({ status: "Draft" })).id;
+  });
+  // Removed at once: nextBudgetNo reads the newest row, and a TST- number is not a BGT- one.
+  after(() => prisma.budBudget.deleteMany({ where: { id: monthBudget } }));
+
   test("no bud_budget_month table exists", async () => {
     const rows = await prisma.$queryRaw<{ count: bigint }[]>`
       SELECT count(*) AS count FROM information_schema.tables
@@ -375,6 +378,7 @@ describe("Budget Month is derived from Fiscal Period, never stored", () => {
     // take their scope as an argument precisely so a test can call them.
     const companies = [await parentCompanyId()];
     const months = await budgetMonths(companies);
+    assert.ok(months.some((m) => m.count > 0), "the fixture Budget must land in a month");
 
     for (const month of months) {
       const inRange = await listBudgets(

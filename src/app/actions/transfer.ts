@@ -101,6 +101,7 @@ const headerOf = (values: TransferValues) => ({
   from_cash_bank_id: num(values.from_cash_bank_id),
   currency_id: num(values.currency_id),
   cash_bank_layer_id: num(values.cash_bank_layer_id),
+  document_date: values.document_date || null,
 });
 
 const asLines = (lines: TransferLineValues[]): TransferLineInput[] =>

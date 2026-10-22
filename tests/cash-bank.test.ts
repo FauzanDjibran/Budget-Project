@@ -10,6 +10,7 @@ import {
   rebuildCashBankBalance,
   recordCashBankEntry,
 } from "../src/lib/siba/cash-bank";
+import { drawFromLayer, openLayer } from "../src/lib/siba/cash-bank-layers";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {
   FIXTURE_PREFIX,
@@ -76,6 +77,7 @@ after(async () => {
     await prisma.cashBankLedger.deleteMany({ where: { cash_bank_id: { in: made } } });
     await prisma.cashBankBalance.deleteMany({ where: { cash_bank_id: { in: made } } });
     await prisma.cashBankPeriod.deleteMany({ where: { cash_bank_id: { in: made } } });
+    await prisma.cashBankLayer.deleteMany({ where: { cash_bank_id: { in: made } } });
     await prisma.mCashBank.deleteMany({ where: { id: { in: made } } });
   }
   await cleanupFixtures();
@@ -201,7 +203,7 @@ describe("the balance never disagrees with the ledger", () => {
     assert.equal(stored.balance.toNumber(), 2_000_000);
   });
 
-  test("an amount is stored positive whichever way the money went", async () => {
+  test("an entry is one signed figure per measure, the sign its direction", async () => {
     // Opened with enough to cover the movement: a resource may no longer be
     // driven below zero, so a payment out of an empty book is refused before
     // it can demonstrate anything about signs.
@@ -615,5 +617,109 @@ describe("a backdated movement is checked on every day from its date on", () => 
     assert.equal(earlier?.opening, 0);
     const summary = await cashBankBalanceReport({ from: "2020-02-10", to: "2020-02-28" }, [company], id);
     assert.equal(summary.groups[0]?.rows[0]?.opening, 600);
+  });
+});
+
+describe("a foreign resource: the month chain checks the account, the layer only its own remainder", () => {
+  // The chain is kept in the resource's own currency, so a USD account is
+  // checked in USD. A layer carries no per-day check: it may be drawn by a
+  // payment dated before it was acquired, as long as the account held the
+  // dollars that day (CLAUDE.md §12, "A document may be backdated").
+  async function usdResource(): Promise<number> {
+    const usd = (
+      await prisma.refCurrency.upsert({
+        where: { currency_code: `test.${FIXTURE_PREFIX}CBPU` },
+        update: { status: "Active" },
+        create: {
+          currency_code: `test.${FIXTURE_PREFIX}CBPU`,
+          currency_label: `${FIXTURE_PREFIX}CBPU`,
+          currency_name: "Fixture USD",
+          created_by: actor,
+        },
+        select: { id: true },
+      })
+    ).id;
+    const account = await makeAccount({ companyId: company, subcategoryLabel: CASH_BANK_SUBCATEGORY });
+    const key = `${FIXTURE_PREFIX}CBU${made.length + 1}${Date.now() % 100000}`;
+    const row = await prisma.mCashBank.create({
+      data: {
+        cash_bank_code: `test.${key}`,
+        cash_bank_label: key,
+        cash_bank_name: `Fixture ${key}`,
+        company_id: company,
+        cash_bank_type: "Bank",
+        currency_id: usd,
+        account_id: account,
+        created_by: actor,
+      },
+      select: { id: true },
+    });
+    await openCashBankBook(prisma, { cashBankId: row.id, openingBalance: 0, rate: 1, date: today, actorId: actor });
+    made.push(row.id);
+    return row.id;
+  }
+  /** Money in: a new layer and its book entry, as a posting writes them. */
+  const receive = (id: number, date: string, foreign: number, rate: number) =>
+    prisma.$transaction(async (tx) => {
+      const layer = await openLayer(tx, { cashBankId: id, date, rate, foreign, actorId: actor });
+      await recordCashBankEntry(tx, {
+        cashBankId: id, date, type: "Transaction", direction: "In", amount: foreign, rate,
+        baseAmount: layer.base_original.toNumber(), actorId: actor,
+      });
+      return layer.id;
+    });
+  /** Money out of one chosen layer, at that layer's kurs. */
+  const pay = (id: number, layerId: number, date: string, foreign: number) =>
+    prisma.$transaction(async (tx) => {
+      const drawn = await drawFromLayer(tx, { layerId, cashBankId: id, foreign, date, actorId: actor });
+      await recordCashBankEntry(tx, {
+        cashBankId: id, date, type: "Transaction", direction: "Out", amount: foreign, rate: drawn.rate,
+        baseAmount: drawn.base, actorId: actor,
+      });
+    });
+  const remaining = async (layerId: number) =>
+    (await prisma.cashBankLayer.findUniqueOrThrow({ where: { id: layerId } })).foreign_remaining.toNumber();
+
+  test("the 03 Jan case in USD: a layer acquired later cannot pay for an earlier day", async () => {
+    const id = await usdResource();
+    const a = await receive(id, "2020-01-01", 100, 15_000);
+    await pay(id, a, "2020-01-05", 80);
+    const b = await receive(id, "2020-01-20", 200, 17_000);
+
+    // Layer B did not exist on 03/01, however much it holds now: drawing it
+    // would release 17.000 rupiah per dollar the account never held that day.
+    await assert.rejects(() => pay(id, b, "2020-01-03", 20), /baru diperoleh pada 20\/01\/2020/);
+    assert.equal(await remaining(b), 200, "the refused draw rolled back with the posting");
+
+    // Layer A existed, but holds only USD 20 — so every layer, and with it the
+    // account, stays at or above nothing on every day.
+    await assert.rejects(() => pay(id, a, "2020-01-03", 50), /hanya menyisakan 20/);
+    assert.equal(await remaining(a), 20);
+
+    // USD 20 from layer A covers every day.
+    await pay(id, a, "2020-01-03", 20);
+    assert.equal(await remaining(a), 0);
+
+    // From 05/01 to 19/01 the account holds USD 0, and so Rp 0: A was drawn to
+    // nothing, and a layer drawn to nothing hands back exactly the base it held.
+    const upTo19 = await prisma.cashBankLedger.aggregate({
+      where: { cash_bank_id: id, entry_date: { lte: new Date("2020-01-19") } },
+      _sum: { movement: true, base_movement: true },
+    });
+    assert.equal(upTo19._sum.movement?.toNumber(), 0);
+    assert.equal(upTo19._sum.base_movement?.toNumber(), 0);
+
+    // A layer may still be drawn on its own acquisition day.
+    await pay(id, b, "2020-01-20", 50);
+    assert.equal(await remaining(b), 150);
+  });
+
+  test("a layer cannot pay more than it holds, however much the account holds", async () => {
+    const id = await usdResource();
+    const a = await receive(id, "2020-01-01", 100, 15_000);
+    await pay(id, a, "2020-01-05", 80);
+    await receive(id, "2020-01-20", 200, 17_000);
+    // The account holds USD 220 on 25/01; layer A holds 20.
+    await assert.rejects(() => pay(id, a, "2020-01-25", 30), /hanya menyisakan 20/);
   });
 });

@@ -38,6 +38,7 @@ export function KursSelect({
   currencyLabel,
   invalid,
   disabled,
+  asOf,
   onChange,
 }: {
   value: number | null;
@@ -45,6 +46,8 @@ export function KursSelect({
   currencyLabel: string;
   invalid?: boolean;
   disabled?: boolean;
+  /** The document's date: a layer acquired after it is not offered. */
+  asOf?: string;
   onChange: (value: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -58,7 +61,10 @@ export function KursSelect({
     );
   }
 
+  // The one already chosen stays readable after the date moves before it;
+  // the server refuses it by name.
   const selected = layers.find((l) => l.id === value) ?? null;
+  const offered = asOf ? layers.filter((l) => l.date <= asOf) : layers;
 
   return (
     <>
@@ -121,7 +127,14 @@ export function KursSelect({
               </tr>
             </thead>
             <tbody>
-              {layers.map((l) => (
+              {!offered.length && (
+                <tr>
+                  <td colSpan={4} className="mut">
+                    Belum ada layer kurs pada {formatDate(asOf!)}.
+                  </td>
+                </tr>
+              )}
+              {offered.map((l) => (
                 <tr
                   key={l.id}
                   className={l.id === value ? "on" : ""}

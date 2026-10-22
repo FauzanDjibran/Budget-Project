@@ -508,7 +508,7 @@ describe("the preview is the journal", () => {
   });
 
   // The cash opens today and the item on the 1st, so on the 2nd only the cash falls short.
-  test("a backdated sale the source could not cover that day is refused in its preview", { skip: today.slice(5) <= "01-02" }, async () => {
+  test("a backdated sale before its layer was acquired is refused in its preview", { skip: today.slice(5) <= "01-02" }, async () => {
     const year = today.slice(0, 4);
     const partnerId = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
     const itemId = await makeItem(titipan, partnerId, 300_000, 17150, `${year}-01-01`);
@@ -523,7 +523,7 @@ describe("the preview is the journal", () => {
     });
     const preview = await previewConversion(id);
     assert.equal(preview.ok, false);
-    assert.match(String(!preview.ok && preview.errors._form), /tidak mencukupi pada 02\/01/);
+    assert.match(String(!preview.ok && preview.errors._form), /baru diperoleh pada/);
     assert.equal(num((await layerOf(usdBank)).foreign_remaining), 500_000, "the preview wrote nothing");
   });
 });

@@ -373,7 +373,7 @@ describe("it reads the present", () => {
     assert.ok((await applyRevaluation(id, actor)).ok);
     await assert.rejects(
       prisma.$transaction((tx) =>
-        drawFromLayer(tx, { layerId: old.id, cashBankId: bank.id, foreign: 10, actorId: actor })
+        drawFromLayer(tx, { date: today, layerId: old.id, cashBankId: bank.id, foreign: 10, actorId: actor })
       ),
       LayerNotAvailable
     );

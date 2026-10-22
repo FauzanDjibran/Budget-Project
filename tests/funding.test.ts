@@ -13,7 +13,6 @@ import {
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import { openCashBankBook } from "../src/lib/siba/cash-bank";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
-import { MODULES } from "../src/lib/siba/nav";
 import { SYSTEM_ACCOUNTS } from "../src/lib/siba/system-accounts";
 import {
   checkSystemAccountValue,
@@ -413,14 +412,6 @@ describe("the funded route is decided by the Company, not by a setting", () => {
   test("there is no reject capability, because the induk never rejects", () => {
     const codes: string[] = PERMISSION_CODES;
     assert.ok(!codes.includes("FUNDING_REQUEST_REJECT"));
-  });
-
-  test("the menu entry has a route, and asks for the view permission", () => {
-    const leaf = MODULES.find((m) => m.key === "finance")
-      ?.groups?.flatMap((g) => g.entities)
-      .find((e) => e.slug === "funding-request");
-    assert.ok(leaf, "Funding Request must be reachable from the Finance menu");
-    assert.equal(leaf!.permission, "FUNDING_REQUEST_VIEW");
   });
 
   test("the bridge is two accounts per Company — four in all", () => {

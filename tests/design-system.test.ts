@@ -1237,11 +1237,18 @@ describe("reports sit together, and open and close the same way", () => {
 });
 
 describe("the shell and the breadcrumb", () => {
-  test("a breadcrumb's module segment is text, not a link to the dashboard", () => {
-    const bad = files.filter((f) =>
-      /className="crumb"[\s\S]{0,200}?href="\/dashboard"/.test(code(f.text))
-    );
-    assert.deepEqual(bad.map((f) => f.rel), [], "A module has no page of its own; `/dashboard` is not it.");
+  test("a breadcrumb's module segment is never a link", () => {
+    // A module has no page of its own (§8), so the first segment is plain text.
+    // Four Finance documents had linked it to their own register, which made
+    // "Finance" and "Cash Bank Transaction" two links to the same page.
+    const bad = files.filter((f) => {
+      const c = code(f.text);
+      return (
+        /className="crumb">\s*<Link\b/.test(c) ||
+        /className="crumb"[\s\S]{0,200}?href="\/dashboard"/.test(c)
+      );
+    });
+    assert.deepEqual(bad.map((f) => f.rel), [], "Render the module as <span>, not <Link> — `/dashboard` is not its page either.");
   });
 
   test("the shell renders the burger and the scrim the narrow layout expects", () => {
@@ -1455,16 +1462,6 @@ describe("a Journal and General Ledger figure reads the accountant's way", () =>
       );
     }
   });
-});
-
-test("a breadcrumb's module segment is never a link", () => {
-  // A module has no page of its own (§8), so the first segment is plain text.
-  // Four Finance documents had linked it to their own register, which made
-  // "Finance" and "Cash Bank Transaction" two links to the same page.
-  const bad = files.filter((f) =>
-    /className="crumb">\s*<Link\b/.test(code(f.text))
-  );
-  assert.deepEqual(bad.map((f) => f.rel), [], "Render the module as <span>, not <Link>.");
 });
 
 describe("a document screen has one shape", () => {
