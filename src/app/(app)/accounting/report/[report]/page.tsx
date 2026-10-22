@@ -23,12 +23,11 @@ import { Icon } from "@/components/icon";
 import {
   carriedYearsBefore,
   reportableFiscalYears,
-  type ReportableFiscalYear,
 } from "@/lib/siba/fiscal";
 import {
   balanceSheetReport,
   profitLossReport,
-  resolveColumn,
+  resolveStatementRun,
   trialBalanceStatement,
   type StatementColumn,
 } from "@/lib/siba/statements";
@@ -336,17 +335,12 @@ async function statementPage(
     );
   }
 
-  // The Neraca is a position at the end of the period, so it has no mode: its
-  // column runs from the year's first day, which is where the profit it carries
-  // in equity is split.
   const neraca = report.key === "balance_sheet";
-  const mode: StatementMode = !neraca && query.mode === "mtd" ? "mtd" : "ytd";
-  const fallback = defaultPeriod(years);
-  const main =
-    resolveColumn(years, toId(query.year), toId(query.period), mode) ??
-    resolveColumn(years, fallback.yearId, fallback.periodId, mode)!;
-  const compare = resolveColumn(years, toId(query.cmpYear), toId(query.cmpPeriod), mode);
+  const { mode, main, compare } = resolveStatementRun(years, query, neraca);
   const columns = compare ? [main, compare] : [main];
+  // The export reads the run on screen — resolved, so a statement opened on its
+  // default period exports that period too — never the filter's unsaved edits.
+  const exportHref = statementExportHref(slug, companyId, mode, main, compare);
 
   // The earlier years this Company has not closed yet. The books are running
   // as an extension of them, and the report says so rather than leaving a
@@ -413,6 +407,7 @@ async function statementPage(
         report={report}
         filter={filter}
         runAt={runAt}
+        exportHref={exportHref}
         title={
           <StatementTitle
             name={report.name}
@@ -477,6 +472,7 @@ async function statementPage(
       report={report}
       filter={filter}
       runAt={runAt}
+      exportHref={exportHref}
       title={
         <StatementTitle
           name={report.name}
@@ -550,19 +546,22 @@ function UnplacedNotice({ names }: { names: string[] }) {
   );
 }
 
-/** The Open year holding today, and its period holding today; else the newest. */
-function defaultPeriod(years: ReportableFiscalYear[]): { yearId: number; periodId: number | null } {
-  const today = new Date().toISOString().slice(0, 10);
-  const year =
-    years.find((y) => y.status === "Open" && y.startDate <= today && today <= y.endDate) ??
-    years[0];
-  const period =
-    year.periods.find((p) => p.startDate <= today && today <= p.endDate) ??
-    year.periods[year.periods.length - 1];
-  return { yearId: year.id, periodId: period?.id ?? null };
-}
-
-function toId(raw?: string): number | null {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : null;
+function statementExportHref(
+  slug: string,
+  companyId: number,
+  mode: StatementMode,
+  main: StatementColumn,
+  compare: StatementColumn | null
+): string {
+  const q = new URLSearchParams({
+    company: String(companyId),
+    year: String(main.yearId),
+    period: String(main.periodId),
+    mode,
+  });
+  if (compare) {
+    q.set("cmpYear", String(compare.yearId));
+    q.set("cmpPeriod", String(compare.periodId));
+  }
+  return `/accounting/report/${slug}/export?${q}`;
 }

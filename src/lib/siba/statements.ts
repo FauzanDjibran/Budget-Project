@@ -67,6 +67,54 @@ export function resolveColumn(
   };
 }
 
+/** What a statement's URL asks for: a year and period, a mode, and a comparison. */
+export type StatementQuery = {
+  year?: string;
+  period?: string;
+  mode?: string;
+  cmpYear?: string;
+  cmpPeriod?: string;
+};
+
+/**
+ * The columns a statement's URL resolves to — read by the page and by its
+ * export alike, so the file is always the run on screen.
+ *
+ * With nothing chosen it opens on the period containing today, in the Open
+ * year that holds it, and falls back to the newest period that exists. The
+ * Neraca has no mode: its column runs from the year's first day, which is
+ * where the profit it carries in equity is split.
+ */
+export function resolveStatementRun(
+  years: ReportableFiscalYear[],
+  query: StatementQuery,
+  neraca: boolean
+): { mode: StatementMode; main: StatementColumn; compare: StatementColumn | null } {
+  const mode: StatementMode = !neraca && query.mode === "mtd" ? "mtd" : "ytd";
+  const fallback = defaultPeriod(years);
+  const main =
+    resolveColumn(years, toId(query.year), toId(query.period), mode) ??
+    resolveColumn(years, fallback.yearId, fallback.periodId, mode)!;
+  const compare = resolveColumn(years, toId(query.cmpYear), toId(query.cmpPeriod), mode);
+  return { mode, main, compare };
+}
+
+function defaultPeriod(years: ReportableFiscalYear[]): { yearId: number; periodId: number | null } {
+  const today = new Date().toISOString().slice(0, 10);
+  const year =
+    years.find((y) => y.status === "Open" && y.startDate <= today && today <= y.endDate) ??
+    years[0];
+  const period =
+    year.periods.find((p) => p.startDate <= today && today <= p.endDate) ??
+    year.periods[year.periods.length - 1];
+  return { yearId: year.id, periodId: period?.id ?? null };
+}
+
+function toId(raw?: string): number | null {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 export type ProfitLossReport = {
   columns: StatementColumn[];
   rows: StatementRow[];

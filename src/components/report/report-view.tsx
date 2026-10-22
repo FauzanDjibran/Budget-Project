@@ -38,6 +38,7 @@ export function ReportView({
   children,
   footnote,
   title,
+  exportHref,
 }: {
   report: ReportDef;
   /** The filter bar — a client component that pushes to the URL. */
@@ -51,6 +52,11 @@ export function ReportView({
    * itself, so the stamp at the foot is left off rather than said twice.
    */
   title?: React.ReactNode;
+  /**
+   * Where Unduh XLSX downloads this run from — the figures on screen, with the
+   * same parameters. Only a report whose export is built passes one.
+   */
+  exportHref?: string;
 }) {
   return (
     <>
@@ -72,8 +78,13 @@ export function ReportView({
               <span className="bdg t-slate">Laporan</span>
             </h1>
             {/* Tampilkan is the primary and rightmost, like Simpan on a form;
-                export actions, when they are built, go to its left. */}
+                export actions go to its left. */}
             <div className="ph-act">
+              {exportHref && (
+                <a className="btn" href={exportHref} download>
+                  <Icon name="down" size={13} /> Unduh XLSX
+                </a>
+              )}
               <ReportRunButton />
             </div>
           </div>

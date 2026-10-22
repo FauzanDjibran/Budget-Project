@@ -76,7 +76,7 @@ or invariants that assume a particular row exists.
   one — the **Report Views** over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
   snapshot a close writes and the ledger reports then read their openings from.
-- **Not yet built** — report output (print and export), intercompany settlement (the
+- **Not yet built** — report output (print, and export beyond the Laba Rugi and the Neraca), intercompany settlement (the
   anak paying the induk back), subledger opening balances, and revaluation of standing
   foreign subject-book positions. Full list in §13.
 
@@ -107,7 +107,7 @@ or invariants that assume a particular row exists.
 | Pencairan Open Item | Done — foreign currency sold out of the Company's own Cash & Bank, and one Partner's open items in that currency converted to Rupiah **at the same kurs**, in one document (`POI-`). One book, one Partner and one layer per document. Each line's amount is the sum of the items it converts. Post writes both cash books, a `Conversion` entry releasing each foreign item at its own kurs, one new IDR item per line in the same book, and one balanced journal with **one** Selisih Kurs line for the whole document (§10 rules 109–112). Its own module, not a Transfer purpose |
 | Reklasifikasi Open Item | Done — an open item's value moved to another book, another Partner, or both, with no cash (`RKL-`). The header is the source position (book × Partner × currency); each line a target book and Partner and the source items it takes. The target is posted as the original movement would have been: a book running the same way **opens** one item per source item at its kurs and base, one running the other way has chosen items **settled**, each with its own Selisih Kurs line. Any category that names a Partner qualifies — no flag. Two holding categories, *Penerimaan* and *Pengeluaran Belum Teridentifikasi*, and Partner Category *Lainnya*, are seeded for money nobody can place yet (§10 rules 113–117). A Budget keeps its classification; its Realisasi card shows where the money went |
 | Revaluasi Kurs | Done — one foreign Cash & Bank restated at a kurs the user states (`RVK-`), raised from its own menu and never by a period close. Post closes every open layer of the resource (`ClosedByRevaluation`, recorded per layer in `fin_cash_bank_revaluation_layer`), opens one layer holding the whole foreign balance at the stated kurs, writes one base-only Cash Bank Book entry (`Revaluation`) and journals the difference against the Company's Laba/Rugi Revaluasi Kurs account (Mapping Account System `fx_revaluation`). Reads the layers as they stand when posted, whatever its date. Final: a wrong kurs is corrected by another revaluation (§10 rules 118–121) |
-| Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. On-screen only; no print or export yet |
+| Report Views | Done — the screen type plus twelve reports: `Buku Kas & Bank`, `Saldo Kas & Bank`, `Posisi Layer Kurs`, the `Buku Subjek` and its summary step `Saldo Buku Subjek` under Finance › Laporan, and General Ledger, Trial Balance, the multi-step **Laba Rugi** and the **Neraca** under Accounting. Catalogue-driven from `reports.ts`, parameters in the URL, read-only, reconciling. The Laba Rugi and the Neraca export to an A4 `.xlsx` (Unduh XLSX); the rest are on-screen only |
 | Authentication | Done — email/password, database-backed sessions, login/logout |
 | Authorization (RBAC) | Done — permission catalogue, roles, server-side enforcement on every route and action |
 | User & role management, profile | Done — Admin-only user/role administration; own profile for everyone |
@@ -341,6 +341,7 @@ server→client boundary. Everything passed into a client component must go thro
 | Hashing | `bcryptjs` (seed only so far) | |
 | Lint | ESLint 9 + `eslint-config-next` | |
 | Seed runner | `tsx` | |
+| Spreadsheet | `exceljs` | The statements' Unduh XLSX (`statement-export.ts`). `jszip`, its own dependency, is declared as a dev dependency for the test that reads the raw sheet |
 | Tests | `node:test` via `tsx` — zero extra dependencies (`npm test`) | |
 
 Path alias: `@/*` → `./src/*`.
@@ -2786,6 +2787,37 @@ Specified in the concept doc, **not yet implemented** (see §13):
   drills itself.
 - **Status:** Frozen, current.
 
+### A statement exports to an A4 workbook of plain values (FROZEN)
+- **Decision:** The Laba Rugi and the Neraca carry **Unduh XLSX** in `.ph-act`. It
+  downloads the run on screen — same Company, year, period, mode and comparison —
+  from `accounting/report/[report]/export`, which resolves the URL through the same
+  `resolveStatementRun` the page uses and reads the same `profitLossReport` /
+  `balanceSheetReport`. `statement-export.ts` lays the screen's rows out the way the
+  company's printed statements always read: company name, a centred title, the period,
+  *(Dinyatakan dalam Rupiah)*, then each heading, its lines and a **Jumlah** line
+  closing it (none under a heading over a single figure), result lines boxed, the grand
+  total double-ruled. Fully open, no Partner rows. One value column, or with a
+  comparison the screen's four — Periode Ini, Pembanding, Selisih, Selisih %. A4
+  portrait, fit to width, column headers repeated on every page, a footer naming who
+  printed it when and *Halaman X dari Y*. A computed line is marked `*` and footnoted.
+- **Reason:** the user's, replacing the company's old Excel statements. Kept from
+  them: the heading / Jumlah shape and the print habits. Changed, against SAK EP (the
+  private-entity standard in force since 1 Jan 2025): one presentation currency instead
+  of separate Rp and USD columns that never added up, the currency and rounding stated,
+  a comparison available, credit balances printed positive. **Plain values only** — no
+  formulas, no grouping, no frozen panes — on the user's instruction: the file is a
+  report to print or hand on, not a model.
+- **Impact:** `exceljs` writes it. It places `<outlinePr>` after `<pageSetUpPr>`,
+  which Excel rejects as a corrupt sheet, so no outline properties are set;
+  `tests/statement-export.test.ts` reads the raw sheet for that, for formulas and for
+  A4. Not on the sheet, by decision for now: the company address (`sys_company` has no
+  field for it), a separate income-tax step, signatures.
+- **Do not change unless:** explicitly instructed. **Never let the export read anything
+  but the run on screen, never compute its figures by a second path, never write
+  formulas or outline grouping into it, and never set outline properties through
+  exceljs.**
+- **Status:** Frozen, current.
+
 ### The ledger reports run one Company at a time; the General Ledger takes several accounts (FROZEN)
 - **Decision:** General Ledger and Trial Balance are Report Views in the
   **Accounting** module (`accounting/report/[report]`), on the same convention
@@ -3116,6 +3148,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **The other legitimate Route Handler is a file download.** Report export (§13) cannot
   be a Server Action, which returns serializable data rather than a `Response` with
   `Content-Disposition`. That is a second instance of the same exception, not a new rule.
+  It exists: `accounting/report/[report]/export/route.ts`, for the Laba Rugi and the
+  Neraca — it asks the report's own view permission and refuses with a bare status.
 - **Do not change unless:** an external consumer appears. **Adding a Route Handler for
   business CRUD is still the thing this decision forbids** — and if one ever lands, the
   authorization gate must stay `auth.ts`, never a second model (§11).
@@ -3928,8 +3962,11 @@ below in outline because the half of it that still holds is easy to lose.**
       user's instruction: whose line it is, is the question a Partner-bearing
       account is read for, so it is a column of its own (see "The ledger reports
       run one Company at a time").
-  12. **Export belongs in `.ph-act`, to the left of Tampilkan.** Print and XLSX are
-      deferred, and adding them later changes no layout.
+  12. **Export belongs in `.ph-act`, to the left of Tampilkan.** `exportHref` on
+      `ReportView` draws **Unduh XLSX** there. It downloads **the run on screen** —
+      the page resolves its own parameters, defaults included, into the link — never
+      the filter's unsaved edits. Built for the Laba Rugi and the Neraca (see "A
+      statement exports to an A4 workbook"); print is still deferred.
   13. **The footnote is one sentence.** It says the single thing a reader needs in
       order to read the figures correctly, and nothing else. Each of the six had
       grown to four or five sentences restating rules the screen already obeys —
@@ -4706,7 +4743,7 @@ decisions now that foreclose them.
 | Multi-layer settlement | The source specification lets one payment draw on several layers (`Σ selected = account_amount`). SIBA takes one per document, refused at draft time with a message that says to split it. Widening this means a selection UI with a running total and per-layer relief, not a loosened check (§12) |
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
 | Submission report export | Write the XLSX for "Laporan Pengajuan"; the picker and its recap are already built |
-| Report output | A print sheet and an export for Report Views. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
+| Report output | A print sheet for Report Views, and an export for every one but the two statements, which have theirs. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
 | Penyesuaian Open Item tax | An adjustment carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
 | Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
 
@@ -5165,7 +5202,7 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
 | A backdated settlement draws on today's cash layer | A subject-book relief now releases at its open item's own kurs, which never changes, so the obligation side no longer depends on when a backdated document is posted. The cash side still draws on its layer as it stands at posting (§12). |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
-| Reports are on-screen only | No print stylesheet and no export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
+| Reports are mostly on-screen only | No print stylesheet, and only the Laba Rugi and the Neraca export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | `recentActivity()` has no caller | The cross-record audit *feed* is still off the dashboard, pending the user's own plan for where it belongs. The per-record history is a separate reader (`recordHistory`) and is now on every form; `recentActivity()` itself remains unused. |
 | A history says who and when, never what | `audit_log` stores no field-level snapshot, so the panel reports that a record was edited and by whom, and cannot say which field moved. Adding a diff means storing one, which is a much larger change than the `event` column was. |
