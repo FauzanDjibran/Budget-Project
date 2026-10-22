@@ -178,10 +178,6 @@ export function SubledgerReport({ report }: { report: Report }) {
                         </td>
                         <td className="pri wrapok">
                           {e.note ?? "—"}
-                          <span className="rsub">
-                            {e.movement > 0 ? "membuka" : "menyelesaikan"} {e.itemNo}
-                            {e.type !== "Transaction" ? ` · ${e.type}` : ""}
-                          </span>
                         </td>
                         <td className="num">
                           {e.movement > 0 ? (

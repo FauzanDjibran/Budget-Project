@@ -356,6 +356,13 @@ async function subledgerPage({
         </>
       }
       runAt={runAt}
+      exportHref={`/finance/report/${slug}/export?${new URLSearchParams({
+        company: String(company.id),
+        book: String(book.categoryId),
+        ...(partnerIds.length ? { partners: partnerIds.join(",") } : {}),
+        from: range.from,
+        to: range.to,
+      })}`}
       footnote={
         <>
           Kolom Bertambah dan Berkurang mengikuti arah buku ini, bukan arah uang:{" "}
