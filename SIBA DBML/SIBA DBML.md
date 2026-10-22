@@ -419,13 +419,13 @@ table cash_bank_ledger {
 
   // Signed: positive money in, negative money out. The sign is the direction —
   // direction, amount and base_amount were dropped in
-  // 20261014114914_ledger_signed_movement, so the two can never disagree.
+  // 20261014114914_ledger_signed_movement, so the two can never disagree. No
+  // running balance: an entry may be backdated, so balance_after followed write
+  // order, not date (dropped in 20261022090000).
   movement                    decimal(18,2) [not null]
-  balance_after               decimal(18,2) [not null]
 
   rate                        decimal(18,6) [not null]
   base_movement               decimal(18,2) [not null]
-  base_balance_after          decimal(18,2) [not null]
 
   source_doc_type_id          int [ref : >? sys_doc_type.id]
   source_doc_id               int
@@ -443,7 +443,8 @@ table cash_bank_ledger {
 }
 
 table cash_bank_balance {
-  cash_bank_id                int [pk, not null, ref : - m_cash_bank.id]
+  id                          int [pk, increment, not null]
+  cash_bank_id                int [unique, not null, ref : - m_cash_bank.id]
 
   balance                     decimal(18,2) [not null, default: 0]
   base_balance                decimal(18,2) [not null, default: 0]
@@ -463,6 +464,7 @@ table cash_bank_balance {
 // the month, not on acc_fiscal_period: a fiscal year may be missing, and a
 // book depends on no module.
 table cash_bank_period {
+  id                          int [pk, increment, not null]
   cash_bank_id                int [not null, ref : > m_cash_bank.id]
   period                      date [not null, note: 'first day of the month']
 
@@ -485,7 +487,7 @@ table cash_bank_period {
   updated_at                  timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 
   indexes {
-    (cash_bank_id, period) [pk]
+    (cash_bank_id, period) [unique]
   }
 }
 
@@ -555,14 +557,11 @@ table sub_ledger {
   // direction behind it is the sign read with the category's raises, which is
   // fixed once the book has an entry. direction, amount and base_amount were
   // dropped in 20261014114914_ledger_signed_movement.
+  // No running balance, as on cash_bank_ledger (dropped in 20261022090000).
   movement                    decimal(18,2) [not null]
-  // The open item's remaining amount after this entry — the item, not the
-  // whole position, which is the sum of its items.
-  balance_after               decimal(18,2) [not null]
 
   rate                        decimal(18,6) [not null]
   base_movement               decimal(18,2) [not null]
-  base_balance_after          decimal(18,2) [not null]
 
   // The open item this entry moved. A raising entry opens a new item and names
   // it; a lowering entry names the item the user chose and relieves it at that

@@ -89,6 +89,25 @@ describe("the schema, the client and the database agree", () => {
     );
   });
 
+  test("every table's primary key is one `id` column — bridge and cache tables too", async () => {
+    // The user's rule, for uniformity: a natural key stays, as a unique one.
+    const rows = await prisma.$queryRaw<{ table_name: string; pk: string | null }[]>`
+      SELECT t.table_name, string_agg(k.column_name, ',') AS pk
+      FROM information_schema.tables t
+      LEFT JOIN information_schema.table_constraints c
+        ON c.table_schema = t.table_schema AND c.table_name = t.table_name
+       AND c.constraint_type = 'PRIMARY KEY'
+      LEFT JOIN information_schema.key_column_usage k
+        ON k.constraint_name = c.constraint_name AND k.table_schema = c.table_schema
+      WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+        AND t.table_name <> '_prisma_migrations'
+      GROUP BY t.table_name
+    `;
+    assert.ok(rows.length >= models.length);
+    const off = rows.filter((r) => r.pk !== "id").map((r) => `${r.table_name} (${r.pk ?? "none"})`);
+    assert.deepEqual(off, [], `tables not keyed by \`id\`: ${off.join(", ")}`);
+  });
+
   test("every applied migration is still on disk", async () => {
     const applied = await prisma.$queryRaw<{ migration_name: string }[]>`
       SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL

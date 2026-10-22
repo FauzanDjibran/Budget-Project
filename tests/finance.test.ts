@@ -961,7 +961,6 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     });
     assert.equal(entries.length, 1);
     assert.equal(entries[0].movement.toNumber(), -400_000, "money out");
-    assert.equal(entries[0].balance_after.toNumber(), 4_600_000);
 
     const balance = await prisma.cashBankBalance.findUniqueOrThrow({
       where: { cash_bank_id: cashBank },
@@ -1148,7 +1147,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const afterFirst = await prisma.cashBankLedger.findMany({
       where: { cash_bank_id: cashBank },
       orderBy: { id: "asc" },
-      select: { id: true, balance_after: true },
+      select: { id: true, movement: true },
     });
 
     const second = await makeDraft({
@@ -1160,15 +1159,15 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const afterSecond = await prisma.cashBankLedger.findMany({
       where: { cash_bank_id: cashBank },
       orderBy: { id: "asc" },
-      select: { id: true, balance_after: true },
+      select: { id: true, movement: true },
     });
 
     assert.equal(afterSecond.length, afterFirst.length + 1);
     for (const [i, row] of afterFirst.entries()) {
       assert.equal(afterSecond[i].id, row.id);
       assert.equal(
-        afterSecond[i].balance_after.toNumber(),
-        row.balance_after.toNumber(),
+        afterSecond[i].movement.toNumber(),
+        row.movement.toNumber(),
         "an existing entry must never be rewritten"
       );
     }
@@ -1822,10 +1821,9 @@ describe("a foreign document is valued rather than refused", () => {
       where: { cash_bank_id: cashBank, entry_type: "Transaction" },
     });
     assert.equal(entry.rate.toNumber(), 1, "base currency, so the rate is 1");
-    assert.equal(entry.base_movement.toNumber(), entry.movement.toNumber());
     assert.equal(
-      entry.base_balance_after.toNumber(),
-      entry.balance_after.toNumber(),
+      entry.base_movement.toNumber(),
+      entry.movement.toNumber(),
       "both measures move together while everything is rupiah"
     );
   });

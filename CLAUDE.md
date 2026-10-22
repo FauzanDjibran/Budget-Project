@@ -821,7 +821,7 @@ so `globals.css` ends with an anchor reset. Keep shared classes working for both
 
 | Rule | Detail |
 | --- | --- |
-| Primary keys | `Int @id @default(autoincrement())` — **not BigInt** |
+| Primary keys | `Int @id @default(autoincrement())` — **not BigInt**. **Every table has one `id` primary key**, bridge, join and cache tables included; a natural key (`cash_bank_id`, `(cash_bank_id, period)`) is kept as a unique constraint beside it. The user's rule, for uniformity; `tests/schema.test.ts` fails on a table keyed by anything else |
 | Timestamps | `DateTime @db.Timestamptz(6)`; `created_at` default now, `updated_at` `@updatedAt` |
 | Authorship | `created_by Int`, `updated_by Int?` — plain Ints with **no FK**, exactly as the DBML declares |
 | Money | `Decimal @db.Decimal(18, 2)` |
@@ -4099,11 +4099,14 @@ below in outline because the half of it that still holds is easy to lose.**
   already written by later entries, which "base is history" forbids. The
   lifetime gain or loss is identical either way; only which period carries it
   can differ. The user's choice (option B) over as-of-date valuation.
-- **The books lost their running balance.** `balance_after` on
-  `cash_bank_ledger` and `sub_ledger` is still written and still true — it is
-  the balance **at the moment of writing** — but once an entry can be dated in
-  among entries written before it, printing it beside date-ordered rows would
-  show figures no row above produced. Both reports now order by
+- **The books lost their running balance, and no longer store one.** Once an
+  entry can be dated in among entries written before it, a balance "after" it
+  follows write order rather than date, and printed beside date-ordered rows it
+  shows figures no row above produced. `balance_after` / `base_balance_after`
+  were kept for a while as the balance at the moment of writing; nothing read
+  them, so they were dropped from `cash_bank_ledger` and `sub_ledger` (migration
+  `20261022090000`, the user's decision). A balance on a date is summed from
+  `movement`; the current one is the `_balance` row. Both reports now order by
   `(entry_date, id)`, state only the period's opening and closing, and
   `reconciles` compares the whole book, summed, with its `_balance` row. The
   user's choice: the materialised `_balance` tables are what is read.
@@ -4831,7 +4834,10 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 - Do **not** write a posting without `holdPostingPeriod` inside its transaction,
   and do **not** let a close write without `lockFiscalPeriod` and its re-check.
   A backdated posting and a close must never interleave (§12).
-- Do **not** print a running balance on a book report again, or order one by id.
+- Do **not** print a running balance on a book report again, order one by id,
+  or bring back a stored `balance_after` on a book.
+- Do **not** create a table without a single `id` primary key, bridge and cache
+  tables included; keep a natural key as a unique constraint (§9).
   An entry may be backdated in among entries written before it (§12).
 - Do **not** post to Laba/Rugi Tahun Berjalan. The Neraca computes it and places
   it on the account System Default names; the closing journal moves a year's

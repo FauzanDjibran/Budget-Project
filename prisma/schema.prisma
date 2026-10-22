@@ -700,9 +700,10 @@ model CashBankLedger {
   /// **is** the direction — one column, so the two can never disagree — and
   /// summing it reconstructs the balance from scratch, which is how the
   /// materialised total is verified.
+  /// There is no running balance: an entry may be backdated in among entries
+  /// written before it, so a balance "after" it would follow write order, not
+  /// date. A balance on a date is summed from `movement`.
   movement      Decimal @db.Decimal(18, 2)
-  /// Balance after this entry, in the resource's own currency.
-  balance_after Decimal @db.Decimal(18, 2)
 
   /// The kurs this movement was valued at, always converting the resource's
   /// own currency to the base currency.
@@ -724,8 +725,6 @@ model CashBankLedger {
   /// what currency movement cost. Summing it rebuilds the base balance exactly
   /// as `movement` rebuilds the foreign one.
   base_movement      Decimal @db.Decimal(18, 2)
-  /// `balance_after` in base currency.
-  base_balance_after Decimal @db.Decimal(18, 2)
 
   /// What caused the movement. Null for an opening balance, which has no
   /// source document — the registration of the resource is the event.
@@ -749,7 +748,8 @@ model CashBankLedger {
 /// in the same transaction as the entry that changed it. Never written on its
 /// own: `rebuildCashBankBalance` recomputes it from the ledger.
 model CashBankBalance {
-  cash_bank_id    Int       @id
+  id              Int       @id @default(autoincrement())
+  cash_bank_id    Int       @unique
   balance         Decimal   @default(0) @db.Decimal(18, 2)
   /// The same balance in base currency. A resource's carrying rate is
   /// `base_balance ÷ balance`, derived on read and never stored — it is an
@@ -773,6 +773,7 @@ model CashBankBalance {
 /// latest. Keyed on the month rather than on `acc_fiscal_period`: a fiscal year
 /// may be missing (2028 open without 2027), and a book depends on no module.
 model CashBankPeriod {
+  id           Int      @id @default(autoincrement())
   cash_bank_id Int
   /// The first day of the month.
   period       DateTime @db.Date
@@ -802,7 +803,7 @@ model CashBankPeriod {
 
   cash_bank MCashBank @relation(fields: [cash_bank_id], references: [id])
 
-  @@id([cash_bank_id, period])
+  @@unique([cash_bank_id, period])
   @@map("cash_bank_period")
 }
 
@@ -951,11 +952,9 @@ model SubLedger {
   /// statement of which way it went — the cash direction behind it follows from
   /// the sign and the category's `raises`, which is fixed once the book has an
   /// entry. Summing this column reconstructs the balance, which is how the
-  /// total is verified.
+  /// total is verified. No running balance, for the reason `cash_bank_ledger`
+  /// gives: an entry may be backdated.
   movement      Decimal @db.Decimal(18, 2)
-  /// The open item's remaining amount after this entry, in its own currency —
-  /// the item, not the whole position, which is the sum of its items.
-  balance_after Decimal @db.Decimal(18, 2)
 
   /// **This book's own settlement rate**, converting the subject's currency to
   /// the base currency — not necessarily the rate the Cash Bank Book recorded
@@ -970,8 +969,6 @@ model SubLedger {
   rate               Decimal @db.Decimal(18, 6)
   /// `movement` in base currency, signed the same way.
   base_movement      Decimal @db.Decimal(18, 2)
-  /// `balance_after` in base currency.
-  base_balance_after Decimal @db.Decimal(18, 2)
 
   /// The open item this entry moved. An entry that raises a position opens a
   /// new item and names it; one that lowers a position names the item the user

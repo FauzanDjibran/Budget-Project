@@ -302,7 +302,11 @@ describe("the book is append-only, and its total is derived", () => {
     const third = await entry("2026-02-20", "In", 1_500_000);
 
     assert.equal(repaid.balance_id, first.balance_id, "a repayment settles the item it names");
-    assert.equal(repaid.balance_after.toNumber(), 6_000_000, "and that item is what moves");
+    assert.equal(
+      (await prisma.subLedgerBalance.findUniqueOrThrow({ where: { id: first.balance_id } })).balance.toNumber(),
+      6_000_000,
+      "and that item is what moves"
+    );
     assert.notEqual(third.balance_id, first.balance_id, "a new borrowing is a new item");
     assert.equal(
       (await subledgerPosition(bookOf("Hutang").categoryId, partner, currency)).foreign,
@@ -358,8 +362,12 @@ describe("the book is append-only, and its total is derived", () => {
       (e: Error) => e instanceof SubledgerItemUnavailable && /dibuka pada 10\/01\/2026/.test(e.message),
       "nor raised by one — it would hold value before it existed"
     );
-    const fits = await entry("2026-02-01", "Out", 20, item);
-    assert.equal(fits.balance_after.toNumber(), 50, "what the lowest day allows still posts");
+    await entry("2026-02-01", "Out", 20, item);
+    assert.equal(
+      (await prisma.subLedgerBalance.findUniqueOrThrow({ where: { id: item } })).balance.toNumber(),
+      50,
+      "what the lowest day allows still posts"
+    );
   });
 
   test("a category that keeps no book yields none to write to", async () => {

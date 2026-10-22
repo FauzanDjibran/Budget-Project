@@ -108,7 +108,6 @@ describe("a resource always has a book", () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].entry_type, "Opening");
     assert.equal(entries[0].movement.toNumber(), 5_000_000);
-    assert.equal(entries[0].balance_after.toNumber(), 5_000_000);
     assert.match(entries[0].entry_no, /^CBL-\d{4}$/);
 
     const balances = await cashBankBalanceMap();
@@ -160,10 +159,6 @@ describe("the balance never disagrees with the ledger", () => {
     assert.deepEqual(
       entries.map((e) => e.movement.toNumber()),
       [1_000_000, -250_000, 80_000]
-    );
-    assert.deepEqual(
-      entries.map((e) => e.balance_after.toNumber()),
-      [1_000_000, 750_000, 830_000]
     );
 
     const stored = await prisma.cashBankBalance.findUniqueOrThrow({

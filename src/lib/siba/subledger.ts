@@ -231,10 +231,8 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
         entry_date: asDate(entry.date),
         entry_type: entry.type,
         movement,
-        balance_after: amount,
         rate: entry.rate,
         base_movement: base,
-        base_balance_after: base,
         source_doc_type_id: entry.sourceDocTypeId ?? null,
         source_doc_id: entry.sourceDocId ?? null,
         note: entry.note ?? null,
@@ -298,11 +296,9 @@ export async function recordSubledgerEntry(db: Db, entry: NewSubledgerEntry) {
       entry_date: asDate(entry.date),
       entry_type: entry.type,
       movement,
-      balance_after: after.foreign,
       // The item's own rate: relief keeps `base ÷ foreign` on it.
       rate: item.rate,
       base_movement: -relief.base,
-      base_balance_after: after.base,
       source_doc_type_id: entry.sourceDocTypeId ?? null,
       source_doc_id: entry.sourceDocId ?? null,
       note: entry.note ?? null,
@@ -377,10 +373,8 @@ async function raiseItem(
       entry_date: asDate(entry.date),
       entry_type: entry.type,
       movement,
-      balance_after: after.foreign,
       rate: item.rate,
       base_movement: base,
-      base_balance_after: after.base,
       source_doc_type_id: entry.sourceDocTypeId ?? null,
       source_doc_id: entry.sourceDocId ?? null,
       note: entry.note ?? null,
@@ -478,10 +472,8 @@ export async function rebuildSubledgerBalance(
 // derives its own figures rather than trusting the stored total.
 //
 // **There is no running balance.** An entry may be dated before entries already
-// written (a backdated posting), so the `balance_after` stored on each row is
-// the position at the moment of writing, not at the entry's date, and printing
-// it beside date-ordered rows would show figures no row above produced. The
-// report reads in date order and states opening and closing only; the current
+// written (a backdated posting), so a balance kept per row would follow the
+// order of writing, not of dates, and the book stores none. The report reads in date order and states opening and closing only; the current
 // position is `sub_ledger_balance`'s, and `reconciles` checks the book against
 // it.
 
