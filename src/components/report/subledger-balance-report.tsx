@@ -5,7 +5,7 @@ import { Icon } from "@/components/icon";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatMoney, formatRate } from "@/lib/format";
-import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
+import { isBaseCurrency } from "@/lib/siba/currency";
 import type { SubledgerBalanceReport as Report } from "@/lib/siba/subledger";
 
 /**
@@ -15,8 +15,10 @@ import type { SubledgerBalanceReport as Report } from "@/lib/siba/subledger";
  * closing as a summary strip; the block holds the open items that position is
  * made of.
  *
- * Every item that stood or moved in the period is listed, at the kurs it was
- * raised at, with its own Saldo Awal, Bertambah, Berkurang and closing, so the
+ * Every item that stood or moved in the period is listed, with the kurs it was
+ * raised at in a column of its own (a dash on a rupiah item), and its own Saldo
+ * Awal, Bertambah, Berkurang and closing in the position's currency — no base
+ * value, on the user's instruction — so the
  * items add up to the header in every column — an item settled inside the
  * period is listed at a closing of nil. One level folds: the block, by its
  * header. Blocks open expanded, and Buka / Tutup Semua fold all of them.
@@ -81,7 +83,6 @@ export function SubledgerBalanceReport({ report }: { report: Report }) {
         const key = keyOf(r);
         const isOpen = open.has(key);
         const money = (n: number) => formatMoney(n, r.currencyLabel);
-        const base = (n: number) => formatMoney(n, BASE_CURRENCY_LABEL);
         const foreign = !isBaseCurrency(r.currencyLabel);
         const figure = (n: number) => (
           <span className={`mny${n ? "" : " z"}${n < 0 ? " neg" : ""}`}>{money(n)}</span>
@@ -122,15 +123,6 @@ export function SubledgerBalanceReport({ report }: { report: Report }) {
                     key: true,
                     negative: r.closing < 0,
                   },
-                  ...(foreign
-                    ? [
-                        {
-                          label: `Nilai ${BASE_CURRENCY_LABEL}`,
-                          value: base(r.baseClosing),
-                          zero: !r.baseClosing,
-                        },
-                      ]
-                    : []),
                 ]}
               />
             </div>
@@ -154,6 +146,9 @@ export function SubledgerBalanceReport({ report }: { report: Report }) {
                         {noun === "rincian" ? "Rincian" : "Open Item"}
                       </th>
                       <th>Keterangan</th>
+                      <th className="num" style={{ width: 96 }}>
+                        Kurs
+                      </th>
                       <th className="num" style={{ width: 126 }}>
                         Saldo Awal
                       </th>
@@ -166,11 +161,6 @@ export function SubledgerBalanceReport({ report }: { report: Report }) {
                       <th className="num" style={{ width: 134 }}>
                         Saldo
                       </th>
-                      {foreign && (
-                        <th className="num" style={{ width: 134 }}>
-                          Nilai {BASE_CURRENCY_LABEL}
-                        </th>
-                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -184,26 +174,21 @@ export function SubledgerBalanceReport({ report }: { report: Report }) {
                         </td>
                         <td className="pri wrapok">
                           {i.note ?? "—"}
-                          {foreign && <span className="rsub">@ {formatRate(i.rate)}</span>}
+                        </td>
+                        <td className="num mono">
+                          {foreign ? formatRate(i.rate) : <span className="dash">–</span>}
                         </td>
                         <td className="num">{figure(i.opening)}</td>
                         <td className="num">{figure(i.raised)}</td>
                         <td className="num">{figure(i.lowered)}</td>
                         <td className="num">{figure(i.closing)}</td>
-                        {foreign && (
-                          <td className="num">
-                            <span className={`mny${i.baseClosing ? "" : " z"}`}>
-                              {base(i.baseClosing)}
-                            </span>
-                          </td>
-                        )}
                       </tr>
                     ))}
 
                     {r.items.length === 0 && (
                       <tr>
                         <td
-                          colSpan={foreign ? 8 : 7}
+                          colSpan={8}
                           className="mut"
                           style={{ textAlign: "center" }}
                         >

@@ -6,7 +6,8 @@ import { companyScope } from "@/lib/siba/company-access";
 import { reportBySlug } from "@/lib/siba/reports";
 import { parseIds, resolveRange } from "@/lib/siba/report-params";
 import { xlsxResponse } from "@/lib/siba/statement-export";
-import { subledgerReport } from "@/lib/siba/subledger";
+import { subledgerBalanceReport, subledgerReport } from "@/lib/siba/subledger";
+import { subledgerBalanceWorkbook } from "@/lib/siba/subledger-balance-export";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { subledgerWorkbook } from "@/lib/siba/subledger-export";
 import { formatDate, formatTimestamp } from "@/lib/format";
@@ -14,7 +15,7 @@ import { formatDate, formatTimestamp } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 /**
- * Unduh XLSX for Buku Kas & Bank and Buku Subjek — the Finance twin of the
+ * Unduh XLSX for Buku Kas & Bank, Buku Subjek and Saldo Buku Subjek — the Finance twin of the
  * Accounting export route, the same Route Handler exception (CLAUDE.md §12).
  * It reads the page's own parameters through the page's own reader under the
  * page's own permission, so the file is the run on screen. A refusal says
@@ -29,7 +30,7 @@ export async function GET(
   if (
     !report ||
     report.module !== "finance" ||
-    (report.key !== "cash_bank_ledger" && report.key !== "subledger")
+    !["cash_bank_ledger", "subledger", "subledger_balance"].includes(report.key)
   ) {
     return new Response("Tidak ditemukan", { status: 404 });
   }
@@ -43,6 +44,26 @@ export async function GET(
   if (!company) return new Response("Akses ditolak", { status: 403 });
   const range = resolveRange(query.from, query.to);
   const printed = { printedBy: actor.user.name, printedAt: formatTimestamp(new Date()) };
+
+  if (report.key === "subledger_balance") {
+    const books = await loadSubledgers();
+    const data = await subledgerBalanceReport(books, query.book ?? "", range, {
+      partnerIds: parseIds(query.partners),
+      companyIds: [company.id],
+    });
+    if (!data) return new Response("Tidak ditemukan", { status: 404 });
+
+    const notes = [
+      data.book.nature === "cumulative"
+        ? "Buku ini hanya bertambah; rinciannya mencatat setiap realisasi per Partner, pada kursnya sendiri."
+        : `Saldo akhir setiap Partner adalah jumlah sisa open item-nya per ${formatDate(range.to)}, masing-masing pada kurs saat item itu dibuka.`,
+    ];
+    const off = data.groups.flatMap((g) => g.rows).filter((r) => !r.reconciles).map((r) => `${r.label} (${r.currencyLabel})`);
+    if (off.length) notes.push(`Posisi tersimpan tidak cocok dengan jumlah entri pada ${off.join(", ")}; perlu diperiksa.`);
+
+    const file = await subledgerBalanceWorkbook({ companyName: company.name, report: data, footnotes: notes, ...printed });
+    return xlsxResponse(file, `Saldo ${data.book.name} ${company.label} ${range.from} - ${range.to}.xlsx`);
+  }
 
   if (report.key === "subledger") {
     const books = await loadSubledgers();

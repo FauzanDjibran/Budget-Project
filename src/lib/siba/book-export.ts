@@ -53,14 +53,31 @@ export type BookExport = {
   printedAt: string;
 };
 
-const HEAD = 7;
-const LAST = 6;
-const BAND = "FFEDF0F5";
-const SOFT = "FFF4F6F9";
-const MUTED = { argb: "FF666666" };
+export const HEAD = 7;
+export const BAND = "FFEDF0F5";
+export const SOFT = "FFF4F6F9";
+export const MUTED = { argb: "FF666666" };
+export const fill = (argb: string): ExcelJS.Fill => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
+export const font = (o: Partial<ExcelJS.Font> = {}): Partial<ExcelJS.Font> => ({ name: FONT, size: 8.5, ...o });
 
-export async function bookWorkbook(s: BookExport): Promise<Buffer> {
+/**
+ * The page every book-shaped export prints on: A4 portrait fitted to width, the
+ * company and title block, the column heading on row HEAD repeated on every
+ * page, and the shared footer. The first `textCols` columns are left-aligned.
+ */
+export function bookSheet(s: {
+  title: string;
+  measure: string;
+  companyName: string;
+  range: PeriodRange;
+  headers: string[];
+  widths: number[];
+  textCols: number;
+  printedBy: string;
+  printedAt: string;
+}) {
   const period = `Untuk periode ${formatDate(s.range.from)} s.d. ${formatDate(s.range.to)}`;
+  const last = s.headers.length;
 
   const footer = `&L&"${FONT}"&7SIBA 3.0 · dicetak ${esc(s.printedAt)} oleh ${esc(s.printedBy)}&R&"${FONT}"&7Halaman &P dari &N`;
   const wb = new ExcelJS.Workbook();
@@ -86,18 +103,15 @@ export async function bookWorkbook(s: BookExport): Promise<Buffer> {
       firstFooter: footer,
     },
   });
-  // The statements' width, so every export prints at one scale.
-  ws.columns = [10, 10, 47, 17, 17, 17].map((width) => ({ width }));
+  ws.columns = s.widths.map((width) => ({ width }));
 
-  const font = (o: Partial<ExcelJS.Font> = {}): Partial<ExcelJS.Font> => ({ name: FONT, size: 8.5, ...o });
-  const fill = (argb: string): ExcelJS.Fill => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
   const titleLine = (r: number, text: string, f: Partial<ExcelJS.Font>, centred = false) => {
     const c = ws.getCell(r, 1);
     c.value = text;
     c.font = font(f);
     if (centred) {
       c.alignment = { horizontal: "center" };
-      ws.mergeCells(r, 1, r, LAST);
+      ws.mergeCells(r, 1, r, last);
     }
   };
   titleLine(1, s.companyName, { size: 12, bold: true });
@@ -105,13 +119,26 @@ export async function bookWorkbook(s: BookExport): Promise<Buffer> {
   titleLine(4, period, { size: 9 }, true);
   titleLine(5, s.measure, { size: 8, italic: true }, true);
 
-  ["Tanggal", "Entri", "Keterangan", ...s.columns, "Saldo"].forEach((v, j) => {
+  s.headers.forEach((v, j) => {
     const c = ws.getCell(HEAD, j + 1);
     c.value = v;
     c.font = font({ bold: true, color: { argb: "FF333333" } });
-    c.alignment = { horizontal: j < 3 ? "left" : "right", vertical: "middle" };
+    c.alignment = { horizontal: j < s.textCols ? "left" : "right", vertical: "middle" };
     c.fill = fill(BAND);
     c.border = { top: thin, bottom: thin };
+  });
+  return { wb, ws };
+}
+
+const LAST = 6;
+
+export async function bookWorkbook(s: BookExport): Promise<Buffer> {
+  const { wb, ws } = bookSheet({
+    ...s,
+    headers: ["Tanggal", "Entri", "Keterangan", ...s.columns, "Saldo"],
+    // The statements' width, so every export prints at one scale.
+    widths: [10, 10, 47, 17, 17, 17],
+    textCols: 3,
   });
 
   let r = HEAD + 2;
