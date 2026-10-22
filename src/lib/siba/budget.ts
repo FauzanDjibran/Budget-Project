@@ -14,7 +14,6 @@ import { loadClassification } from "./classification-data";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import {
   BUDGET_TRANSITIONS,
-  NOT_APPROVED,
   transitionAllowed,
   type BudgetAction,
   type BudgetStatus,
@@ -513,6 +512,18 @@ export async function openBudgetsMatching(
   return rows.map(toRow);
 }
 
+/** Every Open Budget pointing one way, across these Companies, oldest plan first. */
+export async function openBudgetsFor(
+  companyIds: number[],
+  budgetType: "In" | "Out"
+): Promise<BudgetRow[]> {
+  const rows = await prisma.budBudget.findMany({
+    where: { status: "Open", company_id: { in: companyIds }, budget_type: budgetType },
+    orderBy: [{ budget_date: "asc" }, { id: "asc" }],
+  });
+  return rows.map(toRow);
+}
+
 /** One plan, and how much of it a posting is settling. */
 export type BudgetSettlement = { budgetId: number; amount: number };
 
@@ -594,52 +605,6 @@ export async function nextBudgetNo(): Promise<string> {
     });
     return row?.budget_no ?? null;
   });
-}
-
-// ------------------------------------------------------------- KPI summary
-
-export type BudgetSummary = {
-  notApproved: number;
-  notApprovedTotals: MoneyTotal[];
-  draft: number;
-  submitted: number;
-  unrealized: number;
-  unrealizedTotals: MoneyTotal[];
-};
-
-/** The two KPI cards computed from `bud_budget` itself. */
-export async function summarise(rows: BudgetRow[]): Promise<BudgetSummary> {
-  const currencies = await prisma.refCurrency.findMany({
-    select: { id: true, currency_label: true },
-  });
-  const labelOf = new Map(currencies.map((c) => [c.id, c.currency_label]));
-  const money = (b: BudgetRow, amount: number) => ({
-    currencyId: b.currency_id,
-    currencyLabel: labelOf.get(b.currency_id) ?? "",
-    amount,
-  });
-
-  const notApproved = rows.filter((b) => NOT_APPROVED.includes(b.status));
-  // "Unrealized" means an approved budget with money still left to spend
-  // against it. `realized_amount` is written by a posted Cash Bank Transaction,
-  // and a budget that reaches its planned amount leaves Open for Closed — so a
-  // budget only counts here while it is both approved and not yet spent out.
-  const unrealized = rows.filter(
-    (b) => b.status === "Open" && b.realized_amount < b.budget_amount
-  );
-
-  return {
-    notApproved: notApproved.length,
-    notApprovedTotals: sumByCurrency(
-      notApproved.map((b) => money(b, b.budget_amount))
-    ),
-    draft: rows.filter((b) => b.status === "Draft").length,
-    submitted: rows.filter((b) => b.status === "Submitted").length,
-    unrealized: unrealized.length,
-    unrealizedTotals: sumByCurrency(
-      unrealized.map((b) => money(b, b.budget_amount - b.realized_amount))
-    ),
-  };
 }
 
 // -------------------------------------------------------- commitment queues

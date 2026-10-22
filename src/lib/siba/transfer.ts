@@ -2,7 +2,6 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { InsufficientFunds, cashBankBalanceMap, lockCashBanks, recordCashBankEntry } from "./cash-bank";
 import {
   drawFromLayer,
@@ -1194,39 +1193,6 @@ class TransferRefused extends Error {
     super("Transfer ditolak");
     this.name = "TransferRefused";
   }
-}
-
-// ------------------------------------------------------------------ summary
-
-export type TransferSummary = {
-  draft: number;
-  posted: number;
-  cancelled: number;
-  /** Posted value, per currency — amounts are never converted (CLAUDE.md §12). */
-  postedTotals: MoneyTotal[];
-};
-
-export async function summariseTransfers(
-  rows: TransferRow[]
-): Promise<TransferSummary> {
-  const currencies = await prisma.refCurrency.findMany({
-    select: { id: true, currency_label: true },
-  });
-  const labels = new Map(currencies.map((c) => [c.id, c.currency_label]));
-
-  const posted = rows.filter((r) => r.status === "Posted");
-  return {
-    draft: rows.filter((r) => r.status === "Draft").length,
-    posted: posted.length,
-    cancelled: rows.filter((r) => r.status === "Cancelled").length,
-    postedTotals: sumByCurrency(
-      posted.map((r) => ({
-        currencyId: r.currency_id,
-        currencyLabel: labels.get(r.currency_id) ?? "?",
-        amount: r.transfer_amount,
-      }))
-    ),
-  };
 }
 
 /** Carries a dry run's journal out of the transaction it rolls back. */

@@ -12,9 +12,13 @@ import { Amount } from "@/components/ui/amount";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionConversion } from "@/app/actions/item-conversion";
-import { formatDate, formatMoney, formatTotals } from "@/lib/format";
+import { formatDate, formatMoney } from "@/lib/format";
+import { CashBalanceTile } from "@/components/budget/cash-balance-dialog";
+import type { CashBookSummary } from "@/lib/siba/cash-bank";
+import type { LayerReport } from "@/lib/siba/cash-bank-layers";
+import { LayerPositionTile } from "./layer-position-tile";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type { ConversionRow, ConversionSummary } from "@/lib/siba/item-conversion";
+import type { ConversionRow } from "@/lib/siba/item-conversion";
 import {
   CONVERSION_TRANSITIONS,
   availableConversionActions,
@@ -34,12 +38,14 @@ const LIST_HREF = "/finance/pencairan-open-item";
  */
 export function ItemConversionList({
   conversions,
-  summary,
+  cash,
+  layers,
   can,
   initialStatus,
 }: {
   conversions: ConversionRow[];
-  summary: ConversionSummary;
+  cash: CashBookSummary;
+  layers: LayerReport;
   can: ConversionAbilities;
   /** Status the page was opened filtered to, from `?status=`. */
   initialStatus?: string;
@@ -98,11 +104,6 @@ export function ItemConversionList({
     toast("Tidak dapat diproses", result.errors._form ?? Object.values(result.errors)[0], "err");
   };
 
-  const kpi = (s: string) => () => {
-    setStatus(s);
-    setPage(1);
-  };
-
   return (
     <>
       <DocumentHeader
@@ -119,42 +120,8 @@ export function ItemConversionList({
       </DocumentHeader>
 
       <div className="kpis bud">
-        <button className="kpi" onClick={kpi("Draft")} style={{ textAlign: "left", font: "inherit" }}>
-          <div className="h">
-            <span className="i t-warn">
-              <Icon name="clock" size={14} />
-            </span>
-            <span className="l">Belum Diposting</span>
-          </div>
-          <div className="v">{summary.draft}</div>
-          <div className="d">belum menyentuh saldo maupun open item</div>
-        </button>
-
-        <button className="kpi wide" onClick={kpi("Posted")} style={{ textAlign: "left", font: "inherit" }}>
-          <div className="h">
-            <span className="i t-info">
-              <Icon name="check" size={14} />
-            </span>
-            <span className="l">Sudah Diposting</span>
-          </div>
-          <div className="v">{summary.posted}</div>
-          <div className="d">
-            {summary.postedTotals.length
-              ? `${formatTotals(summary.postedTotals)} dicairkan`
-              : "belum ada dana yang dicairkan"}
-          </div>
-        </button>
-
-        <button className="kpi" onClick={kpi("Cancelled")} style={{ textAlign: "left", font: "inherit" }}>
-          <div className="h">
-            <span className="i t-bad">
-              <Icon name="block" size={14} />
-            </span>
-            <span className="l">Dibatalkan</span>
-          </div>
-          <div className="v">{summary.cancelled}</div>
-          <div className="d">tidak pernah bergerak</div>
-        </button>
+        <CashBalanceTile cash={cash} />
+        <LayerPositionTile report={layers} />
       </div>
 
       <div className="card">

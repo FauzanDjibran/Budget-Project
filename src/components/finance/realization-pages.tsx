@@ -5,12 +5,13 @@ import { RecordHistoryCard } from "@/components/ui/record-history-card";
 import { requirePermission } from "@/lib/siba/auth";
 import { budgetMappings } from "@/lib/siba/budget";
 import { cashBookSummary } from "@/lib/siba/cash-bank";
+import { layerReport } from "@/lib/siba/cash-bank-layers";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import {
   financeRefs,
   getTransaction,
   listTransactions,
-  summariseTransactions,
+  readyToRealize,
   transactionLines,
 } from "@/lib/siba/finance";
 import { openRequestFor } from "@/lib/siba/funding";
@@ -50,10 +51,11 @@ export async function RealizationListPage({
 
   const companyIds = await accessibleCompanyIds(actor.permissions);
   const transactions = await listTransactions(companyIds, direction);
-  const [refs, summary, cash] = await Promise.all([
+  const [refs, ready, cash, layers] = await Promise.all([
     financeRefs(),
-    summariseTransactions(transactions),
+    readyToRealize(companyIds, direction),
     cashBookSummary(companyIds),
+    direction === "Out" ? layerReport(companyIds) : null,
   ]);
 
   return (
@@ -61,7 +63,8 @@ export async function RealizationListPage({
       direction={direction}
       transactions={transactions}
       refs={refs}
-      summary={summary}
+      ready={ready}
+      layers={layers}
       cash={cash}
       can={transactionAbilities(actor.permissions)}
       initialStatus={status}

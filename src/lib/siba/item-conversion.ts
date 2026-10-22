@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { formatMoney, formatRate, sumByCurrency, type MoneyTotal } from "@/lib/format";
+import { formatMoney, formatRate } from "@/lib/format";
 import { InsufficientFunds, lockCashBanks, recordCashBankEntry } from "./cash-bank";
 import {
   LayerNotAvailable,
@@ -1258,30 +1258,4 @@ export async function previewConversion(
   const result = await applyConversion(conversionId, 0, true);
   if (!result.ok) return result;
   return { ok: true, lines: await describeJournalLines(result.journal ?? []) };
-}
-
-// ------------------------------------------------------------------ summary
-
-export type ConversionSummary = {
-  draft: number;
-  posted: number;
-  cancelled: number;
-  /** Posted value, per currency — never added across currencies. */
-  postedTotals: MoneyTotal[];
-};
-
-export function summariseConversions(rows: ConversionRow[]): ConversionSummary {
-  const posted = rows.filter((r) => r.status === "Posted");
-  return {
-    draft: rows.filter((r) => r.status === "Draft").length,
-    posted: posted.length,
-    cancelled: rows.filter((r) => r.status === "Cancelled").length,
-    postedTotals: sumByCurrency(
-      posted.map((r) => ({
-        currencyId: r.currency_id,
-        currencyLabel: r.currency_label,
-        amount: r.conversion_amount,
-      }))
-    ),
-  };
 }

@@ -6,7 +6,6 @@ import {
   budgetRefs,
   fiscalPeriod,
   listBudgets,
-  summarise,
 } from "@/lib/siba/budget";
 import { cashBookSummary } from "@/lib/siba/cash-bank";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
@@ -47,10 +46,9 @@ export default async function Page({
     companyIds
   );
 
-  const [refs, months, summary, cash] = await Promise.all([
+  const [refs, months, cash] = await Promise.all([
     budgetRefs(),
     budgetMonths(companyIds),
-    summarise(budgets),
     cashBookSummary(companyIds),
   ]);
 
@@ -59,7 +57,6 @@ export default async function Page({
       budgets={budgets}
       refs={refs}
       months={months.map((m) => ({ id: m.periodId, label: m.label, name: m.name }))}
-      summary={summary}
       cash={cash}
       month={month ? { id: month.id, label: month.label, name: month.name } : null}
       can={budgetAbilities(actor.permissions)}

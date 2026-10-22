@@ -5,6 +5,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import {
   budgetsByIds,
+  openBudgetsFor,
   openBudgetsMatching,
   realizeBudgets,
 } from "./budget";
@@ -735,14 +736,11 @@ export async function eligibleBudgets(
   const opening = new Set<number>();
   const accumulating = new Set<number>();
   for (const { row } of outstanding) {
-    const book = subledgerForCategory(books, row.category_id);
-    if (book && row.partner_id != null) {
-      if (subledgerMovement(book, header.transaction_type, 1) < 0) {
-        lowering.set(row.id, book.categoryId);
-      } else {
-        opening.add(row.id);
-        if (book.nature === "cumulative") accumulating.add(row.id);
-      }
+    const effect = bookEffect(books, row, header.transaction_type);
+    if (effect?.lowers) lowering.set(row.id, effect.bookId);
+    else if (effect) {
+      opening.add(row.id);
+      if (effect.accumulates) accumulating.add(row.id);
     }
   }
   const openItems = await openSubledgerItems(
@@ -781,6 +779,95 @@ export async function eligibleBudgets(
     outstanding: left,
     draftAllocated: draftAllocated.get(row.id) ?? 0,
   }));
+}
+
+/** What realizing a Budget does to its subject book, or null where it keeps none. */
+function bookEffect(
+  books: SubledgerDef[],
+  row: { category_id: number | null; partner_id: number | null },
+  direction: "In" | "Out"
+): { bookId: number; lowers: boolean; accumulates: boolean } | null {
+  const book = subledgerForCategory(books, row.category_id);
+  if (!book || row.partner_id == null) return null;
+  return {
+    bookId: book.categoryId,
+    lowers: subledgerMovement(book, direction, 1) < 0,
+    accumulates: book.nature === "cumulative",
+  };
+}
+
+/** An Open Budget still to be realized, as the Realisasi register's tile states it. */
+export type ReadyBudget = {
+  id: number;
+  budget_no: string;
+  budget_date: string;
+  description: string;
+  company_id: number;
+  category_id: number | null;
+  partner_id: number | null;
+  currency_id: number;
+  outstanding: number;
+  /** Realizing it lowers a position, so a line must name an open item. */
+  lowers: boolean;
+  /** Open items of its Partner, book and currency — what a lowering line can settle. */
+  openItems: number;
+  openItemsRemaining: number;
+};
+
+/**
+ * Every Open Budget one Realisasi menu can still realize, across the reader's
+ * Companies. A lowering Budget whose Partner holds no open item cannot be
+ * posted yet (§10 rule 105), which is why the items are counted here.
+ */
+export async function readyToRealize(
+  companyIds: number[],
+  direction: "In" | "Out"
+): Promise<ReadyBudget[]> {
+  const rows = (await openBudgetsFor(companyIds, direction)).filter(
+    (b) => b.budget_amount - b.realized_amount > 0
+  );
+  if (!rows.length) return [];
+
+  const books = await loadSubledgers();
+  const lowering = new Map<number, number>();
+  for (const row of rows) {
+    const effect = bookEffect(books, row, direction);
+    if (effect?.lowers) lowering.set(row.id, effect.bookId);
+  }
+  const items = await openSubledgerItems(
+    rows
+      .filter((r) => lowering.has(r.id))
+      .map((r) => ({
+        bookId: lowering.get(r.id)!,
+        partnerId: r.partner_id!,
+        currencyId: r.currency_id,
+      }))
+  );
+
+  return rows.map((r) => {
+    const own = lowering.has(r.id)
+      ? items.filter(
+          (i) =>
+            i.bookId === lowering.get(r.id) &&
+            i.partnerId === r.partner_id &&
+            i.currencyId === r.currency_id
+        )
+      : [];
+    return {
+      id: r.id,
+      budget_no: r.budget_no,
+      budget_date: r.budget_date,
+      description: r.description,
+      company_id: r.company_id,
+      category_id: r.category_id,
+      partner_id: r.partner_id,
+      currency_id: r.currency_id,
+      outstanding: r.budget_amount - r.realized_amount,
+      lowers: lowering.has(r.id),
+      openItems: own.length,
+      openItemsRemaining: own.reduce((t, i) => t + i.remaining, 0),
+    };
+  });
 }
 
 /**
@@ -3076,46 +3163,6 @@ export async function nextTransactionNo(direction: "In" | "Out"): Promise<string
     });
     return row?.transaction_no ?? null;
   });
-}
-
-// ------------------------------------------------------------- KPI summary
-
-export type TransactionSummary = {
-  draft: number;
-  draftTotals: MoneyTotal[];
-  posted: number;
-  inTotals: MoneyTotal[];
-  outTotals: MoneyTotal[];
-};
-
-/** The KPI row, per currency — amounts are never converted (CLAUDE.md §12). */
-export async function summariseTransactions(
-  rows: TransactionRow[]
-): Promise<TransactionSummary> {
-  const currencies = await prisma.refCurrency.findMany({
-    select: { id: true, currency_label: true },
-  });
-  const labelOf = new Map(currencies.map((c) => [c.id, c.currency_label]));
-  const money = (t: TransactionRow) => ({
-    currencyId: t.currency_id,
-    currencyLabel: labelOf.get(t.currency_id) ?? "",
-    amount: t.transaction_amount,
-  });
-
-  const drafts = rows.filter((t) => t.status === "Draft");
-  const posted = rows.filter((t) => t.status === "Posted");
-
-  return {
-    draft: drafts.length,
-    draftTotals: sumByCurrency(drafts.map(money)),
-    posted: posted.length,
-    inTotals: sumByCurrency(
-      posted.filter((t) => t.transaction_type === "In").map(money)
-    ),
-    outTotals: sumByCurrency(
-      posted.filter((t) => t.transaction_type === "Out").map(money)
-    ),
-  };
 }
 
 // ---------------------------------------------------- pending commitments

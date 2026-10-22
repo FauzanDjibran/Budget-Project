@@ -15,7 +15,7 @@ import { useToast } from "@/components/ui/toast";
 import { transitionBudgets } from "@/app/actions/budget";
 import { formatDate, formatMoney, formatTotals, sumByCurrency } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type { BudgetRefs, BudgetRow, BudgetSummary } from "@/lib/siba/budget";
+import type { BudgetRefs, BudgetRow } from "@/lib/siba/budget";
 import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import {
   BUDGET_TRANSITIONS,
@@ -31,6 +31,7 @@ import {
   menuButtonClass,
   orderForHeader,
 } from "@/lib/siba/header-actions";
+import { BudgetPlanTile } from "./budget-plan-tile";
 import { CashBalanceTile } from "./cash-balance-dialog";
 import { ReportPicker } from "./report-picker";
 
@@ -64,7 +65,6 @@ export function BudgetList({
   budgets,
   refs,
   months,
-  summary,
   cash,
   month,
   can,
@@ -74,7 +74,6 @@ export function BudgetList({
   refs: BudgetRefs;
   /** Every Budget Month, for the month filter. */
   months: { id: number; label: string; name: string }[];
-  summary: BudgetSummary;
   cash: CashBookSummary;
   /** null when the page is showing every month at once. */
   month: { id: number; label: string; name: string } | null;
@@ -185,6 +184,14 @@ export function BudgetList({
     ...t,
     count: t.value ? narrowed.filter((b) => b.status === t.value).length : narrowed.length,
   }));
+
+  // The plan cards follow the tab alone, never the search: a total that moved
+  // with every keystroke would stop being a summary. Semua is the plan, so a
+  // refused or cancelled Budget is not part of it.
+  const tabLabel = TABS.find((t) => t.value === status)?.label ?? "Semua";
+  const planned = status
+    ? budgets.filter((b) => b.status === status)
+    : budgets.filter((b) => b.status !== "Rejected" && b.status !== "Cancelled");
 
   const activeFilters = (type ? 1 : 0) + (company ? 1 : 0) + (query ? 1 : 0);
   const clearAll = () => {
@@ -346,47 +353,17 @@ export function BudgetList({
 
       <div className="kpis bud">
         <CashBalanceTile cash={cash} />
-
-        <button
-          className="kpi"
-          onClick={() => {
-            setStatus("Submitted");
-            setPage(1);
-          }}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span className="i t-warn">
-              <Icon name="clock" size={14} />
-            </span>
-            <span className="l">Belum Disetujui</span>
-          </div>
-          <div className="v">{summary.notApproved}</div>
-          <div className="d">
-            {formatTotals(summary.notApprovedTotals)} · {summary.draft} draft,{" "}
-            {summary.submitted} diajukan
-          </div>
-        </button>
-
-        <button
-          className="kpi"
-          onClick={() => {
-            setStatus("Open");
-            setPage(1);
-          }}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span className="i t-info">
-              <Icon name="send" size={14} />
-            </span>
-            <span className="l">Belum Direalisasi</span>
-          </div>
-          <div className="v">{summary.unrealized}</div>
-          <div className="d">
-            {formatTotals(summary.unrealizedTotals)} sisa dari budget terklasifikasi
-          </div>
-        </button>
+        {(["Out", "In"] as const).map((d) => (
+          <BudgetPlanTile
+            key={d}
+            budgets={planned.filter((b) => b.budget_type === d)}
+            direction={d}
+            tabLabel={tabLabel}
+            showRemaining={status === "Open"}
+            currencyOf={currencyOf}
+            categoryOf={categoryOf}
+          />
+        ))}
       </div>
 
       <div className="card">

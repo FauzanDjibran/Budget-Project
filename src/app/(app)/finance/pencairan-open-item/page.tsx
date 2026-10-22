@@ -1,7 +1,9 @@
 import { ItemConversionList } from "@/components/finance/item-conversion-list";
 import { requirePermission } from "@/lib/siba/auth";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import { listConversions, summariseConversions } from "@/lib/siba/item-conversion";
+import { cashBookSummary } from "@/lib/siba/cash-bank";
+import { layerReport } from "@/lib/siba/cash-bank-layers";
+import { listConversions } from "@/lib/siba/item-conversion";
 import { conversionAbilities } from "@/lib/siba/item-conversion-workflow";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +17,18 @@ export default async function Page({
   const actor = await requirePermission("ITEM_CONVERSION_VIEW", "/finance/pencairan-open-item");
 
   const { status } = await searchParams;
-  const conversions = await listConversions(await accessibleCompanyIds(actor.permissions));
+  const companyIds = await accessibleCompanyIds(actor.permissions);
+  const [conversions, cash, layers] = await Promise.all([
+    listConversions(companyIds),
+    cashBookSummary(companyIds),
+    layerReport(companyIds),
+  ]);
 
   return (
     <ItemConversionList
       conversions={conversions}
-      summary={summariseConversions(conversions)}
+      cash={cash}
+      layers={layers}
       can={conversionAbilities(actor.permissions)}
       initialStatus={status}
     />

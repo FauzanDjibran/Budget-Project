@@ -11,12 +11,15 @@ import { Pager } from "@/components/ui/pager";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionTransfer } from "@/app/actions/transfer";
-import { formatDate, formatMoney, formatTotals } from "@/lib/format";
+import { formatDate, formatMoney } from "@/lib/format";
+import { CashBalanceTile } from "@/components/budget/cash-balance-dialog";
+import type { CashBookSummary } from "@/lib/siba/cash-bank";
+import type { LayerReport } from "@/lib/siba/cash-bank-layers";
+import { LayerPositionTile } from "./layer-position-tile";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type {
   TransferRefs,
   TransferRow,
-  TransferSummary,
 } from "@/lib/siba/transfer";
 import {
   TRANSFER_PURPOSES,
@@ -46,13 +49,15 @@ import { menuButtonClass } from "@/lib/siba/header-actions";
 export function TransferList({
   transfers,
   refs,
-  summary,
+  cash,
+  layers,
   can,
   initialStatus,
 }: {
   transfers: TransferRow[];
   refs: TransferRefs;
-  summary: TransferSummary;
+  cash: CashBookSummary;
+  layers: LayerReport;
   can: TransferAbilities;
   /** Status the page was opened filtered to, from `?status=`. */
   initialStatus?: string;
@@ -150,63 +155,8 @@ export function TransferList({
       </DocumentHeader>
 
       <div className="kpis bud">
-        <button
-          className="kpi"
-          onClick={() => {
-            setStatus("Draft");
-            setPage(1);
-          }}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span className="i t-warn">
-              <Icon name="clock" size={14} />
-            </span>
-            <span className="l">Belum Diposting</span>
-          </div>
-          <div className="v">{summary.draft}</div>
-          <div className="d">belum menyentuh saldo mana pun</div>
-        </button>
-
-        <button
-          className="kpi wide"
-          onClick={() => {
-            setStatus("Posted");
-            setPage(1);
-          }}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span className="i t-info">
-              <Icon name="check" size={14} />
-            </span>
-            <span className="l">Sudah Diposting</span>
-          </div>
-          <div className="v">{summary.posted}</div>
-          <div className="d">
-            {summary.postedTotals.length
-              ? `${formatTotals(summary.postedTotals)} dipindahkan`
-              : "belum ada dana yang dipindahkan"}
-          </div>
-        </button>
-
-        <button
-          className="kpi"
-          onClick={() => {
-            setStatus("Cancelled");
-            setPage(1);
-          }}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span className="i t-bad">
-              <Icon name="block" size={14} />
-            </span>
-            <span className="l">Dibatalkan</span>
-          </div>
-          <div className="v">{summary.cancelled}</div>
-          <div className="d">tidak pernah bergerak</div>
-        </button>
+        <CashBalanceTile cash={cash} />
+        <LayerPositionTile report={layers} />
       </div>
 
       <div className="card">

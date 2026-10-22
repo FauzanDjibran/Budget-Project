@@ -12,13 +12,13 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionTransaction } from "@/app/actions/finance";
 import { requestFunding, withdrawFunding } from "@/app/actions/funding";
-import { formatDate, formatMoney, formatTotals } from "@/lib/format";
+import { formatDate, formatMoney } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import type {
   FinanceRefs,
+  ReadyBudget,
   TransactionRow,
-  TransactionSummary,
 } from "@/lib/siba/finance";
 import {
   TRANSACTION_TRANSITIONS,
@@ -31,6 +31,9 @@ import {
 import { realizationHref, realizationOf } from "@/lib/siba/realization";
 import { menuButtonClass } from "@/lib/siba/header-actions";
 import { CashBalanceTile } from "@/components/budget/cash-balance-dialog";
+import type { LayerReport } from "@/lib/siba/cash-bank-layers";
+import { LayerPositionTile } from "./layer-position-tile";
+import { ReadyBudgetTile } from "./ready-budget-tile";
 
 /**
  * The register of one Realisasi Budget menu — Penerimaan or Pengeluaran.
@@ -48,7 +51,8 @@ export function TransactionList({
   direction,
   transactions,
   refs,
-  summary,
+  ready,
+  layers,
   cash,
   can,
   initialStatus,
@@ -57,7 +61,9 @@ export function TransactionList({
   direction: "In" | "Out";
   transactions: TransactionRow[];
   refs: FinanceRefs;
-  summary: TransactionSummary;
+  ready: ReadyBudget[];
+  /** Only where a layer is chosen — money leaving. */
+  layers: LayerReport | null;
   cash: CashBookSummary;
   can: TransactionAbilities;
   /** Status the page was opened filtered to, from `?status=` — see the route. */
@@ -171,53 +177,8 @@ export function TransactionList({
 
       <div className="kpis bud">
         <CashBalanceTile cash={cash} />
-
-        <button
-          className="kpi"
-          onClick={() => {
-            setStatus("Draft");
-            setPage(1);
-          }}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span
-              className="i t-warn"
-            >
-              <Icon name="clock" size={14} />
-            </span>
-            <span className="l">Belum Diposting</span>
-          </div>
-          <div className="v">{summary.draft}</div>
-          <div className="d">
-            {formatTotals(summary.draftTotals)} · belum menyentuh Budget maupun
-            saldo
-          </div>
-        </button>
-
-        <button
-          className="kpi"
-          onClick={() => {
-            setStatus("Posted");
-            setPage(1);
-          }}
-          style={{ textAlign: "left", font: "inherit" }}
-        >
-          <div className="h">
-            <span
-              className="i t-info"
-            >
-              <Icon name="check" size={14} />
-            </span>
-            <span className="l">Sudah Diposting</span>
-          </div>
-          <div className="v">{summary.posted}</div>
-          <div className="d">
-            {direction === "In"
-              ? `+ ${formatTotals(summary.inTotals)} masuk`
-              : `− ${formatTotals(summary.outTotals)} keluar`}
-          </div>
-        </button>
+        <ReadyBudgetTile budgets={ready} refs={refs} direction={direction} />
+        {layers && <LayerPositionTile report={layers} />}
       </div>
 
       <div className="card">

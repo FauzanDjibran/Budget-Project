@@ -199,8 +199,6 @@ export function commonActions(
   );
 }
 
-/** Statuses a budget counts as "not yet approved" in the KPI row. */
-export const NOT_APPROVED: BudgetStatus[] = ["Draft", "Submitted"];
 
 /**
  * Kept as a name this module's callers already use, but no longer a second
