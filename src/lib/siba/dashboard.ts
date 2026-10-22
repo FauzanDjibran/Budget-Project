@@ -1,18 +1,9 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { type MoneyTotal } from "@/lib/format";
-import {
-  approvedCommitments,
-  awaitingClassificationCommitments,
-  budgetMonths,
-  realizationOutcomes,
-  submittedCommitments,
-  type CommitmentQueue,
-  type CommitmentRow,
-  type RealizationOutcomeRow,
-} from "./budget";
+import { budgetMonths, listBudgets, type BudgetRow } from "./budget";
 import { cashBookSummary, type CashBookSummary } from "./cash-bank";
+import { layerReport, type LayerReport } from "./cash-bank-layers";
 import { reportableFiscalYears } from "./fiscal";
 import { accountPositions, type AccountPosition } from "./ledger";
 import { reportHref } from "./reports";
@@ -28,42 +19,18 @@ import { intercompanyBridge } from "./system-account-data";
  * This file names no other module's table. Every figure below is asked for by
  * calling the module that owns it — which is what lets the dashboard summarise
  * the whole application without becoming the one place that knows everything
- * about all of it.
+ * about all of it. Company, Currency and Budget Category are master data.
  *
  * It is a **leaf**: it depends on every module and nothing depends on it, so
  * it can be deleted without disturbing anything (CLAUDE.md §3).
  *
- * ## The one rule the queues are built on
- *
- * Every rupiah of committed money sits in **exactly one** Budget stage —
- * waiting for approval, waiting for classification, or waiting to be realized
- * — and the three together are the whole of what has been committed but has
- * not reached a book. Money a `Pending` document holds is still unrealized
- * (`realized_amount` is written only at Post), so it stays inside the third
- * stage and is marked there, never counted as a stage of its own.
- *
- * Draft records — of a Budget or of a document — appear nowhere.
+ * Two sections: today's position, which no period moves, and the chosen
+ * month — its Budgets and each Company's Laba Rugi to date. Draft records, of
+ * a Budget or of a document, appear nowhere.
  */
 
-// ------------------------------------------------------------------- stages
-
-export type StageKey = "approval" | "classification" | "execution";
-
-export type StageRow = CommitmentRow & {
-  href: string;
-};
-
-export type FunnelStage = {
-  key: StageKey;
-  name: string;
-  href: string;
-  count: number;
-  totals: MoneyTotal[];
-  inTotals: MoneyTotal[];
-  outTotals: MoneyTotal[];
-  /** Oldest first. */
-  rows: StageRow[];
-};
+/** A Budget the month's plan counts: committed, never Draft, refused or withdrawn. */
+const PLANNED = new Set(["Submitted", "Approved", "Open", "Closed"]);
 
 // -------------------------------------------------------------------- shape
 
@@ -97,10 +64,13 @@ export type DashboardData = {
   months: DashboardMonth[];
   month: DashboardMonth | null;
   cash: CashBookSummary;
+  layers: LayerReport;
   intercompany: IntercompanyPosition;
   profitLoss: CompanyProfitLoss[];
-  stages: FunnelStage[];
-  plan: RealizationOutcomeRow[];
+  /** The month's committed Budgets, which the plan tiles read as the Budget page does. */
+  budgets: BudgetRow[];
+  currencies: { id: number; label: string }[];
+  categories: { id: number; label: string }[];
   books: SubledgerPosition[];
 };
 
@@ -110,16 +80,15 @@ export async function dashboardData(
   companyIds: number[],
   periodId: number | null = null
 ): Promise<DashboardData> {
-  const [months, submitted, awaiting, approved, cash, books, bridge] =
-    await Promise.all([
-      budgetMonths(companyIds),
-      submittedCommitments(companyIds),
-      awaitingClassificationCommitments(companyIds),
-      approvedCommitments(companyIds),
-      cashBookSummary(companyIds),
-      loadSubledgers().then((defs) => subledgerPositions(defs, companyIds)),
-      intercompanyBridge(),
-    ]);
+  const [months, cash, layers, books, bridge, currencies, categories] = await Promise.all([
+    budgetMonths(companyIds),
+    cashBookSummary(companyIds),
+    layerReport(companyIds),
+    loadSubledgers().then((defs) => subledgerPositions(defs, companyIds)),
+    intercompanyBridge(),
+    prisma.refCurrency.findMany({ select: { id: true, currency_label: true } }),
+    prisma.sysBudgetCategory.findMany({ select: { id: true, category_label: true } }),
+  ]);
 
   const monthList: DashboardMonth[] = months.map((m) => ({
     periodId: m.periodId,
@@ -133,28 +102,6 @@ export async function dashboardData(
     monthList.find((m) => m.current) ??
     monthList[0] ??
     null;
-
-  const stage = (
-    key: StageKey,
-    name: string,
-    href: string,
-    queue: CommitmentQueue
-  ): FunnelStage => ({
-    key,
-    name,
-    href,
-    count: queue.count,
-    totals: queue.totals,
-    inTotals: queue.inTotals,
-    outTotals: queue.outTotals,
-    rows: queue.rows.map((r) => ({ ...r, href: `/budget/budget/${r.id}` })),
-  });
-
-  const stages = [
-    stage("approval", "Menunggu Persetujuan", "/budget/budget/month/all?status=Submitted", submitted),
-    stage("classification", "Menunggu Klasifikasi", "/budget/klasifikasi", awaiting),
-    stage("execution", "Menunggu Direalisasi", "/budget/budget/month/all?status=Open", approved),
-  ];
 
   const bridgeIds = bridge.ok
     ? [
@@ -170,8 +117,8 @@ export async function dashboardData(
     (a, b) => bridgeIds.indexOf(a.id) - bridgeIds.indexOf(b.id)
   );
 
-  const [plan, profitLoss] = await Promise.all([
-    month ? realizationOutcomes(companyIds, month.startDate, month.endDate) : [],
+  const [budgets, profitLoss] = await Promise.all([
+    month && companyIds.length ? listBudgets(month, companyIds) : [],
     month ? companyProfitLoss(companyIds, month.startDate) : [],
   ]);
 
@@ -179,10 +126,12 @@ export async function dashboardData(
     months: monthList,
     month,
     cash,
+    layers,
     intercompany: { ok: bridge.ok, missing: bridge.ok ? [] : bridge.missing, sides },
     profitLoss,
-    stages,
-    plan,
+    budgets: budgets.filter((b) => PLANNED.has(b.status)),
+    currencies: currencies.map((c) => ({ id: c.id, label: c.currency_label })),
+    categories: categories.map((c) => ({ id: c.id, label: c.category_label })),
     books: books.filter((b) => b.subjects > 0),
   };
 }

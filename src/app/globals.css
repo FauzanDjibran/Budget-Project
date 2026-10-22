@@ -654,12 +654,9 @@ td.acts{width:88px;padding-right:7px}
 .kpi[data-fs]{cursor:pointer}
 button.kpi{text-align:left;font:inherit;display:block;width:100%}
 .kpi .v.stack{display:grid;gap:3px;font-size:18px;letter-spacing:-.4px;line-height:1.15}
-.kpi .d .dl{display:flex;justify-content:space-between;gap:10px}
-.kpi .d .dl b{font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
 .kpi .v.stack .kl{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
 .kpi .v.stack .kl small{font-size:10.5px;font-weight:800;letter-spacing:.06em;color:var(--muted-2)}
 .kpi .v .neg{color:var(--bad)}
-.kpi .d .dl.z b{color:var(--muted-2);font-weight:600}
 tr.clk{cursor:pointer}
 .kpis.trio{grid-template-columns:repeat(3,minmax(0,1fr))}
 .dsec{display:flex;align-items:baseline;gap:10px;margin:20px 0 10px}
@@ -667,9 +664,7 @@ tr.clk{cursor:pointer}
 .dsec h2{margin:0;font-size:13.5px;font-weight:800;color:var(--ink)}
 .dsec p{margin:0;font-size:11.5px;color:var(--muted)}
 .dsec .act{margin-left:auto;align-self:center}
-.dgrid{display:grid;grid-template-columns:minmax(280px,1fr) 2fr;gap:14px;align-items:start;margin-bottom:14px}
-.dstack{display:grid;gap:12px}
-@media (max-width:1000px){.kpis.trio,.dgrid{grid-template-columns:1fr}}
+@media (max-width:1000px){.kpis.trio{grid-template-columns:1fr}}
 .tsel{height:32px;border:1px solid var(--line);border-radius:var(--r);background:#fff;padding:0 26px 0 10px;
   font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer;appearance:none;box-shadow:var(--sh-xs);max-width:180px;
   background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='3' stroke-linecap='round'><polyline points='6 9 12 15 18 9'/></svg>");

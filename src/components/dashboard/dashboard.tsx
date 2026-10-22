@@ -4,27 +4,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Icon } from "@/components/icon";
+import { BudgetPlanTile } from "@/components/budget/budget-plan-tile";
 import { CashBalanceTile } from "@/components/budget/cash-balance-dialog";
+import { LayerPositionTile } from "@/components/finance/layer-position-tile";
 import { Amount } from "@/components/ui/amount";
 import { Dialog } from "@/components/ui/dialog";
 import { KpiTile } from "@/components/ui/kpi-tile";
 import { Select } from "@/components/ui/select";
-import {
-  formatAgeDays,
-  formatDate,
-  formatMoney,
-  formatTotals,
-  type MoneyTotal,
-} from "@/lib/format";
-import { directionText } from "@/lib/siba/classification";
+import { formatDate, formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
-import type { RealizationOutcome, RealizationOutcomeRow } from "@/lib/siba/budget";
 import type {
   CompanyProfitLoss,
   DashboardData,
-  FunnelStage,
   IntercompanyPosition,
-  StageKey,
 } from "@/lib/siba/dashboard";
 import { reportHref } from "@/lib/siba/reports";
 import type { SubledgerPosition } from "@/lib/siba/subledger";
@@ -32,41 +24,27 @@ import type { SubledgerPosition } from "@/lib/siba/subledger";
 /**
  * The dashboard: tiles that state a figure, each opening its Rincian.
  *
- *   1. Where the position stands today — cash, intercompany, each Company's
- *      Laba Rugi to the chosen month.
- *   2. What Budgets are waiting on — approval, classification, realization.
- *      The three partition committed money: nothing is in two of them.
- *   3. How the chosen month's plan was realized.
- *   4. What the subject books stand at, per currency.
+ *   1. Where the position stands today — cash, rate layers, intercompany, and
+ *      the subject books, one row per book so a new Budget Category needs no
+ *      new card.
+ *   2. The chosen month — its Budgets, Pengeluaran and Penerimaan, drawn by
+ *      the Budget page's own tile, and each Company's Laba Rugi to date.
  *
  * Money is never summed across currencies (CLAUDE.md §9).
  */
 
-type Open =
-  | { kind: "stage"; key: StageKey }
-  | { kind: "intercompany" }
-  | { kind: "pl" }
-  | { kind: "book"; bookId: number }
-  | { kind: "outcome"; key: string }
-  | null;
-
-const STAGE_LOOK: Record<StageKey, { tone: "t-warn" | "t-acc" | "t-info"; icon: "clock" | "tags" | "send" }> = {
-  approval: { tone: "t-warn", icon: "clock" },
-  classification: { tone: "t-acc", icon: "tags" },
-  execution: { tone: "t-info", icon: "send" },
-};
+type Open = { kind: "intercompany" } | { kind: "pl" } | { kind: "book"; bookId: number } | null;
 
 export function Dashboard({ data }: { data: DashboardData }) {
   const router = useRouter();
   const [open, setOpen] = useState<Open>(null);
   const close = () => setOpen(null);
 
-  const stage = open?.kind === "stage" ? data.stages.find((s) => s.key === open.key) : undefined;
   const book = open?.kind === "book" ? data.books.find((b) => b.bookId === open.bookId) : undefined;
-  const outcome =
-    open?.kind === "outcome"
-      ? data.plan.find((r) => `${r.budgetType}|${r.currencyId}` === open.key)
-      : undefined;
+  const currencyLabel = new Map(data.currencies.map((c) => [c.id, c.label]));
+  const categoryById = new Map(data.categories.map((c) => [c.id, c]));
+  const currencyOf = (id: number) => currencyLabel.get(id) ?? BASE_CURRENCY_LABEL;
+  const categoryOf = (id: number | null) => (id == null ? null : categoryById.get(id) ?? null);
 
   return (
     <>
@@ -91,23 +69,18 @@ export function Dashboard({ data }: { data: DashboardData }) {
       </div>
 
       <div className="kpis trio">
-        {data.stages.map((s) => (
-          <StageTile key={s.key} stage={s} onOpen={() => setOpen({ kind: "stage", key: s.key })} />
-        ))}
+        <CashBalanceTile cash={data.cash} />
+        {/* Nothing held in foreign currency has no layer to show. */}
+        {data.layers.resources > 0 && <LayerPositionTile report={data.layers} />}
+        <IntercompanyTile ic={data.intercompany} onOpen={() => setOpen({ kind: "intercompany" })} />
       </div>
 
-      <div className="dgrid">
-        <div className="dstack">
-          <CashBalanceTile cash={data.cash} />
-          <IntercompanyTile ic={data.intercompany} onOpen={() => setOpen({ kind: "intercompany" })} />
-        </div>
-        <BookCard books={data.books} onOpen={(bookId) => setOpen({ kind: "book", bookId })} />
-      </div>
+      <BookCard books={data.books} onOpen={(bookId) => setOpen({ kind: "book", bookId })} />
 
       {/* Everything here reads the chosen month, and the picker sits beside it. */}
       <div className="dsec">
         <h2>Periode</h2>
-        <p>Laba Rugi s.d. bulan ini, Budget bertanggal bulan ini</p>
+        <p>Budget bertanggal bulan ini, Laba Rugi s.d. bulan ini</p>
         {data.months.length > 0 && (
           <div className="act">
             <Select
@@ -123,58 +96,31 @@ export function Dashboard({ data }: { data: DashboardData }) {
         )}
       </div>
 
-      <div className="dgrid">
+      <div className="kpis trio">
+        {(["Out", "In"] as const).map((d) => (
+          <BudgetPlanTile
+            key={d}
+            budgets={data.budgets.filter((b) => b.budget_type === d)}
+            direction={d}
+            tabLabel={data.month?.name ?? "—"}
+            showRemaining
+            currencyOf={currencyOf}
+            categoryOf={categoryOf}
+          />
+        ))}
         <ProfitLossTile pl={data.profitLoss} onOpen={() => setOpen({ kind: "pl" })} />
-        <OutcomeCard data={data} onOpen={(key) => setOpen({ kind: "outcome", key })} />
       </div>
 
-      {stage && <StageDialog stage={stage} onClose={close} />}
       {open?.kind === "intercompany" && (
         <IntercompanyDialog ic={data.intercompany} onClose={close} />
       )}
       {open?.kind === "pl" && <ProfitLossDialog pl={data.profitLoss} onClose={close} />}
       {book && <BookDialog book={book} onClose={close} />}
-      {outcome && <OutcomeDialog row={outcome} onClose={close} />}
     </>
   );
 }
 
 // ------------------------------------------------------------------- tiles
-
-/** A total that spans currencies, or `Rp 0` where nothing is waiting — never a dash. */
-const totalsOrZero = (totals: MoneyTotal[]) =>
-  totals.length ? formatTotals(totals) : formatMoney(0, BASE_CURRENCY_LABEL);
-
-/** `Pengeluaran Rp 1.000 · USD 50` and its Penerimaan twin, one line each. */
-function DirectionLines({ outTotals, inTotals }: { outTotals: MoneyTotal[]; inTotals: MoneyTotal[] }) {
-  return (
-    <>
-      <span className={`dl${outTotals.length ? "" : " z"}`}>
-        Pengeluaran <b>{totalsOrZero(outTotals)}</b>
-      </span>
-      <span className={`dl${inTotals.length ? "" : " z"}`}>
-        Penerimaan <b>{totalsOrZero(inTotals)}</b>
-      </span>
-    </>
-  );
-}
-
-function StageTile({ stage, onOpen }: { stage: FunnelStage; onOpen: () => void }) {
-  const look = STAGE_LOOK[stage.key];
-  return (
-    <KpiTile
-      icon={look.icon}
-      tone={look.tone}
-      label={stage.name}
-      more="Rincian"
-      value={stage.count}
-      detail={
-<DirectionLines outTotals={stage.outTotals} inTotals={stage.inTotals} />
-      }
-      onClick={onOpen}
-    />
-  );
-}
 
 /** One tile, one line per Company: Laba Bersih from the year's start to the month. */
 function ProfitLossTile({ pl, onOpen }: { pl: CompanyProfitLoss[]; onOpen: () => void }) {
@@ -254,164 +200,6 @@ function IntercompanyTile({ ic, onOpen }: { ic: IntercompanyPosition; onOpen: ()
   );
 }
 
-// ------------------------------------------------------------ period cards
-
-const OUTCOMES: { key: RealizationOutcome; label: string; tone: string }[] = [
-  { key: "under", label: "Kurang", tone: "s-warn" },
-  { key: "match", label: "Sesuai", tone: "s-ok" },
-  { key: "over", label: "Lebih", tone: "s-bad" },
-];
-
-/**
- * How the month's realizable Budgets turned out against their nominal. One row
- * per direction × currency; each outcome states how many Budgets and how much —
- * the shortfall, the nominal, or the excess. A row opens its Budgets.
- */
-function OutcomeCard({
-  data,
-  onOpen,
-}: {
-  data: DashboardData;
-  onOpen: (key: string) => void;
-}) {
-  return (
-    <div className="card">
-      <div className="card-h">
-        <span className="ci">
-          <Icon name="scale" size={15} />
-        </span>
-        <div className="ct">
-          <h3>Realisasi vs Rencana</h3>
-          <p>
-            {data.month
-              ? `Budget Open dan Closed bertanggal ${data.month.name}`
-              : "Belum ada periode"}
-          </p>
-        </div>
-      </div>
-
-      {data.plan.length ? (
-        <div className="tw">
-          <table className="grid">
-            <thead>
-              <tr>
-                <th>Arah · Currency</th>
-                {OUTCOMES.map((o) => (
-                  <th className="num" key={o.key}>
-                    {o.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.plan.map((r) => (
-                <tr
-                  key={`${r.budgetType}|${r.currencyId}`}
-                  className="clk"
-                  onClick={() => onOpen(`${r.budgetType}|${r.currencyId}`)}
-                >
-                  <td className="pri">
-                    {directionText(r.budgetType)} · {r.currencyLabel}
-                    <span className="rsub">{r.budgets.length} Budget</span>
-                  </td>
-                  {OUTCOMES.map((o) => (
-                    <td className="num" key={o.key}>
-                      <Amount value={r[o.key].amount} currency={r.currencyLabel} nil="dash" />
-                      <span className="rsub">{r[o.key].count} Budget</span>
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="empty sm">
-          <div className="ic">
-            <Icon name="scale" size={20} />
-          </div>
-          <h4>Tidak ada Budget Open atau Closed pada periode ini</h4>
-          <p>Pilih periode lain di atas.</p>
-        </div>
-      )}
-      <p className="foot-note" style={{ padding: "0 16px 14px" }}>
-        Kurang menyebut sisa yang belum direalisasi, Sesuai nominalnya, Lebih kelebihannya.
-      </p>
-    </div>
-  );
-}
-
-function OutcomeDialog({ row, onClose }: { row: RealizationOutcomeRow; onClose: () => void }) {
-  return (
-    <Dialog
-      open
-      icon="scale"
-      tone="brand"
-      width={960}
-      title={`Realisasi vs Rencana · ${directionText(row.budgetType)} ${row.currencyLabel}`}
-      subtitle={`${row.budgets.length} Budget`}
-      onClose={onClose}
-      foot={
-        <button className="btn primary" onClick={onClose}>
-          Tutup
-        </button>
-      }
-    >
-      <div className="tw boxed">
-        <table className="grid">
-          <thead>
-            <tr>
-              <th>Budget</th>
-              <th style={{ width: 90 }}>Company</th>
-              <th style={{ width: 90 }}>Hasil</th>
-              <th className="num" style={{ width: 150 }}>Nominal</th>
-              <th className="num" style={{ width: 150 }}>Realisasi</th>
-              <th className="num" style={{ width: 150 }}>Selisih</th>
-            </tr>
-          </thead>
-          <tbody>
-            {OUTCOMES.flatMap((o) =>
-              row.budgets
-                .filter((b) => b.outcome === o.key)
-                .map((b) => (
-                  <tr key={b.id}>
-                    <td>
-                      <Link className="pri" href={`/budget/budget/${b.id}`}>
-                        {b.budgetNo}
-                      </Link>
-                      <span className="rsub">
-                        {b.description}
-                        {b.categoryName ? ` · ${b.categoryName}` : ""}
-                      </span>
-                    </td>
-                    <td className="mut">{b.companyLabel}</td>
-                    <td>
-                      <span className={`bdg ${o.tone}`}>{o.label}</span>
-                    </td>
-                    <td className="num">
-                      <Amount value={b.planned} currency={row.currencyLabel} />
-                    </td>
-                    <td className="num">
-                      <Amount value={b.realized} currency={row.currencyLabel} />
-                    </td>
-                    <td className="num">
-                      <Amount value={b.realized - b.planned} currency={row.currencyLabel} nil="dash" ledger />
-                    </td>
-                  </tr>
-                ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Dialog>
-  );
-}
-
-/**
- * What every subject book stands at, one row per book and one column per
- * currency — a matrix, because a position held in two currencies is two
- * figures and never one. A row opens the book's Partners.
- */
 function BookCard({
   books,
   onOpen,
@@ -481,90 +269,6 @@ function BookCard({
 }
 
 // ----------------------------------------------------------------- dialogs
-
-function StageDialog({ stage, onClose }: { stage: FunnelStage; onClose: () => void }) {
-  const look = STAGE_LOOK[stage.key];
-  const execution = stage.key === "execution";
-  return (
-    <Dialog
-      open
-      icon={look.icon}
-      tone="brand"
-      width={900}
-      title={stage.name}
-      subtitle={`${stage.count} Budget, terlama di atas`}
-      onClose={onClose}
-      foot={
-        <>
-          <button className="btn" onClick={onClose}>
-            Tutup
-          </button>
-          <Link className="btn primary" href={stage.href}>
-            Buka Antrian
-          </Link>
-        </>
-      }
-    >
-      {stage.rows.length ? (
-        <div className="tw boxed">
-          <table className="grid">
-            <thead>
-              <tr>
-                <th>Budget</th>
-                <th style={{ width: 90 }}>Company</th>
-                <th style={{ width: 110 }}>Arah</th>
-                <th style={{ width: 100 }}>Tanggal</th>
-                <th className="num" style={{ width: 170 }}>
-                  {execution ? "Sisa" : "Nominal"}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {stage.rows.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    <Link className="pri" href={r.href}>
-                      {r.budgetNo}
-                    </Link>
-                    <span className="rsub">
-                      {r.description} · {formatAgeDays(r.since)}
-                    </span>
-                  </td>
-                  <td className="mut">{r.companyLabel}</td>
-                  <td className="mut">{directionText(r.budgetType)}</td>
-                  <td className="mut">{formatDate(r.budgetDate)}</td>
-                  <td className="num">
-                    <Amount value={r.amount} currency={r.currencyLabel} />
-                  </td>
-                </tr>
-              ))}
-              {[...stage.outTotals.map((t) => ["Out", t] as const), ...stage.inTotals.map((t) => ["In", t] as const)].map(
-                  ([type, t]) => (
-                    <tr className="totrow" key={`${type}${t.currencyId}`}>
-                      <td colSpan={4}>
-                        Total {directionText(type)} {t.currencyLabel}
-                      </td>
-                      <td className="num">
-                        <Amount value={t.amount} currency={t.currencyLabel} />
-                      </td>
-                    </tr>
-                  )
-                )}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="empty sm">
-          <div className="ic">
-            <Icon name="check" size={20} />
-          </div>
-          <h4>Tidak ada yang menunggu</h4>
-          <p>Antrian ini sedang kosong.</p>
-        </div>
-      )}
-    </Dialog>
-  );
-}
 
 function IntercompanyDialog({ ic, onClose }: { ic: IntercompanyPosition; onClose: () => void }) {
   return (
