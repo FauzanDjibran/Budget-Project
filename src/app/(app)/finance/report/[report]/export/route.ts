@@ -4,6 +4,7 @@ import { cashBankBalanceReport, cashBankLedgerReport } from "@/lib/siba/cash-ban
 import { cashBankBalanceWorkbook } from "@/lib/siba/cash-bank-balance-export";
 import { cashBankLayerWorkbook } from "@/lib/siba/cash-bank-layer-export";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
+import { attachDocumentNumbers } from "@/lib/siba/document-numbers";
 import { cashBankLedgerWorkbook } from "@/lib/siba/cash-bank-export";
 import { companyScope } from "@/lib/siba/company-access";
 import { reportBySlug } from "@/lib/siba/reports";
@@ -75,6 +76,7 @@ export async function GET(
       companyIds: [company.id],
     });
     if (!data) return new Response("Tidak ditemukan", { status: 404 });
+    await attachDocumentNumbers(data.subjects.flatMap((s) => s.entries));
 
     const notes = [
       `Kolom Bertambah dan Berkurang mengikuti arah buku ini, bukan arah uang: ${data.book.closingLabel.toLowerCase()} bertambah saat ${data.book.raises === "In" ? "uang masuk" : "uang keluar"}.`,
@@ -110,6 +112,7 @@ export async function GET(
     await Promise.all(ids.map((id) => cashBankLedgerReport(id, range, [company.id])))
   ).filter((b) => b !== null);
   if (!books.length) return new Response("Tidak ditemukan", { status: 404 });
+  await attachDocumentNumbers(books.flatMap((b) => b.entries));
 
   const notes = [
     `Saldo awal adalah seluruh mutasi sebelum ${formatDate(range.from)} dan bukan entri tersendiri, sehingga tidak muncul sebagai baris.`,

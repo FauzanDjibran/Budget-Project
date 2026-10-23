@@ -1259,3 +1259,9 @@ export async function previewConversion(
   if (!result.ok) return result;
   return { ok: true, lines: await describeJournalLines(result.journal ?? []) };
 }
+
+/** Document numbers by id, for a book report to name the document an entry came from. */
+export async function documentNumbers(ids: number[]): Promise<Map<number, string>> {
+  const rows = await prisma.finItemConversion.findMany({ where: { id: { in: ids } }, select: { id: true, conversion_no: true } });
+  return new Map(rows.map((r) => [r.id, r.conversion_no]));
+}

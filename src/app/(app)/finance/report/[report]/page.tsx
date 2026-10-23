@@ -11,6 +11,7 @@ import {
   cashBankBalanceReport,
   cashBankLedgerReport,
 } from "@/lib/siba/cash-bank";
+import { attachDocumentNumbers } from "@/lib/siba/document-numbers";
 import { companyScope } from "@/lib/siba/company-access";
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
@@ -160,6 +161,7 @@ export default async function Page({
       cashBankIds.map((id) => cashBankLedgerReport(id, range, companyIds))
     );
     const data = cashBankIds.length ? books.filter((b) => b !== null) : null;
+    await attachDocumentNumbers((data ?? []).flatMap((b) => b.entries));
 
     return (
       <ReportView
@@ -342,6 +344,7 @@ async function subledgerPage({
     subledgerReport(books, book.categoryId, range, { partnerIds, companyIds }),
   ]);
   if (!data) notFound();
+  await attachDocumentNumbers(data.subjects.flatMap((s) => s.entries));
 
   return (
     <ReportView

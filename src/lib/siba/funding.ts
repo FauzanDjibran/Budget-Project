@@ -637,3 +637,9 @@ export async function openFundingRequests(
     (r) => r.transaction && companyIds.includes(r.transaction.company_id)
   );
 }
+
+/** Document numbers by id, for a book report to name the document an entry came from. */
+export async function documentNumbers(ids: number[]): Promise<Map<number, string>> {
+  const rows = await prisma.finFundingRequest.findMany({ where: { id: { in: ids } }, select: { id: true, funding_request_no: true } });
+  return new Map(rows.map((r) => [r.id, r.funding_request_no]));
+}

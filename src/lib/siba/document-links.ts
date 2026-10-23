@@ -23,6 +23,30 @@ const ROUTES: Record<string, string> = {
   acc_opening_balance: "/accounting/opening-balance",
 };
 
+/**
+ * What a Cash Bank Book entry was, in a reader's words. `entry_type` alone cannot
+ * say it — a transfer is a `Transaction` like a Realisasi (§12) — so the source
+ * document's table and the sign of the movement decide, and the type is the fallback.
+ */
+const KIND: Record<string, [string, string]> = {
+  fin_cash_bank_transaction: ["Uang Masuk", "Uang Keluar"],
+  fin_funding_request: ["Dana Anak Masuk", "Dana Anak Keluar"],
+  fin_cash_bank_transfer: ["Transfer Masuk", "Transfer Keluar"],
+  fin_item_conversion: ["Pencairan Open Item", "Pencairan Open Item"],
+};
+const TYPE_KIND: Record<string, string> = {
+  Opening: "Saldo Awal",
+  Adjustment: "Penyesuaian",
+  Revaluation: "Revaluasi Kurs",
+};
+
+export function entryKindText(type: string, table: string | null, movement: number): string | null {
+  const byDoc = table && KIND[table];
+  if (byDoc) return movement > 0 ? byDoc[0] : byDoc[1];
+  if (table === "fin_cash_bank_revaluation") return "Revaluasi Kurs";
+  return TYPE_KIND[type] ?? null;
+}
+
 /** The page a source document is read on, or null when it has none. */
 export function documentHref(table: string | null, id: number | null): string | null {
   if (!table || !id) return null;

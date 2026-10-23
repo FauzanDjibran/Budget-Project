@@ -145,7 +145,7 @@ export function SubledgerReport({ report }: { report: Report }) {
                   <thead>
                     <tr>
                       <th style={{ width: 92 }}>Tanggal</th>
-                      <th style={{ width: 106 }}>Entri</th>
+                      <th style={{ width: 106 }}>Dokumen</th>
                       <th>Keterangan</th>
                       <th className="num" style={{ width: 126 }}>
                         Bertambah
@@ -174,7 +174,11 @@ export function SubledgerReport({ report }: { report: Report }) {
                           {formatDate(e.date)}
                         </td>
                         <td>
-                          <span className="lab">{e.entryNo}</span>
+                          {e.sourceDocNo ? (
+                            <span className="lab">{e.sourceDocNo}</span>
+                          ) : (
+                            <span className="dash">—</span>
+                          )}
                         </td>
                         <td className="pri wrapok">
                           {e.note ?? "—"}

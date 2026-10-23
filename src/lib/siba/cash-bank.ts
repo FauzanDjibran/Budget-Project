@@ -830,8 +830,6 @@ export async function cashBankLedgerReport(
   const closing = opening + totalIn - totalOut;
   const baseClosing = roundBase(baseOpening + baseTotalIn - baseTotalOut);
 
-  const docNumbers = await sourceDocumentNumbers(rows);
-
   const entries: LedgerEntryRow[] = rows.map((r) => ({
     id: r.id,
     entryNo: r.entry_no,
@@ -843,7 +841,8 @@ export async function cashBankLedgerReport(
     note: r.note,
     sourceDocTable: r.source_doc_type?.doc_table ?? null,
     sourceDocId: r.source_doc_id,
-    sourceDocNo: r.source_doc_id && r.source_doc_type?.doc_table === "fin_cash_bank_transaction" ? docNumbers.get(r.source_doc_id) ?? null : null,
+    // Filled in by `attachDocumentNumbers`: a book cannot name another module's table.
+    sourceDocNo: null,
   }));
 
   const cents = (n: number) => Math.round(n * 100);
@@ -875,29 +874,6 @@ export async function cashBankLedgerReport(
     entries,
     reconciles,
   };
-}
-
-/**
- * Document numbers for the entries that name one, so a row can say which
- * document moved the money rather than only that something did.
- *
- * Only Cash Bank Transactions reach the book today; an entry pointing at any
- * other document type keeps its reference and simply shows no number.
- */
-async function sourceDocumentNumbers(
-  rows: { source_doc_id: number | null; source_doc_type: { doc_table: string } | null }[]
-): Promise<Map<number, string>> {
-  const ids = rows
-    .filter((r) => r.source_doc_type?.doc_table === "fin_cash_bank_transaction")
-    .map((r) => r.source_doc_id)
-    .filter((id): id is number => id !== null);
-  if (!ids.length) return new Map();
-
-  const docs = await prisma.finCashBankTransaction.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, transaction_no: true },
-  });
-  return new Map(docs.map((d) => [d.id, d.transaction_no]));
 }
 
 export type BalanceReportRow = {

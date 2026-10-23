@@ -24,7 +24,9 @@ const entry = (o: Partial<SubledgerEntryRow>): SubledgerEntryRow => ({
   itemId: 1,
   itemNo: "SBI-0001",
   note: null,
+  sourceDocTable: null,
   sourceDocId: null,
+  sourceDocNo: null,
   ...o,
 });
 
@@ -64,8 +66,8 @@ test("each position runs from Saldo Awal to Saldo Akhir in its own currency, ket
         baseOpening: 1_600_000,
         baseClosing: 1_900_000,
         entries: [
-          entry({ entryNo: "SBL-0002", movement: 30, note: "Titipan dana impor" }),
-          entry({ entryNo: "SBL-0003", movement: -10, type: "Conversion", note: "POI-0001 — Pencairan Open Item" }),
+          entry({ movement: 30, note: "Titipan dana impor", sourceDocNo: "RBM-0002" }),
+          entry({ movement: -10, type: "Conversion", note: "Pencairan Open Item", sourceDocNo: "POI-0001" }),
         ],
       }),
       subject("DAP", "IDR", { opening: 5, closing: 5, active: false }),
@@ -91,11 +93,11 @@ test("each position runs from Saldo Awal to Saldo Akhir in its own currency, ket
   assert.equal(ws.getCell(3, 1).value, "BUKU TITIPAN");
   assert.deepEqual([4, 5].map((c) => ws.getCell(7, c).value), ["Bertambah", "Berkurang"]);
   assert.deepEqual(find(3, "Saldo Awal").map((r) => r.getCell(6).value), [100, 5]);
-  assert.deepEqual(figures(find(2, "SBL-0002")[0]), [30, null, null]);
-  const lowered = find(2, "SBL-0003")[0];
+  assert.deepEqual(figures(find(2, "RBM-0002")[0]), [30, null, null]);
+  const lowered = find(2, "POI-0001")[0];
   assert.deepEqual(figures(lowered), [null, 10, null]);
-  // The keterangan and nothing else — no open item, no entry type.
-  assert.equal(lowered.getCell(3).value, "POI-0001 — Pencairan Open Item");
+  // The source document and the keterangan — no open item, no entry type.
+  assert.equal(lowered.getCell(3).value, "Pencairan Open Item");
 
   const closing = find(3, "Saldo Akhir");
   assert.deepEqual(closing.map(figures), [[30, 10, 120], [0, 0, 5]]);

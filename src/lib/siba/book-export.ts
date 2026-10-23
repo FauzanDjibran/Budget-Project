@@ -11,7 +11,7 @@ import { FONT, double, esc, thin } from "./statement-export";
  *
  * A book the way one is printed everywhere, stacked one block per subject like
  * the General Ledger export: the subject and its currency on the block's band,
- * Saldo Awal carried in, every movement by date with its entry number, the two
+ * Saldo Awal carried in, every movement by date with its source document number, the two
  * movement columns, and a Saldo Akhir line that reconciles on the page (§10
  * rule 40). Every figure is in the block's own currency and carries its code,
  * so a USD block and a rupiah one cannot be read as one scale; nothing is
@@ -21,7 +21,8 @@ import { FONT, double, esc, thin } from "./statement-export";
 
 export type BookRow = {
   date: string;
-  entryNo: string;
+  /** Number of the document the entry came from; empty when it has none. */
+  docNo: string;
   text: string;
   in: number | null;
   out: number | null;
@@ -137,9 +138,9 @@ const LAST = 6;
 export async function bookWorkbook(s: BookExport): Promise<Buffer> {
   const { wb, ws } = bookSheet({
     ...s,
-    headers: ["Tanggal", "Entri", "Keterangan", ...s.columns, "Saldo"],
+    headers: ["Tanggal", "Dokumen", "Keterangan", ...s.columns, "Saldo"],
     // The statements' width, so every export prints at one scale.
-    widths: [10, 10, 47, 17, 17, 17],
+    widths: [10, 14, 43, 17, 17, 17],
     textCols: 3,
   });
 
@@ -183,7 +184,7 @@ export async function bookWorkbook(s: BookExport): Promise<Buffer> {
 
     for (const e of b.rows) {
       text(1, formatDate(e.date));
-      text(2, e.entryNo, { size: 8 });
+      text(2, e.docNo, { size: 8 }, true);
       text(3, e.text, {}, true);
       money(4, e.in);
       money(5, e.out);

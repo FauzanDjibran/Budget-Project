@@ -56,8 +56,8 @@ test("each Cash & Bank runs from Saldo Awal to Saldo Akhir in its own currency, 
         totalOut: 200,
         closing: 1300,
         entries: [
-          entry({ entryNo: "CBL-0002", movement: 500, note: "Setoran", sourceDocTable: "fin_cash_bank_transaction", sourceDocNo: "RBM-0001" }),
-          entry({ entryNo: "CBL-0003", movement: -200, note: "TRF-0001 — Transfer" }),
+          entry({ movement: 500, note: "Setoran", sourceDocTable: "fin_cash_bank_transaction", sourceDocNo: "RBM-0001" }),
+          entry({ movement: -200, note: "Transfer", sourceDocTable: "fin_cash_bank_transfer", sourceDocNo: "TRF-0001" }),
         ],
       }),
       book("BCA-USD", "USD", {
@@ -65,7 +65,7 @@ test("each Cash & Bank runs from Saldo Awal to Saldo Akhir in its own currency, 
         closing: 50,
         baseOpening: 800,
         baseClosing: 900,
-        entries: [entry({ entryNo: "CBL-0004", type: "Revaluation", movement: 0, baseMovement: 100, note: "RVK-0001 — Revaluasi" })],
+        entries: [entry({ type: "Revaluation", movement: 0, baseMovement: 100, note: "Revaluasi", sourceDocNo: "RVK-0001" })],
       }),
       book("KAS", "IDR", { opening: 7, closing: 7 }),
     ],
@@ -83,14 +83,17 @@ test("each Cash & Bank runs from Saldo Awal to Saldo Akhir in its own currency, 
   const figures = (r: ExcelJS.Row) => [4, 5, 6].map((c) => r.getCell(c).value ?? null);
 
   assert.deepEqual(find(3, "Saldo Awal").map((r) => r.getCell(6).value), [1000, 50, 7]);
-  const inn = find(2, "CBL-0002")[0];
+  const inn = find(2, "RBM-0001")[0];
   assert.deepEqual(figures(inn), [500, null, null]);
-  assert.equal(inn.getCell(3).value, "RBM-0001 — Setoran");
-  assert.deepEqual(figures(find(2, "CBL-0003")[0]), [null, 200, null]);
+  assert.equal(inn.getCell(3).value, "Setoran");
+  assert.deepEqual(figures(find(2, "TRF-0001")[0]), [null, 200, null]);
   // A revaluation moves no currency, so neither column carries it.
-  const reval = find(2, "CBL-0004")[0];
+  assert.equal(inn.getCell(2).value, "RBM-0001\nUang Masuk");
+  assert.equal(find(2, "TRF-0001")[0].getCell(2).value, "TRF-0001\nTransfer Keluar");
+  const reval = find(2, "RVK-0001")[0];
+  assert.equal(reval.getCell(2).value, "RVK-0001\nRevaluasi Kurs");
   assert.deepEqual(figures(reval), [null, null, null]);
-  assert.match(String(reval.getCell(3).value), /^\[Revaluasi Kurs\] RVK-0001/);
+  assert.match(String(reval.getCell(3).value), /^Revaluasi$/);
 
   const closing = find(3, "Saldo Akhir");
   assert.deepEqual(closing.map(figures), [[500, 200, 1300], [0, 0, 50], [0, 0, 7]]);

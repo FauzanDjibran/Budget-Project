@@ -9,6 +9,7 @@ import {
 } from "../src/lib/siba/cash-bank";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import { REPORTS, reportBySlug, reportHref } from "../src/lib/siba/reports";
+import { attachDocumentNumbers } from "../src/lib/siba/document-numbers";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import { MODULES, resolvePath, visibleModules } from "../src/lib/siba/nav";
 import {
@@ -413,6 +414,7 @@ describe("the ledger report reconciles", () => {
       scope
     );
     assert.ok(report);
+    await attachDocumentNumbers(report.entries);
     const entry = report.entries[0];
     assert.equal(entry.sourceDocTable, "fin_cash_bank_transaction");
     assert.equal(entry.sourceDocId, doc.id);

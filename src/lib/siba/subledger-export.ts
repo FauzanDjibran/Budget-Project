@@ -42,7 +42,7 @@ export function subledgerWorkbook(s: SubledgerExport): Promise<Buffer> {
       closing: p.closing,
       rows: p.entries.map((e) => ({
         date: e.date,
-        entryNo: e.entryNo,
+        docNo: e.sourceDocNo ?? "",
         text: e.note ?? "—",
         in: e.movement > 0 ? e.movement : null,
         out: e.movement < 0 ? -e.movement : null,

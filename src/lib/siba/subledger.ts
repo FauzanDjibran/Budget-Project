@@ -491,7 +491,10 @@ export type SubledgerEntryRow = {
   itemId: number;
   itemNo: string;
   note: string | null;
+  sourceDocTable: string | null;
   sourceDocId: number | null;
+  /** Filled in by `attachDocumentNumbers`: a book cannot name another module's table. */
+  sourceDocNo: string | null;
 };
 
 export type SubledgerSubject = {
@@ -580,7 +583,10 @@ export async function subledgerReport(
       // Date first: a backdated entry has a later id than the entries it
       // precedes, and a book is read in the order things happened.
       orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
-      include: { item: { select: { item_no: true } } },
+      include: {
+        item: { select: { item_no: true } },
+        source_doc_type: { select: { doc_table: true } },
+      },
     }),
   ]);
 
@@ -643,7 +649,9 @@ export async function subledgerReport(
       itemId: e.balance_id,
       itemNo: e.item.item_no,
       note: e.note,
+      sourceDocTable: e.source_doc_type?.doc_table ?? null,
       sourceDocId: e.source_doc_id,
+      sourceDocNo: null,
     });
   }
 

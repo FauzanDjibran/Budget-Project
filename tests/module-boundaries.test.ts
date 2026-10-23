@@ -155,18 +155,12 @@ const TABLE_OWNERS: Record<string, string[]> = {
  *
  *  - `fiscal.ts` counts the Budgets falling inside each period it returns.
  *    Accounting reaching into Budget; wants a counting function on `budget.ts`.
- *  - `cash-bank.ts` resolves a ledger entry's source document to a document
- *    number for the ledger report. The hard one: the Book is meant to be a
- *    leaf, so it cannot simply import Finance — that would be a cycle. The
- *    real answer is likely that labelling a `(doc_type_id, doc_id)` pair
- *    belongs to the caller, not to the book.
  *
  * Nothing may be added to this list without the same deliberation. A new
  * crossing fails the suite, which is the point.
  */
 const KNOWN_CROSSINGS: Record<string, string[]> = {
   budBudget: ["src/lib/siba/fiscal.ts"],
-  finCashBankTransaction: ["src/lib/siba/cash-bank.ts"],
 };
 
 describe("a module's tables are named only by the module that owns them", () => {

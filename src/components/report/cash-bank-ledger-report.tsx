@@ -2,12 +2,11 @@
 
 import { useState } from "react";
 import { Icon } from "@/components/icon";
-import { Drill } from "@/components/report/drill";
 import { ReportSummary } from "@/components/report/report-summary";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { formatDate, formatMoney } from "@/lib/format";
+import { entryKindText } from "@/lib/siba/document-links";
 import type { LedgerReport } from "@/lib/siba/cash-bank";
-import { documentHref } from "@/lib/siba/document-links";
 import type { PeriodRange } from "@/lib/siba/period";
 
 /**
@@ -23,21 +22,9 @@ import type { PeriodRange } from "@/lib/siba/period";
  * Read the way a book is read: oldest first, opening balance carried in at the
  * top, closing balance struck at the bottom. That the totals must add up is
  * why **there is no entry-type filter**: dropping `Penyesuaian` rows would
- * leave a page whose figures no longer reconcile. The type is shown where it is
- * not the ordinary case — an opening entry, an adjustment or a revaluation
- * carries a badge, a plain transaction carries none.
+ * leave a page whose figures no longer reconcile. What the entry was — Uang
+ * Masuk, Transfer Keluar, Revaluasi Kurs — sits under its document number.
  */
-const TYPE_TEXT: Record<string, string> = {
-  Opening: "Saldo Awal",
-  Adjustment: "Penyesuaian",
-  Revaluation: "Revaluasi Kurs",
-};
-
-const TYPE_CLASS: Record<string, string> = {
-  Opening: "t-slate",
-  Adjustment: "t-vio",
-  Revaluation: "t-acc",
-};
 
 export function CashBankLedgerReport({
   books,
@@ -159,7 +146,7 @@ export function CashBankLedgerReport({
                   <thead>
                     <tr>
                       <th style={{ width: 92 }}>Tanggal</th>
-                      <th style={{ width: 116 }}>Entri</th>
+                      <th style={{ width: 116 }}>Dokumen</th>
                       <th>Keterangan</th>
                       <th className="num" style={{ width: 140 }}>
                         Masuk
@@ -184,30 +171,21 @@ export function CashBankLedgerReport({
                       // A revaluation moves no currency, only its base value,
                       // so neither column carries it.
                       const restated = e.type === "Revaluation";
-                      const href =
-                        e.sourceDocNo && documentHref(e.sourceDocTable, e.sourceDocId);
+                      const kind = entryKindText(e.type, e.sourceDocTable, e.movement);
                       return (
                         <tr key={e.id} style={{ cursor: "default" }}>
                           <td className="mono mut" style={{ fontSize: "11.5px" }}>
                             {formatDate(e.date)}
                           </td>
                           <td>
-                            <span className="lab">{e.entryNo}</span>
-                            {href && (
-                              <Drill href={href} title="Buka dokumen sumber">
-                                <span className="rsub">{e.sourceDocNo}</span>
-                              </Drill>
+                            {e.sourceDocNo ? (
+                              <span className="lab">{e.sourceDocNo}</span>
+                            ) : (
+                              !kind && <span className="dash">—</span>
                             )}
+                            {kind && <span className="rsub">{kind}</span>}
                           </td>
                           <td className="pri wrapok">
-                            {TYPE_TEXT[e.type] && (
-                              <span
-                                className={`bdg ${TYPE_CLASS[e.type]}`}
-                                style={{ marginRight: 6 }}
-                              >
-                                {TYPE_TEXT[e.type]}
-                              </span>
-                            )}
                             {e.note ?? <span className="dash">—</span>}
                           </td>
                           <td className="num">

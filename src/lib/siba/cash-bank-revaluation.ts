@@ -688,3 +688,9 @@ export function summariseRevaluations(rows: RevaluationRow[]): RevaluationSummar
     loss: roundBase(posted.filter((r) => r.fx_difference < 0).reduce((t, r) => t - r.fx_difference, 0)),
   };
 }
+
+/** Document numbers by id, for a book report to name the document an entry came from. */
+export async function documentNumbers(ids: number[]): Promise<Map<number, string>> {
+  const rows = await prisma.finCashBankRevaluation.findMany({ where: { id: { in: ids } }, select: { id: true, revaluation_no: true } });
+  return new Map(rows.map((r) => [r.id, r.revaluation_no]));
+}

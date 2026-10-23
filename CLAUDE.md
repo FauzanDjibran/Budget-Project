@@ -234,6 +234,7 @@ of its own.
 | Revaluasi Kurs data | `src/lib/siba/cash-bank-revaluation.ts` | Header enforcement, `valueRevaluation` (the draft's and Post's one valuation), `applyRevaluation` (and its dry run), `RVK-` numbering. Collapses layers only through `collapseLayers` in the Cash Bank Book; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
 | Document links | `src/lib/siba/document-links.ts` | `documentHref` — a `(doc_table, doc_id)` pair to the page that shows it, so a journal can link its source without the book knowing any route; client-safe |
+| Document numbers | `src/lib/siba/document-numbers.ts` | `attachDocumentNumbers` — fills `sourceDocNo` on book-report entries from each owning module's `documentNumbers(ids)`, so a book never names another module's table; the report page and the export route call it; `server-only` |
 | Statement layout | `src/lib/siba/statement-layout.ts` | The Laba Rugi's steps and result lines, a column's range (`mtd` / `ytd`), and the three builders — `buildProfitLoss`, `buildBalanceSheet` and `buildTrialBalance` over one shared tree — chart + figures to rows, pure; client-safe |
 | Financial statements | `src/lib/siba/statements.ts` | Resolves a year and period to a column, reads the chart and the Partners, asks `ledger.ts` for the figures, computes the Neraca's two equity lines and places them, and lays the Trial Balance out on the chart (`trialBalanceStatement`); `server-only` |
 | Dashboard composition | `src/lib/siba/dashboard.ts` | The positions, the month's Budgets and each Company's Laba Rugi, asked of each owning module; names no table but master data; `server-only` |
@@ -304,8 +305,8 @@ it is needed by several modules and would never be extracted on its own. `fx` an
 books have to answer "what is this worth in base?" identically, and a rule that exists
 twice is a rule with two answers.
 
-**Two boundaries are still crossed**, baselined in the test rather than hidden — see
-§17. Adding a third fails the suite.
+**One boundary is still crossed**, baselined in the test rather than hidden — see
+§17. Adding another fails the suite.
 
 ### Data flow for a Master page
 
@@ -2828,7 +2829,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
 - **Buku Kas & Bank exports the same way** (`cash-bank-export.ts`, the user's
   approval of `Example report/SIBA export sample/Buku Kas & Bank …`): one block per
   Cash & Bank chosen on screen, its band naming the resource and *Mata uang*, Saldo
-  Awal, the entries with the source document leading the keterangan, and a Saldo
+  Awal, the entries with the source document's number and, beneath it, what the entry was (Uang Masuk, Transfer Keluar… — `entryKindText`, from the document type and the sign) in a Dokumen column of its own, and a Saldo
   Akhir carrying Masuk and Keluar. Every figure is in the resource's own currency
   with the code in its number format, and **no base figure is printed**, on the
   user's instruction. No per-row Saldo, like the screen. It reads
@@ -2858,7 +2859,7 @@ Specified in the concept doc, **not yet implemented** (see §13):
   alike): one block per Partner and currency, its band naming the Partner, its
   Partner Category and *Mata uang*, then Saldo Awal, the entries, and a Saldo Akhir
   carrying **Bertambah** and **Berkurang** in the book's own direction. **An entry
-  is its keterangan and its figure only** — no open item, no entry type — on the
+  is its source document's number, its keterangan and its figure** — no open item, no entry type, no CBL-/SBL- number — on the
   user's rule that a book is the ledger and its keterangan; the screen dropped the
   `membuka SBI-…` line for the same reason. Face currency only. It reads
   `subledgerReport`, the screen's own reader.
@@ -3297,7 +3298,7 @@ they relate. Keep the table; keep it out of the UI's write path.
   `records.ts`, because the Budget-count column on the classification screen has
   to ask `budget.ts` for its own table's figure (the module contract) and that
   would otherwise be a cycle. `tests/module-boundaries.test.ts` caught exactly
-  that and `KNOWN_CROSSINGS` stays at two.
+  that and `KNOWN_CROSSINGS` holds one.
 - **Do not change unless:** explicitly instructed. **Never delete a pair** —
   deactivate it; never let a category allow neither direction; never put the
   rules back in code; and never let a `require_partner = false` category hold a
@@ -4533,7 +4534,7 @@ below in outline because the half of it that still holds is easy to lose.**
 - **Reason:** the module contract (§3). A transfer owns its tables and reaches
   the books through the functions they export; it imports only the books and the
   shared kernel, and nothing imports it. It adds **no** boundary crossing, so
-  `KNOWN_CROSSINGS` stays at two.
+  `KNOWN_CROSSINGS` holds one.
 - **Impact:** `valueTransferLine` in `transfer-valuation.ts` is pure and
   client-safe, so the form previews *exactly* what the posting computes rather
   than an approximation of it — the same reason `fx.ts` and `currency.ts` are
@@ -5255,8 +5256,6 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | Older Realisasi lines name no opened item | `fin_cash_bank_transaction_line.opened_item_id` is written from its migration on. A line posted before it is null, so its Budget's Realisasi card cannot follow that money into a reclassification. Not backfilled: matching items to lines by note would be a guess. |
 | A reclassification trail is one step | `reclassTrail` reads one move. An item reclassified twice shows its second move on the item it became, not on the Budget. |
 | An adjustment's counter account is one per side, whichever book | One Pendapatan and one Beban Penyesuaian account per Company, so a Titipan adjustment and a Piutang adjustment land in the same P&L account. Fine for the three books the seed allows; a book needing its own counter account would need the account on the category. |
-| A transfer shows in the Cash Bank Book by number, not as a link | `sourceDocumentNumbers` in `cash-bank.ts` resolves only `fin_cash_bank_transaction`, which is already the baselined crossing this table records below. A transfer entry therefore carries `TRF-0001 — <Purpose>` in its note and has no drill-through. Extending that function to a second table would deepen the debt; the clean fix is to make labelling a `(doc_type_id, doc_id)` pair the caller's job, which is a decision in its own right. |
-| A subject book's report shows a document's note, not a link | An entry carries its source as the weak `(doc_type_id, doc_id)` pair and its document number inside `note`. Resolving that to a link would mean the book importing Finance, which is the boundary crossing `cash-bank.ts` already has and that has not been decided. |
 | The Cash Bank Book has no UI write path of its own | Entries are created by registering a resource with an opening balance, or by posting a Cash Bank Transaction. There is deliberately no manual entry form and no `Adjustment` path yet — so an `Adjustment` entry can exist in the book but cannot be made through the application. |
 | Layers can go stale, and that is accepted | Nothing forces the oldest layer to be consumed, so an unselected layer persists indefinitely. The source document names this as a consequence of the design rather than a defect: a Revaluasi Kurs is what absorbs them, when a user raises one (§10 rules 118–121). |
 | The FX difference on a payment is a user decision | Which layer the user picks sets the gain or loss recognised. Under averaging it would be deterministic. This is the feature working as intended — the source document calls layer selection an auditable control point — but it does mean two clerks can post the same payment to different results, and nothing flags that. |
@@ -5279,7 +5278,7 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |
 | The intercompany position has no subject-book view | It is carried by the two bridge accounts and read through the General Ledger, which is a deliberate deviation from concept doc §34/§37/§38 (§12). The consequence is that the subject books answer "which Partner moved?" and not "what does the anak owe the induk?" — that question is an account balance, and the dashboard now states it from those two accounts so it is no longer reachable only by running the General Ledger for exactly the right one. If a book of it is ever wanted, it needs a subject that is a Company, which is a change to an append-only table. |
 | Tests cover security, Accounting, Budget, Finance, Funding, Penyesuaian Open Item, the books, the layers, the FX kernel, the reports, the fiscal calendar, closing and the snapshot-based opening | No tests for the Master module's own write path or the registry forms. The Server Actions' own bodies are covered structurally only — a test process has no session, so the rules they delegate to are what the suites call. |
-| Two module boundaries are still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a third fails the suite. (1) `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. (2) `cash-bank.ts` resolves a ledger entry's source document to a document number for the report; the Book is meant to be a leaf, so it cannot import Finance without creating a cycle — labelling a `(doc_type_id, doc_id)` pair probably belongs to the caller. Each needs a decision, which is why none was changed silently. |
+| One module boundary is still crossed | Baselined in `tests/module-boundaries.test.ts` as `KNOWN_CROSSINGS`, so a second fails the suite: `fiscal.ts` counts the Budgets inside each period it returns — wants a counting function on `budget.ts`. It needs a decision, which is why it was not changed silently. |
 | `authInterrupts` is experimental | `next.config.ts` enables it so `forbidden()` returns a real 403 instead of a generic error. If a Next upgrade changes the API, the fallback is to render the refusal from each page instead. |
 | Dashboard integrity checks reduced | Checks for missing accounts and dangling FKs were dropped — Postgres makes them unrepresentable. Intentional, recorded so it is not "restored" by mistake. |
 
