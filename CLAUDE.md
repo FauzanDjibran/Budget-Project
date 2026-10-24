@@ -338,7 +338,7 @@ server→client boundary. Everything passed into a client component must go thro
 | Styling | Plain CSS, one global stylesheet | **No utility framework — deliberate** |
 | Fonts | `next/font` — Plus Jakarta Sans + JetBrains Mono | |
 | Auth | Built on Next.js + `bcryptjs` + `node:crypto`. **No auth library** — see §12 | |
-| Validation | Hand-written in Server Actions; `zod` installed but **unused** | |
+| Validation | Hand-written in Server Actions | |
 | Hashing | `bcryptjs` (seed only so far) | |
 | Lint | ESLint 9 + `eslint-config-next` | |
 | Seed runner | `tsx` | |
@@ -1099,7 +1099,10 @@ Implemented and enforced:
    which ties it to the Cash Bank Book and its rate layers, and a mapping from a
    Budget Category that keeps a subject book, which ties it to that book. The
    bridge and FX System Defaults make a third, because those accounts are
-   written by the posting engine alone. `is_control_account` is **recomputed
+   written by the posting engine alone — **except the Penyesuaian pair**
+   (`adjustment_income` / `adjustment_expense`), which is ordinary Profit &
+   Loss that nothing reconciles against, so a manual journal can move its
+   balance on to the real expense or income. `is_control_account` is **recomputed
    from those three, in both directions**, by `syncControlAccounts` in
    `records.ts` — called from every write path that can change the answer, so
    repointing a Cash & Bank, a mapping or a System Default claims the new
@@ -3581,7 +3584,8 @@ they relate. Keep the table; keep it out of the UI's write path.
   Company's `fx`; a close its `accumulated_pl`; the Neraca `current_pl`, and
   `accumulated_pl` while a year is carried; a note its counter account), and
   never fall back to anything. Every account named is a control account through
-  `syncControlAccounts`, released again when repointed. The dashboard's "Perlu
+  `syncControlAccounts`, released again when repointed — except the two
+  `adjustment_*` accounts (§10 rule 79). The dashboard's "Perlu
   Perhatian" card and every refusal point at Accounting › Mapping Account System.
   Older wording in this file that calls these accounts "System Defaults" means
   Mapping Account System.
@@ -5262,7 +5266,6 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | A standing foreign subject-book position is never retranslated | A Hutang in USD keeps the base value its items were carried at until something settles it. Revaluasi Kurs restates a foreign Cash & Bank only (§10 rules 118–121), so a Partner's foreign position drifts from what it would be worth today — by design for now (§13). |
 | A Draft can hold a layer a revaluation has closed | Nothing warns a Realisasi, Transfer or Pencairan draft that its chosen layer was collapsed; its Post is refused naming the layer, and the user picks the new one. A revaluation cannot list those drafts without reading other modules' tables. |
 | A document is capped by one layer | A resource holding five layers of a million each cannot make a single payment of one and a half million. Refused at draft time with a message that says to split the document (§12). It is a deliberate narrowing of the source specification, not a validation bug. |
-| A close drops a go-live Opening Balance | `closingBalances` in `ledger.ts`, which a close snapshots the next year from, sums **journal lines only** — it does not stand on an earlier snapshot the way `openingBasis` does. A developer-injected go-live snapshot (null source) therefore reaches the reports of its own year and is left out of the snapshot the close writes, so every year after the first close would open without the go-live figures. Harmless while no year after a go-live snapshot is closed; the showcase injects its closed year and its current year's snapshot rather than closing one. The fix is to make `closingBalances` open from `openingBasisFor` like the reports do, which touches the close and needs its own test at the boundary. |
 | A snapshot folds away which currencies fed an opening | An Opening Balance is base currency, so once a report's opening comes from one, `LedgerAccount.foreignCurrencies` covers only the lines still scanned — an account funded entirely in dollars two years ago no longer reads as foreign-sourced from its opening alone. The figures are unaffected, and the per-entry `trxAmount` / kurs columns inside the period are untouched. Restoring it would mean scanning the very history the snapshot exists to skip. |
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
 | A backdated settlement draws on today's cash layer | A subject-book relief now releases at its open item's own kurs, which never changes, so the obligation side no longer depends on when a backdated document is posted. The cash side still draws on its layer as it stands at posting (§12). |
@@ -5273,7 +5276,6 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | A history says who and when, never what | `audit_log` stores no field-level snapshot, so the panel reports that a record was edited and by whom, and cannot say which field moved. Adding a diff means storing one, which is a much larger change than the `event` column was. |
 | Rows written before `event` existed read as a bare verb | Rows written before the migration carry `event = null` and report "Dibuat" or "Diubah". They are not backfilled, because nothing in the table records which transition they actually were — inferring one from a timestamp would be a guess presented as a fact. |
 | The suite leaves fixture currencies behind | `cleanupFixtures` removes accounts, partners, mappings and journals but never a `ref_currency` row, so `curr.TESTEUR`, `test.ZZTESTCUR` and the Penyesuaian Open Item suite's `curr.DNCA` persist in whatever database `npm test` last ran against. Harmless now that `otherCurrency` is always the suite's own row rather than `currencies[1]` — that opportunistic pick is what let the leftover become the fixture and silently disable the third-currency refusal test. Deleting them would mean hard-deleting master data, which the application itself never does. |
-| `zod` unused | Installed; validation is hand-written in the services. |
 | The design-system suite is a text scan, not a renderer | `tests/design-system.test.ts` catches a control reproduced by hand or a rule written where a class exists. It cannot see a spacing or alignment mistake that is genuinely new — that still needs a browser. |
 | The anak's Piutang against the induk is never settled | Funding leaves `induk Piutang anak` and `anak Hutang induk` standing, and nothing in the application clears them yet — concept doc §36's settlement is the next scope (§13). The positions reconcile against each other in the meantime, which is what they are for. |
 | The intercompany position has no subject-book view | It is carried by the two bridge accounts and read through the General Ledger, which is a deliberate deviation from concept doc §34/§37/§38 (§12). The consequence is that the subject books answer "which Partner moved?" and not "what does the anak owe the induk?" — that question is an account balance, and the dashboard now states it from those two accounts so it is no longer reachable only by running the General Ledger for exactly the right one. If a book of it is ever wanted, it needs a subject that is a Company, which is a change to an append-only table. |
