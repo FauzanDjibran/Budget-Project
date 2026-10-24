@@ -427,6 +427,31 @@ describe("a manual journal may not touch a control account", () => {
     await syncControlAccounts([accumulated, current], await systemAccountIds(), actor);
   });
 
+  test("an adjustment account stays writable, so its balance can be moved on", async () => {
+    // Beban Penyesuaian is where a Pengurangan lands before a manual journal
+    // moves it to the real expense. Nothing reconciles against it, so naming it
+    // in Mapping Account System must not make it a control account.
+    const adjustment = await makeAccount({ companyId: company, subcategoryLabel: "5.3.1" });
+
+    const before = await systemAccountsOf(company);
+    await writeSystemAccounts(company, { adjustment_expense: adjustment }, actor);
+    await syncControlAccounts([adjustment], await systemAccountIds(), actor);
+
+    assert.equal(await isControl(adjustment), false);
+    const moved = await checkManualJournal(headerFor(), [
+      line(expense, 30_000, 0),
+      line(adjustment, 0, 30_000),
+    ]);
+    assert.equal(moved.ok, true);
+
+    await writeSystemAccounts(
+      company,
+      { adjustment_expense: before.adjustment_expense },
+      actor
+    );
+    await syncControlAccounts([adjustment], await systemAccountIds(), actor);
+  });
+
   test("the picker offers exactly what the check accepts", async () => {
     const controlled = await makeAccount({
       companyId: company,

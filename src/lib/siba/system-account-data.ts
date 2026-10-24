@@ -180,7 +180,16 @@ export async function systemAccountIds(): Promise<Set<number>> {
     select: { account_key: true, account_id: true },
   });
   return new Set(
-    rows.filter((r) => isSystemAccountKey(r.account_key)).map((r) => r.account_id!)
+    rows
+      // The adjustment pair is ordinary Profit & Loss: no book reconciles
+      // against it, and a manual journal moves its balance on to the real
+      // expense or income, which a control account would refuse.
+      .filter(
+        (r) =>
+          isSystemAccountKey(r.account_key) &&
+          systemAccountDef(r.account_key).group !== "adjustment"
+      )
+      .map((r) => r.account_id!)
   );
 }
 
