@@ -72,3 +72,11 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # The showcase posts a year of documents through every real posting path,
+      # so reconciling after it is a standing check that the books still agree.
+      # Last, because the showcase leaves business data behind.
+      - name: Post the showcase year and reconcile the books
+        run: |
+          npm run db:seed-showcase
+          npm run db:reconcile
