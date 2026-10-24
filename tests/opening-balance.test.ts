@@ -475,6 +475,73 @@ describe("closingBalances agrees with the General Ledger", () => {
   });
 });
 
+// ------------------------------------- a go-live snapshot is part of a close
+
+describe("closingBalances stands on a snapshot, so a go-live one survives a close", () => {
+  test("opening + what was posted since, with no journal behind the opening", async () => {
+    const equity = await makeAccount({
+      companyId: induk,
+      subcategoryLabel: "3.3.1",
+      normalBalance: "Kredit",
+    });
+    const written = await writeOpeningBalance(
+      prisma,
+      snapshot(induk, [
+        { accountId: indukCash, debit: 1_000_000, credit: 0 },
+        { accountId: indukReceivable, partnerId: branchA, debit: 400_000, credit: 0 },
+        { accountId: equity, debit: 0, credit: 1_400_000 },
+      ])
+    );
+    openings.push(written.id);
+
+    await postJournal(prisma, {
+      companyId: induk,
+      description: "Fixture go-live movement",
+      accountingDate: new Date(Date.UTC(FIXTURE_YEAR, 5, 15)),
+      lines: [
+        {
+          accountId: indukCash,
+          currencyId: currency,
+          rate: 1,
+          debit: 200_000,
+          credit: 0,
+          description: "Fixture",
+        },
+        {
+          accountId: indukReceivable,
+          partnerId: branchA,
+          currencyId: currency,
+          rate: 1,
+          debit: 0,
+          credit: 200_000,
+          description: "Fixture",
+        },
+      ],
+      actorId: actor,
+    });
+
+    const rows = await closingBalances(induk, `${FIXTURE_YEAR}-12-31`);
+    const net = (accountId: number) =>
+      rows.find((r) => r.accountId === accountId)?.net;
+
+    assert.equal(net(indukCash), 1_200_000, "the opening is carried, not dropped");
+    assert.equal(net(indukReceivable), 200_000);
+    assert.equal(net(equity), -1_400_000, "an account only the snapshot knows is kept");
+    assert.equal(
+      rows.find((r) => r.accountId === indukReceivable)?.partnerLabel !== null,
+      true,
+      "and the snapshot's Partner keeps its name"
+    );
+
+    const before = await closingBalances(induk, `${FIXTURE_YEAR - 1}-12-31`);
+    assert.equal(
+      before.some((r) => r.accountId === indukCash || r.accountId === equity),
+      false,
+      "a snapshot dated after the day asked about is not read"
+    );
+  });
+});
+
 // ------------------------------------------- the closing journal's series
 
 describe("a closing journal names its own date and series", () => {

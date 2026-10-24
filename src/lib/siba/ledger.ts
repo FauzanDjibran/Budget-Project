@@ -710,7 +710,10 @@ export type ClosingBalance = {
   section: AccountSection;
   partnerId: number | null;
   partnerLabel: string | null;
-  /** Raw sums over every posted line up to and including `asOf`, base currency. */
+  /**
+   * Raw sums up to and including `asOf`, base currency: the opening snapshot's
+   * net (on its own side) plus every posted line since it.
+   */
   debit: number;
   credit: number;
   /** `debit − credit`. Positive sits on the debit side. */
@@ -758,9 +761,20 @@ export async function closingBalances(
       ? new Date(`${asOf.toISOString().slice(0, 10)}T00:00:00Z`)
       : new Date(`${asOf.slice(0, 10)}T00:00:00Z`);
 
+  // The balance is opening + what was posted since, like every report here. A
+  // snapshot holds everything before its own date — and a go-live one holds
+  // figures no journal line backs — so only the lines from that date are added.
+  const basis = await openingBasisFor(companyId, to, db);
+
   const lines = await db.accJournalLine.findMany({
     where: {
-      journal: { ...POSTED, company_id: companyId, accounting_date: { lte: to } },
+      journal: {
+        ...POSTED,
+        company_id: companyId,
+        accounting_date: basis
+          ? { gte: basis.accountingDate, lte: to }
+          : { lte: to },
+      },
     },
     select: {
       account_id: true,
@@ -779,12 +793,25 @@ export async function closingBalances(
   // and a ledger of a thousand lines would otherwise carry the same three
   // joins a thousand times.
   const sections = new Map<number, AccountSection>();
-  const accountIds = [...new Set(lines.map((l) => l.account_id))];
+  // Accounts that only the snapshot knows have no line to carry their names.
+  const meta = new Map<
+    number,
+    { label: string; name: string; normalBalance: string }
+  >();
+  const accountIds = [
+    ...new Set([
+      ...lines.map((l) => l.account_id),
+      ...(basis?.byPair ?? []).map((p) => p.accountId),
+    ]),
+  ];
   if (accountIds.length) {
     const rows = await db.accAccount.findMany({
       where: { id: { in: accountIds } },
       select: {
         id: true,
+        account_label: true,
+        account_name: true,
+        normal_balance: true,
         account_subcategory: {
           select: {
             account_category: {
@@ -799,10 +826,45 @@ export async function closingBalances(
         r.id,
         r.account_subcategory.account_category.account_type.section
       );
+      meta.set(r.id, {
+        label: r.account_label,
+        name: r.account_name,
+        normalBalance: r.normal_balance,
+      });
     }
   }
 
   const pairs = new Map<string, ClosingBalance>();
+
+  if (basis) {
+    const partnerIds = [
+      ...new Set(basis.byPair.flatMap((p) => (p.partnerId === null ? [] : [p.partnerId]))),
+    ];
+    const partners = partnerIds.length
+      ? await db.mPartner.findMany({
+          where: { id: { in: partnerIds } },
+          select: { id: true, partner_label: true },
+        })
+      : [];
+    const partnerLabels = new Map(partners.map((p) => [p.id, p.partner_label]));
+    for (const p of basis.byPair) {
+      const a = meta.get(p.accountId)!;
+      // A snapshot stores the net per pair, so it enters on its own side.
+      pairs.set(`${p.accountId}:${p.partnerId ?? "-"}`, {
+        accountId: p.accountId,
+        accountLabel: a.label,
+        accountName: a.name,
+        normalBalance: a.normalBalance,
+        section: sections.get(p.accountId)!,
+        partnerId: p.partnerId,
+        partnerLabel: p.partnerId === null ? null : (partnerLabels.get(p.partnerId) ?? null),
+        debit: p.net > 0 ? p.net : 0,
+        credit: p.net < 0 ? -p.net : 0,
+        net: 0,
+        balance: 0,
+      });
+    }
+  }
 
   for (const l of lines) {
     // The null partner is a key of its own, not an absent one: an account with
