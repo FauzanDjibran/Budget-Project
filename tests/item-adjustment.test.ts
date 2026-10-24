@@ -16,12 +16,8 @@ import {
   effectOfChange,
   type ItemAdjustmentEffect,
 } from "../src/lib/siba/item-adjustment-workflow";
-import {
-  lockSubledgerPosition,
-  recordSubledgerEntry,
-  subledgerItemsByIds,
-  subledgerPosition,
-} from "../src/lib/siba/subledger";
+import { lockSubledgerPosition, recordSubledgerEntry, subledgerItemsByIds } from "../src/lib/siba/subledger";
+import { subledgerPosition } from "../src/lib/siba/subledger-reports";
 import {
   subledgerForCategory,
   subledgerMovement,

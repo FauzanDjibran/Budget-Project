@@ -15,11 +15,7 @@ import { attachDocumentNumbers } from "@/lib/siba/document-numbers";
 import { companyScope } from "@/lib/siba/company-access";
 import type { PeriodRange } from "@/lib/siba/period";
 import { reportBySlug, reportHref } from "@/lib/siba/reports";
-import {
-  subledgerBalanceReport,
-  subledgerReport,
-  subledgerSubjects,
-} from "@/lib/siba/subledger";
+import { subledgerBalanceReport, subledgerReport, subledgerSubjects } from "@/lib/siba/subledger-reports";
 import { SubledgerBalanceReport } from "@/components/report/subledger-balance-report";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { BookFilter } from "@/components/report/book-filter";

@@ -3,7 +3,7 @@ import "server-only";
 import ExcelJS from "exceljs";
 import { formatDate } from "@/lib/format";
 import { isBaseCurrency } from "./currency";
-import type { SubledgerBalanceReport } from "./subledger";
+import type { SubledgerBalanceReport } from "./subledger-reports";
 import { BAND, MUTED, SOFT, bookSheet, fill, font } from "./book-export";
 import { double, thin } from "./statement-export";
 

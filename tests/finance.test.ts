@@ -28,7 +28,7 @@ import {
   recordCashBankEntry,
 } from "../src/lib/siba/cash-bank";
 import { openLayer, openLayersOf } from "../src/lib/siba/cash-bank-layers";
-import { subledgerPosition } from "../src/lib/siba/subledger";
+import { subledgerPosition } from "../src/lib/siba/subledger-reports";
 import { checkTransactionDate, lockFiscalPeriod } from "../src/lib/siba/fiscal";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import {

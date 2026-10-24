@@ -19,7 +19,7 @@ import type {
   IntercompanyPosition,
 } from "@/lib/siba/dashboard";
 import { reportHref } from "@/lib/siba/reports";
-import type { SubledgerPosition } from "@/lib/siba/subledger";
+import type { SubledgerPosition } from "@/lib/siba/subledger-reports";
 
 /**
  * The dashboard: tiles that state a figure, each opening its Rincian.

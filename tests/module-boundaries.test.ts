@@ -125,8 +125,8 @@ const TABLE_OWNERS: Record<string, string[]> = {
   ],
   cashBankLedger: ["src/lib/siba/cash-bank.ts"],
   cashBankBalance: ["src/lib/siba/cash-bank.ts"],
-  subLedger: ["src/lib/siba/subledger.ts"],
-  subLedgerBalance: ["src/lib/siba/subledger.ts"],
+  subLedger: ["src/lib/siba/subledger.ts", "src/lib/siba/subledger-reports.ts"],
+  subLedgerBalance: ["src/lib/siba/subledger.ts", "src/lib/siba/subledger-reports.ts"],
   // The General Ledger is the one thing that may derive from journal lines
   // (CLAUDE.md §10 rule 22) — it reads them and never writes one.
   accJournal: ["src/lib/siba/journal.ts", "src/lib/siba/ledger.ts"],
@@ -240,10 +240,11 @@ describe("the dependency graph points one way", () => {
     // The Cash Bank Book is two files: the book itself and the rate layers a
     // foreign resource holds. They are one module and may name each other;
     // neither may name anything outside the kernel.
-    const BOOKS = ["cash-bank", "cash-bank-layers", "journal", "subledger"];
+    const BOOKS = ["cash-bank", "cash-bank-layers", "journal", "subledger", "subledger-reports"];
     const SIBLINGS: Record<string, string[]> = {
       "cash-bank": ["cash-bank-layers"],
       "cash-bank-layers": ["cash-bank"],
+      "subledger-reports": ["subledger"],
     };
 
     for (const book of BOOKS) {

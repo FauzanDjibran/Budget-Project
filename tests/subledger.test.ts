@@ -10,16 +10,8 @@ import {
   subledgerMovement,
 } from "../src/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "../src/lib/siba/subledger-data";
-import {
-  SubledgerItemUnavailable,
-  itemLowestFrom,
-  recordSubledgerEntry,
-  rebuildSubledgerBalance,
-  subledgerPosition,
-  subledgerBalanceReport,
-  subledgerReport,
-  subledgerSubjects,
-} from "../src/lib/siba/subledger";
+import { SubledgerItemUnavailable, itemLowestFrom, recordSubledgerEntry, rebuildSubledgerBalance } from "../src/lib/siba/subledger";
+import { subledgerPosition, subledgerBalanceReport, subledgerReport, subledgerSubjects } from "../src/lib/siba/subledger-reports";
 import { loadClassification } from "../src/lib/siba/classification-data";
 import { directionsOf, ruleFor } from "../src/lib/siba/classification";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";

@@ -5,7 +5,7 @@ import { Icon } from "@/components/icon";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatMoney } from "@/lib/format";
-import type { SubledgerReport as Report } from "@/lib/siba/subledger";
+import type { SubledgerReport as Report } from "@/lib/siba/subledger-reports";
 
 /**
  * One ledger table per subject, stacked — the General Ledger's shape with a

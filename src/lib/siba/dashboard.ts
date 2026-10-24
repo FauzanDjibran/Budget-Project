@@ -8,7 +8,7 @@ import { reportableFiscalYears } from "./fiscal";
 import { accountPositions, type AccountPosition } from "./ledger";
 import { reportHref } from "./reports";
 import { profitLossReport, resolveColumn } from "./statements";
-import { subledgerPositions, type SubledgerPosition } from "./subledger";
+import { subledgerPositions, type SubledgerPosition } from "./subledger-reports";
 import { loadSubledgers } from "./subledger-data";
 import { intercompanyBridge } from "./system-account-data";
 

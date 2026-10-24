@@ -6,7 +6,7 @@ import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatMoney, formatRate } from "@/lib/format";
 import { isBaseCurrency } from "@/lib/siba/currency";
-import type { SubledgerBalanceReport as Report } from "@/lib/siba/subledger";
+import type { SubledgerBalanceReport as Report } from "@/lib/siba/subledger-reports";
 
 /**
  * Saldo Buku Subjek — one block per Partner and currency, the shape Buku

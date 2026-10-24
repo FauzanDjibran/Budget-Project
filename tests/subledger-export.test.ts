@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import ExcelJS from "exceljs";
 
 import { subledgerWorkbook } from "../src/lib/siba/subledger-export";
-import type { SubledgerEntryRow, SubledgerReport, SubledgerSubject } from "../src/lib/siba/subledger";
+import type { SubledgerEntryRow, SubledgerReport, SubledgerSubject } from "../src/lib/siba/subledger-reports";
 
 /**
  * Buku Subjek's Unduh XLSX: one block per Partner and currency, each from Saldo

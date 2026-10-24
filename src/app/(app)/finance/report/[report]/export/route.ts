@@ -10,7 +10,7 @@ import { companyScope } from "@/lib/siba/company-access";
 import { reportBySlug } from "@/lib/siba/reports";
 import { parseIds, resolveRange } from "@/lib/siba/report-params";
 import { xlsxResponse } from "@/lib/siba/statement-export";
-import { subledgerBalanceReport, subledgerReport } from "@/lib/siba/subledger";
+import { subledgerBalanceReport, subledgerReport } from "@/lib/siba/subledger-reports";
 import { subledgerBalanceWorkbook } from "@/lib/siba/subledger-balance-export";
 import { loadSubledgers } from "@/lib/siba/subledger-data";
 import { subledgerWorkbook } from "@/lib/siba/subledger-export";

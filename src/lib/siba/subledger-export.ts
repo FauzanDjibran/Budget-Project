@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { SubledgerReport } from "./subledger";
+import type { SubledgerReport } from "./subledger-reports";
 import { bookWorkbook } from "./book-export";
 
 /**
