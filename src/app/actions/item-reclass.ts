@@ -8,15 +8,8 @@ import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { checkTransactionDate } from "@/lib/siba/fiscal";
-import {
-  applyReclass,
-  checkReclassHeader,
-  checkReclassLines,
-  nextReclassNo,
-  previewReclass,
-  type ReclassLineInput,
-  type ResolvedReclassLine,
-} from "@/lib/siba/item-reclass";
+import { checkReclassHeader, checkReclassLines, nextReclassNo, type ReclassLineInput, type ResolvedReclassLine } from "@/lib/siba/item-reclass";
+import { applyReclass, previewReclass } from "@/lib/siba/item-reclass-post";
 import {
   RECLASS_TRANSITIONS,
   reclassIsEditable,

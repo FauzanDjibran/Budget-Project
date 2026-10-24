@@ -62,12 +62,8 @@ import {
 } from "@/lib/siba/item-adjustment";
 import { openSubledgerItems } from "@/lib/siba/subledger";
 import { applyConversion, nextConversionNo } from "@/lib/siba/item-conversion";
-import {
-  applyReclass,
-  checkReclassHeader,
-  checkReclassLines,
-  nextReclassNo,
-} from "@/lib/siba/item-reclass";
+import { checkReclassHeader, checkReclassLines, nextReclassNo } from "@/lib/siba/item-reclass";
+import { applyReclass } from "@/lib/siba/item-reclass-post";
 import {
   applyRevaluation,
   checkRevaluationHeader,

@@ -2,16 +2,8 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { BASE_CURRENCY_LABEL } from "../src/lib/siba/currency";
-import {
-  applyReclass,
-  checkReclassHeader,
-  checkReclassLines,
-  nextReclassNo,
-  previewReclass,
-  reclassTrail,
-  type ReclassLineInput,
-  type ResolvedReclassHeader,
-} from "../src/lib/siba/item-reclass";
+import { checkReclassHeader, checkReclassLines, nextReclassNo, reclassTrail, type ReclassLineInput, type ResolvedReclassHeader } from "../src/lib/siba/item-reclass";
+import { applyReclass, previewReclass } from "../src/lib/siba/item-reclass-post";
 import { reclassEffect, valueReclassLine } from "../src/lib/siba/item-reclass-valuation";
 import { recordSubledgerEntry } from "../src/lib/siba/subledger";
 import { subledgerForCategory, type SubledgerDef } from "../src/lib/siba/subledger-catalogue";
