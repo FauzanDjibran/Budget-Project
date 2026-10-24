@@ -9,57 +9,23 @@ import { CancelButton } from "@/components/ui/cancel-button";
 import { Select } from "@/components/ui/select";
 import { Combobox } from "@/components/ui/combobox";
 import { DateInput } from "@/components/ui/date-input";
-import { MoneyInput } from "@/components/ui/money-input";
-import { RateInput } from "@/components/ui/rate-input";
 import { KursSelect } from "./kurs-select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { JournalPreview } from "@/components/ui/journal-preview";
 import { useToast } from "@/components/ui/toast";
 import { Field, FormBody, FormRow, FormSection } from "@/components/ui/form";
-import {
-  createTransfer,
-  transitionTransfer,
-  updateTransfer,
-  type TransferValues,
-  previewTransferPost,
-} from "@/app/actions/transfer";
+import { createTransfer, transitionTransfer, updateTransfer, type TransferValues, previewTransferPost } from "@/app/actions/transfer";
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { relieve, roundBase, type Balance } from "@/lib/siba/fx";
-import type {
-  TransferLineRow,
-  TransferRefs,
-  TransferRow,
-} from "@/lib/siba/transfer";
-import {
-  TRANSFER_PURPOSES,
-  transferCurrencyFollowsSource,
-  transferPurposeOf,
-} from "@/lib/siba/transfer-catalogue";
+import type { TransferLineRow, TransferRefs, TransferRow } from "@/lib/siba/transfer";
+import { TRANSFER_PURPOSES, transferCurrencyFollowsSource, transferPurposeOf } from "@/lib/siba/transfer-catalogue";
 import { rupiahSide, valueTransferLine } from "@/lib/siba/transfer-valuation";
-import { ReportSummary } from "@/components/report/report-summary";
-import {
-  TRANSFER_TRANSITIONS,
-  availableTransferActions,
-  transferIsEditable,
-  type TransferAbilities,
-  type TransferAction,
-} from "@/lib/siba/transfer-workflow";
-import {
-  headerButtonClass,
-  orderForHeader,
-  type ActionTone,
-} from "@/lib/siba/header-actions";
+import { TransferLinesCard, type DraftLine } from "./transfer-lines-card";
+import { TRANSFER_TRANSITIONS, availableTransferActions, transferIsEditable, type TransferAbilities, type TransferAction } from "@/lib/siba/transfer-workflow";
+import { headerButtonClass, orderForHeader, type ActionTone } from "@/lib/siba/header-actions";
 
 export type TransferFormMode = "new" | "view" | "edit";
-
-/** A destination while the document is being edited. */
-type DraftLine = {
-  key: number;
-  to_cash_bank_id: number | null;
-  amount: number;
-  rate: string;
-};
 
 /**
  * The header fields that decide where this document's money comes from, and
@@ -813,333 +779,34 @@ export function TransferForm({
             )}
           </div>
 
-          <div className="card" style={{ marginTop: 14 }}>
-            <div className="card-h">
-              <span className="ci">
-                <Icon name="wallet" size={15} />
-              </span>
-              <div className="ct">
-                <h3>Tujuan</h3>
-                <p>
-                  Satu transfer dapat membagi dana ke beberapa Cash &amp; Bank
-                  sekaligus.
-                </p>
-              </div>
-              {editing ? (
-                <button
-                  className="btn sm primary"
-                  disabled={!headerReady}
-                  title={destinationWaitingFor ?? undefined}
-                  onClick={() => {
-                    setDraftLines((rows) => [
-                      ...rows,
-                      { key: nextKey++, to_cash_bank_id: null, amount: 0, rate: "" },
-                    ]);
-                    setDirty(true);
-                  }}
-                >
-                  <Icon name="plus" size={14} /> Tambah Tujuan
-                </button>
-              ) : (
-                <span className="hint">{lines.length} tujuan</span>
-              )}
-            </div>
-
-            {showSummary && (
-              <div className="lsum">
-                {summaryWaitingFor ? (
-                  <span className="wait">{summaryWaitingFor}</span>
-                ) : (
-                  <ReportSummary
-                    figures={[
-                      {
-                        label: "Saldo Saat Ini",
-                        value: formatMoney(available, sourceLabel),
-                      },
-                      {
-                        label: "Total Digunakan",
-                        value: formatMoney(used, sourceLabel),
-                      },
-                      left < 0
-                        ? {
-                            label: "Kekurangan",
-                            value: formatMoney(-left, sourceLabel),
-                            key: true,
-                            negative: true,
-                          }
-                        : {
-                            label: "Sisa",
-                            value: formatMoney(left, sourceLabel),
-                            key: true,
-                          },
-                    ]}
-                  />
-                )}
-              </div>
-            )}
-
-            {errors._lines && (
-              <div className="nbox bad slim">
-                <span className="ni">
-                  <Icon name="warn" size={14} />
-                </span>
-                <div>
-                  <b>{errors._lines}</b>
-                </div>
-              </div>
-            )}
-
-            {(editing ? draftLines.length : lines.length) ? (
-              <div className="tw">
-                <table
-                  className="grid ltab"
-                  style={{ minWidth: purpose?.entersRate ? 860 : 640 }}
-                >
-                  <thead>
-                    <tr>
-                      <th style={{ width: 34 }}>No</th>
-                      <th>Cash &amp; Bank Tujuan</th>
-                      <th className="num" style={{ width: 170 }}>
-                        {amountHeading} ({currencyLabel})
-                      </th>
-                      {purpose?.entersRate && (
-                        <>
-                          <th className="num" style={{ width: 150 }}>
-                            Kurs ({currencyLabel} → {BASE_CURRENCY_LABEL})
-                          </th>
-                          <th className="num" style={{ width: 180 }}>
-                            {rupiahHeading}
-                          </th>
-                        </>
-                      )}
-                      {editing && <th style={{ width: 44 }} />}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {editing
-                      ? draftLines.map((l, i) => {
-                          const p = preview[i];
-                          return (
-                            <tr key={l.key} className={p?.over ? "overrow" : undefined}>
-                              <td className="no">{i + 1}</td>
-                              <td className="pri">
-                                <Combobox
-                                  size="sm"
-                                  value={l.to_cash_bank_id}
-                                  options={destinationOptions(l.to_cash_bank_id)}
-                                  placeholder="Pilih Cash & Bank…"
-                                  waitingFor={destinationWaitingFor}
-                                  onChange={(v) => {
-                                    setDraftLines((rows) =>
-                                      rows.map((r) =>
-                                        r.key === l.key
-                                          ? { ...r, to_cash_bank_id: v }
-                                          : r
-                                      )
-                                    );
-                                    setDirty(true);
-                                  }}
-                                />
-                              </td>
-                              <td className="num">
-                                <MoneyInput
-                                  size="sm"
-                                  over={p?.over}
-                                  ariaLabel="Nominal"
-                                  value={l.amount ? String(l.amount) : ""}
-                                  onChange={(raw) => {
-                                    setDraftLines((rows) =>
-                                      rows.map((r) =>
-                                        r.key === l.key
-                                          ? { ...r, amount: raw ? Number(raw) : 0 }
-                                          : r
-                                      )
-                                    );
-                                    setDirty(true);
-                                  }}
-                                />
-                                {p?.over && (
-                                  <span className="overtag">
-                                    {drawsLayer ? "Melebihi sisa layer" : "Melebihi saldo"}
-                                  </span>
-                                )}
-                              </td>
-                              {purpose?.entersRate && (
-                                <td className="num">
-                                  <RateInput
-                                    size="sm"
-                                    value={l.rate}
-                                    // The pair is stated once, in the column
-                                    // header. Inside a 150px cell the label
-                                    // and a six-decimal rate do not both fit,
-                                    // and what gets truncated is the figure
-                                    // the operator has to check.
-                                    ariaLabel="Kurs"
-                                    onChange={(v) => {
-                                      setDraftLines((rows) =>
-                                        rows.map((r) =>
-                                          r.key === l.key ? { ...r, rate: v } : r
-                                        )
-                                      );
-                                      setDirty(true);
-                                    }}
-                                  />
-                                </td>
-                              )}
-                              {purpose?.entersRate && (
-                                <td className="num">
-                                  <span className="mny">
-                                    {l.amount && Number(l.rate)
-                                      ? formatMoney(
-                                          rupiahOf(l.amount, l.rate),
-                                          BASE_CURRENCY_LABEL
-                                        )
-                                      : "—"}
-                                  </span>
-                                  {p?.valued && p.valued.fxDifference !== 0 && (
-                                    <span className="rsub">
-                                      selisih kurs{" "}
-                                      {formatMoney(
-                                        p.valued.fxDifference,
-                                        BASE_CURRENCY_LABEL
-                                      )}
-                                    </span>
-                                  )}
-                                </td>
-                              )}
-                              <td className="acts">
-                                <button
-                                  className="iact del"
-                                  title="Keluarkan dari dokumen"
-                                  onClick={() => {
-                                    setDraftLines((rows) =>
-                                      rows.filter((r) => r.key !== l.key)
-                                    );
-                                    setDirty(true);
-                                  }}
-                                >
-                                  <Icon name="trash" size={14} />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      : lines.map((l, i) => {
-                          const destination = refs.cashBanks.find(
-                            (c) => c.id === l.to_cash_bank_id
-                          );
-                          return (
-                            <tr key={l.id}>
-                              <td className="no">{i + 1}</td>
-                              <td className="pri">
-                                <span className="dstack">
-                                  <span className="d1">
-                                    {destination?.label ?? "—"}
-                                  </span>
-                                  <span className="d2">
-                                    {destination?.name ?? ""}
-                                  </span>
-                                </span>
-                              </td>
-                              <td className="num">
-                                <span className="mny">
-                                  {formatMoney(l.amount, currencyLabel)}
-                                </span>
-                              </td>
-                              {purpose?.entersRate && (
-                                <>
-                                  <td className="num">
-                                    <span className="mny">
-                                      {formatRate(l.exchange_rate)}
-                                    </span>
-                                  </td>
-                                  <td className="num">
-                                    <span className="mny">
-                                      {formatMoney(
-                                        rupiahOf(
-                                          l.amount,
-                                          l.exchange_rate,
-                                          purpose.key === "Pencairan"
-                                            ? l.in_amount
-                                            : l.out_amount
-                                        ),
-                                        BASE_CURRENCY_LABEL
-                                      )}
-                                    </span>
-                                    {l.fx_difference !== 0 && (
-                                      <span className="rsub">
-                                        selisih kurs{" "}
-                                        {formatMoney(
-                                          l.fx_difference,
-                                          BASE_CURRENCY_LABEL
-                                        )}
-                                      </span>
-                                    )}
-                                  </td>
-                                </>
-                              )}
-                            </tr>
-                          );
-                        })}
-                  </tbody>
-                  {/* Only the totals the summary above does not state: what
-                      the source gives up is there, so a Transfer has no
-                      footer at all. */}
-                  {footTotal && (
-                    <tfoot>
-                      {/* Each total stands under its own column: rupiah
-                          received under Rupiah Diterima, currency bought under
-                          Valas Dibeli. */}
-                      <tr className="totrow">
-                        <td
-                          colSpan={footTotal.underRupiah ? 4 : 2}
-                          style={{ textAlign: "right" }}
-                        >
-                          {footTotal.label}
-                        </td>
-                        <td className="num">
-                          <span className="mny big">
-                            {formatMoney(footTotal.value, footTotal.currency)}
-                          </span>
-                        </td>
-                        {!footTotal.underRupiah && <td colSpan={2} />}
-                        {editing && <td />}
-                      </tr>
-                      {/* A row of its own rather than a `.rsub` under the
-                          total: `.rsub` is scoped to `tbody td`, so in a
-                          footer it runs inline into the figure beside it —
-                          and a realized gain is a figure in its own right. */}
-                      {fxTotal !== 0 && (
-                        <tr className="totrow">
-                          <td colSpan={4} style={{ textAlign: "right" }}>
-                            {fxTotal > 0 ? "Laba Selisih Kurs" : "Rugi Selisih Kurs"}
-                          </td>
-                          <td className="num">
-                            <span className="mny">
-                              {formatMoney(fxTotal, BASE_CURRENCY_LABEL)}
-                            </span>
-                          </td>
-                          {editing && <td />}
-                        </tr>
-                      )}
-                    </tfoot>
-                  )}
-                </table>
-              </div>
-            ) : (
-              <div className="empty sm">
-                <div className="ic">
-                  <Icon name="wallet" size={18} />
-                </div>
-                <h4>Belum ada tujuan</h4>
-                <p>
-                  {headerReady
-                    ? "Tambahkan Cash & Bank yang menerima dananya."
-                    : "Lengkapi Purpose dan Cash & Bank sumber terlebih dahulu."}
-                </p>
-              </div>
-            )}
-          </div>
+          <TransferLinesCard
+            editing={editing}
+            lines={lines}
+            refs={refs}
+            draftLines={draftLines}
+            setDraftLines={setDraftLines}
+            newKey={() => nextKey++}
+            errors={errors}
+            setDirty={setDirty}
+            purpose={purpose}
+            currencyLabel={currencyLabel}
+            drawsLayer={drawsLayer}
+            headerReady={headerReady}
+            destinationWaitingFor={destinationWaitingFor}
+            destinationOptions={destinationOptions}
+            preview={preview}
+            rupiahOf={rupiahOf}
+            showSummary={showSummary}
+            sourceLabel={sourceLabel}
+            summaryWaitingFor={summaryWaitingFor}
+            available={available}
+            used={used}
+            left={left}
+            fxTotal={fxTotal}
+            amountHeading={amountHeading}
+            rupiahHeading={rupiahHeading}
+            footTotal={footTotal}
+          />
         </div>
       </div>
 
