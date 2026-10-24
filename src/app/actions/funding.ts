@@ -11,7 +11,7 @@ import {
   raiseFundingRequest,
   withdrawFundingRequest,
 } from "@/lib/siba/funding";
-import type { FundingCashSide } from "@/lib/siba/finance";
+import type { FundingCashSide } from "@/lib/siba/finance-funded";
 import type { JournalPreviewLine } from "@/lib/siba/journal";
 
 /**

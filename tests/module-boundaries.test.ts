@@ -73,10 +73,12 @@ const TABLE_OWNERS: Record<string, string[]> = {
   budBudget: ["src/lib/siba/budget.ts", "src/app/actions/budget.ts"],
   finCashBankTransaction: [
     "src/lib/siba/finance.ts",
+    "src/lib/siba/finance-funded.ts",
     "src/app/actions/finance.ts",
   ],
   finCashBankTransactionLine: [
     "src/lib/siba/finance.ts",
+    "src/lib/siba/finance-funded.ts",
     "src/app/actions/finance.ts",
   ],
   finCashBankTransfer: [
@@ -207,7 +209,9 @@ describe("the dependency graph points one way", () => {
     // nothing here — which is also what keeps the confirmation able to write
     // both Companies inside one transaction that Funding owns.
     assert.ok(
-      !sibaImports(sibaModule("finance").text).includes("funding"),
+      !["finance", "finance-funded"].some((m) =>
+        sibaImports(sibaModule(m).text).includes("funding")
+      ),
       "Funding depends on Finance, never the reverse. Export what Funding needs " +
         "from finance.ts instead of reaching back into it."
     );

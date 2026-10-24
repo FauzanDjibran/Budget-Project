@@ -5,19 +5,21 @@ import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { nextDocumentNumber } from "./document-number";
 import {
-  checkFundable,
   fundingRoute,
   isPostingRefusal,
   markTransactionCancelled,
   markTransactionPending,
-  prepareFundedPosting,
   transactingCompany,
   transactionsByIds,
+  type TransactionRow,
+} from "./finance";
+import {
+  checkFundable,
+  prepareFundedPosting,
   writeFundedPosting,
   type FundedPostingCheck,
   type FundingCashSide,
-  type TransactionRow,
-} from "./finance";
+} from "./finance-funded";
 import { openLayersFor, type LayerOption } from "./cash-bank-layers";
 import { isBaseCurrency, maySettle } from "./currency";
 import { describeJournalLines, type JournalPreviewLine } from "./journal";
