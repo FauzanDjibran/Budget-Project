@@ -346,14 +346,27 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
 ), gl AS (
   -- Signed the way the book is: a book that rises on money out rises on the
   -- debit side of its account, one that rises on money in on the credit side.
-  SELECT jl.account_id, jl.partner_id,
-         SUM(CASE WHEN a.raises = 'Out' THEN jl.debit_amount - jl.kredit_amount
-                  ELSE jl.kredit_amount - jl.debit_amount END) AS amount
-  FROM acc_journal_line jl
-  JOIN acc_journal j ON j.id = jl.journal_id
-  JOIN acct a ON a.account_id = jl.account_id
-  WHERE j.status = 'Posted' AND j.journal_no NOT LIKE 'CLS-%'
-  GROUP BY jl.account_id, jl.partner_id
+  SELECT account_id, partner_id, SUM(amount) AS amount
+  FROM (
+    SELECT jl.account_id, jl.partner_id,
+           CASE WHEN a.raises = 'Out' THEN jl.debit_amount - jl.kredit_amount
+                ELSE jl.kredit_amount - jl.debit_amount END AS amount
+    FROM acc_journal_line jl
+    JOIN acc_journal j ON j.id = jl.journal_id
+    JOIN acct a ON a.account_id = jl.account_id
+    WHERE j.status = 'Posted' AND j.journal_no NOT LIKE 'CLS-%'
+    UNION ALL
+    -- A go-live snapshot (no source year) is where history starts: the book's
+    -- Opening entries have no journal line behind them, only this.
+    SELECT ol.account_id, ol.partner_id,
+           CASE WHEN a.raises = 'Out' THEN ol.debit_amount - ol.kredit_amount
+                ELSE ol.kredit_amount - ol.debit_amount END
+    FROM acc_opening_balance_line ol
+    JOIN acc_opening_balance o ON o.id = ol.opening_id
+    JOIN acct a ON a.account_id = ol.account_id
+    WHERE o.source_fiscal_year_id IS NULL
+  ) u
+  GROUP BY account_id, partner_id
 )
 SELECT ac.account_label, ac.account_name, p.partner_label,
        COALESCE(book.amount, 0) AS book, COALESCE(gl.amount, 0) AS gl
