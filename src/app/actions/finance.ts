@@ -13,15 +13,13 @@ import {
   previewPosting,
   budgetDocTypeId,
   checkDocumentDate,
-  checkHeader,
-  checkLines,
   eligibleBudgets,
   nextTransactionNo,
   valueDraft,
   DraftNotValued,
   type EligibleBudget,
-  type LineInput,
 } from "@/lib/siba/finance";
+import { checkHeader, checkLines, type LineInput } from "@/lib/siba/finance-check";
 import {
   TRANSACTION_TRANSITIONS,
   transactionIsEditable,

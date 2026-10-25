@@ -5,12 +5,11 @@ import {
   applyPosting,
   previewPosting,
   budgetDocTypeId,
-  checkHeader,
-  checkLines,
   eligibleBudgets,
   transactingCompany,
   valueDraft,
 } from "../src/lib/siba/finance";
+import { checkHeader, checkLines } from "../src/lib/siba/finance-check";
 import {
   TRANSACTION_TRANSITIONS,
   availableTransactionActions,
