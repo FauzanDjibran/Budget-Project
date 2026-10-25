@@ -11,6 +11,9 @@
 export const PAGE_SIZES = [10, 25, 50, 100] as const;
 export const DEFAULT_PAGE_SIZE = 25;
 
+/** How many entries a report block loads at a time when it is opened. */
+export const ENTRY_PAGE_SIZE = 100;
+
 export type RegisterQuery = {
   page: number;
   size: number;

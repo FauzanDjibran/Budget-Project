@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { loadLedgerEntries } from "@/app/actions/ledger";
 import { Icon } from "@/components/icon";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
@@ -9,7 +10,12 @@ import { Amount } from "@/components/ui/amount";
 import { PartnerCell } from "@/components/ui/partner-cell";
 import { formatAccounting, formatDate, formatForeignFace } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
-import type { GeneralLedgerReport as Report } from "@/lib/siba/ledger";
+import { ENTRY_PAGE_SIZE } from "@/lib/siba/register-query";
+import type {
+  GeneralLedgerReport as Report,
+  LedgerCursor,
+  LedgerEntry,
+} from "@/lib/siba/ledger";
 
 /**
  * One ledger table per account, stacked.
@@ -24,6 +30,10 @@ import type { GeneralLedgerReport as Report } from "@/lib/siba/ledger";
  * up to anything — that sum is the Trial Balance's job, and it does it per
  * currency and per side.
  *
+ * The entries are not sent with the report. Opening an account fetches its
+ * first hundred, and a button fetches the next hundred — so a busy account's
+ * year costs nothing until somebody reads it, and then only what they read.
+ *
  * The entry table carries no Company column — the Company is fixed for the run
  * and stated in the filter — but it does carry a **Partner** column, on the
  * user's instruction: the point of reading a line on a Partner-bearing account
@@ -36,13 +46,46 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
   // arrive in the same state as the rest, not remembered as closed.
   const [open, setOpen] = useState<Set<number>>(new Set());
 
-  const toggle = (id: number) =>
+  // What each account has loaded so far. A report that arrived with its entries
+  // (the export reads it that way) starts with them in place.
+  type Loaded = {
+    entries: LedgerEntry[];
+    next: LedgerCursor | null;
+    busy: boolean;
+    error: string | null;
+  };
+  const [loaded, setLoaded] = useState<Record<number, Loaded>>({});
+  const loadedOf = (a: Report["accounts"][number]): Loaded | null =>
+    loaded[a.id] ??
+    (a.entries.length ? { entries: a.entries, next: null, busy: false, error: null } : null);
+
+  const loadMore = async (a: Report["accounts"][number]) => {
+    const have = loadedOf(a);
+    if (have?.busy) return;
+    const entries = have?.entries ?? [];
+    const cursor = have?.next ?? null;
+    setLoaded((prev) => ({
+      ...prev,
+      [a.id]: { entries, next: cursor, busy: true, error: null },
+    }));
+    const result = await loadLedgerEntries(a.id, report.range.from, report.range.to, cursor);
+    setLoaded((prev) => ({
+      ...prev,
+      [a.id]: result.ok
+        ? { entries: [...entries, ...result.entries], next: result.next, busy: false, error: null }
+        : { entries, next: cursor, busy: false, error: result.error },
+    }));
+  };
+
+  const toggle = (a: Report["accounts"][number]) => {
     setOpen((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(a.id)) next.delete(a.id);
+      else next.add(a.id);
       return next;
     });
+    if (!open.has(a.id) && a.entryCount > 0 && !loadedOf(a)) void loadMore(a);
+  };
 
   // A hand-edited URL can name accounts belonging to another Company, or none
   // at all. Saying so beats a blank card, which reads as "no data".
@@ -65,13 +108,15 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
   // accounts start folded — so the fault is counted up here, where it is seen
   // before any account is opened.
   const mismatchesOf = (a: Report["accounts"][number]) =>
-    a.entries.filter((e) => e.partnerMismatch).length;
+    a.mismatchCount;
   const faulty = report.accounts.filter((a) => mismatchesOf(a) > 0);
   const faultyLines = faulty.reduce((t, a) => t + mismatchesOf(a), 0);
 
   const allOpen = open.size === report.accounts.length;
-  const setAll = (o: boolean) =>
+  const setAll = (o: boolean) => {
     setOpen(o ? new Set(report.accounts.map((a) => a.id)) : new Set());
+    if (o) for (const a of report.accounts) if (a.entryCount > 0 && !loadedOf(a)) void loadMore(a);
+  };
 
   return (
     <>
@@ -107,6 +152,8 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
 
       {report.accounts.map((a) => {
         const isOpen = open.has(a.id);
+        const have = loadedOf(a);
+        const rows = have?.entries ?? [];
         // Every figure here is base currency, a negative in parentheses. The
         // transaction-currency face lives beside the description.
         const money = (n: number) => formatAccounting(n, BASE_CURRENCY_LABEL);
@@ -117,11 +164,11 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
               role="button"
               tabIndex={0}
               aria-expanded={isOpen}
-              onClick={() => toggle(a.id)}
+              onClick={() => toggle(a)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  toggle(a.id);
+                  toggle(a);
                 }
               }}
               style={{ cursor: "pointer" }}
@@ -131,7 +178,7 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
               </span>
               <b>{a.label}</b>
               <span className="cbn">
-                {a.name} · {a.normalBalance} · {a.entries.length} mutasi
+                {a.name} · {a.normalBalance} · {a.entryCount} mutasi
                 {a.foreignCurrencies.length > 0 &&
                   ` · sumber ${a.foreignCurrencies.join(", ")}`}
               </span>
@@ -192,7 +239,7 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                       </td>
                     </tr>
 
-                    {a.entries.map((e, i) => (
+                    {rows.map((e, i) => (
                       <tr key={`${e.journalId}-${i}`}>
                         <td className="mono mut" style={{ fontSize: "11.5px" }}>
                           {formatDate(e.date)}
@@ -235,11 +282,39 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                       </tr>
                     ))}
 
-                    {a.entries.length === 0 && (
+                    {a.entryCount === 0 && (
                       <tr>
                         <td colSpan={7} className="mut" style={{ textAlign: "center" }}>
                           Tidak ada mutasi pada periode ini. Saldo akhir sama
                           dengan saldo awal.
+                        </td>
+                      </tr>
+                    )}
+
+                    {a.entryCount > 0 && !have && (
+                      <tr>
+                        <td colSpan={7} className="mut" style={{ textAlign: "center" }}>
+                          Memuat mutasi…
+                        </td>
+                      </tr>
+                    )}
+
+                    {have && (have.next || have.busy || have.error) && (
+                      <tr>
+                        <td colSpan={7} style={{ textAlign: "center" }}>
+                          {have.error ? (
+                            <span className="err">{have.error} </span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="btn sm"
+                            disabled={have.busy}
+                            onClick={() => void loadMore(a)}
+                          >
+                            {have.busy
+                              ? "Memuat…"
+                              : `Muat ${Math.min(ENTRY_PAGE_SIZE, a.entryCount - rows.length)} mutasi berikutnya (${a.entryCount - rows.length} tersisa)`}
+                          </button>
                         </td>
                       </tr>
                     )}

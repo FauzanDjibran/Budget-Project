@@ -134,7 +134,7 @@ export default async function Page({
 
   if (report.key === "general_ledger") {
     const data = accountIds.length
-      ? await generalLedgerReport(accountIds, range, companyIds)
+      ? await generalLedgerReport(accountIds, range, companyIds, { entries: false })
       : null;
 
     return (
@@ -161,7 +161,10 @@ export default async function Page({
         }
       >
         {data ? (
-          <GeneralLedgerReport report={data} />
+          <GeneralLedgerReport
+            key={`${range.from}|${range.to}|${accountIds.join(",")}`}
+            report={data}
+          />
         ) : (
           <ReportNeedsSubject
             icon="tree"
