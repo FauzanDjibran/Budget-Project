@@ -2258,8 +2258,8 @@ Specified in the concept doc, **not yet implemented** (see §13):
   row-filter inputs, report pager, the read-only `.rolock` box, `kbd`, and the
   submenu's chevron and count. Nothing rendered them. "Near-unmodified" no
   longer covers those; `tests/design-system.test.ts` keeps them from returning.
-  The print block (`.psheet` / `.ps-*`) stays, because report output is still
-  planned (§13).
+  The print block (`.psheet` / `.ps-*`) went too: nothing rendered it, and
+  reports leave the application as XLSX only (§13).
 - **Do not change unless:** a genuinely new component has no existing class — then extend
   the sheet in its own section, matching the token vocabulary.
 
@@ -3372,6 +3372,28 @@ they relate. Keep the table; keep it out of the UI's write path.
   own menu again**, never write the set outside the record's transaction, never
   delete a pairing row, and do not let a `multiref` reach the entity's own table
   — it is `virtual`.
+- **Status:** Frozen, current.
+
+### Biaya and Asset kinds are Budget Categories, one per kind (FROZEN)
+- **Decision:** A Company that spends on many kinds of expense, or buys many
+  kinds of asset, makes one **Budget Category per kind** — `Biaya – Listrik`,
+  `Biaya – Air` — each with Memakai Partner off, its own direction, and its own
+  Mapping Budget ke Account row per Company. Nothing new is built: a
+  Klasifikasi picks the kind as the category, and Realisasi, the plan tiles and
+  every report already show it.
+- **Reason:** the user's (23/10/2026), after weighing an account chosen at
+  classification (a `bud_budget.account_id` and a table of selectable accounts
+  per category). It would keep the category list at nature level and give a
+  Biaya total, but it costs a migration, a new table and menu, and a changed
+  classification path, and the setup rows are the same either way. A category
+  already shows everywhere a kind has to be told apart.
+- **Accepted consequences:** the category list grows with the kinds; a
+  classification is never changed (§10 rule 26), so a Budget put under the
+  wrong kind is corrected by a manual journal between the two expense
+  accounts, which is allowed because Profit & Loss accounts are not control
+  accounts; moving to an account-per-classification model later would apply to
+  new Budgets only.
+- **Do not change unless:** explicitly instructed.
 - **Status:** Frozen, current.
 
 ### Realisasi Budget: two menus, one document, one book entry per Budget (FROZEN)
@@ -4815,9 +4837,12 @@ decisions now that foreclose them.
 | Subject-book revaluation | CORE multi-currency §6.1: retranslate a Partner's open foreign items at a closing rate. Revaluasi Kurs covers Cash & Bank only (§10 rules 118–121); a Hutang or Piutang in USD keeps its items' kurs until settled (§10 rule 24) |
 | Multi-layer settlement | The source specification lets one payment draw on several layers (`Σ selected = account_amount`). SIBA takes one per document, refused at draft time with a message that says to split it. Widening this means a selection UI with a running total and per-layer relief, not a loosened check (§12) |
 | Third-currency settlement | A foreign document paid from a *third* currency's account, needing a cross rate on top of the account's own. Refused today by `maySettle`. This is a cross-rate model, not a relaxed validation (§12) |
-| Report output | A print sheet for Report Views, and an export for every one but the two statements, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek and Saldo Buku Subjek, which have theirs. Both land in the `.ph-act` slot the convention already reserves, and the print half means finally defining the `.psheet` / `.ps-doc` / `.ps-tb` classes `globals.css` references but never declared. The print sheet is also what has to restate the criteria on paper: on screen the sticky filter does it, and paper has no sticky header |
-| Penyesuaian Open Item tax | An adjustment carrying PPN — the Indonesian Nota Retur. There is no tax model anywhere yet |
-| Intercompany settlement | Concept doc §36: the anak handing money back to the induk, clearing `A Piutang B` against `B Hutang A`. The positions are already kept, on the bridge accounts in both Companies' journals — what is missing is the document that settles them |
+| Report output | **Export-first, no print**, on the user's decision: everything reaches users as XLSX, so nothing is planned beyond an export for a Report View or register that lacks one (the Journal and Opening Balance registers, document registers). Print — of a report or of a document voucher — is not planned |
+| Intercompany settlement | Concept doc §36: the anak handing money back to the induk. **Not built, on request only**: money moving in and out through the same CoA is expected to clear the two bridge positions on its own (§10 rule 61), so a document is added only if users ask for explicit clearing |
+| Revaluasi Open Item *(potential menu)* | Restating a Partner's standing foreign open items at a kurs the user states, apart from Pencairan Open Item. One book × Partner × currency per document, the items ticked and never automatic, each restated to `remaining × kurs`, the difference journalled by the book's `raises`, final like Revaluasi Kurs. It makes an item's kurs change, so it needs an amendment to rules 101 and 103 when built. Supersedes the "Subject-book revaluation" row's open question |
+| Subject-book opening balances | **By inject script, not a menu or a table**: the user compiles the positions, a developer-run script writes `Opening` entries and their items into the existing books, with the matching `OPB-` snapshot lines and an equity counter line the user names, in one transaction. Until then the books start empty |
+| Tagihan Biaya *(note only)* | A one-step cash expense document: Company · Cash & Bank · currency · Tanggal Akuntansi, lines of description + account chosen by the user + amount, paid on Post — no Hutang step, no Budget. **Induk only**, and outside the current scope. Building it is also the moment to extract the shared posting-document skeleton |
+| No tax | SIBA carries no tax model: no PPN, no Nota Retur. This replaces the old "Penyesuaian Open Item tax" row |
 
 **Exchange rate — current state.** Built, and it is not a rate *source*. The system
 holds no market rate and looks none up: a kurs is either the identity, the rate of a
@@ -5270,7 +5295,7 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
 | A journal's date is not the day it was written | Every journal is dated by its document, which may be backdated, and a `CLS-` journal by its year's last day (§10 rule 49). A reader comparing a journal's date to its audit row will find them different for any backdated document; `created_at` is when it was written. Journal numbers run in writing order, so a later number can carry an earlier date — accepted (§12). |
 | A backdated settlement draws on today's cash layer | A subject-book relief now releases at its open item's own kurs, which never changes, so the obligation side no longer depends on when a backdated document is posted. The cash side still draws on its layer as it stands at posting (§12). |
 | A manual journal cannot be reversed | Like every other posted journal: a correction is a new manual journal. There is no `JOURNAL_DELETE` and no reversal, which is the same rule concept doc §15 sets for every posted record. |
-| Reports are mostly on-screen only | No print stylesheet, and only the Laba Rugi, the Neraca, the General Ledger, the Trial Balance, Buku Kas & Bank, Saldo Kas & Bank, Posisi Layer Kurs, Buku Subjek and Saldo Buku Subjek export. `globals.css` still carries an `@media print` block referencing `.psheet` / `.ps-doc` / `.ps-tb`, which have never been defined — dead until a print sheet is built. The `.ph-act` slot on every Report View is where those buttons go. |
+| Registers and some lists are on-screen only | There is no print by decision (§13). All nine Report Views export to XLSX; the Journal and Opening Balance registers and the document registers do not. |
 | A report has no pagination | The period is the only control on size. Fine for a month of one resource's book; a year of a busy account will render every row. |
 | `recentActivity()` has no caller | The cross-record audit *feed* is still off the dashboard, pending the user's own plan for where it belongs. The per-record history is a separate reader (`recordHistory`) and is now on every form; `recentActivity()` itself remains unused. |
 | A history says who and when, never what | `audit_log` stores no field-level snapshot, so the panel reports that a record was edited and by whom, and cannot say which field moved. Adding a diff means storing one, which is a much larger change than the `event` column was. |
