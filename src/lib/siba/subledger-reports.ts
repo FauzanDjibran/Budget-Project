@@ -5,6 +5,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { roundBase } from "./fx";
 import type { PeriodRange } from "./period";
+import { ENTRY_PAGE_SIZE, afterBookCursor, type BookCursor } from "./register-query";
 import { subledgerById, type SubledgerDef, type SubledgerNature } from "./subledger-catalogue";
 
 // ------------------------------------------------------------------ reports
@@ -67,7 +68,13 @@ export type SubledgerSubject = {
    * transacted at, so it is shown and never used as an input.
    */
   carryingRate: number | null;
-  /** By date, oldest first — a book reads forward through the period. */
+  /** How many entries the period holds, whether or not `entries` carries them. */
+  entryCount: number;
+  /**
+   * By date, oldest first — a book reads forward through the period. Empty on a
+   * summary run (`entries: false`): the page fetches a subject's rows a page at
+   * a time (`subledgerEntriesPage`).
+   */
   entries: SubledgerEntryRow[];
   /**
    * False when the subject's whole book, summed, disagrees with its
@@ -105,7 +112,7 @@ export async function subledgerReport(
   books: SubledgerDef[],
   bookId: number | string,
   range: PeriodRange,
-  options: { partnerIds?: number[]; companyIds: number[] }
+  options: { partnerIds?: number[]; companyIds: number[]; entries?: boolean }
 ): Promise<SubledgerReport | null> {
   const book = subledgerById(books, bookId);
   if (!book) return null;
@@ -116,25 +123,45 @@ export async function subledgerReport(
   };
   const scope = { budget_category_id: book.categoryId, partner: partnerWhere };
 
-  const [before, within] = await Promise.all([
+  const summary = options.entries === false;
+  const inRange = { ...scope, accounting_date: { gte: startOf(range.from), lte: startOf(range.to) } };
+
+  const [before, within, rolled] = await Promise.all([
     prisma.subLedger.groupBy({
       by: ["partner_id", "currency_id"],
       where: { ...scope, accounting_date: { lt: startOf(range.from) } },
       _sum: { movement: true, base_movement: true },
     }),
-    prisma.subLedger.findMany({
-      where: {
-        ...scope,
-        accounting_date: { gte: startOf(range.from), lte: startOf(range.to) },
-      },
-      // Date first: a backdated entry has a later id than the entries it
-      // precedes, and a book is read in the order things happened.
-      orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
-      include: {
-        item: { select: { item_no: true } },
-        source_doc_type: { select: { doc_table: true } },
-      },
-    }),
+    summary
+      ? Promise.resolve([])
+      : prisma.subLedger.findMany({
+          where: inRange,
+          // Date first: a backdated entry has a later id than the entries it
+          // precedes, and a book is read in the order things happened.
+          orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
+          include: {
+            item: { select: { item_no: true } },
+            source_doc_type: { select: { doc_table: true } },
+          },
+        }),
+    // The split the loop below makes — a raise is a movement of nil or more —
+    // taken from the database's own sums.
+    summary
+      ? Promise.all([
+          prisma.subLedger.groupBy({
+            by: ["partner_id", "currency_id"],
+            where: { ...inRange, movement: { gte: 0 } },
+            _sum: { movement: true, base_movement: true },
+            _count: { _all: true },
+          }),
+          prisma.subLedger.groupBy({
+            by: ["partner_id", "currency_id"],
+            where: { ...inRange, movement: { lt: 0 } },
+            _sum: { movement: true, base_movement: true },
+            _count: { _all: true },
+          }),
+        ])
+      : Promise.resolve(null),
   ]);
 
   type Acc = {
@@ -146,6 +173,7 @@ export async function subledgerReport(
     baseOpening: number;
     baseRaised: number;
     baseLowered: number;
+    entryCount: number;
     entries: SubledgerEntryRow[];
   };
   const acc = new Map<string, Acc>();
@@ -162,6 +190,7 @@ export async function subledgerReport(
         baseOpening: 0,
         baseRaised: 0,
         baseLowered: 0,
+        entryCount: 0,
         entries: [],
       };
       acc.set(k, found);
@@ -174,8 +203,24 @@ export async function subledgerReport(
     subject.opening = b._sum.movement?.toNumber() ?? 0;
     subject.baseOpening = b._sum.base_movement?.toNumber() ?? 0;
   }
+  if (rolled) {
+    const [raises, lowers] = rolled;
+    for (const r of raises) {
+      const subject = reach(r.partner_id, r.currency_id);
+      subject.raised += r._sum.movement?.toNumber() ?? 0;
+      subject.baseRaised += r._sum.base_movement?.toNumber() ?? 0;
+      subject.entryCount += r._count._all;
+    }
+    for (const r of lowers) {
+      const subject = reach(r.partner_id, r.currency_id);
+      subject.lowered += -(r._sum.movement?.toNumber() ?? 0);
+      subject.baseLowered += -(r._sum.base_movement?.toNumber() ?? 0);
+      subject.entryCount += r._count._all;
+    }
+  }
   for (const e of within) {
     const subject = reach(e.partner_id, e.currency_id);
+    subject.entryCount += 1;
     const movement = e.movement.toNumber();
     const baseMovement = e.base_movement.toNumber();
     if (movement >= 0) {
@@ -185,21 +230,7 @@ export async function subledgerReport(
       subject.lowered += -movement;
       subject.baseLowered += -baseMovement;
     }
-    subject.entries.push({
-      id: e.id,
-      entryNo: e.entry_no,
-      date: e.accounting_date.toISOString().slice(0, 10),
-      type: e.entry_type,
-      movement,
-      rate: e.rate.toNumber(),
-      baseMovement,
-      itemId: e.balance_id,
-      itemNo: e.item.item_no,
-      note: e.note,
-      sourceDocTable: e.source_doc_type?.doc_table ?? null,
-      sourceDocId: e.source_doc_id,
-      sourceDocNo: null,
-    });
+    subject.entries.push(subledgerEntryRow(e));
   }
 
   if (acc.size === 0) return { book, range, subjects: [] };
@@ -283,6 +314,7 @@ export async function subledgerReport(
       // Null at a nil position rather than zero: a subject holding nothing has
       // no rate, and a number here would invite being used as one.
       carryingRate: closing === 0 ? null : baseClosing / closing,
+      entryCount: a.entryCount,
       entries: a.entries,
       reconciles:
         !!summed &&
@@ -297,6 +329,79 @@ export async function subledgerReport(
       x.label.localeCompare(y.label) || x.currencyLabel.localeCompare(y.currencyLabel)
   );
   return { book, range, subjects };
+}
+
+type SubledgerEntryRecord = Prisma.SubLedgerGetPayload<{
+  include: {
+    item: { select: { item_no: true } };
+    source_doc_type: { select: { doc_table: true } };
+  };
+}>;
+
+function subledgerEntryRow(e: SubledgerEntryRecord): SubledgerEntryRow {
+  return {
+    id: e.id,
+    entryNo: e.entry_no,
+    date: e.accounting_date.toISOString().slice(0, 10),
+    type: e.entry_type,
+    movement: e.movement.toNumber(),
+    rate: e.rate.toNumber(),
+    baseMovement: e.base_movement.toNumber(),
+    itemId: e.balance_id,
+    itemNo: e.item.item_no,
+    note: e.note,
+    sourceDocTable: e.source_doc_type?.doc_table ?? null,
+    sourceDocId: e.source_doc_id,
+    sourceDocNo: null,
+  };
+}
+
+export type SubledgerEntryPage = { entries: SubledgerEntryRow[]; next: BookCursor | null };
+
+/**
+ * One subject's entries for a period, a page at a time, in the book's order.
+ *
+ * A subject is a Partner in one currency, and it must belong to a Company the
+ * reader may see — otherwise it reads as not found, like the report.
+ */
+export async function subledgerEntriesPage(
+  books: SubledgerDef[],
+  bookId: number | string,
+  partnerId: number,
+  currencyId: number,
+  range: PeriodRange,
+  companyIds: number[],
+  cursor: BookCursor | null
+): Promise<SubledgerEntryPage | null> {
+  const book = subledgerById(books, bookId);
+  if (!book) return null;
+
+  const rows = await prisma.subLedger.findMany({
+    where: {
+      budget_category_id: book.categoryId,
+      partner_id: partnerId,
+      currency_id: currencyId,
+      partner: { company_id: { in: companyIds } },
+      accounting_date: { gte: startOf(range.from), lte: startOf(range.to) },
+      ...afterBookCursor(cursor),
+    },
+    orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
+    take: ENTRY_PAGE_SIZE + 1,
+    include: {
+      item: { select: { item_no: true } },
+      source_doc_type: { select: { doc_table: true } },
+    },
+  });
+
+  const shown = rows.slice(0, ENTRY_PAGE_SIZE);
+  const last = shown[shown.length - 1];
+  return {
+    entries: shown.map(subledgerEntryRow),
+    next:
+      rows.length > ENTRY_PAGE_SIZE && last
+        ? { date: last.accounting_date.toISOString().slice(0, 10), id: last.id }
+        : null,
+  };
 }
 
 /**

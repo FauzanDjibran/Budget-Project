@@ -154,7 +154,7 @@ export default async function Page({
 
   if (report.key === "cash_bank_ledger") {
     const books = await Promise.all(
-      cashBankIds.map((id) => cashBankLedgerReport(id, range, companyIds))
+      cashBankIds.map((id) => cashBankLedgerReport(id, range, companyIds, { entries: false }))
     );
     const data = cashBankIds.length ? books.filter((b) => b !== null) : null;
     await attachDocumentNumbers((data ?? []).flatMap((b) => b.entries));
@@ -182,7 +182,11 @@ export default async function Page({
         }
       >
         {data ? (
-          <CashBankLedgerReport books={data} range={range} />
+          <CashBankLedgerReport
+            key={`${range.from}|${range.to}|${cashBankIds.join(",")}`}
+            books={data}
+            range={range}
+          />
         ) : (
           <ReportNeedsSubject
             icon="book"
@@ -337,7 +341,7 @@ async function subledgerPage({
 
   const [subjects, data] = await Promise.all([
     subledgerSubjects(books, book.categoryId, companyIds),
-    subledgerReport(books, book.categoryId, range, { partnerIds, companyIds }),
+    subledgerReport(books, book.categoryId, range, { partnerIds, companyIds, entries: false }),
   ]);
   if (!data) notFound();
   await attachDocumentNumbers(data.subjects.flatMap((s) => s.entries));
@@ -381,7 +385,10 @@ async function subledgerPage({
         </>
       }
     >
-      <SubledgerReport report={data} />
+      <SubledgerReport
+        key={`${book.categoryId}|${range.from}|${range.to}|${partnerIds.join(",")}`}
+        report={data}
+      />
     </ReportView>
   );
 }

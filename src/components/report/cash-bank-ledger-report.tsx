@@ -1,12 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { loadCashBankEntries } from "@/app/actions/book-entries";
 import { Icon } from "@/components/icon";
+import { LazyRows, useLazyEntries } from "@/components/report/lazy-entries";
 import { ReportSummary } from "@/components/report/report-summary";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { formatDate, formatMoney } from "@/lib/format";
 import { entryKindText } from "@/lib/siba/document-links";
-import type { LedgerReport } from "@/lib/siba/cash-bank";
+import type { LedgerEntryRow, LedgerReport } from "@/lib/siba/cash-bank";
+import type { BookCursor } from "@/lib/siba/register-query";
 import type { PeriodRange } from "@/lib/siba/period";
 
 /**
@@ -37,13 +40,23 @@ export function CashBankLedgerReport({
   // folded like the rest, as the General Ledger's accounts do.
   const [open, setOpen] = useState<Set<number>>(new Set());
 
-  const toggle = (id: number) =>
+  // The entries are fetched when a block is opened, a page at a time.
+  const lazy = useLazyEntries<LedgerEntryRow, BookCursor, number>((id, cursor) =>
+    loadCashBankEntries(id, range.from, range.to, cursor)
+  );
+  const loadedOf = (b: LedgerReport) => lazy.get(b.resource.id, b.entries);
+  const loadMore = (b: LedgerReport) => lazy.more(b.resource.id, b.entries);
+
+  const toggle = (b: LedgerReport) => {
+    const id = b.resource.id;
     setOpen((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+    if (!open.has(id) && b.entryCount > 0 && !loadedOf(b)) void loadMore(b);
+  };
 
   // A hand-edited URL can name resources of another Company, or none at all.
   if (books.length === 0) {
@@ -88,7 +101,10 @@ export function CashBankLedgerReport({
           </span>
           <div className="tspace" />
           <ExpandAll
-            onExpand={() => setOpen(new Set(books.map((b) => b.resource.id)))}
+            onExpand={() => {
+              setOpen(new Set(books.map((b) => b.resource.id)));
+              for (const b of books) if (b.entryCount > 0 && !loadedOf(b)) void loadMore(b);
+            }}
             onCollapse={() => setOpen(new Set())}
             allOpen={open.size === books.length}
             allClosed={open.size === 0}
@@ -99,6 +115,8 @@ export function CashBankLedgerReport({
       {books.map((book) => {
         const res = book.resource;
         const isOpen = open.has(res.id);
+        const have = loadedOf(book);
+        const rows = have?.entries ?? [];
         const money = (n: number) => formatMoney(n, res.currencyLabel);
         return (
           <div className="cblock" key={res.id}>
@@ -107,11 +125,11 @@ export function CashBankLedgerReport({
               role="button"
               tabIndex={0}
               aria-expanded={isOpen}
-              onClick={() => toggle(res.id)}
+              onClick={() => toggle(book)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  toggle(res.id);
+                  toggle(book);
                 }
               }}
               style={{ cursor: "pointer" }}
@@ -122,7 +140,7 @@ export function CashBankLedgerReport({
               <b>{res.label}</b>
               <span className="bdg t-slate">{res.currencyLabel}</span>
               <span className="cbn">
-                {res.name} · {book.entries.length} mutasi
+                {res.name} · {book.entryCount} mutasi
                 {!res.active && " · nonaktif"}
               </span>
               <ReportSummary
@@ -167,7 +185,7 @@ export function CashBankLedgerReport({
                       <td className="num">{money(book.opening)}</td>
                     </tr>
 
-                    {book.entries.map((e) => {
+                    {rows.map((e) => {
                       // A revaluation moves no currency, only its base value,
                       // so neither column carries it.
                       const restated = e.type === "Revaluation";
@@ -210,7 +228,7 @@ export function CashBankLedgerReport({
                       );
                     })}
 
-                    {book.entries.length === 0 && (
+                    {book.entryCount === 0 && (
                       // Not an empty state: no movement is a real answer.
                       <tr>
                         <td colSpan={6} className="mut" style={{ textAlign: "center" }}>
@@ -219,6 +237,13 @@ export function CashBankLedgerReport({
                         </td>
                       </tr>
                     )}
+
+                    <LazyRows
+                      colSpan={6}
+                      total={book.entryCount}
+                      have={have}
+                      onMore={() => void loadMore(book)}
+                    />
 
                     <tr className="totrow">
                       <td colSpan={3}>Saldo akhir per {formatDate(range.to)}</td>

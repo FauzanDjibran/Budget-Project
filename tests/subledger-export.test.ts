@@ -48,6 +48,7 @@ const subject = (label: string, currencyLabel: string, o: Partial<SubledgerSubje
   baseLowered: 0,
   baseClosing: 0,
   carryingRate: null,
+  entryCount: o.entries?.length ?? 0,
   entries: [],
   reconciles: true,
   ...o,

@@ -40,6 +40,7 @@ const book = (label: string, currencyLabel: string, o: Partial<LedgerReport>): L
   baseTotalIn: 0,
   baseTotalOut: 0,
   baseClosing: 0,
+  entryCount: o.entries?.length ?? 0,
   entries: [],
   reconciles: true,
   ...o,

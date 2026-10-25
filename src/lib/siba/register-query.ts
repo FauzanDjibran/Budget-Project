@@ -82,3 +82,18 @@ export async function pageOf<T>(
   const rows = await fetch(win.skip, win.take);
   return { rows, total, all, page: win.page, pages: win.pages, size: query.size };
 }
+
+/**
+ * Where a page of a book's entries stopped: the last entry's place in the
+ * book's order, which is its day and then its row id.
+ */
+export type BookCursor = { date: string; id: number };
+
+/** The rows of a book strictly after a cursor, in (day, id) order. */
+export function afterBookCursor(cursor: BookCursor | null) {
+  if (!cursor) return {};
+  const day = new Date(`${cursor.date}T00:00:00Z`);
+  return {
+    OR: [{ accounting_date: { gt: day } }, { accounting_date: day, id: { gt: cursor.id } }],
+  };
+}

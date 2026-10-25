@@ -1,11 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { loadSubjectEntries } from "@/app/actions/book-entries";
 import { Icon } from "@/components/icon";
+import { LazyRows, useLazyEntries } from "@/components/report/lazy-entries";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
 import { formatDate, formatMoney } from "@/lib/format";
-import type { SubledgerReport as Report } from "@/lib/siba/subledger-reports";
+import type { BookCursor } from "@/lib/siba/register-query";
+import type {
+  SubledgerEntryRow,
+  SubledgerReport as Report,
+  SubledgerSubject,
+} from "@/lib/siba/subledger-reports";
 
 /**
  * One ledger table per subject, stacked — the General Ledger's shape with a
@@ -36,13 +43,31 @@ export function SubledgerReport({ report }: { report: Report }) {
   const keyOf = (s: { partnerId: number; currencyId: number }) =>
     `${s.partnerId}:${s.currencyId}`;
 
-  const toggle = (key: string) =>
+  // The entries are fetched when a subject is opened, a page at a time.
+  const lazy = useLazyEntries<SubledgerEntryRow, BookCursor, string>((key, cursor) => {
+    const [partnerId, currencyId] = key.split(":").map(Number);
+    return loadSubjectEntries(
+      report.book.categoryId,
+      partnerId,
+      currencyId,
+      report.range.from,
+      report.range.to,
+      cursor
+    );
+  });
+  const loadedOf = (s: SubledgerSubject) => lazy.get(keyOf(s), s.entries);
+  const loadMore = (s: SubledgerSubject) => lazy.more(keyOf(s), s.entries);
+
+  const toggle = (s: SubledgerSubject) => {
+    const key = keyOf(s);
     setOpen((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
+    if (!open.has(key) && s.entryCount > 0 && !loadedOf(s)) void loadMore(s);
+  };
 
   if (report.subjects.length === 0) {
     return (
@@ -61,8 +86,10 @@ export function SubledgerReport({ report }: { report: Report }) {
   }
 
   const allOpen = open.size === report.subjects.length;
-  const setAll = (o: boolean) =>
+  const setAll = (o: boolean) => {
     setOpen(o ? new Set(report.subjects.map(keyOf)) : new Set());
+    if (o) for (const s of report.subjects) if (s.entryCount > 0 && !loadedOf(s)) void loadMore(s);
+  };
 
   const raisesLabel =
     report.book.raises === "In" ? "penerimaan uang" : "pengeluaran uang";
@@ -89,6 +116,8 @@ export function SubledgerReport({ report }: { report: Report }) {
       {report.subjects.map((s) => {
         const key = keyOf(s);
         const isOpen = open.has(key);
+        const have = loadedOf(s);
+        const rows = have?.entries ?? [];
         const money = (n: number) => formatMoney(n, s.currencyLabel);
         return (
           <div className="cblock" key={key}>
@@ -97,11 +126,11 @@ export function SubledgerReport({ report }: { report: Report }) {
               role="button"
               tabIndex={0}
               aria-expanded={isOpen}
-              onClick={() => toggle(key)}
+              onClick={() => toggle(s)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  toggle(key);
+                  toggle(s);
                 }
               }}
               style={{ cursor: "pointer" }}
@@ -112,7 +141,7 @@ export function SubledgerReport({ report }: { report: Report }) {
               <b>{s.label}</b>
               <span className="cbn">
                 {s.name} · {s.categoryLabel} · {s.currencyLabel} ·{" "}
-                {s.entries.length} mutasi
+                {s.entryCount} mutasi
                 {s.active ? "" : " · non-aktif"}
               </span>
               <ReportSummary
@@ -168,7 +197,7 @@ export function SubledgerReport({ report }: { report: Report }) {
                       <td className="num">{money(s.opening)}</td>
                     </tr>
 
-                    {s.entries.map((e) => (
+                    {rows.map((e) => (
                       <tr key={e.id}>
                         <td className="mono mut" style={{ fontSize: "11.5px" }}>
                           {formatDate(e.date)}
@@ -202,7 +231,7 @@ export function SubledgerReport({ report }: { report: Report }) {
                       </tr>
                     ))}
 
-                    {s.entries.length === 0 && (
+                    {s.entryCount === 0 && (
                       <tr>
                         <td colSpan={6} className="mut" style={{ textAlign: "center" }}>
                           Tidak ada mutasi pada periode ini. Saldo akhir sama
@@ -210,6 +239,13 @@ export function SubledgerReport({ report }: { report: Report }) {
                         </td>
                       </tr>
                     )}
+
+                    <LazyRows
+                      colSpan={6}
+                      total={s.entryCount}
+                      have={have}
+                      onMore={() => void loadMore(s)}
+                    />
 
                     <tr className="totrow">
                       <td colSpan={3}>

@@ -6,11 +6,11 @@ import { Icon } from "@/components/icon";
 import { ExpandAll } from "@/components/ui/expand-all";
 import { ReportSummary } from "@/components/report/report-summary";
 import { Drill } from "@/components/report/drill";
+import { LazyRows, useLazyEntries } from "@/components/report/lazy-entries";
 import { Amount } from "@/components/ui/amount";
 import { PartnerCell } from "@/components/ui/partner-cell";
 import { formatAccounting, formatDate, formatForeignFace } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
-import { ENTRY_PAGE_SIZE } from "@/lib/siba/register-query";
 import type {
   GeneralLedgerReport as Report,
   LedgerCursor,
@@ -48,34 +48,11 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
 
   // What each account has loaded so far. A report that arrived with its entries
   // (the export reads it that way) starts with them in place.
-  type Loaded = {
-    entries: LedgerEntry[];
-    next: LedgerCursor | null;
-    busy: boolean;
-    error: string | null;
-  };
-  const [loaded, setLoaded] = useState<Record<number, Loaded>>({});
-  const loadedOf = (a: Report["accounts"][number]): Loaded | null =>
-    loaded[a.id] ??
-    (a.entries.length ? { entries: a.entries, next: null, busy: false, error: null } : null);
-
-  const loadMore = async (a: Report["accounts"][number]) => {
-    const have = loadedOf(a);
-    if (have?.busy) return;
-    const entries = have?.entries ?? [];
-    const cursor = have?.next ?? null;
-    setLoaded((prev) => ({
-      ...prev,
-      [a.id]: { entries, next: cursor, busy: true, error: null },
-    }));
-    const result = await loadLedgerEntries(a.id, report.range.from, report.range.to, cursor);
-    setLoaded((prev) => ({
-      ...prev,
-      [a.id]: result.ok
-        ? { entries: [...entries, ...result.entries], next: result.next, busy: false, error: null }
-        : { entries, next: cursor, busy: false, error: result.error },
-    }));
-  };
+  const lazy = useLazyEntries<LedgerEntry, LedgerCursor, number>((id, cursor) =>
+    loadLedgerEntries(id, report.range.from, report.range.to, cursor)
+  );
+  const loadedOf = (a: Report["accounts"][number]) => lazy.get(a.id, a.entries);
+  const loadMore = (a: Report["accounts"][number]) => lazy.more(a.id, a.entries);
 
   const toggle = (a: Report["accounts"][number]) => {
     setOpen((prev) => {
@@ -291,33 +268,12 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
                       </tr>
                     )}
 
-                    {a.entryCount > 0 && !have && (
-                      <tr>
-                        <td colSpan={7} className="mut" style={{ textAlign: "center" }}>
-                          Memuat mutasi…
-                        </td>
-                      </tr>
-                    )}
-
-                    {have && (have.next || have.busy || have.error) && (
-                      <tr>
-                        <td colSpan={7} style={{ textAlign: "center" }}>
-                          {have.error ? (
-                            <span className="err">{have.error} </span>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="btn sm"
-                            disabled={have.busy}
-                            onClick={() => void loadMore(a)}
-                          >
-                            {have.busy
-                              ? "Memuat…"
-                              : `Muat ${Math.min(ENTRY_PAGE_SIZE, a.entryCount - rows.length)} mutasi berikutnya (${a.entryCount - rows.length} tersisa)`}
-                          </button>
-                        </td>
-                      </tr>
-                    )}
+                    <LazyRows
+                      colSpan={7}
+                      total={a.entryCount}
+                      have={have}
+                      onMore={() => void loadMore(a)}
+                    />
 
                     <tr className="totrow">
                       <td colSpan={4}>

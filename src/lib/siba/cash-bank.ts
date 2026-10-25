@@ -7,6 +7,7 @@ import { nextDocumentNumber } from "./document-number";
 import { openLayer } from "./cash-bank-layers";
 import { roundBase } from "./fx";
 import type { PeriodRange } from "./period";
+import { ENTRY_PAGE_SIZE, afterBookCursor, type BookCursor } from "./register-query";
 
 /**
  * The Cash Bank Book — the authoritative record of what is in each cash and
@@ -735,7 +736,13 @@ export type LedgerReport = {
   baseTotalIn: number;
   baseTotalOut: number;
   baseClosing: number;
-  /** By date, oldest first — a book reads forward through the period. */
+  /** How many entries the period holds, whether or not `entries` carries them. */
+  entryCount: number;
+  /**
+   * By date, oldest first — a book reads forward through the period. Empty on
+   * a summary run (`entries: false`): the page states the rollup and fetches an
+   * account's rows a page at a time (`cashBankEntriesPage`).
+   */
   entries: LedgerEntryRow[];
   /**
    * False when the resource's whole book, summed, disagrees with its
@@ -772,7 +779,8 @@ export type LedgerReport = {
 export async function cashBankLedgerReport(
   cashBankId: number,
   range: PeriodRange,
-  companyIds: number[]
+  companyIds: number[],
+  options: { entries?: boolean } = {}
 ): Promise<LedgerReport | null> {
   const resource = await prisma.mCashBank.findFirst({
     where: { id: cashBankId, company_id: { in: companyIds } },
@@ -788,18 +796,39 @@ export async function cashBankLedgerReport(
   });
   if (!resource) return null;
 
-  const [before, rows, wholeBook, stored] = await Promise.all([
+  const within = {
+    cash_bank_id: cashBankId,
+    accounting_date: { gte: startOf(range.from), lte: startOf(range.to) },
+  };
+  const summary = options.entries === false;
+
+  const [before, rows, rolled, wholeBook, stored] = await Promise.all([
     openingsAt([cashBankId], range.from).then((m) => m.get(cashBankId)),
-    prisma.cashBankLedger.findMany({
-      where: {
-        cash_bank_id: cashBankId,
-        accounting_date: { gte: startOf(range.from), lte: startOf(range.to) },
-      },
+    summary
+      ? Promise.resolve([])
+      : prisma.cashBankLedger.findMany({
+      where: within,
       // Date first: a backdated entry has a later id than the entries it
       // precedes, and a book is read in the order things happened.
       orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
       include: { source_doc_type: { select: { doc_table: true } } },
     }),
+    // The same split the loop below makes — in is a positive movement, out is
+    // the rest — taken from the database's own sums.
+    summary
+      ? Promise.all([
+          prisma.cashBankLedger.aggregate({
+            where: { ...within, movement: { gt: 0 } },
+            _sum: { movement: true, base_movement: true },
+            _count: { _all: true },
+          }),
+          prisma.cashBankLedger.aggregate({
+            where: { ...within, movement: { lte: 0 } },
+            _sum: { movement: true, base_movement: true },
+            _count: { _all: true },
+          }),
+        ])
+      : Promise.resolve(null),
     prisma.cashBankLedger.aggregate({
       where: { cash_bank_id: cashBankId },
       _sum: { movement: true, base_movement: true },
@@ -816,6 +845,13 @@ export async function cashBankLedgerReport(
   let totalOut = 0;
   let baseTotalIn = 0;
   let baseTotalOut = 0;
+  if (rolled) {
+    const [inbound, outbound] = rolled;
+    totalIn = inbound._sum.movement?.toNumber() ?? 0;
+    baseTotalIn = inbound._sum.base_movement?.toNumber() ?? 0;
+    totalOut = -(outbound._sum.movement?.toNumber() ?? 0);
+    baseTotalOut = -(outbound._sum.base_movement?.toNumber() ?? 0);
+  }
   for (const r of rows) {
     const movement = r.movement.toNumber();
     const base = r.base_movement.toNumber();
@@ -830,20 +866,7 @@ export async function cashBankLedgerReport(
   const closing = opening + totalIn - totalOut;
   const baseClosing = roundBase(baseOpening + baseTotalIn - baseTotalOut);
 
-  const entries: LedgerEntryRow[] = rows.map((r) => ({
-    id: r.id,
-    entryNo: r.entry_no,
-    date: r.accounting_date.toISOString().slice(0, 10),
-    type: r.entry_type,
-    movement: r.movement.toNumber(),
-    rate: r.rate.toNumber(),
-    baseMovement: r.base_movement.toNumber(),
-    note: r.note,
-    sourceDocTable: r.source_doc_type?.doc_table ?? null,
-    sourceDocId: r.source_doc_id,
-    // Filled in by `attachDocumentNumbers`: a book cannot name another module's table.
-    sourceDocNo: null,
-  }));
+  const entries = rows.map(ledgerEntryRow);
 
   const cents = (n: number) => Math.round(n * 100);
   const reconciles =
@@ -871,8 +894,75 @@ export async function cashBankLedgerReport(
     baseTotalIn,
     baseTotalOut,
     baseClosing,
+    entryCount: rolled ? rolled[0]._count._all + rolled[1]._count._all : entries.length,
     entries,
     reconciles,
+  };
+}
+
+
+type LedgerEntryRecord = Prisma.CashBankLedgerGetPayload<{
+  include: { source_doc_type: { select: { doc_table: true } } };
+}>;
+
+function ledgerEntryRow(r: LedgerEntryRecord): LedgerEntryRow {
+  return {
+    id: r.id,
+    entryNo: r.entry_no,
+    date: r.accounting_date.toISOString().slice(0, 10),
+    type: r.entry_type,
+    movement: r.movement.toNumber(),
+    rate: r.rate.toNumber(),
+    baseMovement: r.base_movement.toNumber(),
+    note: r.note,
+    sourceDocTable: r.source_doc_type?.doc_table ?? null,
+    sourceDocId: r.source_doc_id,
+    // Filled in by `attachDocumentNumbers`: a book cannot name another module's table.
+    sourceDocNo: null,
+  };
+}
+
+export type LedgerEntryPage = { entries: LedgerEntryRow[]; next: BookCursor | null };
+
+/**
+ * One resource's entries for a period, a page at a time, in the book's order.
+ *
+ * The book states no running balance, so a page needs nothing carried to it
+ * but where the last one stopped. A keyset cursor on (day, id): a page costs the
+ * same however deep it is. Same Company scope as the report — a resource
+ * outside it reads as not found.
+ */
+export async function cashBankEntriesPage(
+  cashBankId: number,
+  range: PeriodRange,
+  companyIds: number[],
+  cursor: BookCursor | null
+): Promise<LedgerEntryPage | null> {
+  const resource = await prisma.mCashBank.findFirst({
+    where: { id: cashBankId, company_id: { in: companyIds } },
+    select: { id: true },
+  });
+  if (!resource) return null;
+
+  const rows = await prisma.cashBankLedger.findMany({
+    where: {
+      cash_bank_id: cashBankId,
+      accounting_date: { gte: startOf(range.from), lte: startOf(range.to) },
+      ...afterBookCursor(cursor),
+    },
+    orderBy: [{ accounting_date: "asc" }, { id: "asc" }],
+    take: ENTRY_PAGE_SIZE + 1,
+    include: { source_doc_type: { select: { doc_table: true } } },
+  });
+
+  const shown = rows.slice(0, ENTRY_PAGE_SIZE);
+  const last = shown[shown.length - 1];
+  return {
+    entries: shown.map(ledgerEntryRow),
+    next:
+      rows.length > ENTRY_PAGE_SIZE && last
+        ? { date: last.accounting_date.toISOString().slice(0, 10), id: last.id }
+        : null,
   };
 }
 
