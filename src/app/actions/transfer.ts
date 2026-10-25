@@ -9,14 +9,9 @@ import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { checkTransactionDate } from "@/lib/siba/fiscal";
 import { roundBase } from "@/lib/siba/fx";
-import {
-  applyTransfer,
-  previewTransfer,
-  checkTransferHeader,
-  checkTransferLines,
-  nextTransferNo,
-  type TransferLineInput,
-} from "@/lib/siba/transfer";
+import { applyTransfer, previewTransfer } from "@/lib/siba/transfer";
+import { checkTransferHeader, checkTransferLines, type TransferLineInput } from "@/lib/siba/transfer-check";
+import { nextTransferNo } from "@/lib/siba/transfer-rows";
 import {
   TRANSFER_TRANSITIONS,
   transferIsEditable,

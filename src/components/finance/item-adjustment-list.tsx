@@ -13,7 +13,8 @@ import { useToast } from "@/components/ui/toast";
 import { transitionItemAdjustment } from "@/app/actions/item-adjustment";
 import { formatDate, formatMoney, formatTotals } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type { ItemAdjustmentRow, ItemAdjustmentSummary } from "@/lib/siba/item-adjustment";
+import type { ItemAdjustmentSummary } from "@/lib/siba/item-adjustment";
+import type { ItemAdjustmentRow } from "@/lib/siba/item-adjustment-rows";
 import {
   ITEM_ADJUSTMENT_TRANSITIONS,
   ITEM_ADJUSTMENT_KINDS,

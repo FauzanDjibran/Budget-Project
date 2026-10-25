@@ -2,14 +2,9 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { BASE_CURRENCY_LABEL } from "../src/lib/siba/currency";
-import {
-  applyItemAdjustment,
-  checkItemAdjustmentHeader,
-  checkItemAdjustmentLines,
-  nextItemAdjustmentNo,
-  valueItemAdjustmentDraft,
-  type ResolvedItemAdjustmentHeader,
-} from "../src/lib/siba/item-adjustment";
+import { applyItemAdjustment, valueItemAdjustmentDraft } from "../src/lib/siba/item-adjustment";
+import { checkItemAdjustmentHeader, checkItemAdjustmentLines, type ResolvedItemAdjustmentHeader } from "../src/lib/siba/item-adjustment-check";
+import { nextItemAdjustmentNo } from "../src/lib/siba/item-adjustment-rows";
 import {
   adjustmentDirection,
   adjustmentKind,

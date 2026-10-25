@@ -9,7 +9,7 @@ import { MoneyInput } from "@/components/ui/money-input";
 import { RateInput } from "@/components/ui/rate-input";
 import { formatMoney, formatRate } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
-import type { TransferLineRow, TransferRefs } from "@/lib/siba/transfer";
+import type { TransferLineRow, TransferRefs } from "@/lib/siba/transfer-rows";
 import { ReportSummary } from "@/components/report/report-summary";
 
 

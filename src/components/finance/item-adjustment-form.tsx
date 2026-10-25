@@ -25,11 +25,7 @@ import {
 import { formatDate, formatForeignFace, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { relieve, roundBase } from "@/lib/siba/fx";
-import type {
-  ItemAdjustmentLineRow,
-  ItemAdjustmentRefs,
-  ItemAdjustmentRow,
-} from "@/lib/siba/item-adjustment";
+import type { ItemAdjustmentLineRow, ItemAdjustmentRefs, ItemAdjustmentRow } from "@/lib/siba/item-adjustment-rows";
 import {
   ITEM_ADJUSTMENT_EFFECTS,
   ITEM_ADJUSTMENT_TRANSITIONS,

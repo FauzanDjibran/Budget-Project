@@ -17,10 +17,7 @@ import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import type { LayerReport } from "@/lib/siba/cash-bank-layers";
 import { LayerPositionTile } from "./layer-position-tile";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type {
-  TransferRefs,
-  TransferRow,
-} from "@/lib/siba/transfer";
+import type { TransferRefs, TransferRow } from "@/lib/siba/transfer-rows";
 import {
   TRANSFER_PURPOSES,
   transferPurposeLabel,

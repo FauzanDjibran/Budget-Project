@@ -3,7 +3,7 @@ import { TransferForm } from "@/components/finance/transfer-form";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 import { requirePermission } from "@/lib/siba/auth";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import { getTransfer, transferLines, transferRefs } from "@/lib/siba/transfer";
+import { getTransfer, transferLines, transferRefs } from "@/lib/siba/transfer-rows";
 import {
   transferAbilities,
   transferIsEditable,

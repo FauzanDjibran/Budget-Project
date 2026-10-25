@@ -18,7 +18,7 @@ import { createTransfer, transitionTransfer, updateTransfer, type TransferValues
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { relieve, roundBase, type Balance } from "@/lib/siba/fx";
-import type { TransferLineRow, TransferRefs, TransferRow } from "@/lib/siba/transfer";
+import type { TransferLineRow, TransferRefs, TransferRow } from "@/lib/siba/transfer-rows";
 import { TRANSFER_PURPOSES, transferCurrencyFollowsSource, transferPurposeOf } from "@/lib/siba/transfer-catalogue";
 import { rupiahSide, valueTransferLine } from "@/lib/siba/transfer-valuation";
 import { TransferLinesCard, type DraftLine } from "./transfer-lines-card";

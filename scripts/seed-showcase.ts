@@ -49,17 +49,13 @@ import { nextBudgetNo } from "@/lib/siba/budget";
 import { applyPosting } from "@/lib/siba/finance";
 import { realizationOf } from "@/lib/siba/realization";
 import { nextDocumentNumber } from "@/lib/siba/document-number";
-import { applyTransfer, nextTransferNo } from "@/lib/siba/transfer";
+import { applyTransfer } from "@/lib/siba/transfer";
+import { nextTransferNo } from "@/lib/siba/transfer-rows";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
 import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
-import {
-  adjustmentLineData,
-  applyItemAdjustment,
-  checkItemAdjustmentHeader,
-  checkItemAdjustmentLines,
-  nextItemAdjustmentNo,
-  valueItemAdjustmentDraft,
-} from "@/lib/siba/item-adjustment";
+import { adjustmentLineData, applyItemAdjustment, valueItemAdjustmentDraft } from "@/lib/siba/item-adjustment";
+import { checkItemAdjustmentHeader, checkItemAdjustmentLines } from "@/lib/siba/item-adjustment-check";
+import { nextItemAdjustmentNo } from "@/lib/siba/item-adjustment-rows";
 import { openSubledgerItems } from "@/lib/siba/subledger";
 import { applyConversion } from "@/lib/siba/item-conversion";
 import { nextConversionNo } from "@/lib/siba/item-conversion-rows";

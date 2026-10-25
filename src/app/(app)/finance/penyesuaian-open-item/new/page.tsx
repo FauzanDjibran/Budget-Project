@@ -1,7 +1,7 @@
 import { ItemAdjustmentForm } from "@/components/finance/item-adjustment-form";
 import { requirePermission } from "@/lib/siba/auth";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import { itemAdjustmentRefs } from "@/lib/siba/item-adjustment";
+import { itemAdjustmentRefs } from "@/lib/siba/item-adjustment-rows";
 import { itemAdjustmentAbilities } from "@/lib/siba/item-adjustment-workflow";
 
 export const dynamic = "force-dynamic";

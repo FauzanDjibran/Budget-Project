@@ -4,14 +4,9 @@ import assert from "node:assert/strict";
 import { openCashBankBook } from "../src/lib/siba/cash-bank";
 import { BASE_CURRENCY_LABEL } from "../src/lib/siba/currency";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
-import {
-  applyTransfer,
-  checkTransferHeader,
-  previewTransfer,
-  checkTransferLines,
-  nextTransferNo,
-  type TransferLineInput,
-} from "../src/lib/siba/transfer";
+import { applyTransfer, previewTransfer } from "../src/lib/siba/transfer";
+import { checkTransferHeader, checkTransferLines, type TransferLineInput } from "../src/lib/siba/transfer-check";
+import { nextTransferNo } from "../src/lib/siba/transfer-rows";
 import {
   transferDestinationRefusal,
   transferPurposeForPair,

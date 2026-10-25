@@ -7,16 +7,9 @@ import { type Actor } from "@/lib/siba/access";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import {
-  adjustmentLineData,
-  applyItemAdjustment,
-  checkItemAdjustmentHeader,
-  checkItemAdjustmentLines,
-  nextItemAdjustmentNo,
-  previewItemAdjustment,
-  valueItemAdjustmentDraft,
-  type ItemAdjustmentLineInput,
-} from "@/lib/siba/item-adjustment";
+import { adjustmentLineData, applyItemAdjustment, previewItemAdjustment, valueItemAdjustmentDraft } from "@/lib/siba/item-adjustment";
+import { checkItemAdjustmentHeader, checkItemAdjustmentLines, type ItemAdjustmentLineInput } from "@/lib/siba/item-adjustment-check";
+import { nextItemAdjustmentNo } from "@/lib/siba/item-adjustment-rows";
 import {
   ITEM_ADJUSTMENT_TRANSITIONS,
   itemAdjustmentIsEditable,

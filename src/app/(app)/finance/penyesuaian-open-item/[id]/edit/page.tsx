@@ -3,11 +3,7 @@ import { ItemAdjustmentForm } from "@/components/finance/item-adjustment-form";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 import { requirePermission } from "@/lib/siba/auth";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import {
-  getItemAdjustment,
-  itemAdjustmentLines,
-  itemAdjustmentRefs,
-} from "@/lib/siba/item-adjustment";
+import { getItemAdjustment, itemAdjustmentLines, itemAdjustmentRefs } from "@/lib/siba/item-adjustment-rows";
 import {
   itemAdjustmentAbilities,
   itemAdjustmentIsEditable,
