@@ -104,7 +104,7 @@ export function TransactionList({
   const from = (transactions.page - 1) * transactions.size;
 
   const activeFilters = (reg.status ? 1 : 0) + (reg.q ? 1 : 0);
-  const clearAll = reg.clear;
+  const clearAll = () => reg.clear();
 
   const run = async (row: TransactionRow, action: TransactionAction) => {
     setBusy(true);

@@ -52,12 +52,16 @@ export function useRegisterParams() {
     status,
     pending,
     search: { value: text, onChange: setText },
+    /** Any other facet the register offers, such as `origin`. */
+    param: (key: string) => params.get(key) ?? "",
+    setParam: (key: string, value: string) => set({ [key]: value, page: null }),
     setStatus: (value: string) => set({ status: value, page: null }),
     setPage: (page: number) => set({ page }),
     setSize: (size: number) => set({ size, page: null }),
-    clear: () => {
+    /** Clears the search, the status and any extra facets named. */
+    clear: (...extra: string[]) => {
       setText("");
-      set({ q: null, status: null, page: null });
+      set({ q: null, status: null, page: null, ...Object.fromEntries(extra.map((k) => [k, null])) });
     },
   };
 }

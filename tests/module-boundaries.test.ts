@@ -254,6 +254,10 @@ describe("the dependency graph points one way", () => {
       // would not be liftable; a book that imports arithmetic still is.
       "fx",
       "currency",
+      // What a register is asked for (?page, ?size, ?q, ?status) and the skip/
+      // take that answers it. Pure, so a book's own register can be paged by the
+      // database without the book importing a domain module.
+      "register-query",
     ];
     // The Cash Bank Book is two files: the book itself and the rate layers a
     // foreign resource holds. They are one module and may name each other;
