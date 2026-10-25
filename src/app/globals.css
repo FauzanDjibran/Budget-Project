@@ -786,18 +786,6 @@ table.pkt .mny.in{color:var(--ok)}
   border:1px solid var(--line-2);border-radius:var(--r);font-size:11.5px;color:var(--muted)}
 .pksum b{color:var(--brand);font-weight:800}
 
-@media print{
-  @page{size:A4;margin:14mm}
-  body{background:#fff}
-  .app,#toasts{display:none!important}
-  #layer .ovl{position:static;background:none;backdrop-filter:none;padding:0;display:block;overflow:visible}
-  .psheet{width:100%;margin:0}
-  .ps-doc{box-shadow:none;padding:0;border-radius:0}
-  .noprint{display:none!important}
-  table.ps-tb{font-size:10px}
-  tr{break-inside:avoid}
-}
-
 /* ============================================================ finance */
 .ro .rate{margin-left:auto;font-family:var(--f-mono);font-size:10.5px;color:var(--muted-2);
   background:#fff;border:1px solid var(--line);border-radius:5px;padding:1px 6px;flex:0 0 auto}
