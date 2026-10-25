@@ -5,7 +5,8 @@ import { cashBankBalanceMap } from "./cash-bank";
 import { openLayersFor, type LayerOption } from "./cash-bank-layers";
 import { isBaseCurrency } from "./currency";
 import { nextDocumentNumber } from "./document-number";
-import { type TransferPurposeKey } from "./transfer-catalogue";
+import { TRANSFER_PURPOSES, type TransferPurposeKey } from "./transfer-catalogue";
+import { pageOf, type Paged, type RegisterQuery } from "./register-query";
 import type { TransferStatus } from "./transfer-workflow";
 
 const day = (d: Date): string => d.toISOString().slice(0, 10);
@@ -92,13 +93,48 @@ function toRow(t: TransferRecord): TransferRow {
   };
 }
 
-export async function listTransfers(companyIds: number[]): Promise<TransferRow[]> {
-  const rows = await prisma.finCashBankTransfer.findMany({
-    where: { company_id: { in: companyIds } },
-    orderBy: [{ id: "desc" }],
-    include: { _count: { select: { lines: true } } },
-  });
-  return rows.map(toRow);
+export async function listTransfers(
+  companyIds: number[],
+  query: RegisterQuery,
+  /** A `TransferPurposeKey`, or empty for all. */
+  purpose = ""
+): Promise<Paged<TransferRow>> {
+  const scope = { company_id: { in: companyIds } };
+  const insensitive = (v: string) => ({ contains: v, mode: "insensitive" as const });
+  // The purpose a reader sees is its label, so a search names the label.
+  const purposes = TRANSFER_PURPOSES.filter((p) =>
+    p.label.toLowerCase().includes(query.q.toLowerCase())
+  ).map((p) => p.key);
+  const where = {
+    ...scope,
+    ...(query.status ? { status: query.status as TransferStatus } : {}),
+    ...(purpose ? { purpose: purpose as TransferPurposeKey } : {}),
+    ...(query.q
+      ? {
+          OR: [
+            { transfer_no: insensitive(query.q) },
+            { note: insensitive(query.q) },
+            { from_cash_bank: { cash_bank_label: insensitive(query.q) } },
+            ...(purposes.length ? [{ purpose: { in: purposes } }] : []),
+          ],
+        }
+      : {}),
+  };
+
+  return pageOf(
+    query,
+    (filtered) => prisma.finCashBankTransfer.count({ where: filtered ? where : scope }),
+    async (skip, take) =>
+      (
+        await prisma.finCashBankTransfer.findMany({
+          where,
+          orderBy: [{ id: "desc" }],
+          skip,
+          take,
+          include: { _count: { select: { lines: true } } },
+        })
+      ).map(toRow)
+  );
 }
 
 export async function getTransfer(id: number): Promise<TransferRow | null> {

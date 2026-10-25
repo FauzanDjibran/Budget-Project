@@ -8,6 +8,7 @@ import { DocumentHeader } from "@/components/ui/document-header";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { Pager } from "@/components/ui/pager";
+import { useRegisterParams } from "@/components/ui/use-register-params";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionTransfer } from "@/app/actions/transfer";
@@ -17,6 +18,7 @@ import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import type { LayerReport } from "@/lib/siba/cash-bank-layers";
 import { LayerPositionTile } from "./layer-position-tile";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
+import type { Paged } from "@/lib/siba/register-query";
 import type { TransferRefs, TransferRow } from "@/lib/siba/transfer-rows";
 import {
   TRANSFER_PURPOSES,
@@ -49,24 +51,19 @@ export function TransferList({
   cash,
   layers,
   can,
-  initialStatus,
 }: {
-  transfers: TransferRow[];
+  /** One page, searched and filtered by the database. */
+  transfers: Paged<TransferRow>;
   refs: TransferRefs;
   cash: CashBookSummary;
   layers: LayerReport;
   can: TransferAbilities;
-  /** Status the page was opened filtered to, from `?status=`. */
-  initialStatus?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
 
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState(initialStatus ?? "");
-  const [purpose, setPurpose] = useState("");
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(25);
+  const reg = useRegisterParams();
+  const purpose = reg.param("purpose");
   const [menuFor, setMenuFor] = useState<
     { row: TransferRow; x: number; y: number } | null
   >(null);
@@ -85,40 +82,11 @@ export function TransferList({
     return (id: number) => byId.get(id) ?? "—";
   }, [refs.cashBanks]);
 
-  const filtered = useMemo(() => {
-    let out = transfers.slice();
-    if (status) out = out.filter((t) => t.status === status);
-    if (purpose) out = out.filter((t) => t.purpose === purpose);
+  const pageRows = transfers.rows;
+  const from = (transfers.page - 1) * transfers.size;
 
-    const q = query.trim().toLowerCase();
-    if (q) {
-      out = out.filter((t) =>
-        [
-          t.transfer_no,
-          transferPurposeLabel(t.purpose),
-          cashBankOf(t.from_cash_bank_id),
-          t.note ?? "",
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(q)
-      );
-    }
-    return out;
-  }, [transfers, status, purpose, query, cashBankOf]);
-
-  const pages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const current = Math.min(page, pages);
-  const from = (current - 1) * perPage;
-  const pageRows = filtered.slice(from, from + perPage);
-
-  const activeFilters = (status ? 1 : 0) + (purpose ? 1 : 0) + (query ? 1 : 0);
-  const clearAll = () => {
-    setStatus("");
-    setPurpose("");
-    setQuery("");
-    setPage(1);
-  };
+  const activeFilters = (reg.status ? 1 : 0) + (purpose ? 1 : 0) + (reg.q ? 1 : 0);
+  const clearAll = () => reg.clear("purpose");
 
   const run = async (row: TransferRow, action: TransferAction) => {
     setBusy(true);
@@ -159,18 +127,15 @@ export function TransferList({
       <div className="card">
         <div className="toolbar">
           <SearchField
-            value={query}
+            value={reg.search.value}
             placeholder="Cari nomor dokumen, purpose, atau sumber…"
-            onChange={(v) => {
-              setQuery(v);
-              setPage(1);
-            }}
+            onChange={reg.search.onChange}
           />
 
           <Select
             variant="toolbar"
-            value={status}
-            set={Boolean(status)}
+            value={reg.status}
+            set={Boolean(reg.status)}
             ariaLabel="Filter status"
             options={[
               { value: "", label: "Status: semua" },
@@ -179,10 +144,7 @@ export function TransferList({
                 label: STATUS_TEXT[s] ?? s,
               })),
             ]}
-            onChange={(v) => {
-              setStatus(v);
-              setPage(1);
-            }}
+            onChange={reg.setStatus}
           />
 
           <Select
@@ -194,10 +156,7 @@ export function TransferList({
               { value: "", label: "Purpose: semua" },
               ...TRANSFER_PURPOSES.map((p) => ({ value: p.key, label: p.label })),
             ]}
-            onChange={(v) => {
-              setPurpose(v);
-              setPage(1);
-            }}
+            onChange={(v) => reg.setParam("purpose", v)}
           />
 
           {activeFilters > 0 && (
@@ -208,11 +167,11 @@ export function TransferList({
 
           <div className="tspace" />
           <span className="count">
-            <b>{filtered.length}</b> dari {transfers.length} dokumen
+            <b>{transfers.total}</b> dari {transfers.all} dokumen
           </span>
         </div>
 
-        {filtered.length ? (
+        {transfers.total ? (
           <>
             <div className="tw">
               <table className="grid">
@@ -328,34 +287,31 @@ export function TransferList({
             </div>
 
             <Pager
-              page={current}
-              pages={pages}
-              total={filtered.length}
-              perPage={perPage}
-              onPage={setPage}
-              onPerPage={(n) => {
-                setPerPage(n);
-                setPage(1);
-              }}
+              page={transfers.page}
+              pages={transfers.pages}
+              total={transfers.total}
+              perPage={transfers.size}
+              onPage={reg.setPage}
+              onPerPage={reg.setSize}
             />
           </>
         ) : (
           <div className="empty">
             <div className="ic">
-              <Icon name={transfers.length ? "srch" : "link"} size={20} />
+              <Icon name={transfers.all ? "srch" : "link"} size={20} />
             </div>
             <h4>
-              {transfers.length
+              {transfers.all
                 ? "Tidak ada dokumen yang cocok"
                 : "Belum ada transfer"}
             </h4>
             <p>
-              {transfers.length
+              {transfers.all
                 ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
                 : "Transfer memindahkan dana antar Cash & Bank milik Company sendiri — termasuk pencairan valuta asing dan pembelian valas."}
             </p>
             <div className="cta">
-              {transfers.length ? (
+              {transfers.all ? (
                 <button className="btn" onClick={clearAll}>
                   Bersihkan filter
                 </button>

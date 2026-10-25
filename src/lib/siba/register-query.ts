@@ -64,3 +64,18 @@ export function windowOf(total: number, query: Pick<RegisterQuery, "page" | "siz
   const page = Math.min(query.page, pages);
   return { page, pages, skip: (page - 1) * query.size, take: query.size };
 }
+
+/**
+ * One page of a register: the matching count, the unfiltered count and the
+ * rows, so a reader states only its own `where` and `include`.
+ */
+export async function pageOf<T>(
+  query: RegisterQuery,
+  count: (filtered: boolean) => Promise<number>,
+  fetch: (skip: number, take: number) => Promise<T[]>
+): Promise<Paged<T>> {
+  const [total, all] = await Promise.all([count(true), count(false)]);
+  const win = windowOf(total, query);
+  const rows = await fetch(win.skip, win.take);
+  return { rows, total, all, page: win.page, pages: win.pages, size: query.size };
+}
