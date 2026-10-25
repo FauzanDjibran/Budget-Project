@@ -3,7 +3,7 @@ import { requirePermission } from "@/lib/siba/auth";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { cashBookSummary } from "@/lib/siba/cash-bank";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
-import { listConversions } from "@/lib/siba/item-conversion";
+import { listConversions } from "@/lib/siba/item-conversion-rows";
 import { conversionAbilities } from "@/lib/siba/item-conversion-workflow";
 
 export const dynamic = "force-dynamic";

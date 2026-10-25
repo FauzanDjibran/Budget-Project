@@ -27,11 +27,7 @@ import {
 import { formatDate, formatMoney, formatRate, todayIso } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { relieve, roundBase, type Balance } from "@/lib/siba/fx";
-import type {
-  ConversionLineRow,
-  ConversionRefs,
-  ConversionRow,
-} from "@/lib/siba/item-conversion";
+import type { ConversionLineRow, ConversionRefs, ConversionRow } from "@/lib/siba/item-conversion-rows";
 import { valueConversionLine } from "@/lib/siba/item-conversion-valuation";
 import {
   CONVERSION_TRANSITIONS,

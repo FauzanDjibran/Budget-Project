@@ -1,7 +1,7 @@
 import { ItemConversionForm } from "@/components/finance/item-conversion-form";
 import { requirePermission } from "@/lib/siba/auth";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import { conversionRefs } from "@/lib/siba/item-conversion";
+import { conversionRefs } from "@/lib/siba/item-conversion-rows";
 import { conversionAbilities } from "@/lib/siba/item-conversion-workflow";
 
 export const dynamic = "force-dynamic";

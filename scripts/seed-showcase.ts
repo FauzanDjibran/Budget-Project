@@ -61,7 +61,8 @@ import {
   valueItemAdjustmentDraft,
 } from "@/lib/siba/item-adjustment";
 import { openSubledgerItems } from "@/lib/siba/subledger";
-import { applyConversion, nextConversionNo } from "@/lib/siba/item-conversion";
+import { applyConversion } from "@/lib/siba/item-conversion";
+import { nextConversionNo } from "@/lib/siba/item-conversion-rows";
 import { checkReclassHeader, checkReclassLines, nextReclassNo } from "@/lib/siba/item-reclass";
 import { applyReclass } from "@/lib/siba/item-reclass-post";
 import {

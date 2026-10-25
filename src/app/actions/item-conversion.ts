@@ -9,15 +9,9 @@ import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { checkTransactionDate } from "@/lib/siba/fiscal";
 import { roundBase } from "@/lib/siba/fx";
-import {
-  applyConversion,
-  checkConversionHeader,
-  checkConversionLines,
-  nextConversionNo,
-  previewConversion,
-  type ConversionLineInput,
-  type ResolvedConversionLine,
-} from "@/lib/siba/item-conversion";
+import { applyConversion, previewConversion } from "@/lib/siba/item-conversion";
+import { checkConversionHeader, checkConversionLines, type ConversionLineInput, type ResolvedConversionLine } from "@/lib/siba/item-conversion-check";
+import { nextConversionNo } from "@/lib/siba/item-conversion-rows";
 import {
   CONVERSION_TRANSITIONS,
   conversionIsEditable,

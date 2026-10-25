@@ -18,7 +18,7 @@ import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import type { LayerReport } from "@/lib/siba/cash-bank-layers";
 import { LayerPositionTile } from "./layer-position-tile";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type { ConversionRow } from "@/lib/siba/item-conversion";
+import type { ConversionRow } from "@/lib/siba/item-conversion-rows";
 import {
   CONVERSION_TRANSITIONS,
   availableConversionActions,

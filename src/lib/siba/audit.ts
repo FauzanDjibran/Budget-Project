@@ -9,7 +9,7 @@ import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer";
 import { itemAdjustmentNumbersByIds } from "./item-adjustment";
 import { revaluationNumbersByIds } from "./cash-bank-revaluation";
-import { conversionNumbersByIds } from "./item-conversion";
+import { conversionNumbersByIds } from "./item-conversion-rows";
 import { reclassNumbersByIds } from "./item-reclass";
 import { fundingRequestNumbersByIds } from "./funding";
 import { fiscalClosingLabels, fiscalPeriodLabels } from "./fiscal";

@@ -3,13 +3,9 @@ import assert from "node:assert/strict";
 
 import { openCashBankBook } from "../src/lib/siba/cash-bank";
 import { BASE_CURRENCY_LABEL } from "../src/lib/siba/currency";
-import {
-  applyConversion,
-  checkConversionHeader,
-  checkConversionLines,
-  nextConversionNo,
-  previewConversion,
-} from "../src/lib/siba/item-conversion";
+import { applyConversion, previewConversion } from "../src/lib/siba/item-conversion";
+import { checkConversionHeader, checkConversionLines } from "../src/lib/siba/item-conversion-check";
+import { nextConversionNo } from "../src/lib/siba/item-conversion-rows";
 import { valueConversionLine } from "../src/lib/siba/item-conversion-valuation";
 import { CASH_BANK_SUBCATEGORY } from "../src/lib/siba/records";
 import { recordSubledgerEntry } from "../src/lib/siba/subledger";

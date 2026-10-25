@@ -99,14 +99,20 @@ const TABLE_OWNERS: Record<string, string[]> = {
   ],
   finItemConversion: [
     "src/lib/siba/item-conversion.ts",
+    "src/lib/siba/item-conversion-rows.ts",
+    "src/lib/siba/item-conversion-check.ts",
     "src/app/actions/item-conversion.ts",
   ],
   finItemConversionLine: [
     "src/lib/siba/item-conversion.ts",
+    "src/lib/siba/item-conversion-rows.ts",
+    "src/lib/siba/item-conversion-check.ts",
     "src/app/actions/item-conversion.ts",
   ],
   finItemConversionLineItem: [
     "src/lib/siba/item-conversion.ts",
+    "src/lib/siba/item-conversion-rows.ts",
+    "src/lib/siba/item-conversion-check.ts",
     "src/app/actions/item-conversion.ts",
   ],
   finItemReclass: ["src/lib/siba/item-reclass.ts", "src/lib/siba/item-reclass-post.ts", "src/app/actions/item-reclass.ts"],
