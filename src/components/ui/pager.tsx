@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { Select } from "@/components/ui/select";
 
-export const PAGE_SIZES = [10, 25, 50, 100] as const;
+import { PAGE_SIZES } from "@/lib/siba/register-query";
+
+export { PAGE_SIZES };
 
 /**
  * Client-side paging state for a list that holds every row in memory.

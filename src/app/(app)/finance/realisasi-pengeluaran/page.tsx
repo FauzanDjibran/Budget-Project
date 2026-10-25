@@ -2,12 +2,12 @@ import { RealizationListPage } from "@/components/finance/realization-pages";
 
 export const dynamic = "force-dynamic";
 
-/** `?status=` opens the register already filtered to one queue. */
+/** `?status=`, `?q=`, `?page=` and `?size=` are the register's query. */
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { status } = await searchParams;
-  return <RealizationListPage direction="Out" status={status} />;
+  const params = await searchParams;
+  return <RealizationListPage direction="Out" params={params} />;
 }

@@ -8,6 +8,7 @@ import { DocumentHeader } from "@/components/ui/document-header";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { Pager } from "@/components/ui/pager";
+import { useRegisterParams } from "@/components/ui/use-register-params";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { transitionTransaction } from "@/app/actions/finance";
@@ -18,6 +19,7 @@ import type { CashBookSummary } from "@/lib/siba/cash-bank";
 import type { ReadyBudget } from "@/lib/siba/finance";
 import type { FinanceRefs } from "@/lib/siba/finance-options";
 import type { TransactionRow } from "@/lib/siba/finance-rows";
+import type { Paged } from "@/lib/siba/register-query";
 import {
   TRANSACTION_TRANSITIONS,
   TRANSACTION_TYPE_TEXT,
@@ -53,29 +55,24 @@ export function TransactionList({
   layers,
   cash,
   can,
-  initialStatus,
 }: {
   /** Which menu this is. The rows are already this direction's alone. */
   direction: "In" | "Out";
-  transactions: TransactionRow[];
+  /** One page, searched and filtered by the database — see `useRegisterParams`. */
+  transactions: Paged<TransactionRow>;
   refs: FinanceRefs;
   ready: ReadyBudget[];
   /** Only where a layer is chosen — money leaving. */
   layers: LayerReport | null;
   cash: CashBookSummary;
   can: TransactionAbilities;
-  /** Status the page was opened filtered to, from `?status=` — see the route. */
-  initialStatus?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
 
-  const [query, setQuery] = useState("");
+  const reg = useRegisterParams();
   const kind = realizationOf(direction);
   const listHref = realizationHref(direction);
-  const [status, setStatus] = useState(initialStatus ?? "");
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(25);
   const [menuFor, setMenuFor] = useState<
     { row: TransactionRow; x: number; y: number } | null
   >(null);
@@ -103,33 +100,11 @@ export function TransactionList({
     return (companyId: number) => parent.get(companyId) === false;
   }, [refs.companies]);
 
-  const filtered = useMemo(() => {
-    let out = transactions.slice();
-    if (status) out = out.filter((t) => t.status === status);
+  const pageRows = transactions.rows;
+  const from = (transactions.page - 1) * transactions.size;
 
-    const q = query.trim().toLowerCase();
-    if (q) {
-      out = out.filter((t) =>
-        [t.transaction_no, cashBankOf(t.cash_bank_id), t.note ?? ""]
-          .join(" ")
-          .toLowerCase()
-          .includes(q)
-      );
-    }
-    return out;
-  }, [transactions, status, query, cashBankOf]);
-
-  const pages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const current = Math.min(page, pages);
-  const from = (current - 1) * perPage;
-  const pageRows = filtered.slice(from, from + perPage);
-
-  const activeFilters = (status ? 1 : 0) + (query ? 1 : 0);
-  const clearAll = () => {
-    setStatus("");
-    setQuery("");
-    setPage(1);
-  };
+  const activeFilters = (reg.status ? 1 : 0) + (reg.q ? 1 : 0);
+  const clearAll = reg.clear;
 
   const run = async (row: TransactionRow, action: TransactionAction) => {
     setBusy(true);
@@ -182,18 +157,15 @@ export function TransactionList({
       <div className="card">
         <div className="toolbar">
           <SearchField
-            value={query}
+            value={reg.search.value}
             placeholder="Cari nomor dokumen, Cash & Bank, atau catatan…"
-            onChange={(v) => {
-              setQuery(v);
-              setPage(1);
-            }}
+            onChange={reg.search.onChange}
           />
 
           <Select
             variant="toolbar"
-            value={status}
-            set={Boolean(status)}
+            value={reg.status}
+            set={Boolean(reg.status)}
             ariaLabel="Filter status"
             options={[
               { value: "", label: "Status: semua" },
@@ -202,10 +174,7 @@ export function TransactionList({
                 label: STATUS_TEXT[s] ?? s,
               })),
             ]}
-            onChange={(v) => {
-              setStatus(v);
-              setPage(1);
-            }}
+            onChange={reg.setStatus}
           />
 
           {activeFilters > 0 && (
@@ -216,11 +185,11 @@ export function TransactionList({
 
           <div className="tspace" />
           <span className="count">
-            <b>{filtered.length}</b> dari {transactions.length} dokumen
+            <b>{transactions.total}</b> dari {transactions.all} dokumen
           </span>
         </div>
 
-        {filtered.length ? (
+        {transactions.total ? (
           <>
             <div className="tw">
               <table className="grid">
@@ -343,34 +312,31 @@ export function TransactionList({
             </div>
 
             <Pager
-              page={current}
-              pages={pages}
-              total={filtered.length}
-              perPage={perPage}
-              onPage={setPage}
-              onPerPage={(n) => {
-                setPerPage(n);
-                setPage(1);
-              }}
+              page={transactions.page}
+              pages={transactions.pages}
+              total={transactions.total}
+              perPage={transactions.size}
+              onPage={reg.setPage}
+              onPerPage={reg.setSize}
             />
           </>
         ) : (
           <div className="empty">
             <div className="ic">
-              <Icon name={transactions.length ? "srch" : "wallet2"} size={20} />
+              <Icon name={transactions.all ? "srch" : "wallet2"} size={20} />
             </div>
             <h4>
-              {transactions.length
+              {transactions.all
                 ? "Tidak ada dokumen yang cocok"
                 : `Belum ada ${kind.title}`}
             </h4>
             <p>
-              {transactions.length
+              {transactions.all
                 ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
                 : `Satu dokumen merealisasikan Budget ${direction === "In" ? "Penerimaan" : "Pengeluaran"} yang sudah disetujui, dari Category dan Partner mana pun.`}
             </p>
             <div className="cta">
-              {transactions.length ? (
+              {transactions.all ? (
                 <button className="btn" onClick={clearAll}>
                   Bersihkan filter
                 </button>

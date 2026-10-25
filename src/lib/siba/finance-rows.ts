@@ -3,6 +3,7 @@ import type { TransactionStatus } from "./transaction-workflow";
 
 import { prisma } from "@/lib/prisma";
 import { budgetsByIds } from "./budget";
+import { windowOf, type Paged, type RegisterQuery } from "./register-query";
 import { subledgerItemsByIds, type SubledgerItem } from "./subledger";
 
 /** Reads of Realisasi documents: the register rows, a document's lines and a Budget's realizations. */
@@ -148,21 +149,40 @@ export function toRow(t: TxRecord): TransactionRow {
 
 export async function listTransactions(
   companyIds: number[],
-  direction?: "In" | "Out"
-): Promise<TransactionRow[]> {
-  // Every document belongs to the induk today (§12), so a user holding induk
-  // access sees exactly what they did before. What this adds is the other
-  // half: a user without it sees none, and the list is already right when
-  // Funding Request brings the anak into Finance.
+  direction: "In" | "Out",
+  query: RegisterQuery
+): Promise<Paged<TransactionRow>> {
+  const scope = {
+    company_id: { in: companyIds },
+    transaction_type: direction,
+  } as const;
+  const where = {
+    ...scope,
+    ...(query.status ? { status: query.status as TransactionStatus } : {}),
+    ...(query.q
+      ? {
+          OR: [
+            { transaction_no: { contains: query.q, mode: "insensitive" as const } },
+            { note: { contains: query.q, mode: "insensitive" as const } },
+            { cash_bank: { cash_bank_label: { contains: query.q, mode: "insensitive" as const } } },
+          ],
+        }
+      : {}),
+  };
+
+  const [total, all] = await Promise.all([
+    prisma.finCashBankTransaction.count({ where }),
+    prisma.finCashBankTransaction.count({ where: scope }),
+  ]);
+  const win = windowOf(total, query);
   const rows = await prisma.finCashBankTransaction.findMany({
-    where: {
-      company_id: { in: companyIds },
-      ...(direction ? { transaction_type: direction } : {}),
-    },
+    where,
     orderBy: [{ id: "desc" }],
+    skip: win.skip,
+    take: win.take,
     include: { _count: { select: { lines: true } } },
   });
-  return rows.map(toRow);
+  return { rows: rows.map(toRow), total, all, page: win.page, pages: win.pages, size: query.size };
 }
 
 export async function getTransaction(

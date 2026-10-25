@@ -12,6 +12,7 @@ import { financeRefs } from "@/lib/siba/finance-options";
 import { getTransaction, listTransactions, transactionLines } from "@/lib/siba/finance-rows";
 import { openRequestFor } from "@/lib/siba/funding";
 import { realizationHref } from "@/lib/siba/realization";
+import { parseRegisterQuery } from "@/lib/siba/register-query";
 import {
   baseCurrencyId,
   defaultCompanyId,
@@ -38,15 +39,20 @@ type Direction = "In" | "Out";
 
 export async function RealizationListPage({
   direction,
-  status,
+  params,
 }: {
   direction: Direction;
-  status?: string;
+  /** The page's `searchParams`: `?page=&size=&q=&status=`. */
+  params: Record<string, string | string[] | undefined>;
 }) {
   const actor = await requirePermission("REALIZATION_VIEW", realizationHref(direction));
 
   const companyIds = await accessibleCompanyIds(actor.permissions);
-  const transactions = await listTransactions(companyIds, direction);
+  const transactions = await listTransactions(
+    companyIds,
+    direction,
+    parseRegisterQuery(params, ["Draft", "Pending", "Posted", "Cancelled"])
+  );
   const [refs, ready, cash, layers] = await Promise.all([
     financeRefs(),
     readyToRealize(companyIds, direction),
@@ -63,7 +69,6 @@ export async function RealizationListPage({
       layers={layers}
       cash={cash}
       can={transactionAbilities(actor.permissions)}
-      initialStatus={status}
     />
   );
 }
