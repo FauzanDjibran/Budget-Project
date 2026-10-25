@@ -68,7 +68,6 @@ import { transferDocTypeId } from "./transfer-rows";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
-const day = (d: Date): string => d.toISOString().slice(0, 10);
 
 // ------------------------------------------------------------------ posting
 

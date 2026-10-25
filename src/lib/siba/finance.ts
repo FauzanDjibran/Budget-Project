@@ -7,7 +7,6 @@ import { budgetsByIds, openBudgetsFor, openBudgetsMatching, realizeBudgets } fro
 import { InsufficientFunds, cashBankShortfall, recordCashBankEntry } from "./cash-bank";
 import { LayerNotAvailable, drawFromLayer, openLayer } from "./cash-bank-layers";
 import { createsLayer, maySettle } from "./currency";
-import { fxDifference } from "./fx";
 import { realizationOf } from "./realization";
 import { nextDocumentNumber } from "./document-number";
 import { PeriodShut, checkTransactionDate, holdPostingPeriod, todayDay, type TransactionDateCheck } from "./fiscal";
@@ -40,7 +39,6 @@ import { type PostingResult, type PostingPlan, planPosting, journalEntries } fro
  * what the registry cannot express.
  */
 
-const day = (d: Date): string => d.toISOString().slice(0, 10);
 
 // ------------------------------------------------------------- eligibility
 

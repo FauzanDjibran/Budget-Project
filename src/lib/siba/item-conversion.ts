@@ -68,7 +68,6 @@ import { checkConversionHeader, checkConversionLines } from "./item-conversion-c
  * books only through the functions they export, and nothing imports it.
  */
 
-const day = (d: Date): string => d.toISOString().slice(0, 10);
 const cents = (n: number) => Math.round(n * 100);
 
 export const CONVERSION_LABEL = "Pencairan Open Item";

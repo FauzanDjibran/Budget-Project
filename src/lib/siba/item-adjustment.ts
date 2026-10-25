@@ -69,7 +69,6 @@ import { type ResolvedItemAdjustmentHeader, checkItemAdjustmentHeader, type Chec
 
 type Db = Prisma.TransactionClient | typeof prisma;
 
-const day = (d: Date): string => d.toISOString().slice(0, 10);
 const cents = (n: number) => Math.round(n * 100);
 
 // ---------------------------------------------------------------- valuation

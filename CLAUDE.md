@@ -305,6 +305,16 @@ it is needed by several modules and would never be extracted on its own. `fx` an
 books have to answer "what is this worth in base?" identically, and a rule that exists
 twice is a rule with two answers.
 
+**A module's data code is split by concern, not by module.** Finance, Transfer,
+Pencairan Open Item and Penyesuaian Open Item each keep `<doc>.ts` for the posting
+and its entry points, with `-rows` (register rows, a document and its lines,
+numbers, the form's options) and `-check` (header and line rules) beside it;
+Finance also has `-plan` (the valuation and journal plan every posting path runs),
+`-funded` (the two-Company confirmation) and `-options`; Reklasifikasi has `-post`
+and the subject books `subledger-reports.ts`. They are one block for the module
+contract: `tests/module-boundaries.test.ts` lists every file of a block, and a new
+split file joins that list in the same change.
+
 **One boundary is still crossed**, baselined in the test rather than hidden — see
 §17. Adding another fails the suite.
 
