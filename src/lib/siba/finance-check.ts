@@ -2,7 +2,8 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { BASE_CURRENCY_LABEL, maySettle, rateSource, settlementRefusal } from "./currency";
-import { eligibleBudgets, fundingRoute, transactingCompany, type TransactionHeader, type FundingRoute } from "./finance";
+import { eligibleBudgets, fundingRoute, type TransactionHeader, type FundingRoute } from "./finance";
+import { transactingCompany } from "./finance-options";
 
 /** The rules a Realisasi header and its lines are held to — the enforcement `app/actions/finance.ts` calls. */
 

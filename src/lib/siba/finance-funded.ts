@@ -7,7 +7,9 @@ import { rateSource, settlementRefusal } from "./currency";
 import { realizationOf } from "./realization";
 import { checkTransactionDate, holdPostingPeriod, todayDay } from "./fiscal";
 import { postJournal, type JournalLineInput } from "./journal";
-import { auditTransaction, cashJournalLine, cashShortfall, counterJournalLines, lockPlanPositions, planPosting, transactingCompany, transactionDocTypeId, writeRealizationLines, type PostingPlan } from "./finance";
+import { auditTransaction, cashJournalLine, cashShortfall, counterJournalLines, lockPlanPositions, planPosting, writeRealizationLines, type PostingPlan } from "./finance";
+import { transactingCompany } from "./finance-options";
+import { transactionDocTypeId } from "./finance-rows";
 
 // ----------------------------------------------------- funded posting (anak)
 

@@ -10,7 +10,7 @@ import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
 import { formatDate, formatMoney, formatTotals } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import type { FinanceRefs } from "@/lib/siba/finance";
+import type { FinanceRefs } from "@/lib/siba/finance-options";
 import { realizationOf } from "@/lib/siba/realization";
 import type { FundingRequestRow, FundingSummary } from "@/lib/siba/funding";
 

@@ -45,7 +45,7 @@ import {
   orderForHeader,
   type ActionTone,
 } from "@/lib/siba/header-actions";
-import type { budgetRealizations } from "@/lib/siba/finance";
+import type { budgetRealizations } from "@/lib/siba/finance-rows";
 import { ClassifyDialog } from "./classify-dialog";
 import type { ReclassMove } from "@/lib/siba/item-reclass";
 import { RealizationCard } from "./realization-card";

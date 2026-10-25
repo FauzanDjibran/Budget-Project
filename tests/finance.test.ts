@@ -1,14 +1,9 @@
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  applyPosting,
-  previewPosting,
-  budgetDocTypeId,
-  eligibleBudgets,
-  transactingCompany,
-  valueDraft,
-} from "../src/lib/siba/finance";
+import { applyPosting, previewPosting, eligibleBudgets, valueDraft } from "../src/lib/siba/finance";
+import { transactingCompany } from "../src/lib/siba/finance-options";
+import { budgetDocTypeId } from "../src/lib/siba/finance-rows";
 import { checkHeader, checkLines } from "../src/lib/siba/finance-check";
 import {
   TRANSACTION_TRANSITIONS,

@@ -15,11 +15,9 @@ import { requestFunding, withdrawFunding } from "@/app/actions/funding";
 import { formatDate, formatMoney } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import type { CashBookSummary } from "@/lib/siba/cash-bank";
-import type {
-  FinanceRefs,
-  ReadyBudget,
-  TransactionRow,
-} from "@/lib/siba/finance";
+import type { ReadyBudget } from "@/lib/siba/finance";
+import type { FinanceRefs } from "@/lib/siba/finance-options";
+import type { TransactionRow } from "@/lib/siba/finance-rows";
 import {
   TRANSACTION_TRANSITIONS,
   TRANSACTION_TYPE_TEXT,

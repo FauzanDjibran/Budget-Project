@@ -7,7 +7,8 @@ import { OpenItemSelect, type ItemAllocation } from "./open-item-select";
 import { formatDate, formatMoney, formatRate } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
 import { ReportSummary } from "@/components/report/report-summary";
-import type { EligibleBudget, TransactionLineRow, TransactionRow } from "@/lib/siba/finance";
+import type { EligibleBudget } from "@/lib/siba/finance";
+import type { TransactionLineRow, TransactionRow } from "@/lib/siba/finance-rows";
 import { type RealizationLineDetail } from "./realization-line-detail";
 import type { LayerOption } from "@/lib/siba/cash-bank-layers";
 

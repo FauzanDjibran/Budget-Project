@@ -6,7 +6,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { MoneyInput } from "@/components/ui/money-input";
 import { formatDate, formatMoney, formatRate } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
-import type { OpenItemOption } from "@/lib/siba/finance";
+import type { OpenItemOption } from "@/lib/siba/finance-rows";
 
 /** One chosen item and the amount the user settles against it. */
 export type ItemAllocation = { item_id: number; amount: number };

@@ -6,7 +6,8 @@ import { Amount } from "@/components/ui/amount";
 import { Dialog } from "@/components/ui/dialog";
 import { KpiTile } from "@/components/ui/kpi-tile";
 import { formatDate, formatMoney, sumByCurrency } from "@/lib/format";
-import type { FinanceRefs, ReadyBudget } from "@/lib/siba/finance";
+import type { ReadyBudget } from "@/lib/siba/finance";
+import type { FinanceRefs } from "@/lib/siba/finance-options";
 import { directionText } from "@/lib/siba/classification";
 
 /**

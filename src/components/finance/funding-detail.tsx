@@ -15,7 +15,7 @@ import { KursSelect } from "./kurs-select";
 import { confirmFunding, previewFunding } from "@/app/actions/funding";
 import { formatDate, formatMoney, formatNumber, formatRate, formatTimestamp } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, rateSource } from "@/lib/siba/currency";
-import type { TransactionLineRow } from "@/lib/siba/finance";
+import type { TransactionLineRow } from "@/lib/siba/finance-rows";
 import type { FundingRequestRow, ProviderResource } from "@/lib/siba/funding";
 import { headerButtonClass } from "@/lib/siba/header-actions";
 import { realizationHref, realizationOf } from "@/lib/siba/realization";

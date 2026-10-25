@@ -7,13 +7,9 @@ import { budgetMappings } from "@/lib/siba/budget";
 import { cashBookSummary } from "@/lib/siba/cash-bank";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import {
-  financeRefs,
-  getTransaction,
-  listTransactions,
-  readyToRealize,
-  transactionLines,
-} from "@/lib/siba/finance";
+import { readyToRealize } from "@/lib/siba/finance";
+import { financeRefs } from "@/lib/siba/finance-options";
+import { getTransaction, listTransactions, transactionLines } from "@/lib/siba/finance-rows";
 import { openRequestFor } from "@/lib/siba/funding";
 import { realizationHref } from "@/lib/siba/realization";
 import {

@@ -5,7 +5,7 @@ import { Icon } from "@/components/icon";
 import { formatDate, formatMoney } from "@/lib/format";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
 import { documentHref } from "@/lib/siba/document-links";
-import type { budgetRealizations } from "@/lib/siba/finance";
+import type { budgetRealizations } from "@/lib/siba/finance-rows";
 import type { ReclassMove } from "@/lib/siba/item-reclass";
 import { realizationHref, realizationOf } from "@/lib/siba/realization";
 

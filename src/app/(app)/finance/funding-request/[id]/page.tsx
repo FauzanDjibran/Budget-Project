@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import { FundingDetail } from "@/components/finance/funding-detail";
 import { actorCan } from "@/lib/siba/access";
 import { requirePermission } from "@/lib/siba/auth";
-import { financeRefs, transactionLines } from "@/lib/siba/finance";
+import { financeRefs } from "@/lib/siba/finance-options";
+import { transactionLines } from "@/lib/siba/finance-rows";
 import {
   getFundingRequest,
   providerCashBanks,

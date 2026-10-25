@@ -10,7 +10,7 @@ import {
   type ClassificationHint,
 } from "@/lib/siba/budget";
 import { budgetAbilities } from "@/lib/siba/budget-workflow";
-import { budgetRealizations } from "@/lib/siba/finance";
+import { budgetRealizations } from "@/lib/siba/finance-rows";
 import { reclassTrail } from "@/lib/siba/item-reclass";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 

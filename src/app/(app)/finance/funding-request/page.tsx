@@ -1,7 +1,7 @@
 import { FundingList } from "@/components/finance/funding-list";
 import { actorCan } from "@/lib/siba/access";
 import { requirePermission } from "@/lib/siba/auth";
-import { financeRefs } from "@/lib/siba/finance";
+import { financeRefs } from "@/lib/siba/finance-options";
 import { listFundingRequests, summariseFunding } from "@/lib/siba/funding";
 
 export const dynamic = "force-dynamic";

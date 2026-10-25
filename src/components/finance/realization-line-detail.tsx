@@ -7,7 +7,7 @@ import { formatDate, formatMoney, formatRate } from "@/lib/format";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
 import { STATUS_TEXT } from "@/lib/siba/entities";
 import type { BudgetMapping } from "@/lib/siba/budget";
-import type { OpenItemOption } from "@/lib/siba/finance";
+import type { OpenItemOption } from "@/lib/siba/finance-rows";
 
 /** Everything a Realisasi line knows about itself, whichever mode it is in. */
 export type RealizationLineDetail = {

@@ -2,7 +2,8 @@ import test, { after, before, describe } from "node:test";
 import { realizationOf } from "../src/lib/siba/realization";
 import assert from "node:assert/strict";
 
-import { budgetDocTypeId, fundingRoute, valueDraft } from "../src/lib/siba/finance";
+import { fundingRoute, valueDraft } from "../src/lib/siba/finance";
+import { budgetDocTypeId } from "../src/lib/siba/finance-rows";
 import {
   confirmFundingRequest,
   fundingRequestDocTypeId,

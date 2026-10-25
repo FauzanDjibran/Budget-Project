@@ -4,15 +4,9 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { nextDocumentNumber } from "./document-number";
-import {
-  fundingRoute,
-  isPostingRefusal,
-  markTransactionCancelled,
-  markTransactionPending,
-  transactingCompany,
-  transactionsByIds,
-  type TransactionRow,
-} from "./finance";
+import { fundingRoute, isPostingRefusal, markTransactionCancelled, markTransactionPending, transactionsByIds } from "./finance";
+import { transactingCompany } from "./finance-options";
+import { type TransactionRow } from "./finance-rows";
 import {
   checkFundable,
   prepareFundedPosting,

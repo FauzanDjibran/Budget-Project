@@ -8,17 +8,8 @@ import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { roundBase } from "@/lib/siba/fx";
-import {
-  applyPosting,
-  previewPosting,
-  budgetDocTypeId,
-  checkDocumentDate,
-  eligibleBudgets,
-  nextTransactionNo,
-  valueDraft,
-  DraftNotValued,
-  type EligibleBudget,
-} from "@/lib/siba/finance";
+import { applyPosting, previewPosting, checkDocumentDate, eligibleBudgets, nextTransactionNo, valueDraft, DraftNotValued, type EligibleBudget } from "@/lib/siba/finance";
+import { budgetDocTypeId } from "@/lib/siba/finance-rows";
 import { checkHeader, checkLines, type LineInput } from "@/lib/siba/finance-check";
 import {
   TRANSACTION_TRANSITIONS,
