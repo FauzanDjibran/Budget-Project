@@ -49,6 +49,7 @@ only (PROTOCOL §4, answer D).
 | Concept | Rule departed from | Project decision | Why |
 | --- | --- | --- | --- |
 | ui/design-convention | §5.3: lists have no row checkboxes, no select-all and no bulk bar | CLAUDE.md §12 "Approval and classification are two menus, each a work queue" (FROZEN, 30/09/2026) | The Budget module is its own convention: approver and classifier clear their queues in bulk, and status tabs make it safe. The user confirmed it as a local exception on 04/10/2026 (KB R7). |
+| accounting/books-and-posting | §4: a manual journal may not touch a control account | `Journal 2.0 - Plan.md` D16 (confirmed 28/10/2026): **Jurnal Umum** (`JUM-`) may post to a control account, because the account's ledger then demands its subject and entry, and Post writes that book and the journal in one transaction, so the two cannot drift. The plain manual journal (`JUR-`) still refuses one | Users needed to "just journal" niche movements without a menu per case. SIBA is the trial; promote to the KB if it proves itself in use (plan §7 step 8). |
 
 ## Harvest queue
 
