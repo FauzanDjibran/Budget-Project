@@ -252,6 +252,26 @@ export async function cashBankShortfall(
   }
 }
 
+/**
+ * What a resource holds at the end of `date`, in its own currency: the month's
+ * opening from the chain, plus that month's entries up to the day.
+ */
+export async function cashBankBalanceOn(cashBankId: number, date: string, db: Db = prisma): Promise<number> {
+  const period = monthOf(date);
+  const [before, month] = await Promise.all([
+    db.cashBankPeriod.findFirst({
+      where: { cash_bank_id: cashBankId, period: { lt: period } },
+      orderBy: { period: "desc" },
+      select: { closing: true },
+    }),
+    db.cashBankLedger.aggregate({
+      where: { cash_bank_id: cashBankId, accounting_date: { gte: period, lte: asDate(date) } },
+      _sum: { movement: true },
+    }),
+  ]);
+  return roundBase((before?.closing.toNumber() ?? 0) + (month._sum.movement?.toNumber() ?? 0));
+}
+
 /** `checkMovement`, then moves the month chain with it. Throws before writing. */
 async function movePeriods(
   db: Db,

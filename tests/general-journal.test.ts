@@ -13,6 +13,8 @@ import {
   createManualJournal,
   postManualJournal,
 } from "../src/lib/siba/manual-journal";
+import { openCashBankBook, recordCashBankEntry } from "../src/lib/siba/cash-bank";
+import { openLayersOf } from "../src/lib/siba/cash-bank-layers";
 import { todayDay } from "../src/lib/siba/fiscal";
 import { syncControlAccounts } from "../src/lib/siba/records";
 import { recordSubledgerEntry, subledgerItem } from "../src/lib/siba/subledger";
@@ -456,6 +458,176 @@ describe("the subject_book ledger (Gate B)", () => {
     const label = (await prisma.refCurrency.findUniqueOrThrow({ where: { id: foreignCurrency } }))
       .currency_label;
     assert.match(refused.errors._form, new RegExp(`Nominal ${label} tidak seimbang`));
+  });
+});
+
+describe("the cash_bank ledger (Gate C)", () => {
+  const today = todayDay();
+  let modal = 0;
+  let made = 0;
+
+  before(async () => {
+    modal = await makeAccount({ companyId: company, subcategoryLabel: "3.1.1", normalBalance: "Kredit" });
+    await fx.set("induk", "fx", await makeAccount({ companyId: company, subcategoryLabel: "5.3.1" }));
+  });
+
+  /** A resource on its own cash_bank account, opened today; foreign ones hold one layer. */
+  const resource = async (currencyId: number, opening: number, rate = 1) => {
+    const accountId = await makeAccount({ companyId: company, subcategoryLabel: "1.1.1", ledger: "cash_bank" });
+    const key = `GJ${Date.now() % 1_000_000}${++made}`;
+    const { id } = await prisma.mCashBank.create({
+      data: {
+        cash_bank_code: `test.${key}`,
+        cash_bank_label: key,
+        cash_bank_name: `Fixture ${key}`,
+        company_id: company,
+        cash_bank_type: "Bank",
+        currency_id: currencyId,
+        account_id: accountId,
+        created_by: actor,
+      },
+      select: { id: true },
+    });
+    await openCashBankBook(prisma, {
+      cashBankId: id,
+      openingBalance: opening,
+      rate,
+      layered: currencyId !== baseCurrency,
+      date: today,
+      actorId: actor,
+    });
+    return { id, accountId, layer: (await openLayersOf(id))[0]?.id ?? null };
+  };
+
+  const cash = (
+    r: { id: number; accountId: number },
+    debit: number,
+    credit: number,
+    extra: Partial<GeneralJournalLineValues> = {}
+  ) => line(r.accountId, debit, credit, { subject_id: r.id, ...extra });
+
+  const post = async (lines: GeneralJournalLineValues[]) => {
+    const draft = await createGeneralJournal(header(), lines, actor);
+    assert.ok(draft.ok, JSON.stringify(draft));
+    return { id: draft.id, posted: await postGeneralJournal(draft.id, actor, scope) };
+  };
+
+  const held = async (id: number) =>
+    (await prisma.cashBankBalance.findUniqueOrThrow({ where: { cash_bank_id: id } })).balance.toNumber();
+
+  test("Case 5: a new resource's opening balance writes the book and the journal together", async () => {
+    const bca = await resource(baseCurrency, 0);
+    const { id, posted } = await post([cash(bca, 50_000_000, 0), line(modal, 0, 50_000_000)]);
+    assert.ok(posted.ok, JSON.stringify(posted));
+    assert.equal(await held(bca.id), 50_000_000);
+    const entry = await prisma.cashBankLedger.findFirstOrThrow({
+      where: { cash_bank_id: bca.id, entry_type: "Adjustment" },
+    });
+    assert.equal(entry.source_doc_id, id);
+  });
+
+  test("Case 6: a foreign bank charge draws its layer, and nets its Selisih", async (t) => {
+    if (!foreignCurrency) return t.skip("no foreign currency in this database");
+    const usd = await resource(foreignCurrency, 2_000, 15_900);
+    const { posted } = await post([
+      line(beban, 15, 0, { currency_id: foreignCurrency, exchange_rate: 16_100 }),
+      cash(usd, 0, 15, { currency_id: foreignCurrency, exchange_rate: 1, cash_bank_layer_id: usd.layer }),
+    ]);
+    assert.ok(posted.ok, JSON.stringify(posted));
+    assert.deepEqual(
+      posted.preview.map((l) => [l.debit, l.credit]),
+      [[241_500, 0], [0, 238_500], [0, 3_000]]
+    );
+    const [layer] = await openLayersOf(usd.id);
+    assert.equal(layer.foreignRemaining, 1_985);
+    assert.equal(await held(usd.id), 1_985);
+  });
+
+  test("money arriving in a foreign resource opens a layer at the kurs typed", async (t) => {
+    if (!foreignCurrency) return t.skip("no foreign currency in this database");
+    const usd = await resource(foreignCurrency, 0);
+    const { posted } = await post([
+      cash(usd, 100, 0, { currency_id: foreignCurrency, exchange_rate: 16_250 }),
+      line(modal, 0, 100, { currency_id: foreignCurrency, exchange_rate: 16_250 }),
+    ]);
+    assert.ok(posted.ok, JSON.stringify(posted));
+    const layers = await openLayersOf(usd.id);
+    assert.deepEqual(layers.map((l) => [l.foreignRemaining, l.rate, l.baseRemaining]), [[100, 16_250, 1_625_000]]);
+  });
+
+  test("Case 7: a physical count by Saldo baru", async () => {
+    const kas = await resource(baseCurrency, 2_350_000);
+    const { id, posted } = await post([cash(kas, 0, 0, { new_value: 2_300_000 }), line(beban, 50_000, 0)]);
+    assert.ok(posted.ok, JSON.stringify(posted));
+    assert.equal(await held(kas.id), 2_300_000);
+    const stored = await prisma.accGeneralJournalLine.findFirstOrThrow({
+      where: { journal_id: id, sequence_no: 1 },
+    });
+    assert.deepEqual([stored.kredit_amount.toNumber(), stored.balance_before?.toNumber()], [50_000, 2_350_000]);
+  });
+
+  test("Saldo baru refuses at Post once the resource has moved", async () => {
+    const kas = await resource(baseCurrency, 1_000_000);
+    const draft = await createGeneralJournal(
+      header(),
+      [cash(kas, 0, 0, { new_value: 900_000 }), line(beban, 100_000, 0)],
+      actor
+    );
+    assert.ok(draft.ok);
+    await prisma.$transaction((tx) =>
+      recordCashBankEntry(tx, {
+        cashBankId: kas.id,
+        date: today,
+        type: "Transaction",
+        direction: "In",
+        amount: 5_000,
+        rate: 1,
+        actorId: actor,
+      })
+    );
+    const refused = await postGeneralJournal(draft.id, actor, scope);
+    assert.ok(!refused.ok);
+    assert.match(refused.errors._form, /berubah sejak draft disimpan/);
+  });
+
+  test("a foreign payment names a layer, and cannot overdraw it", async (t) => {
+    if (!foreignCurrency) return t.skip("no foreign currency in this database");
+    const usd = await resource(foreignCurrency, 100, 15_900);
+    const foreign = { currency_id: foreignCurrency, exchange_rate: 16_000 };
+    const none = await checkGeneralJournal(header(), [line(beban, 10, 0, foreign), cash(usd, 0, 10, foreign)]);
+    assert.ok(!none.ok);
+    assert.match(none.errors["lines.1.cash_bank_layer_id"], /Pilih layer/);
+
+    const over = await checkGeneralJournal(header(), [
+      line(beban, 150, 0, foreign),
+      cash(usd, 0, 150, { ...foreign, cash_bank_layer_id: usd.layer }),
+    ]);
+    assert.ok(!over.ok);
+    assert.match(over.errors["lines.1.amount"], /tidak cukup/);
+  });
+
+  test("a refused Post rolls back, and the layer it drew is unspent", async (t) => {
+    if (!foreignCurrency) return t.skip("no foreign currency in this database");
+    const usd = await resource(foreignCurrency, 100, 15_900);
+    const foreign = { currency_id: foreignCurrency, exchange_rate: 16_000 };
+    // Each line fits the layer alone; together they overdraw it at Post.
+    const { posted } = await post([
+      line(beban, 110, 0, foreign),
+      cash(usd, 0, 60, { ...foreign, cash_bank_layer_id: usd.layer }),
+      cash(usd, 0, 50, { ...foreign, cash_bank_layer_id: usd.layer }),
+    ]);
+    assert.ok(!posted.ok);
+    assert.match(posted.errors._form, /hanya menyisakan/);
+    const [layer] = await openLayersOf(usd.id);
+    assert.equal(layer.foreignRemaining, 100);
+    assert.equal(await held(usd.id), 100);
+  });
+
+  test("a rupiah payment may not take the resource below nothing", async () => {
+    const kas = await resource(baseCurrency, 10_000);
+    const refused = await checkGeneralJournal(header(), [line(beban, 20_000, 0), cash(kas, 0, 20_000)]);
+    assert.ok(!refused.ok);
+    assert.match(refused.errors["lines.1.amount"], /tidak mencukupi/);
   });
 });
 

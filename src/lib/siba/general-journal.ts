@@ -17,6 +17,8 @@ import {
   type AdapterLine,
   type LedgerAdapter,
 } from "./general-journal-ledgers";
+import { InsufficientFunds } from "./cash-bank";
+import { LayerNotAvailable } from "./cash-bank-layers";
 import { SubledgerItemUnavailable } from "./subledger";
 import { isBalanced, valueGeneralJournal } from "./general-journal-valuation";
 import {
@@ -63,8 +65,10 @@ export type GeneralJournalLineValues = {
   debit: number;
   credit: number;
   description: string;
-  /** The entry the line moves in its ledger: an open item; null for a new one. */
+  /** What the line moves in its ledger: an open item (null for a new one), or a Cash & Bank. */
   subject_id?: number | null;
+  /** The rate layer a foreign Cash & Bank payment draws on. */
+  cash_bank_layer_id?: number | null;
   /** Saldo baru (D14): the value the entry should hold; the side and amount follow. */
   new_value?: number | null;
   /** Left out by the form; Post passes the stored figure back to be held to it. */
@@ -75,6 +79,7 @@ export type GeneralJournalLineValues = {
 type ResolvedLine = JournalLineInput & {
   isGenerated: boolean;
   subjectId: number | null;
+  layerId: number | null;
   newValue: number | null;
   balanceBefore: number | null;
 };
@@ -211,6 +216,7 @@ export async function checkGeneralJournal(
       face: onDebit ? d : c,
       rate: base ? 1 : Number(line.exchange_rate),
       subjectId: adapter ? line.subject_id ?? null : null,
+      layerId: adapter ? line.cash_bank_layer_id ?? null : null,
       newValue,
       balanceBefore: line.balance_before,
       description: String(line.description ?? "").trim() || description,
@@ -241,6 +247,7 @@ export async function checkGeneralJournal(
       description: adapterLine.description,
       isGenerated: false,
       subjectId: adapterLine.subjectId,
+      layerId: adapterLine.layerId,
       newValue,
       balanceBefore: adapterLine.balanceBefore ?? null,
     });
@@ -292,6 +299,7 @@ export async function checkGeneralJournal(
       description: "Selisih kurs",
       isGenerated: true,
       subjectId: null,
+      layerId: null,
       newValue: null,
       balanceBefore: null,
     });
@@ -335,6 +343,7 @@ function lineRows(lines: ResolvedLine[], actorId: number) {
       description: l.description,
       is_generated: l.isGenerated,
       subject_id: l.subjectId,
+      cash_bank_layer_id: l.layerId,
       new_value: l.newValue,
       balance_before: l.balanceBefore,
       created_by: actorId,
@@ -514,7 +523,12 @@ export async function postGeneralJournal(
     if (error instanceof DryRun) {
       return { ok: true, journalNo: existing.journalNo, postedJournalNo: null, preview };
     }
-    if (error instanceof PeriodShut || error instanceof SubledgerItemUnavailable) {
+    if (
+      error instanceof PeriodShut ||
+      error instanceof SubledgerItemUnavailable ||
+      error instanceof InsufficientFunds ||
+      error instanceof LayerNotAvailable
+    ) {
       return { ok: false, errors: { _form: error.message } };
     }
     throw error;
@@ -591,6 +605,7 @@ async function draftOrRefusal(
         credit: onDebit ? 0 : l.trx_amount.toNumber(),
         description: l.description,
         subject_id: l.subject_id,
+        cash_bank_layer_id: l.cash_bank_layer_id,
         new_value: l.new_value?.toNumber() ?? null,
         balance_before: l.balance_before?.toNumber() ?? null,
       };

@@ -3,7 +3,10 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatDate, formatNumber } from "@/lib/format";
-import { relieve, roundBase } from "./fx";
+import { cashBankBalanceOn, cashBankShortfall, lockCashBanks, recordCashBankEntry } from "./cash-bank";
+import { LayerNotAvailable, drawFromLayer, openLayer, openLayersOf } from "./cash-bank-layers";
+import { isBaseCurrency } from "./currency";
+import { drawLayer, relieve, roundBase } from "./fx";
 import {
   SubledgerItemUnavailable,
   itemBalanceOn,
@@ -33,8 +36,10 @@ export type AdapterLine = {
   side: "debit" | "credit";
   face: number;
   rate: number;
-  /** The entry the line moves: an open item; null for a new one. */
+  /** What the line moves: an open item (null for a new one), or a Cash & Bank. */
   subjectId: number | null;
+  /** Cash & Bank only: the rate layer a foreign payment draws on. */
+  layerId: number | null;
   /** Saldo baru as typed (D14); the adapter turns it into `side` and `face`. */
   newValue: number | null;
   /**
@@ -100,6 +105,7 @@ const partnerAdapter: LedgerAdapter = {
   ledger: "partner",
   async check(line, account, ctx): Promise<Record<string, string>> {
     line.subjectId = null;
+    line.layerId = null;
     if (!line.partnerId) return { partner_id: "Account ini wajib menyebut Partner." };
     const partner = await prisma.mPartner.findUnique({
       where: { id: line.partnerId },
@@ -153,6 +159,7 @@ const subjectBookAdapter: LedgerAdapter = {
       return { partner_id: "Partner tersebut milik Company lain." };
     }
     const raise = raisingSide(book);
+    line.layerId = null;
 
     if (line.subjectId == null) {
       if (line.newValue != null) {
@@ -275,9 +282,161 @@ const subjectBookAdapter: LedgerAdapter = {
   },
 };
 
+/**
+ * `cash_bank`: a Cash & Bank posting to this account. Debit is money in. A
+ * foreign resource paying out names one of its layers and gives up that
+ * layer's base at its kurs; money arriving opens a new layer at the kurs
+ * typed (D10). A rupiah resource holds no layers. Saldo baru holds to the
+ * balance it was typed against (D14, Case 7).
+ */
+const cashBankAdapter: LedgerAdapter = {
+  ledger: "cash_bank",
+  takesNewValue: true,
+
+  async check(line, account, ctx): Promise<Record<string, string>> {
+    line.partnerId = null;
+    if (line.subjectId == null) return { subject_id: "Pilih Cash & Bank." };
+    const resource = await prisma.mCashBank.findUnique({
+      where: { id: line.subjectId },
+      select: {
+        cash_bank_label: true,
+        company_id: true,
+        account_id: true,
+        status: true,
+        currency_id: true,
+        currency: { select: { currency_label: true } },
+      },
+    });
+    if (!resource || resource.company_id !== ctx.companyId || resource.account_id !== account.id) {
+      return { subject_id: `Cash & Bank tersebut tidak memakai Account ${account.account_label}.` };
+    }
+    if (resource.status !== "Active") return { subject_id: "Cash & Bank tersebut non-aktif." };
+    if (resource.currency_id !== line.currencyId) {
+      return { currency_id: `Currency baris harus sama dengan currency ${resource.cash_bank_label}.` };
+    }
+
+    const stored = line.balanceBefore;
+    line.balanceBefore = null;
+    if (line.newValue != null) {
+      const held = await cashBankBalanceOn(line.subjectId, ctx.date);
+      if (stored !== undefined && cents(stored ?? NaN) !== cents(held)) {
+        return {
+          subject_id: `Saldo ${resource.cash_bank_label} berubah sejak draft disimpan: kini ` +
+            `${formatNumber(held, 2)}. Buka dan simpan ulang draft.`,
+        };
+      }
+      if (line.newValue < 0) return { new_value: "Saldo baru tidak boleh di bawah nol." };
+      const diff = line.newValue - held;
+      if (cents(diff) === 0) {
+        return { new_value: `${resource.cash_bank_label} sudah bersaldo ${formatNumber(held, 2)}.` };
+      }
+      line.side = diff > 0 ? "debit" : "credit";
+      line.face = cents(Math.abs(diff)) / 100;
+      line.balanceBefore = held;
+    }
+
+    const foreign = !isBaseCurrency(resource.currency.currency_label);
+    const out = line.side === "credit";
+    if (!foreign || !out) {
+      if (line.layerId != null) {
+        return { cash_bank_layer_id: "Layer hanya dipilih untuk uang keluar dari Cash & Bank valas." };
+      }
+      if (!foreign) line.rate = 1;
+    } else {
+      if (line.layerId == null) return { cash_bank_layer_id: "Pilih layer kurs yang dipakai." };
+      const layer = (await openLayersOf(line.subjectId)).find((l) => l.id === line.layerId);
+      if (!layer) {
+        return { cash_bank_layer_id: "Layer tersebut bukan layer terbuka milik Cash & Bank ini." };
+      }
+      if (layer.date > ctx.date) {
+        return {
+          cash_bank_layer_id: `Layer ${layer.layerNo} baru diperoleh pada ${formatDate(layer.date)}, ` +
+            "sesudah tanggal journal ini.",
+        };
+      }
+      if (cents(line.face) > cents(layer.foreignRemaining)) {
+        return {
+          amount: `Layer ${layer.layerNo} tinggal ${formatNumber(layer.foreignRemaining, 2)}, ` +
+            `tidak cukup untuk ${formatNumber(line.face, 2)}.`,
+        };
+      }
+      line.rate = layer.rate;
+      line.baseAmount = drawLayer(
+        { foreign: layer.foreignRemaining, base: layer.baseRemaining, rate: layer.rate },
+        cents(line.face) === cents(layer.foreignRemaining) ? layer.foreignRemaining : line.face
+      ).base;
+    }
+
+    if (out) {
+      const short = await cashBankShortfall(line.subjectId, ctx.date, line.face);
+      if (short) return { amount: short.message };
+    }
+    return {};
+  },
+
+  lockKeys(line) {
+    return [{ rank: 2, key: String(line.subjectId) }];
+  },
+
+  async lock(tx, key) {
+    await lockCashBanks(tx, [Number(key)]);
+  },
+
+  async write(tx, line, _account, ctx) {
+    const cashBankId = line.subjectId!;
+    if (line.newValue != null) {
+      const held = await cashBankBalanceOn(cashBankId, ctx.date, tx);
+      if (cents(held) !== cents(line.balanceBefore ?? NaN)) {
+        throw new LayerNotAvailable(
+          "Saldo Cash & Bank berubah sejak draft disimpan. Buka dan simpan ulang draft."
+        );
+      }
+    }
+    const source = {
+      sourceDocTypeId: ctx.sourceDocTypeId,
+      sourceDocId: ctx.sourceDocId,
+      note: line.description,
+      actorId: ctx.actorId,
+    };
+    if (line.layerId != null) {
+      const drawn = await drawFromLayer(tx, {
+        layerId: line.layerId,
+        cashBankId,
+        foreign: line.face,
+        date: ctx.date,
+        actorId: ctx.actorId,
+      });
+      if (cents(drawn.base) !== cents(line.baseAmount ?? NaN)) {
+        throw new LayerNotAvailable("Layer kurs berubah sejak draft disimpan. Ulangi Post.");
+      }
+    }
+    const into = line.side === "debit";
+    const base = line.baseAmount ?? roundBase(line.face * line.rate);
+    await recordCashBankEntry(tx, {
+      cashBankId,
+      date: ctx.date,
+      type: "Adjustment",
+      direction: into ? "In" : "Out",
+      amount: line.face,
+      rate: line.rate,
+      baseAmount: base,
+      ...source,
+    });
+    // A foreign receipt opens its own layer; a rupiah resource holds none.
+    const currency = await tx.refCurrency.findUniqueOrThrow({
+      where: { id: line.currencyId },
+      select: { currency_label: true },
+    });
+    if (into && !isBaseCurrency(currency.currency_label)) {
+      await openLayer(tx, { cashBankId, date: ctx.date, rate: line.rate, foreign: line.face, baseAmount: base, ...source });
+    }
+  },
+};
+
 const ADAPTERS: Record<string, LedgerAdapter> = {
   [partnerAdapter.ledger]: partnerAdapter,
   [subjectBookAdapter.ledger]: subjectBookAdapter,
+  [cashBankAdapter.ledger]: cashBankAdapter,
 };
 
 /** The adapter for a ledger; null for `none`, undefined for one not built yet. */
