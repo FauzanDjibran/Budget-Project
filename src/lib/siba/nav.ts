@@ -335,6 +335,15 @@ export const MODULES: NavModule[] = [
             desc: "Journal dari posting dokumen, dan Journal Manual untuk entri yang tidak berasal dari dokumen. Final setelah diposting.",
             permission: "JOURNAL_VIEW",
           },
+          {
+            key: "acc_general_journal",
+            slug: "jurnal-umum",
+            name: "Jurnal Umum",
+            single: "Jurnal Umum",
+            icon: "book",
+            desc: "Satu jurnal untuk buku besar, Buku Subjek, dan Kas & Bank sekaligus — penyesuaian, reklasifikasi, dan koreksi tanpa menu sendiri.",
+            permission: "JOURNAL_GENERAL_VIEW",
+          },
         ],
       },
       {

@@ -1323,6 +1323,12 @@ const DOCUMENT_SCREENS: {
     routes: "src/app/(app)/accounting/journal",
   },
   {
+    name: "Jurnal Umum",
+    form: "src/components/accounting/general-journal-form.tsx",
+    list: "src/components/accounting/general-journal-list.tsx",
+    routes: "src/app/(app)/accounting/jurnal-umum",
+  },
+  {
     name: "Budget",
     form: "src/components/budget/budget-form.tsx",
     list: "src/components/budget/budget-list.tsx",
@@ -1574,6 +1580,7 @@ describe("a Post confirmation shows the journal it will write", () => {
     "src/components/finance/item-reclass-form.tsx",
     "src/components/finance/item-adjustment-form.tsx",
     "src/components/finance/revaluation-form.tsx",
+    "src/components/accounting/general-journal-form.tsx",
   ];
   for (const rel of POSTING_FORMS) {
     test(`${rel} previews its journal in the Post confirmation`, () => {

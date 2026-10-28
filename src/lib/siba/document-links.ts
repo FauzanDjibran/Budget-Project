@@ -21,6 +21,7 @@ const ROUTES: Record<string, string> = {
   fin_cash_bank_revaluation: "/finance/revaluasi-kurs",
   acc_fiscal_year: "/accounting/fiscal-year",
   acc_opening_balance: "/accounting/opening-balance",
+  acc_general_journal: "/accounting/jurnal-umum",
 };
 
 /**
@@ -33,6 +34,7 @@ const KIND: Record<string, [string, string]> = {
   fin_funding_request: ["Dana Anak Masuk", "Dana Anak Keluar"],
   fin_cash_bank_transfer: ["Transfer Masuk", "Transfer Keluar"],
   fin_item_conversion: ["Pencairan Open Item", "Pencairan Open Item"],
+  acc_general_journal: ["Jurnal Umum", "Jurnal Umum"],
 };
 const TYPE_KIND: Record<string, string> = {
   Opening: "Saldo Awal",
