@@ -9,9 +9,13 @@ const globalForPrisma = globalThis as unknown as {
 function createClient() {
   // Prisma 7 connects through a driver adapter rather than a bundled engine.
   const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+  // Only a script run against the remote database sets this (`with-remote.mjs`);
+  // the deployed app keeps Prisma's default.
+  const timeout = Number(process.env.PRISMA_TX_TIMEOUT_MS) || undefined;
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    ...(timeout && { transactionOptions: { timeout, maxWait: timeout } }),
   });
 }
 

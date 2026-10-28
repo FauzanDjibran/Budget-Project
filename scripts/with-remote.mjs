@@ -112,5 +112,9 @@ if (destructive && !confirmed) {
 
 console.log(`[remote] ${shown}`);
 
+// From this machine every query crosses to Singapore, so one posting's
+// interactive transaction outlasts Prisma's 5s default (`src/lib/prisma.ts`).
+env.PRISMA_TX_TIMEOUT_MS ??= "60000";
+
 const result = spawnSync(argv[0], argv.slice(1), { stdio: "inherit", env, shell: true });
 process.exit(result.status === null ? 1 : result.status);

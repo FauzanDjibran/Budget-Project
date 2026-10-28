@@ -74,7 +74,9 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
-const prisma = new PrismaClient({ adapter });
+/** The setup's own transactions write many rows; against Neon 5s is not enough. */
+const LONG = { timeout: 60_000, maxWait: 20_000 };
+const prisma = new PrismaClient({ adapter, transactionOptions: LONG });
 
 type Balance = "Debit" | "Kredit";
 
@@ -629,9 +631,35 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
   for (const spec of CASH_BANKS) {
     const existing = await prisma.mCashBank.findFirst({
       where: { cash_bank_label: spec.label },
-      select: { id: true },
+      select: { id: true, currency: { select: { currency_label: true } } },
     });
-    if (existing) continue;
+    if (existing) {
+      // A resource whose book `db:truncate-transactions` emptied gets its
+      // openings again; one whose book holds anything is left alone.
+      if (await prisma.cashBankLedger.count({ where: { cash_bank_id: existing.id } })) continue;
+      const layeredExisting = existing.currency.currency_label !== "IDR";
+      await prisma.$transaction(async (tx) => {
+        for (const o of spec.openings) {
+          const date = on(CLOSED_YEAR, ...o.date);
+          const note = "Saldo awal saat resource didaftarkan.";
+          await recordCashBankEntry(tx, {
+            cashBankId: existing.id,
+            date,
+            type: "Opening",
+            direction: "In",
+            amount: o.amount,
+            rate: o.rate,
+            note,
+            actorId: actor,
+          });
+          if (layeredExisting) {
+            await openLayer(tx, { cashBankId: existing.id, date, rate: o.rate, foreign: o.amount, note, actorId: actor });
+          }
+        }
+      }, LONG);
+      tally("cash & bank reopened");
+      continue;
+    }
 
     const account = await prisma.accAccount.update({
       where: { id: (await prisma.accAccount.findFirstOrThrow({
@@ -689,7 +717,7 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
         }
       }
       return created;
-    });
+    }, LONG);
     await audit("m_cash_bank", row.id, actor);
     tally("cash & bank");
   }
@@ -788,17 +816,26 @@ async function injectClosedYear(actor: number) {
       select: { id: true, status: true, start_date: true },
     });
   const [closed, current] = await Promise.all([yearOf(induk.id, CLOSED_YEAR), yearOf(induk.id, YEAR)]);
-  if (closed.status === "Closed") return;
+  // A year closed while the cash books were empty (an earlier run over a
+  // truncated database) still owes its snapshot.
+  const snapshot = await prisma.accOpeningBalance.findFirst({
+    where: { company_id: induk.id, fiscal_year_id: current.id },
+    select: { id: true },
+  });
+  if (closed.status === "Closed" && snapshot) return;
 
-  const balances = await prisma.cashBankBalance.findMany({
-    where: { cash_bank: { company_id: induk.id } },
-    select: { base_balance: true, cash_bank: { select: { account_id: true } } },
+  // What each cash account held when the current year began: what the
+  // snapshot states, whatever the year has posted since.
+  const entries = await prisma.cashBankLedger.findMany({
+    where: { cash_bank: { company_id: induk.id }, accounting_date: { lt: current.start_date } },
+    select: { base_movement: true, cash_bank: { select: { account_id: true } } },
   });
   const perAccount = new Map<number, number>();
-  for (const b of balances) {
-    const id = b.cash_bank.account_id;
-    perAccount.set(id, (perAccount.get(id) ?? 0) + b.base_balance.toNumber());
+  for (const e of entries) {
+    const id = e.cash_bank.account_id;
+    perAccount.set(id, (perAccount.get(id) ?? 0) + e.base_movement.toNumber());
   }
+  if (closed.status === "Closed" && !perAccount.size) return;
   const total = [...perAccount.values()].reduce((t, v) => t + v, 0);
   const equity = await prisma.accAccount.findFirstOrThrow({
     where: { company_id: induk.id, account_name: "Modal Disetor" },
@@ -819,6 +856,13 @@ async function injectClosedYear(actor: number) {
           actorId: actor,
         })
       : null;
+    if (closed.status === "Closed") {
+      await tx.accFiscalClosing.updateMany({
+        where: { fiscal_year_id: closed.id, company_id: induk.id },
+        data: { opening_balance_id: opening?.id ?? null },
+      });
+      return;
+    }
     for (const company of companies) {
       await recordFiscalClosing(tx, {
         fiscalYearId: company.is_parent ? closed.id : (await yearOf(company.id, CLOSED_YEAR)).id,
@@ -828,7 +872,7 @@ async function injectClosedYear(actor: number) {
         actorId: actor,
       });
     }
-  });
+  }, LONG);
   tally("fiscal year closings", companies.length);
   tally("opening balances");
 }
@@ -1977,9 +2021,13 @@ async function runCbt(e: CbtEvent, budgets: Map<string, number>, actor: number) 
   const foreign = resource && resource.currency.currency_label !== "IDR";
   const already = await prisma.finCashBankTransaction.findFirst({
     where: { note: e.note },
-    select: { id: true },
+    select: { id: true, status: true },
   });
-  if (already) return;
+  if (already) {
+    // A run cut off between saving the draft and its Post left it Draft.
+    if (already.status === "Draft" && (e.status ?? "Posted") === "Posted") await post(already.id, actor, e.note);
+    return;
+  }
   const layer =
     foreign && purposeDirection(e.purpose) === "Out"
       ? await layerFor(e.cashBank!, total, e.date)
@@ -2266,15 +2314,24 @@ async function insertMappings(companyId: number, companyLabel: string, actor: nu
     });
     if (existing) continue;
 
-    // One account, one book (Journal 2.0 D18): a book's mapping target
-    // declares that book as its ledger, as the user would on the account form.
+    // A book's mapping target keeps that book (Journal 2.0 D18), as the user
+    // would tick it on the account form.
     const keepsBook = await prisma.sysBudgetCategory.count({
       where: { id: budgetCategoryId, require_partner: true, raises: { not: null } },
     });
-    if (keepsBook) {
-      await prisma.accAccount.update({
-        where: { id: account.id },
-        data: { ledger: "subject_book", ledger_book_id: budgetCategoryId },
+    const kept = await prisma.accAccountBook.count({
+      where: { account_id: account.id, budget_category_id: budgetCategoryId },
+    });
+    if (keepsBook && !kept) {
+      const bookCodes = await prisma.accAccountBook.findMany({ select: { account_book_code: true } });
+      await prisma.accAccount.update({ where: { id: account.id }, data: { ledger: "partner" } });
+      await prisma.accAccountBook.create({
+        data: {
+          account_book_code: await nextCode("acbk", bookCodes.map((c) => c.account_book_code)),
+          account_id: account.id,
+          budget_category_id: budgetCategoryId,
+          created_by: actor,
+        },
       });
     }
 
