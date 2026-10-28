@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { compareCodes } from "./account-code";
+import { compareCodes, ledgerTakesPartner } from "./account-code";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "./currency";
 import {
   cancelDraftJournal,
@@ -166,7 +166,7 @@ export async function manualJournalOptions(
         account_label: true,
         account_name: true,
         normal_balance: true,
-        require_partner: true,
+        ledger: true,
         partner_category_id: true,
       },
     }),
@@ -195,7 +195,7 @@ export async function manualJournalOptions(
         label: a.account_label,
         name: a.account_name,
         normalBalance: a.normal_balance,
-        requirePartner: a.require_partner,
+        requirePartner: ledgerTakesPartner(a.ledger),
         partnerCategoryId: a.partner_category_id,
       })),
     partners: partners.map((p) => ({
@@ -317,7 +317,7 @@ export async function checkManualJournal(
         is_postable: true,
         is_active: true,
         is_control_account: true,
-        require_partner: true,
+        ledger: true,
         partner_category_id: true,
         _count: { select: { children: true } },
       },
@@ -363,7 +363,7 @@ export async function checkManualJournal(
     // Partner, so a line on it without a Partner would be a movement with no
     // subject. The category must match too — that is what the column is for.
     let partnerId: number | null = null;
-    if (account.require_partner) {
+    if (ledgerTakesPartner(account.ledger)) {
       const partner = line.partner_id ? partnerById.get(line.partner_id) : null;
       if (!partner) {
         errors[lineKey(i, "partner_id")] =

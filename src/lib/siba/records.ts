@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney } from "@/lib/format";
-import { compareCodes } from "./account-code";
+import { compareCodes, ledgerIsControl, ledgerTakesPartner } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
 import { journalLineCountForAccount } from "./journal";
 import { subledgerForCategory } from "./subledger-catalogue";
@@ -261,7 +261,14 @@ export async function optionsFor(
       }));
     }
     case "sys_budget_category": {
-      const rows = await prisma.sysBudgetCategory.findMany({ orderBy: { id: "asc" } });
+      const rows = await prisma.sysBudgetCategory.findMany({
+        // A book is a category that names a Partner and says which way it runs.
+        where:
+          filter === "bookCategory"
+            ? { require_partner: true, raises: { not: null } }
+            : undefined,
+        orderBy: { id: "asc" },
+      });
       return rows.map((r) => ({
         id: r.id,
         label: r.category_label,
@@ -347,6 +354,7 @@ function accountWhere(filter?: Field["refFilter"]) {
         is_postable: true,
         children: { none: {} },
         account_subcategory: { subcategory_label: CASH_BANK_SUBCATEGORY },
+        ledger: "cash_bank" as const,
       };
     case "postableAccount":
       // `children: none` rather than `is_postable` alone: the flag is what the
@@ -444,90 +452,64 @@ export async function accountUsage(accountId: number): Promise<string[]> {
  * Why an account is a **control account** — an account whose balance is
  * reconciled against a book that lives outside the General Ledger.
  *
- * Two structures make one, and both are the same fact seen from either side:
- *
- *  * a **Cash & Bank** resource posts to it, so it must agree with the Cash
- *    Bank Book and, for a foreign resource, with its rate layers;
- *  * a **Budget Category that keeps a subject book** maps to it, so it must
- *    agree with that book's positions.
+ * The account says so itself (Journal 2.0 D18): its `ledger` is `cash_bank`,
+ * so it must agree with the Cash Bank Book and, for a foreign resource, with
+ * its rate layers; or `subject_book`, so it must agree with that one book's
+ * positions. A mapping and a Cash & Bank resource are checked against the
+ * ledger rather than deciding it.
  *
  * Writing to such an account by any route other than the posting that also
  * writes the book would put the two out of agreement silently — nothing would
  * error, the General Ledger would simply stop matching the Buku Hutang. That
  * is what the manual journal is refused for.
  *
- * Returns one phrase per reason, in the reader's own words, or an empty list.
- * The **System Default** half is resolved by the caller, which is the only
- * layer that may read both this and `sys_setting` — the same split
- * `accountUsage` already uses.
+ * Returns one phrase naming the book, in the reader's own words, or an empty
+ * list. The **System Account** half is resolved by the caller, which is the
+ * only layer that may read both this and `acc_system_account` — the same
+ * split `accountUsage` already uses.
  */
 export async function controlAccountReasons(
   accountId: number
 ): Promise<string[]> {
-  const [cashBanks, mappings] = await Promise.all([
-    prisma.mCashBank.findMany({
-      where: { account_id: accountId },
-      select: { cash_bank_label: true },
-    }),
-    prisma.accBudgetCategoryAccount.findMany({
-      where: { account_id: accountId },
-      select: { budget_category_id: true },
-    }),
-  ]);
+  const account = await prisma.accAccount.findUnique({
+    where: { id: accountId },
+    select: {
+      ledger: true,
+      ledger_book_id: true,
+      cash_banks: { select: { cash_bank_label: true } },
+    },
+  });
+  if (!account || !ledgerIsControl(account.ledger)) return [];
 
-  const reasons: string[] = [];
-  if (cashBanks.length) {
-    reasons.push(
-      `Buku Kas & Bank ${cashBanks.map((c) => c.cash_bank_label).join(", ")}`
-    );
+  if (account.ledger === "cash_bank") {
+    const labels = account.cash_banks.map((c) => c.cash_bank_label).join(", ");
+    return [labels ? `Buku Kas & Bank ${labels}` : "Buku Kas & Bank"];
   }
-
-  // Only a category that actually keeps a book makes its target a control
-  // account. Biaya and Asset map to an account too, and that account
-  // reconciles against nothing but the General Ledger itself — so an expense
-  // account stays open to manual entry, which is most of what one is for.
-  const catalogue = await loadSubledgers();
-  const books = new Set<string>();
-  for (const m of mappings) {
-    const book = subledgerForCategory(catalogue, m.budget_category_id);
-    if (book) books.add(book.name);
-  }
-  reasons.push(...[...books].sort());
-
-  return reasons;
+  const book = account.ledger_book_id
+    ? subledgerForCategory(await loadSubledgers(), account.ledger_book_id)
+    : null;
+  return [book?.name ?? "Buku Subjek"];
 }
 
 /**
- * Every account the structure already makes a control account.
- *
- * One query pair rather than one per account: used by the backfill script,
- * which has a whole chart to consider.
+ * Every account its ledger makes a control account. Used by the backfill
+ * script, which has a whole chart to consider.
  */
 export async function structuralControlAccountIds(): Promise<Set<number>> {
-  const [cashBanks, mappings] = await Promise.all([
-    prisma.mCashBank.findMany({ select: { account_id: true } }),
-    prisma.accBudgetCategoryAccount.findMany({
-      select: { account_id: true, budget_category_id: true },
-    }),
-  ]);
-
-  const catalogue = await loadSubledgers();
-  const ids = new Set<number>(cashBanks.map((c) => c.account_id));
-  for (const m of mappings) {
-    if (subledgerForCategory(catalogue, m.budget_category_id)) {
-      ids.add(m.account_id);
-    }
-  }
-  return ids;
+  const rows = await prisma.accAccount.findMany({
+    where: { ledger: { in: ["subject_book", "cash_bank"] } },
+    select: { id: true },
+  });
+  return new Set(rows.map((r) => r.id));
 }
 
 /**
  * Re-decides whether each of these accounts is a control account.
  *
  * Being one is not a property somebody sets: it is the answer to "does
- * anything outside the General Ledger reconcile against this account?" — a
- * Cash & Bank resource registered on it, a subledger-bearing mapping pointing
- * at it, a bridge or FX System Default naming it. So the flag is *recomputed*
+ * anything outside the General Ledger reconcile against this account?" — its
+ * ledger is a book's (`subject_book`, `cash_bank`), or a bridge or FX System
+ * Account names it. So the flag is *recomputed*
  * from the structure on every event that can change that answer, in both
  * directions, the same way a parent account's posting privilege follows the
  * shape of the tree rather than a checkbox.
@@ -559,6 +541,105 @@ export async function syncControlAccounts(
   }
 }
 
+// ------------------------------------------------------- the account's ledger
+
+/**
+ * Whether an account of this ledger may be a mapping's target (Journal 2.0
+ * D18): a category that keeps a book maps to an account of **that** book, and
+ * one that keeps none to an account no book reconciles against. One account,
+ * one book.
+ */
+function ledgerFitsCategory(
+  account: { ledger: string; ledger_book_id: number | null },
+  category: { id: number; label: string; book: string | null }
+): string | null {
+  if (category.book) {
+    return account.ledger === "subject_book" && account.ledger_book_id === category.id
+      ? null
+      : `Budget Category ${category.label} memakai ${category.book}, sehingga Account tujuannya harus memakai ledger ${category.book}.`;
+  }
+  return ledgerIsControl(account.ledger)
+    ? `Budget Category ${category.label} tidak memakai buku subjek, sehingga Account tujuannya tidak boleh memakai ledger buku.`
+    : null;
+}
+
+async function categoryBook(categoryId: number) {
+  const row = await prisma.sysBudgetCategory.findUnique({
+    where: { id: categoryId },
+    select: { id: true, category_label: true },
+  });
+  if (!row) return null;
+  const book = subledgerForCategory(await loadSubledgers(), categoryId);
+  return { id: row.id, label: row.category_label, book: book?.name ?? null };
+}
+
+/** A mapping's target, checked against the account's ledger. */
+export async function checkMappingLedger(
+  accountId: number,
+  budgetCategoryId: number
+): Promise<string | null> {
+  const [account, category] = await Promise.all([
+    prisma.accAccount.findUnique({
+      where: { id: accountId },
+      select: { ledger: true, ledger_book_id: true },
+    }),
+    categoryBook(budgetCategoryId),
+  ]);
+  if (!account || !category) return null;
+  return ledgerFitsCategory(account, category);
+}
+
+/**
+ * The ledger an account is saved with. A subject book must be a category that
+ * keeps one. Once the account exists the ledger may change only while nothing
+ * depends on it: a journal line locks it, and every Cash & Bank and mapping
+ * naming the account must still fit the new one.
+ */
+export async function checkAccountLedger(
+  currentId: number | null,
+  ledger: string,
+  bookId: number | null
+): Promise<string | null> {
+  if (!["none", "partner", "subject_book", "cash_bank"].includes(ledger)) {
+    return "Pilih ledger.";
+  }
+  if (ledger === "subject_book" && bookId) {
+    const category = await categoryBook(bookId);
+    if (!category?.book) return "Budget Category tersebut tidak memiliki buku subjek.";
+  }
+  if (!currentId) return null;
+
+  const current = await prisma.accAccount.findUnique({
+    where: { id: currentId },
+    select: {
+      ledger: true,
+      ledger_book_id: true,
+      cash_banks: { select: { cash_bank_label: true } },
+      mappings: { select: { budget_category_id: true } },
+    },
+  });
+  if (!current) return null;
+  const next = { ledger, ledger_book_id: ledger === "subject_book" ? bookId : null };
+  if (current.ledger === next.ledger && current.ledger_book_id === next.ledger_book_id) {
+    return null;
+  }
+
+  if (await journalLineCountForAccount(currentId)) {
+    return "Ledger tidak dapat diubah: account ini sudah memiliki journal line.";
+  }
+  if (current.cash_banks.length && ledger !== "cash_bank") {
+    return `Account ini dipakai Cash & Bank (${current.cash_banks
+      .map((c) => c.cash_bank_label)
+      .join(", ")}) dan harus tetap memakai ledger Kas & Bank.`;
+  }
+  for (const id of new Set(current.mappings.map((m) => m.budget_category_id))) {
+    const category = await categoryBook(id);
+    const misfit = category && ledgerFitsCategory(next, category);
+    if (misfit) return `Account ini dipakai mapping. ${misfit}`;
+  }
+  return null;
+}
+
 /**
  * The account a Cash & Bank resource posts to, checked against every rule at
  * once. The form narrows its picker to the same set, but this is what actually
@@ -574,6 +655,7 @@ export async function checkCashBankAccount(
       company_id: true,
       is_postable: true,
       is_active: true,
+      ledger: true,
       account_subcategory: { select: { subcategory_label: true } },
     },
   });
@@ -591,6 +673,11 @@ export async function checkCashBankAccount(
   }
   if (!account.is_active) {
     return "Account tersebut non-aktif dan tidak dapat dipilih.";
+  }
+  // One account, one ledger (Journal 2.0 D18): the account declares itself the
+  // Cash Bank Book's before a resource may post to it.
+  if (account.ledger !== "cash_bank") {
+    return "Account harus memakai ledger Kas & Bank. Ubah ledger account tersebut terlebih dahulu.";
   }
   return null;
 }
@@ -1086,7 +1173,7 @@ export async function accountTree(companyId: number): Promise<{
         normalBalance: a.normal_balance,
         isPostable: a.is_postable,
         isActive: a.is_active,
-        requirePartner: a.require_partner,
+        requirePartner: ledgerTakesPartner(a.ledger),
         partnerCategoryLabel: a.partner_category_id
           ? partnerLabel.get(a.partner_category_id) ?? null
           : null,

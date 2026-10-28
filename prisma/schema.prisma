@@ -1143,14 +1143,15 @@ model AccAccount {
   parent_account         Int?
   is_postable            Boolean       @default(true)
   normal_balance         NormalBalance
-  require_partner        Boolean       @default(false)
   /// Not in the DBML. Locks a subledger account to a single partner category so
-  /// subject histories never mix. Replaces the DBML's `partner_type`.
+  /// subject histories never mix. Replaces the DBML's `partner_type`. Set
+  /// exactly when the ledger takes a Partner (`partner`, `subject_book`).
   partner_category_id    Int?
-  /// Which ledger the account belongs to (Journal 2.0 D18): what a Jurnal Umum
-  /// line on it must name. `subject_book` names its one book in
-  /// `ledger_book_id`. Backfilled from `require_partner`, the mappings and the
-  /// Cash & Bank resources; `require_partner` is retired once its readers move.
+  /// Which ledger the account belongs to (Journal 2.0 D18): what a line on it
+  /// must name. `partner` and `subject_book` take a Partner on every line
+  /// (it replaced `require_partner`); `subject_book` names its one book in
+  /// `ledger_book_id`; `cash_bank` is what a Cash & Bank resource posts to.
+  /// Locked once the account has a journal line.
   ledger                 AccountLedger @default(none)
   ledger_book_id         Int?
   is_control_account     Boolean       @default(false)

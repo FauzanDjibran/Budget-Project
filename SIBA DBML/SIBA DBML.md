@@ -721,16 +721,18 @@ table acc_account {
 
   normal_balance              enum('Debit', 'Kredit') [not null]
 
-  require_partner             boolean [not null, default: false]
+  // Set exactly when the ledger takes a Partner ('partner', 'subject_book').
   partner_category_id         int [ref : >? sys_partner_category.id]
 
-  // Which ledger the account belongs to (Journal 2.0 D18), and so what a Jurnal
-  // Umum line on it must name: 'none' nothing; 'partner' a Partner, for the
+  // Which ledger the account belongs to (Journal 2.0 D18), and so what every
+  // line on it must name: 'none' nothing; 'partner' a Partner, for the
   // breakdown only; 'subject_book' a Partner and an open item in
-  // ledger_book_id's book; 'cash_bank' a Cash & Bank. Backfilled from
-  // require_partner, the mappings and the resources; require_partner is
-  // retired once its readers move. CHECK: ledger_book_id is set exactly when
-  // ledger = 'subject_book'. One account, one ledger.
+  // ledger_book_id's book; 'cash_bank' a Cash & Bank, and the only ledger a
+  // resource may post to. Replaced require_partner (dropped in
+  // 20261028150000). is_control_account is 'subject_book' or 'cash_bank', plus
+  // the System Account claims. Locked once the account has a journal line.
+  // CHECK: ledger_book_id is set exactly when ledger = 'subject_book'. One
+  // account, one ledger.
   ledger                      enum('none', 'partner', 'subject_book', 'cash_bank') [not null, default: 'none']
   ledger_book_id              int [ref : >? sys_budget_category.id]
 

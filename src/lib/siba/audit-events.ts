@@ -229,6 +229,8 @@ const BY_ENTITY: Record<string, Record<string, AuditEventLabel>> = {
   acc_fiscal_period: FISCAL_PERIOD_EVENTS,
   acc_fiscal_closing: FISCAL_CLOSING_EVENTS,
   acc_journal: JOURNAL_EVENTS,
+  // Jurnal Umum runs the manual journal's own Draft → Post / Cancel.
+  acc_general_journal: JOURNAL_EVENTS,
   sys_user: USER_EVENTS,
   sys_role: ROLE_EVENTS,
 };

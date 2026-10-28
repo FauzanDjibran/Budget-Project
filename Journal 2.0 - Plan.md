@@ -1,6 +1,6 @@
 # SIBA 3.0 — Journal 2.0: Jurnal Umum, one journal for every money ledger
 
-> **Status: step 0 done, nothing built (28/10/2026).** Every decision in §1
+> **Status: steps 0–2 done (28/10/2026).** Every decision in §1
 > and §9 is confirmed by the user. Progress is tracked in §10.
 
 ## Goal
@@ -493,7 +493,7 @@ All three proposals accepted as written.
 | §9 open items | Settled 28/10/2026 | All three accepted |
 | 0 Prep | Done 28/10/2026 | 28/10/2026, local and Neon alike: **no account is mapped from two categories, and no Cash & Bank account is used by a mapping, a System Account or `require_partner`**, nor by a manual journal line, so D18's migration needs no cleanup. **One Draft, PYO-0003**, no Draft RKL-. **Registering a Cash & Bank with a Saldo Awal writes an `Opening` book entry dated today and no journal** (`openCashBankBook`), so the General Ledger holds that figure only through an Opening Balance snapshot; Jurnal Umum's Case 5 is the route that writes both. Local exception added to KNOWLEDGE.md. PYO-0003 resolved by D4's revision: every transaction emptied on both databases; the showcase is reseeded at step 6, once it no longer creates PYO / RKL |
 | 1 Schema | Done 28/10/2026 | Migration `20261028114823_general_journal`: enum `AccountLedger`, `acc_account.ledger` + `ledger_book_id` (CHECK: a book exactly when `subject_book`), backfilled; it refuses an account that would need two ledgers. Local and Neon alike: 5 `cash_bank`, 26 `subject_book` across 8 books, 114 `none`, no `partner`, and every ledger agrees with today's `is_control_account`. `require_partner` kept beside it until step 2; nothing reads `ledger` yet. Doc type *Jurnal Umum*, `JOURNAL_GENERAL_*`, `truncate-transactions` clears the two tables, `SIBA DBML.md` updated |
-| 2 Engine + `gl` (Gate A) | Not started | |
+| 2 Engine + `gl` (Gate A) | Done 28/10/2026 | Migration `20261028150000_account_ledger_replaces_require_partner` re-runs step 1's backfill and drops `acc_account.require_partner`; every reader asks `ledgerTakesPartner` (`account-code.ts`). The account form asks **Ledger** (+ Buku Subjek, + Partner Category), locked once the account has a journal line and refused while a Cash & Bank or mapping it serves would no longer fit. `is_control_account` = the ledger is `subject_book` / `cash_bank`, plus System Account claims; a Cash & Bank needs a `cash_bank` account, a book's mapping an account of that book, a non-book mapping a non-book account. Engine in `general-journal.ts` (check, draft, Post + dry run, cancel), valuation and the netted Selisih in `general-journal-valuation.ts`, the contract and registry (`partner` only) in `general-journal-ledgers.ts`; a ledger with no adapter refuses by name. `tests/general-journal.test.ts`: Case 9 identical to the manual journal, the draft's rows equal the posted ones, Cases 2/3/6/11 valuation, a foreign Selisih line, JUR- still refuses a control account. No Server Action or screen yet (step 5). **Neon not migrated yet** |
 | 3 `subject_book` (Gate B) | Not started | |
 | 4 `cash_bank` (Gate C) | Not started | |
 | 5 Screens | Not started | |

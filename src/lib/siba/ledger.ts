@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { AccountSection, Prisma } from "@/generated/prisma/client";
-import { compareCodes } from "./account-code";
+import { compareCodes, ledgerTakesPartner } from "./account-code";
 import { isBaseCurrency } from "./currency";
 import { roundBase } from "./fx";
 import { partnerMismatch, type PartnerMismatch } from "./journal";
@@ -343,7 +343,7 @@ export async function generalLedgerReport(
       account_label: true,
       account_name: true,
       normal_balance: true,
-      require_partner: true,
+      ledger: true,
       company_id: true,
       company: { select: { company_label: true } },
     },
@@ -408,7 +408,7 @@ export async function generalLedgerReport(
       const isForeign = !isBaseCurrency(label);
       if (isForeign) foreign.add(label);
 
-      const mismatch = partnerMismatch(a.require_partner, l.partner_id);
+      const mismatch = partnerMismatch(ledgerTakesPartner(a.ledger), l.partner_id);
       if (mismatch) mismatches += 1;
 
       entries.push({
@@ -440,7 +440,7 @@ export async function generalLedgerReport(
       name: a.account_name,
       companyLabel: a.company.company_label,
       normalBalance: a.normal_balance,
-      requirePartner: a.require_partner,
+      requirePartner: ledgerTakesPartner(a.ledger),
       opening,
       debit,
       credit,
@@ -470,11 +470,11 @@ const LINE_ORDER: Prisma.AccJournalLineOrderByWithRelationInput[] = [
  * breaking the account's Partner rule, and which currencies fed it.
  */
 async function ledgerRollup(
-  accounts: { id: number; require_partner: boolean }[],
+  accounts: { id: number; ledger: string }[],
   within: { journal: { status: "Posted"; accounting_date: { gte: Date; lte: Date } } }
 ) {
-  const required = accounts.filter((a) => a.require_partner).map((a) => a.id);
-  const unrequired = accounts.filter((a) => !a.require_partner).map((a) => a.id);
+  const required = accounts.filter((a) => ledgerTakesPartner(a.ledger)).map((a) => a.id);
+  const unrequired = accounts.filter((a) => !ledgerTakesPartner(a.ledger)).map((a) => a.id);
   const ids = accounts.map((a) => a.id);
 
   const [sums, missing, unexpected, currencies] = await Promise.all([
@@ -557,7 +557,7 @@ export async function ledgerEntriesPage(
 ): Promise<LedgerEntryPage | null> {
   const account = await prisma.accAccount.findFirst({
     where: { id: accountId, company_id: { in: companyIds } },
-    select: { id: true, normal_balance: true, require_partner: true, company_id: true },
+    select: { id: true, normal_balance: true, ledger: true, company_id: true },
   });
   if (!account) return null;
 
@@ -623,7 +623,7 @@ export async function ledgerEntriesPage(
       description: l.description,
       partnerLabel: l.partner?.partner_label ?? null,
       partnerName: l.partner?.partner_name ?? null,
-      partnerMismatch: partnerMismatch(account.require_partner, l.partner_id),
+      partnerMismatch: partnerMismatch(ledgerTakesPartner(account.ledger), l.partner_id),
       debit: d,
       credit: c,
       balance: running,
@@ -950,7 +950,7 @@ export type ClosingBalance = {
  *
  * This is the grain `acc_journal_line` itself keeps, and taking it straight
  * from the posted lines is the point: an account's Partner split is whatever
- * was actually posted against it, not whatever `require_partner` currently
+ * was actually posted against it, not whatever the account's ledger currently
  * says. Reading the flag instead would drop a partner-bearing balance sitting
  * on an unflagged account, and would invent a null-partner line for an account
  * that has none.

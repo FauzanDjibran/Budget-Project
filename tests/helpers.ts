@@ -234,6 +234,13 @@ export async function makeAccount(options: {
   controlAccount?: boolean;
   /** Names a Partner on every line, of this category. */
   partnerCategoryLabel?: string | null;
+  /**
+   * The account's ledger (Journal 2.0 D18). Defaults to `partner` when a
+   * Partner Category is named and `none` otherwise. `bookLabel` makes it a
+   * subject book's account; `cash_bank` the Cash Bank Book's.
+   */
+  ledger?: "none" | "partner" | "cash_bank";
+  bookLabel?: string;
 }): Promise<number> {
   const key = nextFixture();
   // A fixture account carries a real lineage code: it continues its parent
@@ -260,7 +267,10 @@ export async function makeAccount(options: {
       is_active: options.active ?? true,
       normal_balance: options.normalBalance ?? "Debit",
       is_control_account: options.controlAccount ?? false,
-      require_partner: Boolean(options.partnerCategoryLabel),
+      ledger: options.bookLabel
+        ? "subject_book"
+        : options.ledger ?? (options.partnerCategoryLabel ? "partner" : "none"),
+      ledger_book_id: options.bookLabel ? await budgetCategoryId(options.bookLabel) : null,
       partner_category_id: options.partnerCategoryLabel
         ? await partnerCategoryId(options.partnerCategoryLabel)
         : null,
@@ -363,6 +373,31 @@ export async function cleanupFixtures(): Promise<void> {
   await prisma.accBudgetCategoryAccount.deleteMany({
     where: { bca_code: { startsWith: FIXTURE_PREFIX } },
   });
+
+  // A Jurnal Umum names an account and a Partner on each line, and goes first:
+  // a posted one points at the acc_journal removed below.
+  const generalIds = [
+    ...new Set(
+      (
+        await prisma.accGeneralJournalLine.findMany({
+          where: {
+            OR: [
+              { account: { account_code: { startsWith: FIXTURE_PREFIX } } },
+              { partner: { partner_label: { startsWith: FIXTURE_PREFIX } } },
+            ],
+          },
+          select: { journal_id: true },
+        })
+      ).map((l) => l.journal_id)
+    ),
+  ];
+  if (generalIds.length) {
+    await prisma.accGeneralJournalLine.deleteMany({ where: { journal_id: { in: generalIds } } });
+    await prisma.auditLog.deleteMany({
+      where: { entity_key: "acc_general_journal", row_id: { in: generalIds } },
+    });
+    await prisma.accGeneralJournal.deleteMany({ where: { id: { in: generalIds } } });
+  }
 
   // The application never deletes a journal — it is append-only and immutable
   // (CLAUDE.md §12). A test tearing down its own fixtures is the same

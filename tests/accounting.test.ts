@@ -83,7 +83,11 @@ before(async () => {
   parent = await parentCompanyId();
   child = await childCompanyId();
 
-  cash = await makeAccount({ companyId: parent, subcategoryLabel: CASH_BANK_SUBCATEGORY });
+  cash = await makeAccount({
+    companyId: parent,
+    subcategoryLabel: CASH_BANK_SUBCATEGORY,
+    ledger: "cash_bank",
+  });
   bankHeader = await makeAccount({
     companyId: parent,
     subcategoryLabel: CASH_BANK_SUBCATEGORY,
@@ -93,6 +97,7 @@ before(async () => {
     companyId: parent,
     subcategoryLabel: CASH_BANK_SUBCATEGORY,
     parentId: bankHeader,
+    ledger: "cash_bank",
   });
   receivable = await makeAccount({ companyId: parent, subcategoryLabel: "1.1.3" });
   foreignCash = await makeAccount({ companyId: child, subcategoryLabel: CASH_BANK_SUBCATEGORY });
@@ -100,6 +105,7 @@ before(async () => {
     companyId: parent,
     subcategoryLabel: CASH_BANK_SUBCATEGORY,
     active: false,
+    ledger: "cash_bank",
   });
 
   contested = (
@@ -180,6 +186,13 @@ describe("a Cash & Bank resource may only post to an eligible account", () => {
   test("refuses a deactivated account", async () => {
     const problem = await checkCashBankAccount(inactiveCash, parent);
     assert.match(String(problem), /non-aktif/);
+  });
+
+  test("refuses a Kas account whose ledger is not Kas & Bank", async () => {
+    // One account, one ledger (Journal 2.0 D18): the account declares itself
+    // the Cash Bank Book's before a resource may post to it.
+    const plain = await makeAccount({ companyId: parent, subcategoryLabel: CASH_BANK_SUBCATEGORY });
+    assert.match(String(await checkCashBankAccount(plain, parent)), /ledger Kas & Bank/);
   });
 
   test("refuses an account that does not exist", async () => {

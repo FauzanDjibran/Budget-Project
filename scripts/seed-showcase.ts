@@ -633,8 +633,13 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
     });
     if (existing) continue;
 
-    const account = await prisma.accAccount.findFirstOrThrow({
-      where: { company_id: companyId, account_name: spec.account },
+    const account = await prisma.accAccount.update({
+      where: { id: (await prisma.accAccount.findFirstOrThrow({
+        where: { company_id: companyId, account_name: spec.account },
+        select: { id: true },
+      })).id },
+      // A resource posts only to an account of the Cash Bank Book's ledger.
+      data: { ledger: "cash_bank" },
       select: { id: true },
     });
     const codes = await prisma.mCashBank.findMany({ select: { cash_bank_code: true } });
@@ -2261,6 +2266,18 @@ async function insertMappings(companyId: number, companyLabel: string, actor: nu
     });
     if (existing) continue;
 
+    // One account, one book (Journal 2.0 D18): a book's mapping target
+    // declares that book as its ledger, as the user would on the account form.
+    const keepsBook = await prisma.sysBudgetCategory.count({
+      where: { id: budgetCategoryId, require_partner: true, raises: { not: null } },
+    });
+    if (keepsBook) {
+      await prisma.accAccount.update({
+        where: { id: account.id },
+        data: { ledger: "subject_book", ledger_book_id: budgetCategoryId },
+      });
+    }
+
     const codes = await prisma.accBudgetCategoryAccount.findMany({
       select: { bca_code: true },
     });
@@ -2383,7 +2400,8 @@ async function insertNode(node: AccountNode, ctx: Context): Promise<number> {
       parent_account: ctx.parentId,
       is_postable: !node.header,
       normal_balance: node.balance ?? ctx.groupBalance,
-      require_partner: Boolean(partnerCategoryId),
+      // A Partner account; its mapping makes it a subject book's, below.
+      ledger: partnerCategoryId ? "partner" : "none",
       partner_category_id: partnerCategoryId,
       // A subledger account is exactly the thing a control account reconciles:
       // its GL balance against the Hutang / Piutang / Titipan / Prive book.

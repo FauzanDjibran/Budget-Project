@@ -12,6 +12,7 @@ import {
   type ClassificationCatalogue,
   budgetCategoryNeedsPartner,
 } from "./classification";
+import { LEDGER_TEXT, ledgerTakesPartner } from "./account-code";
 import { isBaseCurrency } from "./currency";
 import type { SystemDefaultKey } from "./system-defaults";
 
@@ -126,7 +127,9 @@ export type Field = {
     | "postableAccount"
     | "parentAccount"
     /** Only the Partner Categories the chosen Budget Category admits. */
-    | "admittedPartnerCategory";
+    | "admittedPartnerCategory"
+    /** Only the Budget Categories that keep a subject book. */
+    | "bookCategory";
   /**
    * Named predicate deciding whether the field applies at all. A field that
    * does not apply is hidden and stored as null — the Server Action evaluates
@@ -134,6 +137,10 @@ export type Field = {
    */
   visibleWhen?:
     | "accountRequiresPartner"
+    /** The account's ledger takes a Partner on every line (Journal 2.0 D18). */
+    | "accountTakesPartner"
+    /** The account's ledger is a subject book, so it names which one. */
+    | "accountKeepsBook"
     | "budgetCategoryRequiresPartner"
     /**
      * A Budget Category that keeps a book **and** moves both ways, so which
@@ -860,12 +867,29 @@ export const ENTITIES: Entity[] = [
         defaultValue: "Debit",
       },
       {
-        name: "require_partner",
-        label: "Require Partner",
-        type: "bool",
-        defaultValue: false,
-        resets: ["partner_category_id"],
-        caption: "Wajib mengisi Partner",
+        // Which ledger the account belongs to (Journal 2.0 D18): what every
+        // line on it must name. One account, one ledger — a Cash & Bank or a
+        // mapping is checked against it, and it is locked once the account has
+        // a journal line (`validateAccount`).
+        name: "ledger",
+        label: "Ledger",
+        type: "select",
+        options: ["none", "partner", "subject_book", "cash_bank"],
+        optionLabels: LEDGER_TEXT,
+        required: true,
+        defaultValue: "none",
+        resets: ["ledger_book_id", "partner_category_id"],
+        help: "yang wajib disebut setiap baris journal",
+      },
+      {
+        name: "ledger_book_id",
+        label: "Buku Subjek",
+        type: "ref",
+        ref: "sys_budget_category",
+        refFilter: "bookCategory",
+        required: true,
+        visibleWhen: "accountKeepsBook",
+        help: "satu Account untuk satu buku",
       },
       {
         name: "partner_category_id",
@@ -873,7 +897,7 @@ export const ENTITIES: Entity[] = [
         type: "ref",
         ref: "sys_partner_category",
         required: true,
-        visibleWhen: "accountRequiresPartner",
+        visibleWhen: "accountTakesPartner",
         help: "satu Account menampung satu Partner Category",
       },
       {
@@ -1122,6 +1146,12 @@ export function fieldApplies(
   if (field.visibleWhen === "accountRequiresPartner") {
     const v = values.require_partner;
     return v === true || v === "true";
+  }
+  if (field.visibleWhen === "accountTakesPartner") {
+    return ledgerTakesPartner(String(values.ledger ?? ""));
+  }
+  if (field.visibleWhen === "accountKeepsBook") {
+    return values.ledger === "subject_book";
   }
   if (field.visibleWhen === "categoryChoosesRaises") {
     const v = values.require_partner;

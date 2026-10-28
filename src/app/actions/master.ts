@@ -15,6 +15,7 @@ import { type Entity, type Field } from "@/lib/siba/entities";
 import {
   SEGMENT_RANGE_TEXT,
   joinCode,
+  ledgerTakesPartner,
   parseSegment,
 } from "@/lib/siba/account-code";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
@@ -27,7 +28,9 @@ import {
   accountUsage,
   checkAccountIsLeaf,
   checkAccountNumber,
+  checkAccountLedger,
   checkCashBankAccount,
+  checkMappingLedger,
   delegate,
   nextCode,
   partnerCategoriesForBudgetCategory,
@@ -232,6 +235,14 @@ async function applicableFields(
     }
     if (field.visibleWhen === "accountRequiresPartner") {
       if (boolValue(values, "require_partner")) applies.add(field.name);
+      continue;
+    }
+    if (field.visibleWhen === "accountTakesPartner") {
+      if (ledgerTakesPartner(String(values.ledger ?? ""))) applies.add(field.name);
+      continue;
+    }
+    if (field.visibleWhen === "accountKeepsBook") {
+      if (values.ledger === "subject_book") applies.add(field.name);
       continue;
     }
     if (field.visibleWhen === "categoryChoosesRaises") {
@@ -481,6 +492,13 @@ async function validateAccount(
     }
   }
 
+  const ledgerError = await checkAccountLedger(
+    currentId,
+    String(values.ledger ?? ""),
+    applies.has("ledger_book_id") ? refValue(values, "ledger_book_id") : null
+  );
+  if (ledgerError) errors.ledger = ledgerError;
+
   return errors;
 }
 
@@ -593,6 +611,10 @@ async function validateMapping(
       // lands — so a mapping may never resolve to one.
       const notLeaf = await checkAccountIsLeaf(accountId);
       if (notLeaf) errors.account_id = notLeaf;
+      else if (budgetCategoryId) {
+        const misfit = await checkMappingLedger(accountId, budgetCategoryId);
+        if (misfit) errors.account_id = misfit;
+      }
     }
   }
 
@@ -721,6 +743,14 @@ async function syncControlAccountsFor(
   actorId: number,
   previousAccountId?: number | null
 ): Promise<void> {
+  if (entityKey === "acc_account") {
+    // The ledger decides it, so an account claims or releases itself; the id
+    // arrives as `previousAccountId`.
+    if (previousAccountId) {
+      await syncControlAccounts([previousAccountId], await systemAccountIds(), actorId);
+    }
+    return;
+  }
   if (entityKey !== "m_cash_bank" && entityKey !== "acc_budget_category_account") {
     return;
   }
@@ -739,6 +769,7 @@ async function currentAccountId(
   entityKey: string,
   id: number
 ): Promise<number | null> {
+  if (entityKey === "acc_account") return id;
   if (entityKey !== "m_cash_bank" && entityKey !== "acc_budget_category_account") {
     return null;
   }
@@ -832,7 +863,12 @@ export async function createRecord(
     return row;
   });
 
-  await syncControlAccountsFor(entity.key, values, actor.user.id);
+  await syncControlAccountsFor(
+    entity.key,
+    values,
+    actor.user.id,
+    entity.key === "acc_account" ? created.id : undefined
+  );
 
   await prisma.auditLog.create({
     data: {

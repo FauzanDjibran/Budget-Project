@@ -71,6 +71,8 @@ const TABLE_OWNERS: Record<string, string[]> = {
   // A module is its data module *and* its Server Action — two layers of one
   // building block, not two modules.
   budBudget: ["src/lib/siba/budget.ts", "src/app/actions/budget.ts"],
+  accGeneralJournal: ["src/lib/siba/general-journal.ts"],
+  accGeneralJournalLine: ["src/lib/siba/general-journal.ts"],
   finCashBankTransaction: [
     "src/lib/siba/finance.ts",
     "src/lib/siba/finance-funded.ts",
