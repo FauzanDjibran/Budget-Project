@@ -724,6 +724,16 @@ table acc_account {
   require_partner             boolean [not null, default: false]
   partner_category_id         int [ref : >? sys_partner_category.id]
 
+  // Which ledger the account belongs to (Journal 2.0 D18), and so what a Jurnal
+  // Umum line on it must name: 'none' nothing; 'partner' a Partner, for the
+  // breakdown only; 'subject_book' a Partner and an open item in
+  // ledger_book_id's book; 'cash_bank' a Cash & Bank. Backfilled from
+  // require_partner, the mappings and the resources; require_partner is
+  // retired once its readers move. CHECK: ledger_book_id is set exactly when
+  // ledger = 'subject_book'. One account, one ledger.
+  ledger                      enum('none', 'partner', 'subject_book', 'cash_bank') [not null, default: 'none']
+  ledger_book_id              int [ref : >? sys_budget_category.id]
+
   is_control_account          boolean [not null, default: false]
 
   note                        text
@@ -1065,6 +1075,89 @@ table acc_journal_line {
   indexes {
     journal_id
     account_id
+  }
+}
+
+// Jurnal Umum (JUM-, Journal 2.0): a journal that may write any money ledger.
+// Every column of acc_journal under the same name and type, so it can later
+// replace that table without being reshaped. Post writes an ordinary posted
+// acc_journal, linked by posted_journal_id.
+table acc_general_journal {
+  id                          int [pk, increment, not null]
+
+  journal_no                  varchar(255) [not null, unique]  // JUM-0001
+  accounting_date             date
+  // Null while a draft, as on a manual journal; Post sets it.
+  posted_at                   timestamptz [default: `transaction_timestamp()`]
+  // Null on a Jurnal Umum. Kept so that, once this table replaces
+  // acc_journal, every posting document writes its journal here.
+  source_doc_type_id          int [ref : >? sys_doc_type.id]
+  source_doc_id               int
+  company_id                  int [not null, ref : > sys_company.id]
+  description                 text [not null]
+  status                      enum('Draft', 'Posted', 'Cancelled') [not null, default: 'Draft']
+  is_manual                   boolean [not null, default: true]
+
+  // The journal Post wrote, while acc_journal is still the ledger.
+  posted_journal_id           int [unique, ref : - acc_journal.id]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
+
+  indexes {
+    (company_id, accounting_date)
+    (source_doc_type_id, source_doc_id)
+  }
+}
+
+// A Jurnal Umum line: every column of acc_journal_line, plus the subject its
+// account's ledger demands. After Post its rows equal the posted
+// acc_journal_line rows one for one, the netted Selisih Kurs included.
+table acc_general_journal_line {
+  id                          int [pk, increment, not null]
+
+  journal_id                  int [not null, ref : > acc_general_journal.id]
+  sequence_no                 int [not null]
+  // Chosen first; it brings its ledger (acc_account.ledger).
+  account_id                  int [not null, ref : > acc_account.id]
+  partner_id                  int [ref : >? m_partner.id]
+  currency_id                 int [not null, ref : > ref_currency.id]
+  // 1 for the base currency; the subject's own kurs where it holds one; typed
+  // only for something new. Nothing records which.
+  exchange_rate               decimal(18,6) [not null, default: 1]
+  // Base currency, exactly as Post writes them to acc_journal_line.
+  debit_amount                decimal(18,2) [not null, default: 0]
+  kredit_amount               decimal(18,2) [not null, default: 0]
+  trx_amount                  decimal(18,2) [not null]
+  description                 text [not null]
+
+  // A weak reference read by the account's ledger adapter, no foreign key:
+  //   subject_book → sub_ledger_balance.id, the open item (null: a new item)
+  //   cash_bank    → m_cash_bank.id
+  subject_id                  int
+  // The rate layer a foreign Cash & Bank line draws on.
+  cash_bank_layer_id          int [ref : >? cash_bank_layer.id]
+  // Saldo baru as typed, and the balance it was typed against; Post refuses
+  // if the object no longer holds balance_before.
+  new_value                   decimal(18,2)
+  balance_before              decimal(18,2)
+  // The one netted Selisih Kurs line, written by the system on save.
+  is_generated                boolean [not null, default: false]
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
+
+  indexes {
+    journal_id
+    account_id
+    (account_id, subject_id)
+    cash_bank_layer_id
   }
 }
 

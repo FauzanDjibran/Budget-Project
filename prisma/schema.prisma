@@ -384,6 +384,7 @@ model SysCompany {
   fiscal_periods   AccFiscalPeriod[]
   opening_balances AccOpeningBalance[]
   system_accounts  AccSystemAccount[]
+  general_journals AccGeneralJournal[]
 
   @@map("sys_company")
 }
@@ -433,6 +434,7 @@ model SysDocType {
   cash_bank_layers  CashBankLayer[]
   journals          AccJournal[]
   subledger_entries SubLedger[]
+  general_journals  AccGeneralJournal[]
 
   @@map("sys_doc_type")
 }
@@ -503,6 +505,7 @@ model SysBudgetCategory {
   reclass_targets    FinItemReclassLine[]              @relation("ReclassTarget")
   sub_ledger_entries SubLedger[]
   sub_ledger_items   SubLedgerBalance[]
+  ledger_accounts    AccAccount[]
 
   @@map("sys_budget_category")
 }
@@ -573,18 +576,19 @@ model RefCurrency {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  cash_banks         MCashBank[]
-  budgets            BudBudget[]
-  transactions       FinCashBankTransaction[]
-  transfers          FinCashBankTransfer[]
-  journal_lines      AccJournalLine[]
-  subledger_entries  SubLedger[]
-  subledger_balances SubLedgerBalance[]
-  funding_requests   FinFundingRequest[]
-  item_adjustments   FinItemAdjustment[]
-  conversions        FinItemConversion[]
-  revaluations       FinCashBankRevaluation[]
-  reclasses          FinItemReclass[]
+  cash_banks            MCashBank[]
+  budgets               BudBudget[]
+  transactions          FinCashBankTransaction[]
+  transfers             FinCashBankTransfer[]
+  journal_lines         AccJournalLine[]
+  subledger_entries     SubLedger[]
+  subledger_balances    SubLedgerBalance[]
+  funding_requests      FinFundingRequest[]
+  item_adjustments      FinItemAdjustment[]
+  conversions           FinItemConversion[]
+  revaluations          FinCashBankRevaluation[]
+  reclasses             FinItemReclass[]
+  general_journal_lines AccGeneralJournalLine[]
 
   @@map("ref_currency")
 }
@@ -619,6 +623,7 @@ model MPartner {
   reclass_targets    FinItemReclassLine[] @relation("ReclassTarget")
 
   opening_balance_lines AccOpeningBalanceLine[]
+  general_journal_lines AccGeneralJournalLine[]
 
   @@index([company_id])
   @@index([category_id])
@@ -882,8 +887,9 @@ model CashBankLayer {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  cash_bank       MCashBank   @relation(fields: [cash_bank_id], references: [id])
-  source_doc_type SysDocType? @relation(fields: [source_doc_type_id], references: [id])
+  cash_bank             MCashBank               @relation(fields: [cash_bank_id], references: [id])
+  source_doc_type       SysDocType?             @relation(fields: [source_doc_type_id], references: [id])
+  general_journal_lines AccGeneralJournalLine[]
 
   @@index([cash_bank_id, status, acquisition_date, acquisition_seq])
   @@index([source_doc_type_id, source_doc_id])
@@ -1141,6 +1147,12 @@ model AccAccount {
   /// Not in the DBML. Locks a subledger account to a single partner category so
   /// subject histories never mix. Replaces the DBML's `partner_type`.
   partner_category_id    Int?
+  /// Which ledger the account belongs to (Journal 2.0 D18): what a Jurnal Umum
+  /// line on it must name. `subject_book` names its one book in
+  /// `ledger_book_id`. Backfilled from `require_partner`, the mappings and the
+  /// Cash & Bank resources; `require_partner` is retired once its readers move.
+  ledger                 AccountLedger @default(none)
+  ledger_book_id         Int?
   is_control_account     Boolean       @default(false)
   note                   String?
   is_active              Boolean       @default(true)
@@ -1150,6 +1162,7 @@ model AccAccount {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
+  ledger_book         SysBudgetCategory?    @relation(fields: [ledger_book_id], references: [id])
   account_subcategory AccAccountSubcategory @relation(fields: [account_subcategory_id], references: [id])
   company             SysCompany            @relation(fields: [company_id], references: [id])
   partner_category    SysPartnerCategory?   @relation(fields: [partner_category_id], references: [id])
@@ -1162,6 +1175,7 @@ model AccAccount {
 
   opening_balance_lines AccOpeningBalanceLine[]
   system_accounts       AccSystemAccount[]
+  general_journal_lines AccGeneralJournalLine[]
 
   @@unique([company_id, account_label])
   @@index([company_id])
@@ -2253,6 +2267,16 @@ enum JournalStatus {
   Cancelled
 }
 
+/// Which ledger an account belongs to (Journal 2.0 D18). `none` touches no
+/// ledger; `partner` needs a Partner for the breakdown only; `subject_book`
+/// a Partner and an open item in its one book; `cash_bank` a Cash & Bank.
+enum AccountLedger {
+  none
+  partner
+  subject_book
+  cash_bank
+}
+
 /// The accounting journal. A `Posted` journal is append-only and immutable:
 /// once posted, a journal and its lines are never updated and never deleted. A
 /// correction is a new journal, exactly as a corrected business transaction is
@@ -2293,9 +2317,10 @@ model AccJournal {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  company         SysCompany       @relation(fields: [company_id], references: [id])
-  source_doc_type SysDocType?      @relation(fields: [source_doc_type_id], references: [id])
+  company         SysCompany         @relation(fields: [company_id], references: [id])
+  source_doc_type SysDocType?        @relation(fields: [source_doc_type_id], references: [id])
   lines           AccJournalLine[]
+  general_journal AccGeneralJournal?
 
   @@index([company_id, accounting_date])
   @@index([source_doc_type_id, source_doc_id])
@@ -2346,6 +2371,99 @@ model AccJournalLine {
   @@index([journal_id])
   @@index([account_id])
   @@map("acc_journal_line")
+}
+
+/// Jurnal Umum (`JUM-`, Journal 2.0): a journal that may write any money
+/// ledger. Every column of `acc_journal` under the same name and type, so it
+/// can later replace that table without being reshaped (plan §6, §8). Post
+/// writes an ordinary posted `acc_journal`, linked by `posted_journal_id`.
+model AccGeneralJournal {
+  id                 Int           @id @default(autoincrement())
+  journal_no         String        @unique
+  accounting_date    DateTime?     @db.Date
+  /// Null while a draft, as on a manual journal; Post sets it.
+  posted_at          DateTime?     @default(dbgenerated("transaction_timestamp()")) @db.Timestamptz(6)
+  /// Null on a Jurnal Umum. Kept so that, once this table replaces
+  /// acc_journal, every posting document writes its journal here.
+  source_doc_type_id Int?
+  source_doc_id      Int?
+  company_id         Int
+  description        String
+  status             JournalStatus @default(Draft)
+  is_manual          Boolean       @default(true)
+
+  /// The journal Post wrote, while acc_journal is still the ledger.
+  posted_journal_id Int? @unique
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  company         SysCompany              @relation(fields: [company_id], references: [id])
+  source_doc_type SysDocType?             @relation(fields: [source_doc_type_id], references: [id])
+  posted_journal  AccJournal?             @relation(fields: [posted_journal_id], references: [id])
+  lines           AccGeneralJournalLine[]
+
+  @@index([company_id, accounting_date])
+  @@index([source_doc_type_id, source_doc_id])
+  @@map("acc_general_journal")
+}
+
+/// A Jurnal Umum line: every column of `acc_journal_line`, plus the subject
+/// its account's ledger demands. After Post its rows equal the posted
+/// `acc_journal_line` rows one for one, the netted Selisih Kurs included.
+model AccGeneralJournalLine {
+  id          Int @id @default(autoincrement())
+  journal_id  Int
+  sequence_no Int
+
+  /// Chosen first; it brings its ledger (`acc_account.ledger`).
+  account_id Int
+  partner_id Int?
+
+  currency_id   Int
+  /// 1 for the base currency; the subject's own kurs where it holds one; typed
+  /// only for something new (D6, D19). Nothing records which.
+  exchange_rate Decimal @default(1) @db.Decimal(18, 6)
+
+  /// Base currency, exactly as Post writes them to acc_journal_line.
+  debit_amount  Decimal @default(0) @db.Decimal(18, 2)
+  kredit_amount Decimal @default(0) @db.Decimal(18, 2)
+  trx_amount    Decimal @db.Decimal(18, 2)
+
+  description String
+
+  /// A weak reference read by the account's ledger adapter (D13): the open
+  /// item (`sub_ledger_balance.id`, null for a new item) on a `subject_book`
+  /// account, the Cash & Bank (`m_cash_bank.id`) on a `cash_bank` one.
+  subject_id         Int?
+  /// The rate layer a foreign Cash & Bank line draws on; the one extra
+  /// reference a ledger is allowed (D19).
+  cash_bank_layer_id Int?
+  /// Saldo baru as typed (D14), and the balance it was typed against. Post
+  /// refuses if the object no longer holds `balance_before`.
+  new_value          Decimal? @db.Decimal(18, 2)
+  balance_before     Decimal? @db.Decimal(18, 2)
+  /// The one netted Selisih Kurs line (D7), written by the system on save.
+  is_generated       Boolean  @default(false)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  journal         AccGeneralJournal @relation(fields: [journal_id], references: [id])
+  account         AccAccount        @relation(fields: [account_id], references: [id])
+  partner         MPartner?         @relation(fields: [partner_id], references: [id])
+  currency        RefCurrency       @relation(fields: [currency_id], references: [id])
+  cash_bank_layer CashBankLayer?    @relation(fields: [cash_bank_layer_id], references: [id])
+
+  @@index([journal_id])
+  @@index([account_id])
+  @@index([account_id, subject_id])
+  @@index([cash_bank_layer_id])
+  @@map("acc_general_journal_line")
 }
 
 /// Every create, update and lifecycle transition in the application appends one

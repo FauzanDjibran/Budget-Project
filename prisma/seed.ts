@@ -177,6 +177,9 @@ const DOC_TYPES: [label: string, table: string][] = [
   // A Revaluasi Kurs writes a Cash Bank Book entry, opens a layer and writes a
   // journal, and each names the document as its source.
   ["Revaluasi Kurs", "fin_cash_bank_revaluation"],
+  // A Jurnal Umum writes the books its lines' accounts name and a journal,
+  // and each names the document as its source.
+  ["Jurnal Umum", "acc_general_journal"],
 ];
 
 /**

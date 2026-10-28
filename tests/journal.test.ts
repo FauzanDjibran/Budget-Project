@@ -316,8 +316,8 @@ describe("the trial balance balances", () => {
 
 describe("the Journal's capabilities are the manual journal's", () => {
   test("the catalogue grants exactly view, create, edit, post and cancel", () => {
-    const journalPermissions = PERMISSION_CODES.filter((c) =>
-      c.startsWith("JOURNAL_")
+    const journalPermissions = PERMISSION_CODES.filter(
+      (c) => c.startsWith("JOURNAL_") && !c.startsWith("JOURNAL_GENERAL_")
     );
     assert.deepEqual(
       journalPermissions,
@@ -329,6 +329,19 @@ describe("the Journal's capabilities are the manual journal's", () => {
         "JOURNAL_CANCEL",
       ],
       "the four write capabilities reach a manual journal's Draft and nothing else"
+    );
+  });
+
+  test("Jurnal Umum has the same five, and no delete either", () => {
+    assert.deepEqual(
+      PERMISSION_CODES.filter((c) => c.startsWith("JOURNAL_GENERAL_")),
+      [
+        "JOURNAL_GENERAL_VIEW",
+        "JOURNAL_GENERAL_CREATE",
+        "JOURNAL_GENERAL_EDIT",
+        "JOURNAL_GENERAL_POST",
+        "JOURNAL_GENERAL_CANCEL",
+      ]
     );
   });
 

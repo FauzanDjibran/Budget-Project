@@ -189,6 +189,14 @@ export const PERMISSIONS = [
   { code: "JOURNAL_EDIT", name: "Ubah Journal Manual", module: "accounting", description: "Hanya selama berstatus Draft." },
   { code: "JOURNAL_POST", name: "Post Journal Manual", module: "accounting", description: "Memasukkan journal ke buku besar. Tidak dapat dibatalkan." },
   { code: "JOURNAL_CANCEL", name: "Batalkan Journal Manual", module: "accounting", description: "Hanya draft yang belum diposting." },
+  // Jurnal Umum may write every money ledger, control accounts included, so it
+  // is one high-clearance set with no split by ledger; Draft → Post is the
+  // review step (Journal 2.0 D12).
+  { code: "JOURNAL_GENERAL_VIEW", name: "Lihat Jurnal Umum", module: "accounting" },
+  { code: "JOURNAL_GENERAL_CREATE", name: "Tambah Jurnal Umum", module: "accounting", description: "Dapat menulis Buku Subjek dan Kas & Bank, termasuk control account." },
+  { code: "JOURNAL_GENERAL_EDIT", name: "Ubah Jurnal Umum", module: "accounting", description: "Hanya selama berstatus Draft." },
+  { code: "JOURNAL_GENERAL_POST", name: "Post Jurnal Umum", module: "accounting", description: "Menulis setiap buku dan buku besar sekaligus. Tidak dapat dibatalkan." },
+  { code: "JOURNAL_GENERAL_CANCEL", name: "Batalkan Jurnal Umum", module: "accounting", description: "Hanya draft yang belum diposting." },
   { code: "REPORT_GENERAL_LEDGER_VIEW", name: "Lihat General Ledger", module: "accounting" },
   { code: "REPORT_TRIAL_BALANCE_VIEW", name: "Lihat Trial Balance", module: "accounting" },
   { code: "REPORT_PROFIT_LOSS_VIEW", name: "Lihat Laba Rugi", module: "accounting" },
