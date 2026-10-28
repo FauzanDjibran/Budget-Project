@@ -136,6 +136,15 @@ export async function itemLowestFrom(
   return { balance: lowest.run / 100, at: formatDate(lowest.at) };
 }
 
+/** What an open item holds at the end of `date`: its entries dated on or before it. */
+export async function itemBalanceOn(itemId: number, date: string, db: Db = prisma): Promise<number> {
+  const sum = await db.subLedger.aggregate({
+    where: { balance_id: itemId, accounting_date: { lte: asDate(date) } },
+    _sum: { movement: true },
+  });
+  return sum._sum.movement?.toNumber() ?? 0;
+}
+
 /** Next entry number, `SBL-0001`. The format lives in `document-number.ts`. */
 async function nextEntryNo(db: Db): Promise<string> {
   return nextDocumentNumber("SBL", async () => {

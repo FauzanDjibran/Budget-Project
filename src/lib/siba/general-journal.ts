@@ -11,7 +11,13 @@ import {
   holdPostingPeriod,
   todayDay,
 } from "./fiscal";
-import { adapterFor, type AdapterLine, type LedgerAdapter } from "./general-journal-ledgers";
+import {
+  adapterFor,
+  type AdapterAccount,
+  type AdapterLine,
+  type LedgerAdapter,
+} from "./general-journal-ledgers";
+import { SubledgerItemUnavailable } from "./subledger";
 import { isBalanced, valueGeneralJournal } from "./general-journal-valuation";
 import {
   JournalImbalance,
@@ -53,14 +59,25 @@ export type GeneralJournalLineValues = {
   currency_id: number | null;
   /** Null on a base-currency line, where the kurs is 1 and is not asked. */
   exchange_rate: number | null;
-  /** In the line's own currency. Exactly one of the two is non-zero. */
+  /** In the line's own currency. Exactly one of the two is non-zero, unless `new_value` is given. */
   debit: number;
   credit: number;
   description: string;
+  /** The entry the line moves in its ledger: an open item; null for a new one. */
+  subject_id?: number | null;
+  /** Saldo baru (D14): the value the entry should hold; the side and amount follow. */
+  new_value?: number | null;
+  /** Left out by the form; Post passes the stored figure back to be held to it. */
+  balance_before?: number | null;
 };
 
 /** A line as it is stored and posted, the Selisih line among them. */
-type ResolvedLine = JournalLineInput & { isGenerated: boolean };
+type ResolvedLine = JournalLineInput & {
+  isGenerated: boolean;
+  subjectId: number | null;
+  newValue: number | null;
+  balanceBefore: number | null;
+};
 
 type Checked = {
   companyId: number;
@@ -68,7 +85,7 @@ type Checked = {
   description: string;
   lines: ResolvedLine[];
   /** The user's lines with their adapters, for Post's locks and writes. */
-  ledgerLines: { adapter: LedgerAdapter; line: AdapterLine }[];
+  ledgerLines: { adapter: LedgerAdapter; line: AdapterLine; account: AdapterAccount }[];
   balanced: boolean;
   imbalance: string | null;
 };
@@ -165,34 +182,38 @@ export async function checkGeneralJournal(
       errors[lineKey(i, "currency_id")] = "Currency wajib dipilih.";
       continue;
     }
-    // A kurs of 1 is right only for base money (CLAUDE.md §10 rule 68).
-    const base = isBaseCurrency(currency.currency_label);
-    const rate = base ? 1 : Number(line.exchange_rate);
-    if (!(rate > 0)) {
-      errors[lineKey(i, "exchange_rate")] =
-        `Kurs ${currency.currency_label} ke ${BASE_CURRENCY_LABEL} wajib diisi.`;
+    const newValue = line.new_value == null ? null : Number(line.new_value);
+    if (newValue != null && !adapter?.takesNewValue) {
+      errors[lineKey(i, "new_value")] = "Saldo baru tidak tersedia untuk account ini.";
       continue;
     }
 
     const d = Math.max(0, Number(line.debit) || 0);
     const c = Math.max(0, Number(line.credit) || 0);
     const onDebit = Math.round(d * 100) > 0;
-    if (onDebit === Math.round(c * 100) > 0) {
+    if (newValue == null && onDebit === Math.round(c * 100) > 0) {
       errors[lineKey(i, "amount")] = onDebit
         ? "Isi debit atau kredit, bukan keduanya."
         : "Nominal wajib diisi pada salah satu sisi.";
       continue;
     }
 
-    // An account with no ledger takes no Partner; one the ledger names is
-    // the adapter's to check.
+    // A kurs of 1 is right only for base money (CLAUDE.md §10 rule 68). An
+    // entry that carries its own kurs overrides the typed one in its adapter.
+    const base = isBaseCurrency(currency.currency_label);
+    // An account with no ledger takes no Partner and no entry; what the ledger
+    // names is the adapter's to check.
     const adapterLine: AdapterLine = {
       accountId: account.id,
       partnerId: adapter ? line.partner_id : null,
       currencyId: currency.id,
       side: onDebit ? "debit" : "credit",
       face: onDebit ? d : c,
-      rate,
+      rate: base ? 1 : Number(line.exchange_rate),
+      subjectId: adapter ? line.subject_id ?? null : null,
+      newValue,
+      balanceBefore: line.balance_before,
+      description: String(line.description ?? "").trim() || description,
     };
     if (adapter) {
       const refused = await adapter.check(adapterLine, account, ctx);
@@ -200,18 +221,28 @@ export async function checkGeneralJournal(
         errors[lineKey(i, field)] = message;
       }
       if (Object.keys(refused).length) continue;
-      ledgerLines.push({ adapter, line: adapterLine });
+      ledgerLines.push({ adapter, line: adapterLine, account });
+    }
+    const rate = adapterLine.rate;
+    if (!(rate > 0)) {
+      errors[lineKey(i, "exchange_rate")] =
+        `Kurs ${currency.currency_label} ke ${BASE_CURRENCY_LABEL} wajib diisi.`;
+      continue;
     }
 
+    const debitSide = adapterLine.side === "debit";
     resolved.push({
       accountId: account.id,
       partnerId: adapterLine.partnerId,
       currencyId: currency.id,
       rate,
-      debit: onDebit ? d : 0,
-      credit: onDebit ? 0 : c,
-      description: String(line.description ?? "").trim() || description,
+      debit: debitSide ? adapterLine.face : 0,
+      credit: debitSide ? 0 : adapterLine.face,
+      description: adapterLine.description,
       isGenerated: false,
+      subjectId: adapterLine.subjectId,
+      newValue,
+      balanceBefore: adapterLine.balanceBefore ?? null,
     });
     valuation.push({
       currencyLabel: currency.currency_label,
@@ -219,6 +250,7 @@ export async function checkGeneralJournal(
       side: adapterLine.side,
       face: adapterLine.face,
       rate,
+      baseAmount: adapterLine.baseAmount,
     });
   }
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -259,6 +291,9 @@ export async function checkGeneralJournal(
       baseAmount: amount,
       description: "Selisih kurs",
       isGenerated: true,
+      subjectId: null,
+      newValue: null,
+      balanceBefore: null,
     });
   }
 
@@ -299,6 +334,9 @@ function lineRows(lines: ResolvedLine[], actorId: number) {
       kredit_amount: onDebit ? 0 : base,
       description: l.description,
       is_generated: l.isGenerated,
+      subject_id: l.subjectId,
+      new_value: l.newValue,
+      balance_before: l.balanceBefore,
       created_by: actorId,
     };
   });
@@ -423,19 +461,27 @@ export async function postGeneralJournal(
     const postedJournalNo = await prisma.$transaction(async (tx) => {
       await holdPostingPeriod(tx, [c.companyId], c.date);
 
-      const keys = c.ledgerLines.flatMap(({ adapter, line }) =>
-        (adapter.lockKeys?.(line) ?? []).map((k) => ({ ...k, adapter }))
+      const keys = c.ledgerLines.flatMap(({ adapter, line, account }) =>
+        (adapter.lockKeys?.(line, account) ?? []).map((k) => ({ ...k, adapter }))
       );
       keys.sort((a, b) => a.rank - b.rank || a.key.localeCompare(b.key));
-      for (const k of keys) await k.adapter.lock?.(tx, [k.key]);
-
-      const ctx = { companyId: c.companyId, date: c.date };
-      for (const { adapter, line } of c.ledgerLines) await adapter.write?.(tx, line, ctx);
+      for (const k of keys) await k.adapter.lock?.(tx, k.key);
 
       const docType = await tx.sysDocType.findFirstOrThrow({
         where: { doc_table: "acc_general_journal" },
         select: { id: true },
       });
+      const ctx = {
+        companyId: c.companyId,
+        date: c.date,
+        actorId,
+        sourceDocTypeId: docType.id,
+        sourceDocId: id,
+      };
+      for (const { adapter, line, account } of c.ledgerLines) {
+        await adapter.write?.(tx, line, account, ctx);
+      }
+
       const posted = await postJournal(tx, {
         companyId: c.companyId,
         description: c.description,
@@ -468,7 +514,9 @@ export async function postGeneralJournal(
     if (error instanceof DryRun) {
       return { ok: true, journalNo: existing.journalNo, postedJournalNo: null, preview };
     }
-    if (error instanceof PeriodShut) return { ok: false, errors: { _form: error.message } };
+    if (error instanceof PeriodShut || error instanceof SubledgerItemUnavailable) {
+      return { ok: false, errors: { _form: error.message } };
+    }
     throw error;
   }
 }
@@ -542,6 +590,9 @@ async function draftOrRefusal(
         debit: onDebit ? l.trx_amount.toNumber() : 0,
         credit: onDebit ? 0 : l.trx_amount.toNumber(),
         description: l.description,
+        subject_id: l.subject_id,
+        new_value: l.new_value?.toNumber() ?? null,
+        balance_before: l.balance_before?.toNumber() ?? null,
       };
     }),
   };
