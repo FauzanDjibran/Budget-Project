@@ -336,12 +336,15 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
   JOIN acc_account a ON a.id = ab.account_id
   WHERE ab.status = 'Active' AND a.ledger = 'category'
 ), acct AS (
-  SELECT DISTINCT m.account_id, c.raises::text AS raises
+  SELECT DISTINCT m.account_id
   FROM mapping m
   JOIN book_cat c ON c.id = m.budget_category_id
   WHERE c.keeps_book
 ), book AS (
-  SELECT m.account_id, s.partner_id, SUM(s.base_movement) AS amount
+  -- In the account's own terms, debit less kredit: each book turned by its own
+  -- direction, so an account holding Hutang and Piutang sums both (D18).
+  SELECT m.account_id, s.partner_id,
+         SUM(CASE WHEN c.raises = 'Out' THEN s.base_movement ELSE -s.base_movement END) AS amount
   FROM sub_ledger s
   JOIN book_cat c ON c.id = s.budget_category_id
   JOIN m_partner p ON p.id = s.partner_id
@@ -350,13 +353,10 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
    AND m.partner_category_id IS NOT DISTINCT FROM p.category_id
   GROUP BY m.account_id, s.partner_id
 ), gl AS (
-  -- Signed the way the book is: a book that rises on money out rises on the
-  -- debit side of its account, one that rises on money in on the credit side.
+  -- Debit less kredit, the measure the book side was turned into.
   SELECT account_id, partner_id, SUM(amount) AS amount
   FROM (
-    SELECT jl.account_id, jl.partner_id,
-           CASE WHEN a.raises = 'Out' THEN jl.debit_amount - jl.kredit_amount
-                ELSE jl.kredit_amount - jl.debit_amount END AS amount
+    SELECT jl.account_id, jl.partner_id, jl.debit_amount - jl.kredit_amount AS amount
     FROM acc_journal_line jl
     JOIN acc_journal j ON j.id = jl.journal_id
     JOIN acct a ON a.account_id = jl.account_id
@@ -364,9 +364,7 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
     UNION ALL
     -- A go-live snapshot (no source year) is where history starts: the book's
     -- Opening entries have no journal line behind them, only this.
-    SELECT ol.account_id, ol.partner_id,
-           CASE WHEN a.raises = 'Out' THEN ol.debit_amount - ol.kredit_amount
-                ELSE ol.kredit_amount - ol.debit_amount END
+    SELECT ol.account_id, ol.partner_id, ol.debit_amount - ol.kredit_amount
     FROM acc_opening_balance_line ol
     JOIN acc_opening_balance o ON o.id = ol.opening_id
     JOIN acct a ON a.account_id = ol.account_id
