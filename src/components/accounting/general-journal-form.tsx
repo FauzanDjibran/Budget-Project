@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { OpenItemSelect } from "@/components/finance/open-item-select";
 import { Amount } from "@/components/ui/amount";
 import { CancelButton } from "@/components/ui/cancel-button";
 import { Combobox } from "@/components/ui/combobox";
@@ -111,8 +112,10 @@ const EMPTY: GeneralJournalOptions = {
  * column the amount is typed in is the line's side, which against the
  * ledger's direction says whether it raises or lowers (D19). An entry that
  * can only move one way — *Item baru*, a layer drawn, *Layer baru* — opens
- * only that column. A Partner account may keep several books; a named item
- * brings its own, and *Item baru* is offered once per book.
+ * only that column. A Partner account may keep several books; a named item,
+ * picked in the open-item dialog, brings its own, while **Baru** opens a new
+ * item in the book chosen beside it — two controls, so no line becomes a new
+ * item by omission (D20).
  *
  * The base figures and the one Selisih Kurs line are the valuation Post runs,
  * from what the options say now; the Server Action values against the
@@ -567,14 +570,14 @@ export function GeneralJournalForm({
             </div>
 
             <div className="tw">
-              <table className="grid ltab" style={{ minWidth: editing ? 1270 : 1060 }}>
+              <table className="grid ltab" style={{ minWidth: editing ? 1330 : 1060 }}>
                 <thead>
                   {editing ? (
                     <tr>
                       <th style={{ width: 34 }}>No</th>
                       <th style={{ width: 210 }}>Account</th>
                       <th style={{ width: 170 }}>Subjek</th>
-                      <th style={{ width: 170 }}>Entri</th>
+                      <th style={{ width: 230 }}>Entri</th>
                       <th style={{ width: 84 }}>Currency</th>
                       <th className="num" style={{ width: 120 }}>Kurs</th>
                       <th className="num" style={{ width: 150 }}>Debit</th>
@@ -609,6 +612,12 @@ export function GeneralJournalForm({
                           .map((id) => by.book.get(id))
                           .filter((b) => b !== undefined);
                         const effect = r.side ? lineEffectText(ledger, r.side, r.book?.raises ?? null) : null;
+                        const isNew = l.subject.startsWith(`${NEW_ITEM}:`);
+                        /** Baru, in a book: a new item only raises, so a lowering amount typed before it goes. */
+                        const openNew = (bookId: number | null) => {
+                          const book = bookId ? by.book.get(bookId) : undefined;
+                          setLine(l.key, { subject: newItem(bookId), ...(book && { [other(raiseOf(book))]: "" }) });
+                        };
                         const fixedRate = Boolean(r.item) || Boolean(r.layer);
                         /** One side's amount: typed, or closed to this entry. */
                         const amountCell = (side: Side) => (
@@ -683,47 +692,58 @@ export function GeneralJournalForm({
                             </td>
                             <td>
                               {ledger === "partner" ? (
-                                <Select
-                                  size="sm"
-                                  searchable
-                                  value={l.subject}
-                                  placeholder="Pilih open item…"
-                                  waitingFor={l.partner_id ? null : "Pilih Partner dulu…"}
-                                  ariaLabel={`Open item baris ${i + 1}`}
-                                  options={[
-                                    ...accountBooks.map((b) => ({
-                                      value: newItem(b.id),
-                                      label: accountBooks.length > 1 ? `Item baru · ${b.name}` : "Item baru",
-                                    })),
-                                    ...options.items
-                                      .filter(
-                                        (it) =>
-                                          r.account?.bookIds.includes(it.bookId) && it.partnerId === l.partner_id
-                                      )
-                                      .map((it) => {
-                                        const cur = by.currency.get(it.currencyId);
-                                        const held = cur?.isBase
-                                          ? formatMoney(it.remaining, cur.label)
-                                          : `${formatMoney(it.remaining, cur?.label)} @ ${formatRate(it.rate)}`;
-                                        return {
-                                          value: String(it.id),
-                                          label: `${it.itemNo} · ${formatDate(it.date)}`,
-                                          hint:
-                                            accountBooks.length > 1
-                                              ? `${by.book.get(it.bookId)?.name} · ${held}`
-                                              : held,
-                                        };
-                                      }),
-                                  ]}
-                                  onChange={(v) => {
-                                    // Item baru only raises: a lowering amount typed before it goes.
-                                    const opens = newItemBook(v);
-                                    setLine(l.key, {
-                                      subject: v,
-                                      ...(opens && { [other(raiseOf(by.book.get(opens)))]: "" }),
-                                    });
-                                  }}
-                                />
+                                // Choosing an item and opening a new one are two controls (D20).
+                                <div style={{ display: "flex", gap: 6 }}>
+                                  <label className={`chk sm${l.partner_id ? "" : " dis"}`} title="Buka item baru">
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`Item baru baris ${i + 1}`}
+                                      disabled={!l.partner_id}
+                                      checked={isNew}
+                                      onChange={() =>
+                                        isNew
+                                          ? setLine(l.key, { subject: "" })
+                                          : openNew(accountBooks.length === 1 ? accountBooks[0].id : null)
+                                      }
+                                    />
+                                    <span className="ct">Baru</span>
+                                  </label>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    {!isNew ? (
+                                      <OpenItemSelect
+                                        single
+                                        value={r.item ? [{ item_id: r.item.id, amount: 0 }] : []}
+                                        items={options.items
+                                          .filter(
+                                            (it) =>
+                                              r.account?.bookIds.includes(it.bookId) && it.partnerId === l.partner_id
+                                          )
+                                          .map((it) => ({
+                                            ...it,
+                                            currencyLabel: by.currency.get(it.currencyId)?.label,
+                                            book: accountBooks.length > 1 ? by.book.get(it.bookId)?.name : undefined,
+                                          }))}
+                                        currencyLabel={BASE_CURRENCY_LABEL}
+                                        direction="In"
+                                        cashRate={null}
+                                        waitingFor={l.partner_id ? null : "Pilih Partner dulu…"}
+                                        invalid={Boolean(errors[`lines.${i}.subject_id`])}
+                                        onChange={(v) => setLine(l.key, { subject: v[0] ? String(v[0].item_id) : "" })}
+                                      />
+                                    ) : accountBooks.length === 1 ? (
+                                      <div className="ro">{accountBooks[0].name}</div>
+                                    ) : (
+                                      <Select
+                                        size="sm"
+                                        value={r.book ? String(r.book.id) : ""}
+                                        placeholder="Pilih Buku…"
+                                        ariaLabel={`Buku item baru baris ${i + 1}`}
+                                        options={accountBooks.map((b) => ({ value: String(b.id), label: b.name }))}
+                                        onChange={(v) => openNew(v ? Number(v) : null)}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
                               ) : foreignCash ? (
                                 <Select
                                   size="sm"

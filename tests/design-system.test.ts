@@ -1637,3 +1637,17 @@ describe("dropdowns share one keyboard model", () => {
     });
   }
 });
+
+/**
+ * Jurnal Umum picks an existing open item in the same dialog a Realisasi
+ * line does, in its single-choice mode, and opens a new one only through its
+ * Baru checkbox (Journal 2.0, D20) — never from a dropdown that mixes the two.
+ */
+describe("an open item is chosen in one dialog", () => {
+  test("Jurnal Umum picks its item with OpenItemSelect, and Baru is its own control", () => {
+    const text = code(files.find((f) => f.rel === "src/components/accounting/general-journal-form.tsx")!.text);
+    assert.match(text, /<OpenItemSelect\s+single/, "the Entri cell opens the open-item dialog");
+    assert.doesNotMatch(text, /placeholder="Pilih open item…"/, "a second open-item picker");
+    assert.doesNotMatch(text, /label: [^\n]*"Item baru/, "Item baru offered as an option beside the items");
+  });
+});

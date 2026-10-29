@@ -102,8 +102,7 @@ const raisingSide = (book: SubledgerDef) => (book.raises === "In" ? "credit" : "
 /**
  * `partner`: a Partner and an open item in one of the account's books (D18,
  * revised 28/10/2026). A named item brings its own book; a new item opens in
- * the book the line names, which may be left out when the account keeps only
- * one. Whether the line raises or lowers is read from its side against that
+ * the book the line names, always (D20). Whether the line raises or lowers is read from its side against that
  * book's `raises` (D19). Lowering names an Open item and relieves it at its
  * own kurs; raising grows a named Open item at its own kurs, or opens a new
  * one at the kurs typed. Every named item holds the balance the draft was
@@ -116,9 +115,10 @@ const partnerAdapter: LedgerAdapter = {
     if (!line.partnerId) return { partner_id: "Account ini wajib menyebut Partner." };
     const item = line.subjectId == null ? null : await subledgerItem(line.subjectId);
     if (line.subjectId != null && !item) return { subject_id: "Open item tidak ditemukan." };
-    line.bookId =
-      item?.bookId ?? line.bookId ?? (account.bookIds.length === 1 ? account.bookIds[0] : null);
-    if (line.bookId == null) return { subject_id: "Pilih buku subjek item baru." };
+    // A new item is a choice the line states by naming its book (D20), even
+    // where the account keeps one: no line becomes a new item by omission.
+    line.bookId = item?.bookId ?? line.bookId;
+    if (line.bookId == null) return { subject_id: "Pilih open item, atau centang Baru dan pilih bukunya." };
     if (!account.bookIds.includes(line.bookId)) {
       return { subject_id: `Buku tersebut tidak ditampung Account ${account.account_label}.` };
     }

@@ -221,8 +221,11 @@ describe("a rupiah Jurnal Umum", () => {
     assert.match(missing.errors["lines.0.partner_id"], /wajib menyebut Partner/);
 
     const stranger = await makePartner({ companyId: company, categoryLabel: "Stakeholder" });
+    const { budget_category_id } = await prisma.accAccountBook.findFirstOrThrow({
+      where: { account_id: pemasaran },
+    });
     const wrong = await checkGeneralJournal(header(), [
-      line(pemasaran, 1_000, 0, { partner_id: stranger }),
+      line(pemasaran, 1_000, 0, { partner_id: stranger, budget_category_id }),
       line(ymh, 0, 1_000),
     ]);
     assert.ok(!wrong.ok);
@@ -385,7 +388,7 @@ describe("the subject_book ledger (Gate B)", () => {
     const held = await openItem("Penerimaan Belum Teridentifikasi", 500, 16_000, foreignCurrency);
     const { id, preview } = await draftAndPost([
       on("Penerimaan Belum Teridentifikasi", 500, 0, { subject_id: held, ...usd(0) }),
-      on("Titipan", 0, 500, { subject_id: null, ...usd(16_300) }),
+      on("Titipan", 0, 500, { subject_id: null, budget_category_id: book("Titipan").categoryId, ...usd(16_300) }),
     ]);
     assert.equal(preview.at(-1)!.debit, 150_000, "Debit Selisih 150.000");
     assert.equal((await subledgerItem(held))!.status, "Cleared");
@@ -410,7 +413,7 @@ describe("the subject_book ledger (Gate B)", () => {
       line(beban, 100, 0),
     ]);
     assert.ok(!unnamed.ok);
-    assert.match(unnamed.errors["lines.0.subject_id"], /buku subjek/);
+    assert.match(unnamed.errors["lines.0.subject_id"], /centang Baru/, "no line becomes a new item by omission");
 
     const titipan = await openItem("Titipan", 1_000, 1, baseCurrency);
     const foreign = await checkGeneralJournal(header(), [
@@ -445,7 +448,10 @@ describe("the subject_book ledger (Gate B)", () => {
     // Piutang admits Stakeholder too, but this account is Piutang's Cabang account.
     const stakeholder = await makePartner({ companyId: company, categoryLabel: "Stakeholder" });
     const refused = await checkGeneralJournal(header(), [
-      line(accounts.Piutang, 100, 0, { partner_id: stakeholder, subject_id: null }),
+      line(accounts.Piutang, 100, 0, {
+        partner_id: stakeholder,
+        budget_category_id: book("Piutang").categoryId,
+      }),
       line(beban, 0, 100),
     ]);
     assert.ok(!refused.ok);
@@ -455,11 +461,18 @@ describe("the subject_book ledger (Gate B)", () => {
   test("a lowering names its item, and never takes it below nothing", async () => {
     const item = await openItem("Piutang", 1_000, 1, baseCurrency);
     const unnamed = await checkGeneralJournal(header(), [
-      on("Piutang", 0, 500, { subject_id: null }),
+      on("Piutang", 0, 500, { subject_id: null, budget_category_id: book("Piutang").categoryId }),
       line(beban, 500, 0),
     ]);
     assert.ok(!unnamed.ok);
     assert.match(unnamed.errors["lines.0.subject_id"], /open item yang dilunasi/);
+
+    const omitted = await checkGeneralJournal(header(), [
+      on("Piutang", 500, 0, { subject_id: null }),
+      line(ymh, 0, 500),
+    ]);
+    assert.ok(!omitted.ok, "a raising line with neither an item nor Baru");
+    assert.match(omitted.errors["lines.0.subject_id"], /centang Baru/);
 
     const over = await checkGeneralJournal(header(), [
       on("Piutang", 0, 1_500, { subject_id: item }),
