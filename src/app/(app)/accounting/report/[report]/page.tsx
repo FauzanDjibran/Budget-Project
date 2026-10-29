@@ -7,7 +7,7 @@ import { requirePermission } from "@/lib/siba/auth";
 import { CompanyFilter, NoCompanyAccess } from "@/components/master/company-filter";
 import { ReportCompany } from "@/components/report/report-run";
 import { companyScope } from "@/lib/siba/company-access";
-import { generalLedgerReport, ledgerAccountOptions } from "@/lib/siba/ledger";
+import { generalLedgerReport, ledgerAccountOptions, ledgerPartnerOptions } from "@/lib/siba/ledger";
 import { TrialBalanceParams } from "@/components/report/trial-balance-params";
 import type { PeriodRange } from "@/lib/siba/period";
 import { parseIds, resolveRange } from "@/lib/siba/report-params";
@@ -59,6 +59,7 @@ export default async function Page({
   searchParams: Promise<{
     company?: string;
     accounts?: string;
+    partners?: string;
     from?: string;
     to?: string;
     year?: string;
@@ -106,8 +107,12 @@ export default async function Page({
   }
 
   const accountIds = parseIds(query.accounts);
+  const partnerIds = parseIds(query.partners);
 
-  const options = await ledgerAccountOptions(company.id);
+  const [options, partnerOptions] = await Promise.all([
+    ledgerAccountOptions(company.id),
+    ledgerPartnerOptions(company.id),
+  ]);
   const runAt = new Date().toISOString();
 
   const filterBar = (
@@ -126,6 +131,7 @@ export default async function Page({
         allPlaceholder="Pilih account…"
         missingHint="Pilih minimal satu account terlebih dahulu."
         companyId={company.id}
+        partnerFilter={{ options: partnerOptions, selectedIds: partnerIds }}
       />
     </>
   );
@@ -134,7 +140,7 @@ export default async function Page({
 
   if (report.key === "general_ledger") {
     const data = accountIds.length
-      ? await generalLedgerReport(accountIds, range, companyIds, { entries: false })
+      ? await generalLedgerReport(accountIds, range, companyIds, { entries: false, partnerIds })
       : null;
 
     return (
@@ -147,6 +153,7 @@ export default async function Page({
             ? `/accounting/report/${slug}/export?${new URLSearchParams({
                 company: String(company.id),
                 accounts: accountIds.join(","),
+                ...(partnerIds.length && { partners: partnerIds.join(",") }),
                 from: range.from,
                 to: range.to,
               })}`
@@ -162,7 +169,7 @@ export default async function Page({
       >
         {data ? (
           <GeneralLedgerReport
-            key={`${range.from}|${range.to}|${accountIds.join(",")}`}
+            key={`${range.from}|${range.to}|${accountIds.join(",")}|${partnerIds.join(",")}`}
             report={data}
           />
         ) : (

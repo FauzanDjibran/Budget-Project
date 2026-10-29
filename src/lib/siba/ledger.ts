@@ -117,13 +117,16 @@ async function openingBasis(
   companyId: number,
   from: Date,
   /** The accounts asked about, or null for "every account this Company has". */
-  accountIds: number[] | null
+  accountIds: number[] | null,
+  /** Only the lines naming these Partners (the General Ledger's filter); none = all. */
+  partnerIds: number[] = []
 ): Promise<OpeningBasis> {
   const snapshot = await openingBasisFor(companyId, from);
 
   const lines = await prisma.accJournalLine.findMany({
     where: {
       ...(accountIds ? { account_id: { in: accountIds } } : {}),
+      ...partnerWhere(partnerIds),
       journal: {
         ...POSTED,
         company_id: companyId,
@@ -147,9 +150,19 @@ async function openingBasis(
 
   if (snapshot) {
     const wanted = accountIds ? new Set(accountIds) : null;
-    for (const [accountId, value] of snapshot.byAccount) {
-      if (wanted && !wanted.has(accountId)) continue;
-      net.set(accountId, value);
+    if (partnerIds.length) {
+      // The snapshot is kept at (account, partner?) grain, so a Partner's
+      // opening is read off it exactly as the lines are filtered.
+      for (const pair of snapshot.byPair) {
+        if (wanted && !wanted.has(pair.accountId)) continue;
+        if (pair.partnerId == null || !partnerIds.includes(pair.partnerId)) continue;
+        net.set(pair.accountId, (net.get(pair.accountId) ?? 0) + pair.net);
+      }
+    } else {
+      for (const [accountId, value] of snapshot.byAccount) {
+        if (wanted && !wanted.has(accountId)) continue;
+        net.set(accountId, value);
+      }
     }
   }
 
@@ -186,6 +199,11 @@ async function openingBasis(
  * unreadable, on the one line of a ledger a reader most expects to be blank.
  * `signedMovement` never produced it, because it subtracts rather than negates.
  */
+/** A journal line filter naming only these Partners; none chosen filters nothing. */
+function partnerWhere(partnerIds: number[]) {
+  return partnerIds.length ? { partner_id: { in: partnerIds } } : {};
+}
+
 function signedNet(normalBalance: string, net: number): number {
   if (net === 0) return 0;
   return normalBalance === "Kredit" ? -net : net;
@@ -201,11 +219,12 @@ function signedNet(normalBalance: string, net: number): number {
  */
 async function basesByCompany(
   accountsByCompany: Map<number, number[] | null>,
-  from: Date
+  from: Date,
+  partnerIds: number[] = []
 ): Promise<Map<number, OpeningBasis>> {
   const out = new Map<number, OpeningBasis>();
   for (const [companyId, ids] of accountsByCompany) {
-    out.set(companyId, await openingBasis(companyId, from, ids));
+    out.set(companyId, await openingBasis(companyId, from, ids, partnerIds));
   }
   return out;
 }
@@ -296,6 +315,8 @@ export type LedgerAccount = {
 
 export type GeneralLedgerReport = {
   range: PeriodRange;
+  /** The Partners the run is narrowed to; empty for every line. */
+  partnerIds: number[];
   accounts: LedgerAccount[];
   /**
    * The Opening Balance the openings were computed from, where there was one.
@@ -332,9 +353,10 @@ export async function generalLedgerReport(
   accountIds: number[],
   range: PeriodRange,
   companyIds: number[],
-  options: { entries?: boolean } = {}
+  options: { entries?: boolean; partnerIds?: number[] } = {}
 ): Promise<GeneralLedgerReport> {
-  if (!accountIds.length) return { range, accounts: [], openingFrom: null };
+  const partnerIds = options.partnerIds ?? [];
+  if (!accountIds.length) return { range, partnerIds, accounts: [], openingFrom: null };
 
   const accounts = await prisma.accAccount.findMany({
     where: { id: { in: accountIds }, company_id: { in: companyIds } },
@@ -349,12 +371,15 @@ export async function generalLedgerReport(
       company: { select: { company_label: true } },
     },
   });
-  if (!accounts.length) return { range, accounts: [], openingFrom: null };
+  if (!accounts.length) return { range, partnerIds, accounts: [], openingFrom: null };
 
   const ids = accounts.map((a) => a.id);
   const from = new Date(`${range.from}T00:00:00Z`);
   const to = new Date(`${range.to}T00:00:00Z`);
-  const within = { journal: { ...POSTED, accounting_date: { gte: from, lte: to } } };
+  const within = {
+    journal: { ...POSTED, accounting_date: { gte: from, lte: to } },
+    ...partnerWhere(partnerIds),
+  };
 
   // Grouped by Company because a snapshot belongs to one, and an account
   // belongs to exactly one Company's chart.
@@ -363,7 +388,7 @@ export async function generalLedgerReport(
     byCompany.set(a.company_id, [...(byCompany.get(a.company_id) ?? []), a.id]);
   }
 
-  const bases = await basesByCompany(byCompany, from);
+  const bases = await basesByCompany(byCompany, from, partnerIds);
   const summary = options.entries === false ? await ledgerRollup(accounts, within) : null;
 
   const lines = summary
@@ -454,7 +479,7 @@ export async function generalLedgerReport(
   });
 
   out.sort((a, b) => compareCodes(a.label, b.label));
-  return { range, accounts: out, openingFrom: provenanceOf(bases) };
+  return { range, partnerIds, accounts: out, openingFrom: provenanceOf(bases) };
 }
 
 /** A ledger's order: by the day, then the journal, then the line within it. */
@@ -472,7 +497,10 @@ const LINE_ORDER: Prisma.AccJournalLineOrderByWithRelationInput[] = [
  */
 async function ledgerRollup(
   accounts: { id: number; ledger: string; partner_category_id: number | null }[],
-  within: { journal: { status: "Posted"; accounting_date: { gte: Date; lte: Date } } }
+  within: {
+    journal: { status: "Posted"; accounting_date: { gte: Date; lte: Date } };
+    partner_id?: { in: number[] };
+  }
 ) {
   const required = accounts.filter((a) => accountTakesPartner(a)).map((a) => a.id);
   const unrequired = accounts.filter((a) => !accountTakesPartner(a)).map((a) => a.id);
@@ -487,12 +515,12 @@ async function ledgerRollup(
     }),
     prisma.accJournalLine.groupBy({
       by: ["account_id"],
-      where: { account_id: { in: required }, partner_id: null, ...within },
+      where: { account_id: { in: required }, AND: [within, { partner_id: null }] },
       _count: { _all: true },
     }),
     prisma.accJournalLine.groupBy({
       by: ["account_id"],
-      where: { account_id: { in: unrequired }, partner_id: { not: null }, ...within },
+      where: { account_id: { in: unrequired }, AND: [within, { partner_id: { not: null } }] },
       _count: { _all: true },
     }),
     prisma.accJournalLine.groupBy({
@@ -554,7 +582,8 @@ export async function ledgerEntriesPage(
   accountId: number,
   range: PeriodRange,
   companyIds: number[],
-  cursor: LedgerCursor | null
+  cursor: LedgerCursor | null,
+  partnerIds: number[] = []
 ): Promise<LedgerEntryPage | null> {
   const account = await prisma.accAccount.findFirst({
     where: { id: accountId, company_id: { in: companyIds } },
@@ -564,7 +593,10 @@ export async function ledgerEntriesPage(
 
   const from = new Date(`${range.from}T00:00:00Z`);
   const to = new Date(`${range.to}T00:00:00Z`);
-  const within = { journal: { ...POSTED, accounting_date: { gte: from, lte: to } } };
+  const within = {
+    journal: { ...POSTED, accounting_date: { gte: from, lte: to } },
+    ...partnerWhere(partnerIds),
+  };
 
   // "After the cursor" in the ledger's order: a later day, a later journal on
   // the same day, or a later line within the same journal.
@@ -583,7 +615,7 @@ export async function ledgerEntriesPage(
       }
     : {};
 
-  const basis = await openingBasis(account.company_id, from, [account.id]);
+  const basis = await openingBasis(account.company_id, from, [account.id], partnerIds);
   let running = signedNet(account.normal_balance, basis.net.get(account.id) ?? 0);
 
   if (cursor) {
@@ -822,6 +854,21 @@ export async function ledgerAccountOptions(companyId: number) {
       // last quarter's figures are exactly when one matters.
       active: true,
     }));
+}
+
+/** The Partners a General Ledger may be narrowed to — every one of the Company, inactive included. */
+export async function ledgerPartnerOptions(companyId: number) {
+  const rows = await prisma.mPartner.findMany({
+    where: { company_id: companyId },
+    orderBy: { partner_label: "asc" },
+    select: { id: true, partner_label: true, partner_name: true, status: true },
+  });
+  return rows.map((p) => ({
+    id: p.id,
+    label: p.partner_label,
+    name: p.partner_name + (p.status === "Active" ? "" : " · non-aktif"),
+    active: true,
+  }));
 }
 
 // -------------------------------------------------------- account positions

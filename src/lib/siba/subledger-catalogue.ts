@@ -80,6 +80,7 @@ export type BookSource = {
   allows_in: boolean;
   allows_out: boolean;
   require_partner: boolean;
+  keeps_book: boolean;
   raises: string | null;
   book_icon: string | null;
   book_closing_label: string | null;
@@ -90,14 +91,14 @@ const DEFAULT_ICON: IconName = "book";
 /**
  * Whether this category keeps a book at all.
  *
- * Two conditions, and both are the category's own statement about itself: it
- * must name a Partner, or the book would have no subject (§10 rule 52), and it
- * must say which way the book runs. A category that names a Partner but has no
- * `raises` is a **setup gap** rather than a category without a book — every
- * screen that lists books simply does not list it yet.
+ * Three conditions, all the category's own statement about itself: it must
+ * name a Partner, or the book would have no subject (§10 rule 52), say it is a
+ * book (`keeps_book`), and say which way the book runs. One naming a Partner
+ * without `keeps_book` is a partner tag: its journal lines carry the Partner
+ * and no book entry is written.
  */
 export function keepsBook(row: BookSource): boolean {
-  return row.require_partner && (row.raises === "In" || row.raises === "Out");
+  return row.require_partner && row.keeps_book && (row.raises === "In" || row.raises === "Out");
 }
 
 /** Builds the book a category keeps, or null where it keeps none. */

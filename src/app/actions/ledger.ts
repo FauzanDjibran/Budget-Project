@@ -27,7 +27,8 @@ export async function loadLedgerEntries(
   accountId: number,
   from: string,
   to: string,
-  cursor: LedgerCursor | null
+  cursor: LedgerCursor | null,
+  partnerIds: number[] = []
 ): Promise<LedgerEntriesResult> {
   let permissions: Awaited<ReturnType<typeof authorizeAction>>["permissions"];
   try {
@@ -38,6 +39,9 @@ export async function loadLedgerEntries(
   }
 
   if (!Number.isInteger(accountId) || !DAY.test(from) || !DAY.test(to)) {
+    return { ok: false, error: "Permintaan tidak valid." };
+  }
+  if (!Array.isArray(partnerIds) || !partnerIds.every((id) => Number.isInteger(id))) {
     return { ok: false, error: "Permintaan tidak valid." };
   }
   if (
@@ -51,7 +55,8 @@ export async function loadLedgerEntries(
     accountId,
     { from, to },
     await accessibleCompanyIds(permissions),
-    cursor
+    cursor,
+    partnerIds
   );
   if (!page) return { ok: false, error: "Account tidak ditemukan." };
   return { ok: true, ...page };

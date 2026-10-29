@@ -14,7 +14,7 @@ import {
 } from "@/lib/siba/statements";
 import { trialBalanceWorkbook } from "@/lib/siba/trial-balance-export";
 import { formatDate, formatMoney, formatTimestamp } from "@/lib/format";
-import { generalLedgerReport } from "@/lib/siba/ledger";
+import { generalLedgerReport, ledgerPartnerOptions } from "@/lib/siba/ledger";
 import { ledgerWorkbook } from "@/lib/siba/ledger-export";
 import { parseIds, resolveRange } from "@/lib/siba/report-params";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
@@ -56,8 +56,13 @@ export async function GET(
     const ids = parseIds(query.accounts);
     if (!ids.length) return new Response("Pilih account terlebih dahulu", { status: 400 });
     const range = resolveRange(query.from, query.to);
-    const data = await generalLedgerReport(ids, range, [company.id]);
+    const partnerIds = parseIds(query.partners);
+    const data = await generalLedgerReport(ids, range, [company.id], { partnerIds });
     const notes = [`Seluruh angka dalam mata uang dasar (${BASE_CURRENCY_LABEL}); saldo bergerak mengikuti normal balance account.`];
+    if (partnerIds.length) {
+      const names = (await ledgerPartnerOptions(company.id)).filter((p) => partnerIds.includes(p.id));
+      notes.push(`Hanya baris journal Partner: ${names.map((p) => `${p.label} ${p.name}`).join(", ")}.`);
+    }
     if (data.openingFrom) {
       notes.push(`Saldo awal diambil dari Opening Balance ${data.openingFrom.openingNo} per ${formatDate(data.openingFrom.date)}.`);
     }

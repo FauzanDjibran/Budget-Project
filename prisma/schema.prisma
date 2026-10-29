@@ -464,15 +464,19 @@ model SysBudgetCategory {
   /// False = this category names no Partner (Asset, Biaya). A mapping row is
   /// then refused rather than merely unused.
   require_partner Boolean @default(true)
+  /// Whether the category keeps a subject book — open items in `sub_ledger`.
+  /// Only a category that names a Partner may; one that names a Partner without
+  /// it is a partner tag: its journal lines carry the Partner and no book entry
+  /// is written. Locked once a Budget is classified into it.
+  keeps_book      Boolean @default(false)
 
   /// Which cash direction *raises* this category's subject position — the one
   /// fact a subject book needs that nothing else in the row predicts. Money out
   /// raises a Piutang and lowers a Hutang, which is balance-sheet logic rather
   /// than cash direction.
   ///
-  /// Null where the category keeps no book. A category keeps one exactly when it
-  /// names a Partner (§10 rule 52), so `require_partner` decides whether a book
-  /// exists and this decides which way it runs.
+  /// Set exactly when `keeps_book` (§10 rule 52); `keeps_book` decides whether a
+  /// book exists and this decides which way it runs.
   raises FlowDirection?
 
   /// Presentation for that book, both optional. The name, the subject line and

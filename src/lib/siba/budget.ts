@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { categoryAccounts } from "./category-accounts";
+import { bookFor } from "./subledger-catalogue";
 import type { Prisma } from "@/generated/prisma/client";
 import { nextDocumentNumber } from "./document-number";
 import {
@@ -250,6 +251,8 @@ export type BudgetCategoryOption = BudgetOption & {
   needsPartner: boolean;
   /** Partner Category labels this budget category admits. */
   partnerCategories: string[];
+  /** The subject book it keeps — null for a partner tag or a category naming no Partner. */
+  book: { name: string; raises: "In" | "Out"; cumulative: boolean } | null;
 };
 
 export type BudgetRefs = {
@@ -327,6 +330,10 @@ export async function budgetRefs(): Promise<BudgetRefs> {
         directions: rule ? directionsOf(rule) : [],
         needsPartner: rule?.requirePartner ?? false,
         partnerCategories: rule?.partnerCategories ?? [],
+        book: (() => {
+          const def = bookFor(c);
+          return def && { name: def.name, raises: def.raises, cumulative: def.nature === "cumulative" };
+        })(),
       };
     }),
     partners: partners.map((p) => ({

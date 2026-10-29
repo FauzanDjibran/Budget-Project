@@ -38,6 +38,7 @@ import {
   makeAccount,
   makeMapping,
   makePartner,
+  partnerCategoryId,
   parentCompanyId,
   prisma,
   setSystemAccount,
@@ -342,6 +343,10 @@ after(async () => {
   // currency, so the books have to be cleared before either can go.
   await cleanupFiscalYear();
   await cleanupFixtures();
+  await prisma.sysBudgetPartnerCategoryMapping.deleteMany({
+    where: { budget_category: { category_label: { startsWith: FIXTURE_PREFIX } } },
+  });
+  await prisma.sysBudgetCategory.deleteMany({ where: { category_label: { startsWith: FIXTURE_PREFIX } } });
   await prisma.refCurrency.deleteMany({
     where: { currency_label: { startsWith: FIXTURE_PREFIX } },
   });
@@ -1385,6 +1390,47 @@ describe("posting writes a balanced journal alongside the book", () => {
  * the document, in one transaction, and none is derived from another.
  */
 describe("posting writes the subject book alongside the cash book", () => {
+  test("a partner tag journals the Partner and writes no subject book", async () => {
+    const karyawan = await partnerCategoryId("Karyawan");
+    const label = `${FIXTURE_PREFIX} Uang Makan`;
+    await prisma.sysBudgetCategory.create({
+      data: {
+        category_code: `bcat.${FIXTURE_PREFIX}tag`,
+        category_label: label,
+        category_name: label,
+        allows_out: true,
+        require_partner: true,
+        keeps_book: false,
+        created_by: actor,
+        partner_categories: {
+          create: { mapping_code: `bpcm.${FIXTURE_PREFIX}tag`, partner_category_id: karyawan, created_by: actor },
+        },
+      },
+    });
+    const account = await makeAccount({
+      companyId: induk,
+      subcategoryLabel: "5.3.1",
+      partnerCategoryLabel: "Karyawan",
+      bookLabels: [label],
+    });
+    const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
+    const cashBank = await makeCashBank({ opening: 1_000_000 });
+    const budget = await makeBudget({ type: "Out", categoryLabel: label, partnerId: partner, amount: 250_000 });
+    const doc = await makeDraft({
+      transaction_type: "Out" as const,
+      cashBankId: cashBank,
+      lines: [{ budgetId: budget, amount: 250_000, outstanding: 250_000 }],
+    });
+    await post(doc);
+
+    assert.equal(await prisma.subLedger.count({ where: { source_doc_id: doc } }), 0, "no book, no entry");
+    const counter = await prisma.accJournalLine.findFirstOrThrow({
+      where: { journal: { source_doc_id: doc }, account_id: account },
+    });
+    assert.equal(counter.partner_id, partner, "the counter line carries the Partner");
+    assert.equal(counter.debit_amount.toNumber(), 250_000);
+  });
+
   test("a Hutang receipt raises the partner's position", async () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
     const cashBank = await makeCashBank({ opening: 1_000_000 });

@@ -10,6 +10,8 @@ import {
 import { entityBySlug, fieldApplies } from "../src/lib/siba/entities";
 import { MODULES } from "../src/lib/siba/nav";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
+import { subledgerForCategory } from "../src/lib/siba/subledger-catalogue";
+import { loadSubledgers } from "../src/lib/siba/subledger-data";
 import { FIXTURE_PREFIX, disconnect, prisma, systemUserId } from "./helpers";
 
 /**
@@ -44,6 +46,7 @@ describe("an inert classification cannot be reached", () => {
         category_name: `${FIXTURE_PREFIX} Inert`,
         allows_out: true,
         require_partner: true,
+        keeps_book: true,
         // The database itself refuses `raises: null` here, which is the other
         // half of the same rule.
         raises: "Out",
@@ -171,6 +174,7 @@ describe("a category and the Partner Categories it admits are one save", () => {
           allows_in: true,
           allows_out: true,
           require_partner: true,
+          keeps_book: true,
           raises: "In",
           created_by: actor,
         },
@@ -316,12 +320,12 @@ describe("Arah is one field over two columns", () => {
       fieldApplies(field, values, undefined, undefined, []);
 
     assert.equal(
-      applies({ require_partner: true, direction_mode: "Both" }),
+      applies({ require_partner: true, keeps_book: true, direction_mode: "Both" }),
       true,
       "a category moving both ways has to say which way its book runs"
     );
     assert.equal(
-      applies({ require_partner: true, direction_mode: "Out" }),
+      applies({ require_partner: true, keeps_book: true, direction_mode: "Out" }),
       false,
       "a Pengeluaran-only book can only rise on Pengeluaran — asking offers one answer"
     );
@@ -330,6 +334,28 @@ describe("Arah is one field over two columns", () => {
       false,
       "a category naming no Partner keeps no book at all"
     );
+    assert.equal(
+      applies({ require_partner: true, keeps_book: false, direction_mode: "Both" }),
+      false,
+      "a partner tag keeps no book, so nothing runs any way"
+    );
+  });
+
+  test("Buku Subjek is offered only where a Partner is named, and gates the book's fields", () => {
+    const field = (name: string) => {
+      const f = entity.fields.find((x) => x.name === name);
+      assert.ok(f, name);
+      return f;
+    };
+    const applies = (name: string, values: Record<string, unknown>) =>
+      fieldApplies(field(name), values, undefined, undefined, []);
+
+    assert.equal(applies("keeps_book", { require_partner: true }), true);
+    assert.equal(applies("keeps_book", { require_partner: false }), false);
+    for (const name of ["book_closing_label", "allows_item_adjustment"]) {
+      assert.equal(applies(name, { require_partner: true, keeps_book: true }), true, name);
+      assert.equal(applies(name, { require_partner: true, keeps_book: false }), false, name);
+    }
   });
 
   test("every seeded category round-trips through the one field", async () => {
@@ -357,3 +383,41 @@ describe("Arah is one field over two columns", () => {
   });
 });
 
+
+describe("a book is a category's own statement", () => {
+  test("the database refuses a book without a Partner, and a direction without a book", async () => {
+    const actorId = await systemUserId();
+    const base = {
+      category_name: `${FIXTURE_PREFIX} Check`,
+      allows_out: true,
+      created_by: actorId,
+    };
+    await assert.rejects(
+      prisma.sysBudgetCategory.create({
+        data: { ...base, category_code: `bcat.${FIXTURE_PREFIX}c1`, category_label: `${FIXTURE_PREFIX} C1`,
+          require_partner: false, keeps_book: true, raises: "Out" },
+      }),
+      "a book needs a subject"
+    );
+    await assert.rejects(
+      prisma.sysBudgetCategory.create({
+        data: { ...base, category_code: `bcat.${FIXTURE_PREFIX}c2`, category_label: `${FIXTURE_PREFIX} C2`,
+          require_partner: true, keeps_book: false, raises: "Out" },
+      }),
+      "a partner tag runs no way"
+    );
+    await assert.rejects(
+      prisma.sysBudgetCategory.create({
+        data: { ...base, category_code: `bcat.${FIXTURE_PREFIX}c3`, category_label: `${FIXTURE_PREFIX} C3`,
+          require_partner: true, keeps_book: false, allows_item_adjustment: true },
+      }),
+      "only a book may be adjusted"
+    );
+    const tag = await prisma.sysBudgetCategory.create({
+      data: { ...base, category_code: `bcat.${FIXTURE_PREFIX}c4`, category_label: `${FIXTURE_PREFIX} C4`,
+        require_partner: true, keeps_book: false },
+      select: { id: true },
+    });
+    assert.equal(subledgerForCategory(await loadSubledgers(), tag.id), null, "a partner tag keeps no book");
+  });
+});

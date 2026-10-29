@@ -19,6 +19,7 @@ import {
 } from "@/lib/siba/account-code";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
 import { bookHasEntries } from "@/lib/siba/subledger";
+import { budgetCountByCategory } from "@/lib/siba/budget";
 import { BASE_CURRENCY_LABEL, isBaseCurrency } from "@/lib/siba/currency";
 import { fiscalYearShape, parseYear } from "@/lib/siba/fiscal";
 import {
@@ -247,10 +248,20 @@ async function applicableFields(
       }
       continue;
     }
+    if (field.visibleWhen === "categoryKeepsBook") {
+      if (boolValue(values, "require_partner") && boolValue(values, "keeps_book")) {
+        applies.add(field.name);
+      }
+      continue;
+    }
     if (field.visibleWhen === "categoryChoosesRaises") {
       // Only a category that keeps a book and moves both ways has a choice to
       // make; a single-direction one has its answer derived below.
-      if (boolValue(values, "require_partner") && values.direction_mode === "Both") {
+      if (
+        boolValue(values, "require_partner") &&
+        boolValue(values, "keeps_book") &&
+        values.direction_mode === "Both"
+      ) {
         applies.add(field.name);
       }
       continue;
@@ -576,7 +587,7 @@ function derivedColumns(
 
   const mode = String(values.direction_mode ?? "");
   const both = mode === "Both";
-  const raises = !boolValue(values, "require_partner")
+  const raises = !boolValue(values, "require_partner") || !boolValue(values, "keeps_book")
     ? null
     : both
       ? (values.raises ?? null)
@@ -837,8 +848,23 @@ export async function updateRecord(
   if (entity.key === "sys_budget_category") {
     const stored = await prisma.sysBudgetCategory.findUnique({
       where: { id },
-      select: { raises: true },
+      select: { raises: true, keeps_book: true },
     });
+    // Turning a book on after Budgets were classified would start it without
+    // the items their realizations never opened; off, it would orphan them.
+    if (
+      stored &&
+      Boolean(data.keeps_book) !== stored.keeps_book &&
+      (await budgetCountByCategory()).get(id)
+    ) {
+      return {
+        ok: false,
+        errors: {
+          keeps_book:
+            "Sudah ada Budget yang diklasifikasikan ke Category ini, sehingga Buku Subjek tidak dapat diubah lagi.",
+        },
+      };
+    }
     if (stored?.raises && (data.raises ?? null) !== stored.raises && (await bookHasEntries(id))) {
       return {
         ok: false,

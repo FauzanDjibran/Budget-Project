@@ -7,12 +7,22 @@ import { Dialog } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import { formatDate, formatMoney, formatTotals, sumByCurrency } from "@/lib/format";
 import type {
+  BudgetCategoryOption,
   BudgetMapping,
   BudgetRefs,
   BudgetRow,
   ClassificationHint,
 } from "@/lib/siba/budget";
 import { BUDGET_TYPE_TEXT } from "@/lib/siba/budget-workflow";
+
+/** What realizing a Budget of this category does to open items, read as `subledgerMovement` does. */
+function itemEffect(book: BudgetCategoryOption["book"], direction: string): string {
+  if (!book) return "Tanpa open item: realisasinya hanya menulis journal, dengan Partner bila ada.";
+  if (book.cumulative) return `Realisasi menambah rincian ${book.name}.`;
+  return direction === book.raises
+    ? `Realisasi membuka open item baru di ${book.name}.`
+    : `Realisasi menyelesaikan open item ${book.name} yang dipilih pada dokumennya.`;
+}
 
 /**
  * Tetapkan Klasifikasi — one Budget Category and Partner for every Budget in
@@ -285,6 +295,12 @@ export function ClassifyDialog({
             pemetaan dibuat.
           </div>
         )
+      ) : null}
+
+      {category && (!needsPartner || partnerId) ? (
+        <div className="apmap">
+          <Icon name="book" size={13} /> {itemEffect(category.book, first.budget_type)}
+        </div>
       ) : null}
     </Dialog>
   );

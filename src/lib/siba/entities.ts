@@ -122,12 +122,7 @@ export type Field = {
   refFilter?:
     | "cashBankAccount"
     | "postableAccount"
-    | "parentAccount"
-    /**
-     * The Budget Categories an account may hold (D25): every one that takes
-     * no Partner, and those taking one that keep a book.
-     */
-    | "accountCategory";
+    | "parentAccount";
   /**
    * Named predicate deciding whether the field applies at all. A field that
    * does not apply is hidden and stored as null — the Server Action evaluates
@@ -146,6 +141,8 @@ export type Field = {
      * much — so asking would be offering one answer.
      */
     | "categoryChoosesRaises"
+    /** A Budget Category that names a Partner and keeps a subject book. */
+    | "categoryKeepsBook"
     /**
      * The chosen `currency_id` is not the base currency. A base-currency
      * resource needs no kurs — asking for one and answering "1" would be a
@@ -654,7 +651,7 @@ export const ENTITIES: Entity[] = [
         label: "Memakai Partner",
         type: "bool",
         span: 4,
-        resets: ["raises", "book_closing_label", "allows_item_adjustment", "partner_category_ids"],
+        resets: ["keeps_book", "raises", "book_closing_label", "allows_item_adjustment", "partner_category_ids"],
         help: "matikan bila kategori ini tidak punya subjek",
       },
       // Chosen here rather than on a menu of its own. A category that names a
@@ -675,8 +672,20 @@ export const ENTITIES: Entity[] = [
         span: 12,
         help: "boleh dipilih saat Budget kategori ini disetujui",
       },
-      // A category that names a Partner keeps a subject book, and these two are
-      // what that book needs. `raises` is the only fact nothing else predicts:
+      // A category that names a Partner may keep a subject book — open items a
+      // Realisasi opens and settles. Without one it is a partner tag: its
+      // journal lines carry the Partner and no book entry is written. Locked
+      // once a Budget is classified into it.
+      {
+        name: "keeps_book",
+        label: "Buku Subjek",
+        type: "bool",
+        visibleWhen: "accountRequiresPartner",
+        span: 4,
+        resets: ["raises", "book_closing_label", "allows_item_adjustment"],
+        help: "realisasi membuka dan menyelesaikan open item",
+      },
+      // A book needs these two. `raises` is the only fact nothing else predicts:
       // money out raises a Piutang and lowers a Hutang, which is balance-sheet
       // logic rather than cash direction. Without it the category has no book —
       // deliberately, because a book running the wrong way is worse than none.
@@ -688,10 +697,9 @@ export const ENTITIES: Entity[] = [
         optionLabels: { Out: "Pengeluaran", In: "Penerimaan" },
         // Required *because* of `visibleWhen`, not despite it: a field that
         // does not apply is skipped by `validate`, so this reads as "mandatory
-        // exactly when the category names a Partner". Naming a Partner means
-        // keeping a book, and a book has to know which way it runs — leaving it
-        // optional produced a category that could be transacted while its
-        // subject book silently recorded nothing.
+        // exactly when the category keeps a book". A book has to know which
+        // way it runs — leaving it optional produced a category that could be
+        // transacted while its subject book silently recorded nothing.
         required: true,
         visibleWhen: "categoryChoosesRaises",
         span: 4,
@@ -701,7 +709,7 @@ export const ENTITIES: Entity[] = [
         name: "book_closing_label",
         label: "Sebutan Saldo Akhir",
         type: "text",
-        visibleWhen: "accountRequiresPartner",
+        visibleWhen: "categoryKeepsBook",
         span: 8,
         placeholder: "Sisa hutang",
         help: "opsional, dipakai pada laporan Buku Subjek",
@@ -715,7 +723,7 @@ export const ENTITIES: Entity[] = [
         name: "allows_item_adjustment",
         label: "Boleh Penyesuaian Open Item",
         type: "bool",
-        visibleWhen: "accountRequiresPartner",
+        visibleWhen: "categoryKeepsBook",
         span: 4,
         help: "posisi dapat disesuaikan tanpa uang",
       },
@@ -888,7 +896,6 @@ export const ENTITIES: Entity[] = [
         label: "Kategori",
         type: "multiref",
         ref: "sys_budget_category",
-        refFilter: "accountCategory",
         joinTable: "acc_account_book",
         virtual: true,
         required: true,
@@ -1095,9 +1102,12 @@ export function fieldApplies(
     const ids = (Array.isArray(raw) ? raw : String(raw ?? "").split(",")).map(Number);
     return ids.some((id) => classification?.find((r) => r.id === id)?.requirePartner);
   }
+  const on = (v: unknown) => v === true || v === "true";
+  if (field.visibleWhen === "categoryKeepsBook") {
+    return on(values.require_partner) && on(values.keeps_book);
+  }
   if (field.visibleWhen === "categoryChoosesRaises") {
-    const v = values.require_partner;
-    return (v === true || v === "true") && values.direction_mode === "Both";
+    return on(values.require_partner) && on(values.keeps_book) && values.direction_mode === "Both";
   }
   if (field.visibleWhen === "currencyIsForeign") {
     const label = currencyLabelOf?.(values.currency_id);

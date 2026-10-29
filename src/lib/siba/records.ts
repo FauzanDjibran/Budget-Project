@@ -262,11 +262,6 @@ export async function optionsFor(
     }
     case "sys_budget_category": {
       const rows = await prisma.sysBudgetCategory.findMany({
-        // An account may hold a category taking no Partner, or one keeping a book (D25).
-        where:
-          filter === "accountCategory"
-            ? { OR: [{ require_partner: false }, { raises: { not: null } }] }
-            : undefined,
         orderBy: { id: "asc" },
       });
       return rows.map((r) => ({
@@ -613,21 +608,28 @@ export async function checkAccountLedger(
         ?.company_id ?? null;
   }
   const books = await loadSubledgers();
+  // An account reconciles against a subject book or it does not, so a book and
+  // a partner tag (a Partner without a book) are never held together.
+  if (takesPartner) {
+    const kept = bookIds.filter((id) => subledgerForCategory(books, id));
+    if (kept.length && kept.length !== bookIds.length) {
+      return "Kategori dengan Buku Subjek dan tanpa Buku Subjek tidak dapat dipegang satu account.";
+    }
+  }
   for (const id of bookIds) {
     const category = await prisma.sysBudgetCategory.findUnique({
       where: { id },
       select: { category_name: true },
     });
     if (!category) return "Kategori tidak ditemukan.";
-    const book = subledgerForCategory(books, id);
     if (takesPartner) {
-      if (!book) return `Kategori ${category.category_name} belum menyebut arah bukunya.`;
       if (!partnerCategoryId) continue;
       const admitted = await prisma.sysBudgetPartnerCategoryMapping.count({
         where: { budget_category_id: id, partner_category_id: partnerCategoryId, status: "Active" },
       });
       if (!admitted) {
-        return `${book.name} tidak menerima Partner Category account ini. ` +
+        const name = subledgerForCategory(books, id)?.name ?? `Kategori ${category.category_name}`;
+        return `${name} tidak menerima Partner Category account ini. ` +
           "Pilih Kategori yang menerimanya, atau ubah Partner Category.";
       }
     }
@@ -1024,14 +1026,13 @@ export async function computedValues(
             ? admitted.join(" · ")
             : "belum diatur",
         budget_count: budgets.get(r.id) ?? 0,
-        // A category keeps a book when it names a Partner *and* says which way
-        // that book runs. Saying which of the two is missing is the point: the
-        // second is a setup gap somebody can close, the first is a decision.
+        // A category naming a Partner without a book is a partner tag, which
+        // reads differently from one naming no Partner at all.
         book: !r.require_partner
           ? "—"
-          : r.raises
+          : r.keeps_book
             ? `Buku ${r.category_label}`
-            : "arah belum diatur",
+            : "Tanpa buku",
       };
     }
   }

@@ -49,7 +49,7 @@ export function GeneralLedgerReport({ report }: { report: Report }) {
   // What each account has loaded so far. A report that arrived with its entries
   // (the export reads it that way) starts with them in place.
   const lazy = useLazyEntries<LedgerEntry, LedgerCursor, number>((id, cursor) =>
-    loadLedgerEntries(id, report.range.from, report.range.to, cursor)
+    loadLedgerEntries(id, report.range.from, report.range.to, cursor, report.partnerIds)
   );
   const loadedOf = (a: Report["accounts"][number]) => lazy.get(a.id, a.entries);
   const loadMore = (a: Report["accounts"][number]) => lazy.more(a.id, a.entries);

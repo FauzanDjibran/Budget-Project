@@ -726,6 +726,37 @@ describe("a Partner account and its books (Journal 2.0 D18)", () => {
       "an account never collides with itself, its Company read off the account");
   });
 
+  test("a partner tag is held by an account of its own, never beside a book", async () => {
+    const actor = await systemUserId();
+    const karyawan = await partnerCategoryId("Karyawan");
+    const tag = await prisma.sysBudgetCategory.create({
+      data: {
+        category_code: `bcat.${FIXTURE_PREFIX}tag`,
+        category_label: `${FIXTURE_PREFIX} Uang Makan`,
+        category_name: `${FIXTURE_PREFIX} Uang Makan`,
+        allows_out: true,
+        require_partner: true,
+        keeps_book: false,
+        created_by: actor,
+        partner_categories: {
+          create: { mapping_code: `bpcm.${FIXTURE_PREFIX}tag`, partner_category_id: karyawan, created_by: actor },
+        },
+      },
+      select: { id: true },
+    });
+    try {
+      const hutang = await budgetCategoryId("Hutang");
+      assert.equal(await checkAccountLedger(null, "category", [tag.id], karyawan, null), null);
+      assert.match(
+        (await checkAccountLedger(null, "category", [hutang, tag.id], karyawan, null)) ?? "",
+        /Buku Subjek dan tanpa Buku Subjek/
+      );
+    } finally {
+      await prisma.sysBudgetPartnerCategoryMapping.deleteMany({ where: { budget_category_id: tag.id } });
+      await prisma.sysBudgetCategory.delete({ where: { id: tag.id } });
+    }
+  });
+
   test("a Kategori without a Partner is held once per Company, and never beside one with (D25)", async () => {
     const company = (await prisma.sysCompany.findFirstOrThrow({ where: { is_parent: true } })).id;
     const [hutang, biaya] = await Promise.all(["Hutang", "Biaya"].map((l) => budgetCategoryId(l)));

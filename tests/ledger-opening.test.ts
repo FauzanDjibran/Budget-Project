@@ -8,6 +8,7 @@ import {
   cleanupFixtures,
   disconnect,
   makeAccount,
+  makePartner,
   parentCompanyId,
   prisma,
   systemUserId,
@@ -51,6 +52,10 @@ let expense = 0;
 let equity = 0;
 /** Carries an opening into 1981 and never moves again. */
 let dormant = 0;
+/** Carries lines of two Partners, for the General Ledger's Partner filter. */
+let tagged = 0;
+let partnerA = 0;
+let partnerB = 0;
 
 const systemAccounts = systemAccountFixture();
 
@@ -83,7 +88,7 @@ async function makeYear(
  */
 async function postFixtureJournal(
   date: string,
-  lines: { accountId: number; debit: number; credit: number }[]
+  lines: { accountId: number; debit: number; credit: number; partnerId?: number }[]
 ): Promise<void> {
   await prisma.accJournal.create({
     data: {
@@ -98,6 +103,7 @@ async function postFixtureJournal(
         create: lines.map((l, i) => ({
           sequence_no: i + 1,
           account_id: l.accountId,
+          partner_id: l.partnerId ?? null,
           currency_id: baseCurrency,
           exchange_rate: 1,
           debit_amount: l.debit,
@@ -240,6 +246,15 @@ before(async () => {
 
   await systemAccounts.set("induk", "accumulated_pl", equity);
 
+  tagged = await makeAccount({ companyId: company, subcategoryLabel: "1.1.4", normalBalance: "Debit" });
+  partnerA = await makePartner({ companyId: company, categoryLabel: "Karyawan" });
+  partnerB = await makePartner({ companyId: company, categoryLabel: "Karyawan" });
+  await postFixtureJournal(`${FY}-05-02`, [
+    { accountId: tagged, debit: 700_000, credit: 0, partnerId: partnerA },
+    { accountId: tagged, debit: 300_000, credit: 0, partnerId: partnerB },
+    { accountId: cash, debit: 0, credit: 1_000_000 },
+  ]);
+
   // 1980: the history the snapshot will fold away.
   await postFixtureJournal(`${FY}-03-15`, [
     { accountId: cash, debit: 9_000_000, credit: 0 },
@@ -262,6 +277,14 @@ before(async () => {
   assert.equal(closed.ok, true, JSON.stringify(closed));
 
   // 1981: movement after the snapshot, which the reports must still add.
+  await postFixtureJournal(`${FY + 1}-03-03`, [
+    { accountId: tagged, debit: 50_000, credit: 0, partnerId: partnerA },
+    { accountId: cash, debit: 0, credit: 50_000 },
+  ]);
+  await postFixtureJournal(`${FY + 1}-08-08`, [
+    { accountId: cash, debit: 120_000, credit: 0 },
+    { accountId: tagged, debit: 0, credit: 120_000, partnerId: partnerB },
+  ]);
   await postFixtureJournal(`${FY + 1}-02-10`, [
     { accountId: expense, debit: 800_000, credit: 0 },
     { accountId: cash, debit: 0, credit: 800_000 },
@@ -279,7 +302,7 @@ after(async () => {
   await disconnect();
 });
 
-const accounts = () => [cash, income, expense, equity, dormant];
+const accounts = () => [cash, income, expense, equity, dormant, tagged];
 
 /** Every account's opening, from the report and from the reference. */
 async function comparedAt(from: string, to: string) {
@@ -516,5 +539,26 @@ describe("the latest snapshot on or before the date is the one used", () => {
       0,
       "a balance sheet carried into a new year has two equal sides"
     );
+  });
+});
+
+describe("the General Ledger narrows to Partners without breaking its arithmetic", () => {
+  const run = async (from: string, partnerIds?: number[]) =>
+    (await generalLedgerReport([tagged], { from, to: `${FY + 1}-12-31` }, [company], { partnerIds })).accounts[0];
+
+  for (const from of [`${FY}-01-01`, `${FY + 1}-01-01`, `${FY + 1}-06-01`]) {
+    test(`each Partner's run adds up to the whole, from ${from}`, async () => {
+      const [all, a, b] = await Promise.all([run(from), run(from, [partnerA]), run(from, [partnerB])]);
+      for (const key of ["opening", "debit", "credit", "closing"] as const) {
+        assert.equal(a[key] + b[key], all[key], `${key} from ${from}`);
+      }
+      const both = await run(from, [partnerA, partnerB]);
+      assert.equal(both.closing, all.closing);
+    });
+  }
+
+  test("a Partner's opening read off the snapshot is that Partner's alone", async () => {
+    assert.equal((await run(`${FY + 1}-01-01`, [partnerA])).opening, 700_000);
+    assert.equal((await run(`${FY + 1}-06-01`, [partnerA])).opening, 750_000);
   });
 });

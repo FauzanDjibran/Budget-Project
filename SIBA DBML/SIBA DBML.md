@@ -225,11 +225,17 @@ table sys_budget_category {
   // yet is a setup gap, which an empty mapping list alone cannot distinguish.
   require_partner             boolean [not null, default: true]
 
-  // A category that names a Partner keeps a subject book, and these three are
-  // that book. `raises` is which cash direction raises the subject's position —
-  // money out raises a Piutang and lowers a Hutang — and is the only fact
-  // nothing else in the row predicts; null means no book yet. The other two are
-  // presentation and fall back, so a book works without them.
+  // Whether the category keeps a subject book. Only one that names a Partner
+  // may (CHECK sys_budget_category_book_needs_partner); one that names a
+  // Partner without a book is a partner tag — its journal lines carry the
+  // Partner and no sub_ledger entry is written. Locked once a Budget is
+  // classified into the category.
+  keeps_book                  boolean [not null, default: false]
+
+  // These three are the book. `raises` is which cash direction raises the
+  // subject's position — money out raises a Piutang and lowers a Hutang — and
+  // is set exactly when keeps_book (CHECK sys_budget_category_book_has_direction).
+  // The other two are presentation and fall back, so a book works without them.
   //
   // The book's identity is this row's id, which is what
   // `sub_ledger.budget_category_id` holds. Its name, its subject line and whether its closing
@@ -245,7 +251,7 @@ table sys_budget_category {
   // correctly and would book income or expense against owner drawings or an
   // investment's own return. Seeded on for Titipan, Hutang and Piutang.
   // CHECK sys_budget_category_item_adjustment_needs_book: only a category that
-  // keeps a book (require_partner and raises set) may carry it.
+  // keeps a book (keeps_book) may carry it.
   allows_item_adjustment      boolean [not null, default: false]
 
   note                        text

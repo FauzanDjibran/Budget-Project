@@ -213,8 +213,9 @@ const BUDGET_CATEGORIES: [
    * a Prive and an Investasi, and *lowers* a Hutang or a Titipan. A book that
    * mirrored the cash flow would print every position backwards.
    *
-   * Null exactly where the category names no Partner, because a book with no
-   * subject is not a book. The pairing is mandatory in both directions:
+   * Null exactly where the category keeps no book, and `keeps_book` is written
+   * from it: every seeded category naming a Partner is a book. One naming a
+   * Partner without a book (a partner tag) is the user's to create. The pairing is mandatory in both directions:
    * `sys_budget_category_partner_implies_book` refuses a row that names a
    * Partner without saying which way its book runs, so a fresh database cannot
    * be seeded at all without this column. It was missing until a reset proved
@@ -733,6 +734,7 @@ async function ensureReferenceData(
             allows_in: directions.includes("In"),
             allows_out: directions.includes("Out"),
             require_partner: _partners.length > 0,
+            keeps_book: raises != null,
             raises,
             allows_item_adjustment: allowsItemAdjustment,
             note,
@@ -892,7 +894,7 @@ async function ensureBudgetCategoryRules(audit: {
   for (const [label, , directions, partners, raises] of BUDGET_CATEGORIES) {
     const category = await prisma.sysBudgetCategory.findFirst({
       where: { category_label: label },
-      select: { id: true, allows_in: true, allows_out: true, raises: true },
+      select: { id: true, allows_in: true, allows_out: true },
     });
     // A category the declaration names but the database does not is not this
     // function's to create — the loop above owns that, and reaching here means
@@ -906,22 +908,11 @@ async function ensureBudgetCategoryRules(audit: {
           allows_in: directions.includes("In"),
           allows_out: directions.includes("Out"),
           require_partner: partners.length > 0,
+          keeps_book: raises != null,
           raises,
         },
       });
       tally("budget category rules backfilled");
-    }
-
-    // A category that predates the column and was repaired by the migration's
-    // rule rather than by name. Filled in only where it is still missing: a
-    // direction somebody has since chosen through the GUI is theirs, and the
-    // seed does not overwrite it.
-    if (partners.length && !category.raises && raises) {
-      await prisma.sysBudgetCategory.update({
-        where: { id: category.id },
-        data: { raises },
-      });
-      tally("budget category book directions backfilled");
     }
 
     if (!partners.length) continue;

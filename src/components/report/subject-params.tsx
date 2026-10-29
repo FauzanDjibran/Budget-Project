@@ -48,6 +48,7 @@ export function SubjectParams({
   extraParams,
   lead,
   dateless = false,
+  partnerFilter,
 }: {
   slug: string;
   subjects: RefOption[];
@@ -77,11 +78,14 @@ export function SubjectParams({
   lead?: React.ReactNode;
   /** A standing position rather than a period's movement: no date row. */
   dateless?: boolean;
+  /** The General Ledger's narrowing to lines naming these Partners (`partners=`). */
+  partnerFilter?: { options: RefOption[]; selectedIds: number[] };
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   const [selected, setSelected] = useState<number[]>(selectedIds);
+  const [partners, setPartners] = useState<number[]>(partnerFilter?.selectedIds ?? []);
   const [start, setStart] = useState(from);
   const [end, setEnd] = useState(to);
 
@@ -97,6 +101,7 @@ export function SubjectParams({
             company: companyId ?? null,
             ...extraParams,
             [param]: selected.join(","),
+            ...(partnerFilter && partners.length ? { partners: partners.join(",") } : {}),
             ...(dateless ? {} : { from: start, to: end }),
           })
         );
@@ -127,6 +132,22 @@ export function SubjectParams({
           />
         </div>
       </div>
+
+      {partnerFilter && (
+        <div className="rrow">
+          <span className="rl">Partner</span>
+          <div className="rf wide">
+            <MultiSelect
+              value={partners}
+              options={partnerFilter.options}
+              placeholder="Tambah Partner…"
+              emptyPlaceholder="Semua Partner"
+              removeTitle="Keluarkan dari laporan"
+              onChange={setPartners}
+            />
+          </div>
+        </div>
+      )}
 
       {!dateless && <PeriodRow start={start} end={end} onStart={setStart} onEnd={setEnd} />}
     </>
