@@ -607,8 +607,10 @@ export async function checkMappingLedger(
  * be a category that keeps one and admits the account's Partner Category, so
  * every Partner the account takes has a place in each of its books. Once the
  * account exists the ledger may change, and a book be dropped, only while no
- * journal line depends on it; every Cash & Bank and mapping naming the account
- * must still fit.
+ * journal line depends on it, and a Cash & Bank naming the account must still
+ * fit. A mapping does not hold an account back (D24): the account is where a
+ * book's account is decided, and a mapping left behind is repointed on its
+ * own form, which still checks it.
  *
  * A book and a Partner Category belong to one account of a Company (D21), as a
  * posting group names one account: Jurnal Umum finds the account from the book
@@ -667,12 +669,10 @@ export async function checkAccountLedger(
     select: {
       ledger: true,
       cash_banks: { select: { cash_bank_label: true } },
-      mappings: { select: { budget_category_id: true } },
     },
   });
   if (!current) return null;
   const currentBooks = await accountBookIds(currentId);
-  const next = { ledger, bookIds };
   const dropsBook = currentBooks.some((id) => !bookIds.includes(id));
   if (current.ledger === ledger && !dropsBook) return null;
 
@@ -685,11 +685,6 @@ export async function checkAccountLedger(
     return `Account ini dipakai Cash & Bank (${current.cash_banks
       .map((c) => c.cash_bank_label)
       .join(", ")}) dan harus tetap memakai ledger Kas & Bank.`;
-  }
-  for (const id of new Set(current.mappings.map((m) => m.budget_category_id))) {
-    const category = await categoryBook(id);
-    const misfit = category && ledgerFitsCategory(next, category);
-    if (misfit) return `Account ini dipakai mapping. ${misfit}`;
   }
   return null;
 }

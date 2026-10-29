@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { KursSelect } from "@/components/finance/kurs-select";
 import { OpenItemSelect } from "@/components/finance/open-item-select";
 import { Amount } from "@/components/ui/amount";
 import { CancelButton } from "@/components/ui/cancel-button";
@@ -122,15 +123,15 @@ const EMPTY: GeneralJournalOptions = {
 /**
  * Jurnal Umum — read, created and edited on the same two cards (Journal 2.0).
  *
- * A line is filled Account → Subjek → Entri → Currency → Kurs → Debit or
- * Kredit, as the manual journal is: the account brings its ledger, and the
- * column the amount is typed in is the line's side, which against the
- * ledger's direction says whether it raises or lowers (D19). An entry that
- * can only move one way — *Item baru*, a layer drawn, *Layer baru* — opens
- * only that column. A Partner account may keep several books; a named item,
- * picked in the open-item dialog, brings its own, while **Baru** opens a new
- * item in the book chosen beside it — two controls, so no line becomes a new
- * item by omission (D20).
+ * A line is filled Jenis → Akun → Partner → Entri → Currency → Kurs → Debit
+ * or Kredit (D22): what the line is written against comes first and its
+ * account follows, and the column the amount is typed in is the line's side,
+ * which against the ledger's direction says whether it raises or lowers
+ * (D19). Choosing an existing entry and opening a new one are two controls:
+ * the open-item or layer dialog, and a **Baru** checkbox beside it (D20, D23),
+ * so no line opens an item or a layer by omission. An entry that can only
+ * move one way — a new item, a layer drawn, a new layer — opens only that
+ * column.
  *
  * The base figures and the one Selisih Kurs line are the valuation Post runs,
  * from what the options say now; the Server Action values against the
@@ -247,10 +248,11 @@ export function GeneralJournalForm({
 
     const raise: Side = ledger === "cash_bank" ? "debit" : raiseOf(book);
     // An entry that can move only one way opens only that column.
+    // A foreign Cash & Bank draws a layer (Kredit) unless Baru opens one (Debit).
     const only: Side | null =
       isNew && book
         ? raise
-        : ledger === "cash_bank" && l.layer_id
+        : ledger === "cash_bank" && currency && !currency.isBase
           ? l.layer_id === NEW_ITEM
             ? "debit"
             : "credit"
@@ -261,10 +263,10 @@ export function GeneralJournalForm({
 
     const layers = cash ? options.layers[cash.id] ?? [] : [];
     const layer = layers.find((x) => String(x.id) === l.layer_id) ?? null;
-    let rate = currency?.isBase ? 1 : Number(l.exchange_rate || 0);
+    // An entry's kurs is the line's from the moment it is chosen.
+    const rate = item?.rate ?? layer?.rate ?? (currency?.isBase ? 1 : Number(l.exchange_rate || 0));
     let base: number | undefined;
     if (item && side) {
-      rate = item.rate;
       const raising = (side === "credit") === (book?.raises === "In");
       base = raising
         ? roundBase(face * item.rate)
@@ -276,7 +278,6 @@ export function GeneralJournalForm({
           : undefined;
     }
     if (layer && side === "credit" && face > 0 && cents(face) <= cents(layer.foreignRemaining)) {
-      rate = layer.rate;
       base = drawLayer(
         { foreign: layer.foreignRemaining, base: layer.baseRemaining, rate: layer.rate },
         cents(face) === cents(layer.foreignRemaining) ? layer.foreignRemaining : face
@@ -646,6 +647,8 @@ export function GeneralJournalForm({
                         const restart = (patch: Partial<DraftLine>) =>
                           setLine(l.key, { ...blankLine(), key: l.key, kind: l.kind, description: l.description, ...patch });
                         const fixedRate = Boolean(r.item) || Boolean(r.layer);
+                        // A kurs is typed only for something new; an entry brings its own.
+                        const typedRate = l.kind === "gl" || r.isNew || l.layer_id === NEW_ITEM;
                         /** One side's amount: typed, or closed to this entry. */
                         const amountCell = (side: Side) => (
                           <td className="num">
@@ -777,25 +780,40 @@ export function GeneralJournalForm({
                                   </div>
                                 </div>
                               ) : foreignCash ? (
-                                <Select
-                                  size="sm"
-                                  value={l.layer_id}
-                                  placeholder="Pilih layer…"
-                                  ariaLabel={`Layer kurs baris ${i + 1}`}
-                                  invalid={Boolean(errors[`lines.${i}.cash_bank_layer_id`])}
-                                  options={[
-                                    { value: NEW_ITEM, label: "Layer baru", hint: "uang masuk, kurs diisi" },
-                                    ...r.layers.map((x) => ({
-                                      value: String(x.id),
-                                      label: `${x.layerNo} · ${formatDate(x.date)}`,
-                                      hint: `${formatMoney(x.foreignRemaining, r.currency!.label)} @ ${formatRate(x.rate)}`,
-                                    })),
-                                  ]}
-                                  // A layer is drawn (Kredit); Layer baru receives (Debit).
-                                  onChange={(v) =>
-                                    setLine(l.key, v === NEW_ITEM ? { layer_id: v, credit: "" } : { layer_id: v, debit: "" })
-                                  }
-                                />
+                                // As an open item: drawing a layer and opening one are two controls.
+                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                  <label className="chk sm" title="Uang masuk membuka layer baru">
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`Layer baru baris ${i + 1}`}
+                                      checked={l.layer_id === NEW_ITEM}
+                                      onChange={() =>
+                                        setLine(
+                                          l.key,
+                                          l.layer_id === NEW_ITEM
+                                            ? { layer_id: "", debit: "" }
+                                            : { layer_id: NEW_ITEM, credit: "", exchange_rate: "" }
+                                        )
+                                      }
+                                    />
+                                    <span className="ct">Baru</span>
+                                  </label>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    {l.layer_id === NEW_ITEM ? (
+                                      dash("layer baru")
+                                    ) : (
+                                      <KursSelect
+                                        size="sm"
+                                        value={r.layer?.id ?? null}
+                                        layers={r.layers}
+                                        currencyLabel={r.currency!.label}
+                                        asOf={journalDate}
+                                        invalid={Boolean(errors[`lines.${i}.cash_bank_layer_id`])}
+                                        onChange={(v) => setLine(l.key, { layer_id: v ? String(v) : "" })}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
                               ) : (
                                 dash()
                               )}
@@ -825,6 +843,8 @@ export function GeneralJournalForm({
                                 dash(r.currency ? "mata uang dasar" : "—")
                               ) : fixedRate ? (
                                 <span className="mny">{formatRate(r.rate)}</span>
+                              ) : !typedRate ? (
+                                dash()
                               ) : (
                                 <RateInput
                                   size="sm"

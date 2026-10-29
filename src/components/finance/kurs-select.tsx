@@ -39,6 +39,7 @@ export function KursSelect({
   invalid,
   disabled,
   asOf,
+  size,
   onChange,
 }: {
   value: number | null;
@@ -48,11 +49,14 @@ export function KursSelect({
   disabled?: boolean;
   /** The document's date: a layer acquired after it is not offered. */
   asOf?: string;
+  /** Inside a line table (Jurnal Umum). */
+  size?: "sm";
   onChange: (value: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
 
   if (!layers.length) {
+    if (size === "sm") return <span className="dash">tidak ada layer</span>;
     return (
       <div className="ro nil">
         Resource ini belum memegang {currencyLabel}. Layer terbentuk saat saldo
@@ -70,7 +74,7 @@ export function KursSelect({
     <>
       <button
         type="button"
-        className={`cbx${invalid ? " bad" : ""}${open ? " open" : ""}${
+        className={`cbx${size === "sm" ? " sm" : ""}${invalid ? " bad" : ""}${open ? " open" : ""}${
           disabled ? " dis" : ""
         }${selected ? "" : " ph"}`}
         disabled={disabled}

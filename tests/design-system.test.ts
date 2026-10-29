@@ -1650,4 +1650,10 @@ describe("an open item is chosen in one dialog", () => {
     assert.doesNotMatch(text, /placeholder="Pilih open item…"/, "a second open-item picker");
     assert.doesNotMatch(text, /label: [^\n]*"Item baru/, "Item baru offered as an option beside the items");
   });
+
+  test("a layer is drawn through KursSelect, and a new one by its own Baru", () => {
+    const text = code(files.find((f) => f.rel === "src/components/accounting/general-journal-form.tsx")!.text);
+    assert.match(text, /<KursSelect\s/, "a rate layer is chosen in its dialog, never a dropdown");
+    assert.doesNotMatch(text, /label: "Layer baru"/, "Layer baru offered as an option beside the layers");
+  });
 });
