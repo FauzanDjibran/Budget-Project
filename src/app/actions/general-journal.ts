@@ -37,11 +37,12 @@ export type GeneralJournalFormLine = {
   side: "debit" | "credit" | "";
   partner_id: string;
   subject_id: string;
+  /** The book a new item opens in, on an account keeping several. */
+  budget_category_id: string;
   cash_bank_layer_id: string;
   currency_id: string;
   exchange_rate: string;
   amount: string;
-  new_value: string;
   description: string;
 };
 
@@ -79,19 +80,19 @@ const decimal = (raw: string | null | undefined): number | null => {
 const asLines = (lines: GeneralJournalFormLine[]): GeneralJournalLineValues[] =>
   lines
     // A row added and never filled in is not a line.
-    .filter((l) => id(l.account_id) !== null || decimal(l.amount) || decimal(l.new_value) !== null)
+    .filter((l) => id(l.account_id) !== null || decimal(l.amount))
     .map((l) => {
       const amount = decimal(l.amount) ?? 0;
       return {
         account_id: id(l.account_id),
         partner_id: id(l.partner_id),
         subject_id: id(l.subject_id),
+        budget_category_id: id(l.budget_category_id),
         cash_bank_layer_id: id(l.cash_bank_layer_id),
         currency_id: id(l.currency_id),
         exchange_rate: decimal(l.exchange_rate),
         debit: l.side === "debit" ? amount : 0,
         credit: l.side === "credit" ? amount : 0,
-        new_value: decimal(l.new_value),
         description: l.description ?? "",
       };
     });

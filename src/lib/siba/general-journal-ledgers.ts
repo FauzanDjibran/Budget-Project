@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatDate, formatNumber } from "@/lib/format";
-import { cashBankBalanceOn, cashBankShortfall, lockCashBanks, recordCashBankEntry } from "./cash-bank";
+import { cashBankShortfall, lockCashBanks, recordCashBankEntry } from "./cash-bank";
 import { LayerNotAvailable, drawFromLayer, openLayer, openLayersOf } from "./cash-bank-layers";
 import { isBaseCurrency } from "./currency";
 import { drawLayer, relieve, roundBase } from "./fx";
@@ -38,12 +38,12 @@ export type AdapterLine = {
   rate: number;
   /** What the line moves: an open item (null for a new one), or a Cash & Bank. */
   subjectId: number | null;
+  /** Partner only: which of the account's books the line writes into. */
+  bookId: number | null;
   /** Cash & Bank only: the rate layer a foreign payment draws on. */
   layerId: number | null;
-  /** Saldo baru as typed (D14); the adapter turns it into `side` and `face`. */
-  newValue: number | null;
   /**
-   * What the entry held on the journal's date when the draft was saved.
+   * What the named open item held on the journal's date when the draft was saved.
    * `undefined` on a save, where the adapter reads it; stored at Post, where a
    * different figure refuses the line.
    */
@@ -57,7 +57,8 @@ export type AdapterAccount = {
   id: number;
   account_label: string;
   partner_category_id: number | null;
-  ledger_book_id: number | null;
+  /** The books a `partner` account keeps (`acc_account_book`). */
+  bookIds: number[];
 };
 
 export type AdapterContext = { companyId: number; date: string };
@@ -71,12 +72,10 @@ export type PostContext = AdapterContext & {
 export type LedgerAdapter = {
   /** Its `acc_account.ledger` value. */
   ledger: string;
-  /** Whether a line may be entered as Saldo baru (D14). */
-  takesNewValue?: boolean;
   /**
    * Refusals keyed by the line's field (`partner_id`, …); empty when sound.
    * The adapter fills what its ledger decides — the kurs an entry carries, the
-   * exact base, the side and amount a Saldo baru comes to — on `line` itself.
+   * exact base, the book — on `line` itself.
    */
   check(
     line: AdapterLine,
@@ -97,59 +96,36 @@ export type LedgerAdapter = {
 
 const cents = (n: number) => Math.round(n * 100);
 
-/**
- * `partner`: a Partner on every line, for the General Ledger's breakdown only.
- * It writes no book, so it neither locks nor writes.
- */
-const partnerAdapter: LedgerAdapter = {
-  ledger: "partner",
-  async check(line, account, ctx): Promise<Record<string, string>> {
-    line.subjectId = null;
-    line.layerId = null;
-    if (!line.partnerId) return { partner_id: "Account ini wajib menyebut Partner." };
-    const partner = await prisma.mPartner.findUnique({
-      where: { id: line.partnerId },
-      select: { company_id: true, status: true, category_id: true },
-    });
-    if (!partner) return { partner_id: "Partner tidak ditemukan." };
-    if (partner.company_id !== ctx.companyId) {
-      return { partner_id: "Partner tersebut milik Company lain." };
-    }
-    if (partner.status !== "Active") return { partner_id: "Partner tersebut non-aktif." };
-    if (account.partner_category_id && partner.category_id !== account.partner_category_id) {
-      return {
-        partner_id: "Partner Category tidak sesuai dengan yang ditetapkan pada Account.",
-      };
-    }
-    return {};
-  },
-};
-
 /** The side of a journal line that raises this book: money in raises a Hutang, credited. */
 const raisingSide = (book: SubledgerDef) => (book.raises === "In" ? "credit" : "debit");
 
-async function bookOf(account: AdapterAccount): Promise<SubledgerDef | null> {
-  return subledgerForCategory(await loadSubledgers(), account.ledger_book_id);
-}
-
 /**
- * `subject_book`: a Partner and an open item in the account's one book (D18).
- * Whether the line raises or lowers is read from its side against the book's
- * `raises` (D19). Lowering names an Open item and relieves it at its own kurs;
- * raising grows a named Open item at its own kurs, or opens a new one at the
- * kurs typed. Every named item holds the balance the draft was saved against,
- * or Post refuses it (D14, Case 10).
+ * `partner`: a Partner and an open item in one of the account's books (D18,
+ * revised 28/10/2026). A named item brings its own book; a new item opens in
+ * the book the line names, which may be left out when the account keeps only
+ * one. Whether the line raises or lowers is read from its side against that
+ * book's `raises` (D19). Lowering names an Open item and relieves it at its
+ * own kurs; raising grows a named Open item at its own kurs, or opens a new
+ * one at the kurs typed. Every named item holds the balance the draft was
+ * saved against, or Post refuses it (Case 10).
  */
-const subjectBookAdapter: LedgerAdapter = {
-  ledger: "subject_book",
-  takesNewValue: true,
+const partnerAdapter: LedgerAdapter = {
+  ledger: "partner",
 
   async check(line, account, ctx): Promise<Record<string, string>> {
-    const book = await bookOf(account);
+    if (!line.partnerId) return { partner_id: "Account ini wajib menyebut Partner." };
+    const item = line.subjectId == null ? null : await subledgerItem(line.subjectId);
+    if (line.subjectId != null && !item) return { subject_id: "Open item tidak ditemukan." };
+    line.bookId =
+      item?.bookId ?? line.bookId ?? (account.bookIds.length === 1 ? account.bookIds[0] : null);
+    if (line.bookId == null) return { subject_id: "Pilih buku subjek item baru." };
+    if (!account.bookIds.includes(line.bookId)) {
+      return { subject_id: `Buku tersebut tidak ditampung Account ${account.account_label}.` };
+    }
+    const book = subledgerForCategory(await loadSubledgers(), line.bookId);
     if (!book) {
       return { account_id: `Account ${account.account_label} menunjuk buku subjek yang tidak aktif.` };
     }
-    if (!line.partnerId) return { partner_id: "Account ini wajib menyebut Partner." };
     const partner = await prisma.mPartner.findUnique({
       where: { id: line.partnerId },
       select: { company_id: true, status: true, category_id: true, partner_label: true },
@@ -158,13 +134,18 @@ const subjectBookAdapter: LedgerAdapter = {
     if (partner.company_id !== ctx.companyId) {
       return { partner_id: "Partner tersebut milik Company lain." };
     }
+    // A book's Partners are split over its accounts by Partner Category; a
+    // Partner on another category's account puts the book and the General
+    // Ledger on different accounts.
+    if (account.partner_category_id && partner.category_id !== account.partner_category_id) {
+      return {
+        partner_id: "Partner Category tidak sesuai dengan yang ditetapkan pada Account.",
+      };
+    }
     const raise = raisingSide(book);
     line.layerId = null;
 
-    if (line.subjectId == null) {
-      if (line.newValue != null) {
-        return { new_value: "Saldo baru hanya untuk open item yang sudah ada." };
-      }
+    if (!item) {
       if (line.side !== raise) {
         return { subject_id: `Pilih open item yang dilunasi: baris ini menurunkan ${book.name}.` };
       }
@@ -187,8 +168,7 @@ const subjectBookAdapter: LedgerAdapter = {
       return {};
     }
 
-    const item = await subledgerItem(line.subjectId);
-    if (!item || item.bookId !== book.categoryId || item.partnerId !== line.partnerId) {
+    if (item.partnerId !== line.partnerId) {
       return { subject_id: "Open item tersebut bukan milik buku dan Partner baris ini." };
     }
     if (item.currencyId !== line.currencyId) {
@@ -211,16 +191,6 @@ const subjectBookAdapter: LedgerAdapter = {
     }
     line.balanceBefore = held;
 
-    if (line.newValue != null) {
-      if (line.newValue < 0) return { new_value: "Saldo baru tidak boleh di bawah nol." };
-      const diff = line.newValue - held;
-      if (cents(diff) === 0) {
-        return { new_value: `Open item ${item.itemNo} sudah bernilai ${formatNumber(held, 2)}.` };
-      }
-      line.side = diff > 0 ? raise : raise === "debit" ? "credit" : "debit";
-      line.face = cents(Math.abs(diff)) / 100;
-    }
-
     line.rate = item.rate;
     if (line.side === raise) {
       line.baseAmount = roundBase(line.face * item.rate);
@@ -242,8 +212,8 @@ const subjectBookAdapter: LedgerAdapter = {
     return {};
   },
 
-  lockKeys(line, account) {
-    return [{ rank: 1, key: `${account.ledger_book_id}:${line.partnerId}:${line.currencyId}` }];
+  lockKeys(line) {
+    return [{ rank: 1, key: `${line.bookId}:${line.partnerId}:${line.currencyId}` }];
   },
 
   async lock(tx, key) {
@@ -251,8 +221,8 @@ const subjectBookAdapter: LedgerAdapter = {
     await lockSubledgerPosition(tx, book, partner, currency);
   },
 
-  async write(tx, line, account, ctx) {
-    const book = (await bookOf(account))!;
+  async write(tx, line, _account, ctx) {
+    const book = subledgerForCategory(await loadSubledgers(), line.bookId)!;
     if (line.subjectId != null) {
       const held = await itemBalanceOn(line.subjectId, ctx.date, tx);
       if (cents(held) !== cents(line.balanceBefore ?? NaN)) {
@@ -286,15 +256,15 @@ const subjectBookAdapter: LedgerAdapter = {
  * `cash_bank`: a Cash & Bank posting to this account. Debit is money in. A
  * foreign resource paying out names one of its layers and gives up that
  * layer's base at its kurs; money arriving opens a new layer at the kurs
- * typed (D10). A rupiah resource holds no layers. Saldo baru holds to the
- * balance it was typed against (D14, Case 7).
+ * typed (D10). A rupiah resource holds no layers.
  */
 const cashBankAdapter: LedgerAdapter = {
   ledger: "cash_bank",
-  takesNewValue: true,
 
   async check(line, account, ctx): Promise<Record<string, string>> {
     line.partnerId = null;
+    line.bookId = null;
+    line.balanceBefore = null;
     if (line.subjectId == null) return { subject_id: "Pilih Cash & Bank." };
     const resource = await prisma.mCashBank.findUnique({
       where: { id: line.subjectId },
@@ -313,26 +283,6 @@ const cashBankAdapter: LedgerAdapter = {
     if (resource.status !== "Active") return { subject_id: "Cash & Bank tersebut non-aktif." };
     if (resource.currency_id !== line.currencyId) {
       return { currency_id: `Currency baris harus sama dengan currency ${resource.cash_bank_label}.` };
-    }
-
-    const stored = line.balanceBefore;
-    line.balanceBefore = null;
-    if (line.newValue != null) {
-      const held = await cashBankBalanceOn(line.subjectId, ctx.date);
-      if (stored !== undefined && cents(stored ?? NaN) !== cents(held)) {
-        return {
-          subject_id: `Saldo ${resource.cash_bank_label} berubah sejak draft disimpan: kini ` +
-            `${formatNumber(held, 2)}. Buka dan simpan ulang draft.`,
-        };
-      }
-      if (line.newValue < 0) return { new_value: "Saldo baru tidak boleh di bawah nol." };
-      const diff = line.newValue - held;
-      if (cents(diff) === 0) {
-        return { new_value: `${resource.cash_bank_label} sudah bersaldo ${formatNumber(held, 2)}.` };
-      }
-      line.side = diff > 0 ? "debit" : "credit";
-      line.face = cents(Math.abs(diff)) / 100;
-      line.balanceBefore = held;
     }
 
     const foreign = !isBaseCurrency(resource.currency.currency_label);
@@ -384,14 +334,6 @@ const cashBankAdapter: LedgerAdapter = {
 
   async write(tx, line, _account, ctx) {
     const cashBankId = line.subjectId!;
-    if (line.newValue != null) {
-      const held = await cashBankBalanceOn(cashBankId, ctx.date, tx);
-      if (cents(held) !== cents(line.balanceBefore ?? NaN)) {
-        throw new LayerNotAvailable(
-          "Saldo Cash & Bank berubah sejak draft disimpan. Buka dan simpan ulang draft."
-        );
-      }
-    }
     const source = {
       sourceDocTypeId: ctx.sourceDocTypeId,
       sourceDocId: ctx.sourceDocId,
@@ -435,7 +377,6 @@ const cashBankAdapter: LedgerAdapter = {
 
 const ADAPTERS: Record<string, LedgerAdapter> = {
   [partnerAdapter.ledger]: partnerAdapter,
-  [subjectBookAdapter.ledger]: subjectBookAdapter,
   [cashBankAdapter.ledger]: cashBankAdapter,
 };
 

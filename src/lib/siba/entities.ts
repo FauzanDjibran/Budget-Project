@@ -139,8 +139,6 @@ export type Field = {
     | "accountRequiresPartner"
     /** The account's ledger takes a Partner on every line (Journal 2.0 D18). */
     | "accountTakesPartner"
-    /** The account's ledger is a subject book, so it names which one. */
-    | "accountKeepsBook"
     | "budgetCategoryRequiresPartner"
     /**
      * A Budget Category that keeps a book **and** moves both ways, so which
@@ -874,22 +872,27 @@ export const ENTITIES: Entity[] = [
         name: "ledger",
         label: "Ledger",
         type: "select",
-        options: ["none", "partner", "subject_book", "cash_bank"],
+        options: ["none", "partner", "cash_bank"],
         optionLabels: LEDGER_TEXT,
         required: true,
         defaultValue: "none",
-        resets: ["ledger_book_id", "partner_category_id"],
+        resets: ["book_ids", "partner_category_id"],
         help: "yang wajib disebut setiap baris journal",
       },
       {
-        name: "ledger_book_id",
+        // A Partner account keeps one or more books — a Hutang Piutang
+        // account keeps both, each still reported on its own. Written in the
+        // account's own transaction (`reconcileMultiref`).
+        name: "book_ids",
         label: "Buku Subjek",
-        type: "ref",
+        type: "multiref",
         ref: "sys_budget_category",
         refFilter: "bookCategory",
+        joinTable: "acc_account_book",
+        virtual: true,
         required: true,
-        visibleWhen: "accountKeepsBook",
-        help: "satu Account untuk satu buku",
+        visibleWhen: "accountTakesPartner",
+        help: "buku yang ditampung account ini",
       },
       {
         name: "partner_category_id",
@@ -1149,9 +1152,6 @@ export function fieldApplies(
   }
   if (field.visibleWhen === "accountTakesPartner") {
     return ledgerTakesPartner(String(values.ledger ?? ""));
-  }
-  if (field.visibleWhen === "accountKeepsBook") {
-    return values.ledger === "subject_book";
   }
   if (field.visibleWhen === "categoryChoosesRaises") {
     const v = values.require_partner;

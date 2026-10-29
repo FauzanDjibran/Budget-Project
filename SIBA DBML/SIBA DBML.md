@@ -721,20 +721,18 @@ table acc_account {
 
   normal_balance              enum('Debit', 'Kredit') [not null]
 
-  // Set exactly when the ledger takes a Partner ('partner', 'subject_book').
+  // Set exactly when the ledger is 'partner', and admitted by each of its books.
   partner_category_id         int [ref : >? sys_partner_category.id]
 
   // Which ledger the account belongs to (Journal 2.0 D18), and so what every
-  // line on it must name: 'none' nothing; 'partner' a Partner, for the
-  // breakdown only; 'subject_book' a Partner and an open item in
-  // ledger_book_id's book; 'cash_bank' a Cash & Bank, and the only ledger a
-  // resource may post to. Replaced require_partner (dropped in
-  // 20261028150000). is_control_account is 'subject_book' or 'cash_bank', plus
-  // the System Account claims. Locked once the account has a journal line.
-  // CHECK: ledger_book_id is set exactly when ledger = 'subject_book'. One
-  // account, one ledger.
-  ledger                      enum('none', 'partner', 'subject_book', 'cash_bank') [not null, default: 'none']
-  ledger_book_id              int [ref : >? sys_budget_category.id]
+  // line on it must name: 'none' nothing; 'partner' a Partner and an open
+  // item in one of the books it keeps (acc_account_book); 'cash_bank' a Cash &
+  // Bank, and the only ledger a resource may post to. Replaced require_partner
+  // (dropped in 20261028150000); 'subject_book' and ledger_book_id merged into
+  // 'partner' in 20261028230000. is_control_account is 'partner' or
+  // 'cash_bank', plus the System Account claims. Locked once the account has a
+  // journal line.
+  ledger                      enum('none', 'partner', 'cash_bank') [not null, default: 'none']
 
   is_control_account          boolean [not null, default: false]
 
@@ -752,6 +750,34 @@ table acc_account {
     (company_id, account_label) [unique]
     company_id
     account_subcategory_id
+  }
+}
+
+// The subject books a 'partner' account keeps, chosen on the account's form.
+// One account may keep several — a Hutang Piutang Karyawan account carries
+// both books, each still reported on its own. A book unticked is set
+// Inactive, never deleted.
+table acc_account_book {
+  id                          int [pk, increment, not null]
+
+  account_book_code           varchar(255) [not null, unique]
+
+  account_id                  int [not null, ref : > acc_account.id]
+  budget_category_id          int [not null, ref : > sys_budget_category.id]
+
+  note                        text
+
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  int [not null]
+  updated_by                  int
+
+  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
+  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
+
+  indexes {
+    (account_id, budget_category_id) [unique]
+    budget_category_id
   }
 }
 
@@ -1137,14 +1163,16 @@ table acc_general_journal_line {
   description                 text [not null]
 
   // A weak reference read by the account's ledger adapter, no foreign key:
-  //   subject_book → sub_ledger_balance.id, the open item (null: a new item)
-  //   cash_bank    → m_cash_bank.id
+  //   partner   → sub_ledger_balance.id, the open item (null: a new item)
+  //   cash_bank → m_cash_bank.id
   subject_id                  int
+  // The book a 'partner' line writes into: one of its account's books, the
+  // named item's own or the one a new item opens in. A plain id.
+  budget_category_id          int
   // The rate layer a foreign Cash & Bank line draws on.
   cash_bank_layer_id          int [ref : >? cash_bank_layer.id]
-  // Saldo baru as typed, and the balance it was typed against; Post refuses
-  // if the object no longer holds balance_before.
-  new_value                   decimal(18,2)
+  // What the named open item held on the journal's date when the draft was
+  // saved; Post refuses if it no longer does.
   balance_before              decimal(18,2)
   // The one netted Selisih Kurs line, written by the system on save.
   is_generated                boolean [not null, default: false]

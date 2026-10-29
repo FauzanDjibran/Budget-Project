@@ -26,6 +26,7 @@ import {
   accountDescendants,
   accountUsage,
   checkAccountIsLeaf,
+  checkAccountLedger,
   checkAccountNumber,
   listRows,
   checkCashBankAccount,
@@ -40,6 +41,8 @@ import {
   makeAccount,
   makeMapping,
   parentCompanyId,
+  partnerCategoryId,
+  budgetCategoryId,
   prisma,
   systemUserId,
 } from "./helpers";
@@ -687,5 +690,17 @@ describe("Company access is a permission, not a preference", () => {
     assert.equal(currency.scope, undefined, "Currency belongs to no Company");
     const rows = await listRows(currency, null);
     assert.ok(rows.length > 0, "a base currency is seeded and stays readable");
+  });
+});
+
+describe("a Partner account and its books (Journal 2.0 D18)", () => {
+  test("may keep several books, each of which admits its Partner Category", async () => {
+    const [hutang, piutang, prive] = await Promise.all(
+      ["Hutang", "Piutang", "Prive"].map((l) => budgetCategoryId(l))
+    );
+    const karyawan = await partnerCategoryId("Karyawan");
+    assert.equal(await checkAccountLedger(null, "partner", [hutang, piutang], karyawan), null);
+    // Prive admits Stakeholder only, so a Karyawan account cannot keep it.
+    assert.match((await checkAccountLedger(null, "partner", [hutang, prive], karyawan)) ?? "", /tidak menerima/);
   });
 });

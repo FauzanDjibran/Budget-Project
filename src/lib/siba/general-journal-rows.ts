@@ -57,7 +57,9 @@ export type GeneralJournalLineRow = {
   accountLabel: string;
   accountName: string;
   ledger: string;
-  /** The book's direction, on a subject-book line. */
+  /** The book a Partner line writes into, and its direction. */
+  bookId: number | null;
+  bookName: string | null;
   raises: "In" | "Out" | null;
   partnerId: number | null;
   partnerLabel: string | null;
@@ -76,7 +78,6 @@ export type GeneralJournalLineRow = {
   subjectLabel: string | null;
   layerId: number | null;
   layerNo: string | null;
-  newValue: number | null;
   balanceBefore: number | null;
 };
 
@@ -110,7 +111,7 @@ export async function getGeneralJournal(
         orderBy: { sequence_no: "asc" },
         include: {
           account: {
-            select: { account_label: true, account_name: true, ledger: true, ledger_book_id: true },
+            select: { account_label: true, account_name: true, ledger: true },
           },
           partner: { select: { partner_label: true, partner_name: true } },
           currency: { select: { currency_label: true } },
@@ -124,7 +125,7 @@ export async function getGeneralJournal(
     j.lines.filter((l) => l.account.ledger === ledger && l.subject_id).map((l) => l.subject_id!);
   const [books, items, cashBanks, layers] = await Promise.all([
     loadSubledgers(),
-    subledgerItemsByIds(subjectIds("subject_book")),
+    subledgerItemsByIds(subjectIds("partner")),
     prisma.mCashBank.findMany({
       where: { id: { in: subjectIds("cash_bank") } },
       select: { id: true, cash_bank_label: true },
@@ -134,34 +135,38 @@ export async function getGeneralJournal(
   const itemNo = new Map(items.map((i) => [i.id, i.itemNo]));
   const cashLabel = new Map(cashBanks.map((c) => [c.id, c.cash_bank_label]));
 
-  const lines = j.lines.map((l) => ({
-    id: l.id,
-    accountId: l.account_id,
-    accountLabel: l.account.account_label,
-    accountName: l.account.account_name,
-    ledger: l.account.ledger,
-    raises: books.find((b) => b.categoryId === l.account.ledger_book_id)?.raises ?? null,
-    partnerId: l.partner_id,
-    partnerLabel: l.partner?.partner_label ?? null,
-    partnerName: l.partner?.partner_name ?? null,
-    currencyId: l.currency_id,
-    currencyLabel: l.currency.currency_label,
-    foreign: !isBaseCurrency(l.currency.currency_label),
-    rate: l.exchange_rate.toNumber(),
-    trxAmount: l.trx_amount.toNumber(),
-    debit: l.debit_amount.toNumber(),
-    credit: l.kredit_amount.toNumber(),
-    description: l.description,
-    isGenerated: l.is_generated,
-    subjectId: l.subject_id,
-    subjectLabel: l.subject_id
-      ? (l.account.ledger === "cash_bank" ? cashLabel.get(l.subject_id) : itemNo.get(l.subject_id)) ?? null
-      : null,
-    layerId: l.cash_bank_layer_id,
-    layerNo: l.cash_bank_layer_id ? layers.get(l.cash_bank_layer_id)?.layerNo ?? null : null,
-    newValue: l.new_value?.toNumber() ?? null,
-    balanceBefore: l.balance_before?.toNumber() ?? null,
-  }));
+  const lines = j.lines.map((l) => {
+    const book = books.find((b) => b.categoryId === l.budget_category_id);
+    return {
+      id: l.id,
+      accountId: l.account_id,
+      accountLabel: l.account.account_label,
+      accountName: l.account.account_name,
+      ledger: l.account.ledger,
+      bookId: l.budget_category_id,
+      bookName: book?.name ?? null,
+      raises: book?.raises ?? null,
+      partnerId: l.partner_id,
+      partnerLabel: l.partner?.partner_label ?? null,
+      partnerName: l.partner?.partner_name ?? null,
+      currencyId: l.currency_id,
+      currencyLabel: l.currency.currency_label,
+      foreign: !isBaseCurrency(l.currency.currency_label),
+      rate: l.exchange_rate.toNumber(),
+      trxAmount: l.trx_amount.toNumber(),
+      debit: l.debit_amount.toNumber(),
+      credit: l.kredit_amount.toNumber(),
+      description: l.description,
+      isGenerated: l.is_generated,
+      subjectId: l.subject_id,
+      subjectLabel: l.subject_id
+        ? (l.account.ledger === "cash_bank" ? cashLabel.get(l.subject_id) : itemNo.get(l.subject_id)) ?? null
+        : null,
+      layerId: l.cash_bank_layer_id,
+      layerNo: l.cash_bank_layer_id ? layers.get(l.cash_bank_layer_id)?.layerNo ?? null : null,
+      balanceBefore: l.balance_before?.toNumber() ?? null,
+    };
+  });
   const total = (k: "debit" | "credit") =>
     Math.round(lines.reduce((t, l) => t + l[k], 0) * 100) / 100;
 
@@ -188,11 +193,12 @@ export type GeneralJournalOptions = {
     label: string;
     name: string;
     ledger: string;
-    bookId: number | null;
+    /** The books a Partner account keeps. */
+    bookIds: number[];
     partnerCategoryId: number | null;
   }[];
   partners: { id: number; label: string; name: string; categoryId: number }[];
-  books: { id: number; name: string; raises: "In" | "Out"; partnerCategoryIds: number[] }[];
+  books: { id: number; name: string; raises: "In" | "Out" }[];
   items: SubledgerItem[];
   cashBanks: {
     id: number;
@@ -212,7 +218,7 @@ export type GeneralJournalOptions = {
  * pickers offer. The Server Action re-checks every choice.
  */
 export async function generalJournalOptions(companyId: number): Promise<GeneralJournalOptions> {
-  const [accounts, partners, currencies, books, pairs, cashBanks, balances] = await Promise.all([
+  const [accounts, partners, currencies, books, cashBanks, balances] = await Promise.all([
     prisma.accAccount.findMany({
       where: { company_id: companyId, is_active: true, is_postable: true, children: { none: {} } },
       select: {
@@ -220,8 +226,12 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
         account_label: true,
         account_name: true,
         ledger: true,
-        ledger_book_id: true,
         partner_category_id: true,
+        books: {
+          where: { status: "Active" },
+          select: { budget_category_id: true },
+          orderBy: { budget_category_id: "asc" },
+        },
       },
     }),
     prisma.mPartner.findMany({
@@ -235,10 +245,6 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
       select: { id: true, currency_label: true, currency_name: true },
     }),
     loadSubledgers(),
-    prisma.sysBudgetPartnerCategoryMapping.findMany({
-      where: { status: "Active", partner_category: { status: "Active" } },
-      select: { budget_category_id: true, partner_category_id: true },
-    }),
     prisma.mCashBank.findMany({
       where: { company_id: companyId, status: "Active" },
       orderBy: { cash_bank_label: "asc" },
@@ -262,7 +268,7 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
         label: a.account_label,
         name: a.account_name,
         ledger: a.ledger,
-        bookId: a.ledger_book_id,
+        bookIds: a.books.map((b) => b.budget_category_id),
         partnerCategoryId: a.partner_category_id,
       })),
     partners: partners.map((p) => ({
@@ -275,9 +281,6 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
       id: b.categoryId,
       name: b.name,
       raises: b.raises,
-      partnerCategoryIds: pairs
-        .filter((p) => p.budget_category_id === b.categoryId)
-        .map((p) => p.partner_category_id),
     })),
     items,
     cashBanks: cashBanks.map((c) => ({

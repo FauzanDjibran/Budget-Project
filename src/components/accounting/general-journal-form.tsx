@@ -65,7 +65,6 @@ type DraftLine = {
   /** In the line's own currency; one of the two is filled, and that is its side. */
   debit: string;
   credit: string;
-  new_value: string;
   description: string;
 };
 
@@ -80,11 +79,14 @@ const blankLine = (): DraftLine => ({
   exchange_rate: "",
   debit: "",
   credit: "",
-  new_value: "",
   description: "",
 });
 
 const NEW_ITEM = "new";
+/** A new open item, in the book it opens in: `new:<book id>`. */
+const newItem = (bookId: number | null) => `${NEW_ITEM}:${bookId ?? ""}`;
+const newItemBook = (subject: string) =>
+  subject.startsWith(`${NEW_ITEM}:`) ? Number(subject.slice(NEW_ITEM.length + 1)) || null : null;
 const cents = (n: number) => Math.round(n * 100);
 const other = (s: Side): Side => (s === "debit" ? "credit" : "debit");
 /** The side that raises a book: money in raises a Hutang, credited. */
@@ -109,8 +111,8 @@ const EMPTY: GeneralJournalOptions = {
  * column the amount is typed in is the line's side, which against the
  * ledger's direction says whether it raises or lowers (D19). An entry that
  * can only move one way — *Item baru*, a layer drawn, *Layer baru* — opens
- * only that column. **Saldo Baru** states the value an entry should hold;
- * the side and amount follow (D14).
+ * only that column. A Partner account may keep several books; a named item
+ * brings its own, and *Item baru* is offered once per book.
  *
  * The base figures and the one Selisih Kurs line are the valuation Post runs,
  * from what the options say now; the Server Action values against the
@@ -148,8 +150,10 @@ export function GeneralJournalForm({
             account_id: l.accountId,
             partner_id: l.partnerId,
             subject:
-              l.ledger === "subject_book"
-                ? String(l.subjectId ?? NEW_ITEM)
+              l.ledger === "partner"
+                ? l.subjectId
+                  ? String(l.subjectId)
+                  : newItem(l.bookId)
                 : l.subjectId
                   ? String(l.subjectId)
                   : "",
@@ -160,9 +164,8 @@ export function GeneralJournalForm({
                 : "",
             currency_id: l.currencyId,
             exchange_rate: l.foreign ? String(l.rate) : "",
-            debit: l.newValue == null && l.debit > 0 ? String(l.trxAmount) : "",
-            credit: l.newValue == null && l.credit > 0 ? String(l.trxAmount) : "",
-            new_value: l.newValue == null ? "" : String(l.newValue),
+            debit: l.debit > 0 ? String(l.trxAmount) : "",
+            credit: l.credit > 0 ? String(l.trxAmount) : "",
             description: l.description === journal.description ? "" : l.description,
           }))
       : [blankLine(), blankLine()]
@@ -206,8 +209,9 @@ export function GeneralJournalForm({
   const resolve = (l: DraftLine) => {
     const account = l.account_id ? by.account.get(l.account_id) ?? null : null;
     const ledger = account?.ledger ?? "none";
-    const book = account?.bookId ? by.book.get(account.bookId) ?? null : null;
-    const item = ledger === "subject_book" ? by.item.get(l.subject) ?? null : null;
+    const item = ledger === "partner" ? by.item.get(l.subject) ?? null : null;
+    const bookId = item?.bookId ?? newItemBook(l.subject);
+    const book = bookId ? by.book.get(bookId) ?? null : null;
     const cash = ledger === "cash_bank" ? by.cash.get(l.subject) ?? null : null;
     const currencyId = item?.currencyId ?? cash?.currencyId ?? l.currency_id;
     const currency = currencyId ? by.currency.get(currencyId) ?? null : null;
@@ -215,7 +219,7 @@ export function GeneralJournalForm({
     const raise: Side = ledger === "cash_bank" ? "debit" : raiseOf(book);
     // An entry that can move only one way opens only that column.
     const only: Side | null =
-      ledger === "subject_book" && l.subject === NEW_ITEM
+      ledger === "partner" && !item && book
         ? raise
         : ledger === "cash_bank" && l.layer_id
           ? l.layer_id === NEW_ITEM
@@ -223,17 +227,8 @@ export function GeneralJournalForm({
             : "credit"
           : null;
 
-    // Saldo Baru: the side and amount follow from what the entry holds now.
-    const held = item ? item.remaining : cash ? cash.balance : null;
-    const target = l.new_value === "" ? null : Number(l.new_value);
-    let side: Side | "" = Number(l.debit) > 0 ? "debit" : Number(l.credit) > 0 ? "credit" : "";
-    let face = side ? Number(l[side]) : 0;
-    if (target != null && held != null && cents(target) !== cents(held)) {
-      side = target > held ? raise : other(raise);
-      face = cents(Math.abs(target - held)) / 100;
-    } else if (target != null) {
-      face = 0;
-    }
+    const side: Side | "" = Number(l.debit) > 0 ? "debit" : Number(l.credit) > 0 ? "credit" : "";
+    const face = side ? Number(l[side]) : 0;
 
     const layers = cash ? options.layers[cash.id] ?? [] : [];
     const layer = layers.find((x) => String(x.id) === l.layer_id) ?? null;
@@ -258,7 +253,7 @@ export function GeneralJournalForm({
         cents(face) === cents(layer.foreignRemaining) ? layer.foreignRemaining : face
       ).base;
     }
-    return { account, ledger, book, item, cash, currency, layers, layer, side, face, rate, base, held, only };
+    return { account, ledger, book, item, cash, currency, layers, layer, side, face, rate, base, only };
   };
 
   const resolved = lines.map(resolve);
@@ -304,12 +299,12 @@ export function GeneralJournalForm({
         account_id: l.account_id ? String(l.account_id) : "",
         side: r.side,
         partner_id: l.partner_id ? String(l.partner_id) : "",
-        subject_id: l.subject === NEW_ITEM ? "" : l.subject,
+        subject_id: r.ledger === "partner" && !r.item ? "" : l.subject,
+        budget_category_id: r.book ? String(r.book.id) : "",
         cash_bank_layer_id: l.layer_id === NEW_ITEM ? "" : l.layer_id,
         currency_id: r.currency ? String(r.currency.id) : "",
         exchange_rate: l.exchange_rate,
-        amount: l.new_value !== "" || !r.side ? "" : l[r.side],
-        new_value: l.new_value,
+        amount: r.side ? l[r.side] : "",
         description: l.description,
       };
     });
@@ -572,7 +567,7 @@ export function GeneralJournalForm({
             </div>
 
             <div className="tw">
-              <table className="grid ltab" style={{ minWidth: editing ? 1420 : 1060 }}>
+              <table className="grid ltab" style={{ minWidth: editing ? 1270 : 1060 }}>
                 <thead>
                   {editing ? (
                     <tr>
@@ -584,7 +579,6 @@ export function GeneralJournalForm({
                       <th className="num" style={{ width: 120 }}>Kurs</th>
                       <th className="num" style={{ width: 150 }}>Debit</th>
                       <th className="num" style={{ width: 150 }}>Kredit</th>
-                      <th className="num" style={{ width: 150 }}>Saldo Baru</th>
                       <th style={{ minWidth: 140 }}>Keterangan</th>
                       <th style={{ width: 44 }} />
                     </tr>
@@ -605,26 +599,21 @@ export function GeneralJournalForm({
                     ? lines.map((l, i) => {
                         const r = resolved[i];
                         const ledger = r.ledger;
-                        const derived = l.new_value !== "";
                         const foreignCash = ledger === "cash_bank" && r.currency && !r.currency.isBase;
                         const waitAccount = l.account_id ? null : "Pilih Account dulu…";
-                        const partners = options.partners.filter((p) =>
-                          ledger === "subject_book"
-                            ? r.book?.partnerCategoryIds.includes(p.categoryId)
-                            : !r.account?.partnerCategoryId || p.categoryId === r.account.partnerCategoryId
+                        // The account names the one Partner Category its Partners hold.
+                        const partners = options.partners.filter(
+                          (p) => p.categoryId === r.account?.partnerCategoryId
                         );
+                        const accountBooks = (r.account?.bookIds ?? [])
+                          .map((id) => by.book.get(id))
+                          .filter((b) => b !== undefined);
                         const effect = r.side ? lineEffectText(ledger, r.side, r.book?.raises ?? null) : null;
                         const fixedRate = Boolean(r.item) || Boolean(r.layer);
-                        /** One side's amount: typed, derived from Saldo Baru, or closed to this entry. */
+                        /** One side's amount: typed, or closed to this entry. */
                         const amountCell = (side: Side) => (
                           <td className="num">
-                            {derived ? (
-                              r.side === side && r.face > 0 ? (
-                                <Amount value={r.face} currency={r.currency?.label} />
-                              ) : (
-                                dash()
-                              )
-                            ) : r.only && r.only !== side ? (
+                            {r.only && r.only !== side ? (
                               dash()
                             ) : (
                               <MoneyInput
@@ -676,7 +665,7 @@ export function GeneralJournalForm({
                                   options={options.cashBanks
                                     .filter((c) => c.accountId === l.account_id)
                                     .map((c) => ({ value: String(c.id), label: `${c.label} – ${c.name}` }))}
-                                  onChange={(v) => setLine(l.key, { subject: v, layer_id: "", new_value: "" })}
+                                  onChange={(v) => setLine(l.key, { subject: v, layer_id: "" })}
                                 />
                               ) : (
                                 <Combobox
@@ -686,14 +675,14 @@ export function GeneralJournalForm({
                                   waitingFor={waitAccount}
                                   invalid={Boolean(errors[`lines.${i}.partner_id`])}
                                   options={partners.map((p) => ({ id: p.id, label: p.label, name: p.name, active: true }))}
-                                  onChange={(v) => setLine(l.key, { partner_id: v, subject: "", new_value: "" })}
+                                  onChange={(v) => setLine(l.key, { partner_id: v, subject: "" })}
                                 />
                               )}
                               {err(i, "partner_id")}
                               {err(i, "subject_id")}
                             </td>
                             <td>
-                              {ledger === "subject_book" ? (
+                              {ledger === "partner" ? (
                                 <Select
                                   size="sm"
                                   searchable
@@ -702,28 +691,38 @@ export function GeneralJournalForm({
                                   waitingFor={l.partner_id ? null : "Pilih Partner dulu…"}
                                   ariaLabel={`Open item baris ${i + 1}`}
                                   options={[
-                                    ...(derived ? [] : [{ value: NEW_ITEM, label: "Item baru" }]),
+                                    ...accountBooks.map((b) => ({
+                                      value: newItem(b.id),
+                                      label: accountBooks.length > 1 ? `Item baru · ${b.name}` : "Item baru",
+                                    })),
                                     ...options.items
-                                      .filter((it) => it.bookId === r.book?.id && it.partnerId === l.partner_id)
+                                      .filter(
+                                        (it) =>
+                                          r.account?.bookIds.includes(it.bookId) && it.partnerId === l.partner_id
+                                      )
                                       .map((it) => {
                                         const cur = by.currency.get(it.currencyId);
+                                        const held = cur?.isBase
+                                          ? formatMoney(it.remaining, cur.label)
+                                          : `${formatMoney(it.remaining, cur?.label)} @ ${formatRate(it.rate)}`;
                                         return {
                                           value: String(it.id),
                                           label: `${it.itemNo} · ${formatDate(it.date)}`,
-                                          hint: cur?.isBase
-                                            ? formatMoney(it.remaining, cur.label)
-                                            : `${formatMoney(it.remaining, cur?.label)} @ ${formatRate(it.rate)}`,
+                                          hint:
+                                            accountBooks.length > 1
+                                              ? `${by.book.get(it.bookId)?.name} · ${held}`
+                                              : held,
                                         };
                                       }),
                                   ]}
-                                  onChange={(v) =>
+                                  onChange={(v) => {
                                     // Item baru only raises: a lowering amount typed before it goes.
+                                    const opens = newItemBook(v);
                                     setLine(l.key, {
                                       subject: v,
-                                      new_value: v === NEW_ITEM ? "" : l.new_value,
-                                      ...(v === NEW_ITEM && { [other(raiseOf(r.book))]: "" }),
-                                    })
-                                  }
+                                      ...(opens && { [other(raiseOf(by.book.get(opens)))]: "" }),
+                                    });
+                                  }}
                                 />
                               ) : foreignCash ? (
                                 <Select
@@ -786,27 +785,6 @@ export function GeneralJournalForm({
                             </td>
                             {amountCell("debit")}
                             {amountCell("credit")}
-                            <td className="num">
-                              {(r.item || r.cash) && (
-                                <>
-                                  <MoneyInput
-                                    size="sm"
-                                    value={l.new_value}
-                                    placeholder=""
-                                    ariaLabel={`Saldo baru baris ${i + 1}`}
-                                    currencyLabel={r.currency?.label}
-                                    invalid={Boolean(errors[`lines.${i}.new_value`])}
-                                    onChange={(v) => setLine(l.key, { new_value: v })}
-                                  />
-                                  {r.held != null && (
-                                    <span className="rsub">
-                                      kini <span className="mny">{formatMoney(r.held, r.currency?.label)}</span>
-                                    </span>
-                                  )}
-                                </>
-                              )}
-                              {err(i, "new_value")}
-                            </td>
                             <td>
                               <input
                                 className="inp sm"
@@ -850,8 +828,11 @@ export function GeneralJournalForm({
                             ) : (
                               <PartnerCell label={l.partnerLabel} name={l.partnerName} mismatch={null} />
                             )}
-                            {l.ledger === "subject_book" && (
-                              <span className="rsub">{l.subjectLabel ?? "Item baru"}</span>
+                            {l.ledger === "partner" && (
+                              <span className="rsub">
+                                {l.subjectLabel ?? "Item baru"}
+                                {l.bookName && ` · ${l.bookName}`}
+                              </span>
                             )}
                             {l.layerNo && <span className="rsub">{l.layerNo}</span>}
                           </td>
@@ -895,7 +876,7 @@ export function GeneralJournalForm({
                           <Amount value={-valued.selisih} currency={BASE_CURRENCY_LABEL} />
                         )}
                       </td>
-                      <td colSpan={3} />
+                      <td colSpan={2} />
                     </tr>
                   )}
                   {/* Balance is spoken about only when it breaks; a foreign
@@ -919,7 +900,7 @@ export function GeneralJournalForm({
                       <td className="num">
                         <Amount value={totalCredit} currency={BASE_CURRENCY_LABEL} big />
                       </td>
-                      <td colSpan={3} />
+                      <td colSpan={2} />
                     </tr>
                   ) : (
                     <tr className="totrow">
@@ -982,6 +963,9 @@ function LineDetail({ line, onClose }: { line: GeneralJournalLineRow; onClose: (
   const side: Side = line.debit > 0 ? "debit" : "credit";
   const effect = lineEffectText(line.ledger, side, line.raises);
   const face = (n: number | null) => (n == null ? "—" : formatMoney(n, line.currencyLabel));
+  const raises = (side === "credit") === (line.raises === "In");
+  const after =
+    line.balanceBefore == null ? null : line.balanceBefore + (raises ? line.trxAmount : -line.trxAmount);
   return (
     <Dialog
       open
@@ -999,7 +983,7 @@ function LineDetail({ line, onClose }: { line: GeneralJournalLineRow; onClose: (
       <div className="apsum">
         <div>
           <span>Buku</span>
-          <b>{LEDGER_TEXT[line.ledger as keyof typeof LEDGER_TEXT]}</b>
+          <b>{line.bookName ?? LEDGER_TEXT[line.ledger as keyof typeof LEDGER_TEXT]}</b>
         </div>
         <div>
           <span>Efek</span>
@@ -1026,8 +1010,8 @@ function LineDetail({ line, onClose }: { line: GeneralJournalLineRow; onClose: (
           <b className="mono">{face(line.balanceBefore)}</b>
         </div>
         <div>
-          <span>Saldo Baru</span>
-          <b className="mono">{face(line.newValue)}</b>
+          <span>Saldo Sesudah</span>
+          <b className="mono">{face(after)}</b>
         </div>
       </div>
     </Dialog>

@@ -61,16 +61,16 @@ export type GeneralJournalLineValues = {
   currency_id: number | null;
   /** Null on a base-currency line, where the kurs is 1 and is not asked. */
   exchange_rate: number | null;
-  /** In the line's own currency. Exactly one of the two is non-zero, unless `new_value` is given. */
+  /** In the line's own currency. Exactly one of the two is non-zero. */
   debit: number;
   credit: number;
   description: string;
   /** What the line moves in its ledger: an open item (null for a new one), or a Cash & Bank. */
   subject_id?: number | null;
+  /** The book a new item opens in, on a `partner` account keeping several. */
+  budget_category_id?: number | null;
   /** The rate layer a foreign Cash & Bank payment draws on. */
   cash_bank_layer_id?: number | null;
-  /** Saldo baru (D14): the value the entry should hold; the side and amount follow. */
-  new_value?: number | null;
   /** Left out by the form; Post passes the stored figure back to be held to it. */
   balance_before?: number | null;
 };
@@ -79,8 +79,8 @@ export type GeneralJournalLineValues = {
 type ResolvedLine = JournalLineInput & {
   isGenerated: boolean;
   subjectId: number | null;
+  bookId: number | null;
   layerId: number | null;
-  newValue: number | null;
   balanceBefore: number | null;
 };
 
@@ -137,8 +137,8 @@ export async function checkGeneralJournal(
         is_postable: true,
         is_active: true,
         ledger: true,
-        ledger_book_id: true,
         partner_category_id: true,
+        books: { where: { status: "Active" }, select: { budget_category_id: true } },
         _count: { select: { children: true } },
       },
     }),
@@ -147,7 +147,9 @@ export async function checkGeneralJournal(
       select: { id: true, currency_label: true },
     }),
   ]);
-  const accountById = new Map(accounts.map((a) => [a.id, a]));
+  const accountById = new Map(
+    accounts.map((a) => [a.id, { ...a, bookIds: a.books.map((b) => b.budget_category_id) }])
+  );
   const currencyById = new Map(currencies.map((c) => [c.id, c]));
   const ctx = { companyId, date: dated.date };
 
@@ -187,16 +189,10 @@ export async function checkGeneralJournal(
       errors[lineKey(i, "currency_id")] = "Currency wajib dipilih.";
       continue;
     }
-    const newValue = line.new_value == null ? null : Number(line.new_value);
-    if (newValue != null && !adapter?.takesNewValue) {
-      errors[lineKey(i, "new_value")] = "Saldo baru tidak tersedia untuk account ini.";
-      continue;
-    }
-
     const d = Math.max(0, Number(line.debit) || 0);
     const c = Math.max(0, Number(line.credit) || 0);
     const onDebit = Math.round(d * 100) > 0;
-    if (newValue == null && onDebit === Math.round(c * 100) > 0) {
+    if (onDebit === Math.round(c * 100) > 0) {
       errors[lineKey(i, "amount")] = onDebit
         ? "Isi debit atau kredit, bukan keduanya."
         : "Nominal wajib diisi pada salah satu sisi.";
@@ -216,8 +212,8 @@ export async function checkGeneralJournal(
       face: onDebit ? d : c,
       rate: base ? 1 : Number(line.exchange_rate),
       subjectId: adapter ? line.subject_id ?? null : null,
+      bookId: adapter ? line.budget_category_id ?? null : null,
       layerId: adapter ? line.cash_bank_layer_id ?? null : null,
-      newValue,
       balanceBefore: line.balance_before,
       description: String(line.description ?? "").trim() || description,
     };
@@ -247,8 +243,8 @@ export async function checkGeneralJournal(
       description: adapterLine.description,
       isGenerated: false,
       subjectId: adapterLine.subjectId,
+      bookId: adapterLine.bookId,
       layerId: adapterLine.layerId,
-      newValue,
       balanceBefore: adapterLine.balanceBefore ?? null,
     });
     valuation.push({
@@ -299,8 +295,8 @@ export async function checkGeneralJournal(
       description: "Selisih kurs",
       isGenerated: true,
       subjectId: null,
+      bookId: null,
       layerId: null,
-      newValue: null,
       balanceBefore: null,
     });
   }
@@ -343,8 +339,8 @@ function lineRows(lines: ResolvedLine[], actorId: number) {
       description: l.description,
       is_generated: l.isGenerated,
       subject_id: l.subjectId,
+      budget_category_id: l.bookId,
       cash_bank_layer_id: l.layerId,
-      new_value: l.newValue,
       balance_before: l.balanceBefore,
       created_by: actorId,
     };
@@ -606,7 +602,7 @@ async function draftOrRefusal(
         description: l.description,
         subject_id: l.subject_id,
         cash_bank_layer_id: l.cash_bank_layer_id,
-        new_value: l.new_value?.toNumber() ?? null,
+        budget_category_id: l.budget_category_id,
         balance_before: l.balance_before?.toNumber() ?? null,
       };
     }),

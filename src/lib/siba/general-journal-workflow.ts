@@ -109,7 +109,7 @@ export function lineEffectText(
   raises: "In" | "Out" | null
 ): string | null {
   if (ledger === "cash_bank") return side === "debit" ? "uang masuk" : "uang keluar";
-  if (ledger === "subject_book" && raises) {
+  if (ledger === "partner" && raises) {
     return (side === "credit") === (raises === "In") ? "menambah" : "melunasi";
   }
   return null;

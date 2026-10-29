@@ -217,7 +217,7 @@ describe("a manual journal may not touch a control account", () => {
       subcategoryLabel: "2.1.1",
       normalBalance: "Kredit",
       partnerCategoryLabel: "Cabang",
-      bookLabel: "Hutang",
+      bookLabels: ["Hutang"],
     });
     const mapping = await makeMapping({
       companyId: company,

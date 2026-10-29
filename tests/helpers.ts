@@ -236,11 +236,11 @@ export async function makeAccount(options: {
   partnerCategoryLabel?: string | null;
   /**
    * The account's ledger (Journal 2.0 D18). Defaults to `partner` when a
-   * Partner Category is named and `none` otherwise. `bookLabel` makes it a
-   * subject book's account; `cash_bank` the Cash Bank Book's.
+   * Partner Category is named and `none` otherwise. `bookLabels` are the
+   * books a `partner` account keeps; `cash_bank` the Cash Bank Book's.
    */
   ledger?: "none" | "partner" | "cash_bank";
-  bookLabel?: string;
+  bookLabels?: string[];
 }): Promise<number> {
   const key = nextFixture();
   // A fixture account carries a real lineage code: it continues its parent
@@ -267,10 +267,9 @@ export async function makeAccount(options: {
       is_active: options.active ?? true,
       normal_balance: options.normalBalance ?? "Debit",
       is_control_account: options.controlAccount ?? false,
-      ledger: options.bookLabel
-        ? "subject_book"
+      ledger: options.bookLabels?.length
+        ? "partner"
         : options.ledger ?? (options.partnerCategoryLabel ? "partner" : "none"),
-      ledger_book_id: options.bookLabel ? await budgetCategoryId(options.bookLabel) : null,
       partner_category_id: options.partnerCategoryLabel
         ? await partnerCategoryId(options.partnerCategoryLabel)
         : null,
@@ -278,6 +277,16 @@ export async function makeAccount(options: {
     },
     select: { id: true },
   });
+  for (const label of options.bookLabels ?? []) {
+    await prisma.accAccountBook.create({
+      data: {
+        account_book_code: `${FIXTURE_PREFIX}.${key}.${label}`,
+        account_id: row.id,
+        budget_category_id: await budgetCategoryId(label),
+        created_by: await systemUserId(),
+      },
+    });
+  }
   return row.id;
 }
 
@@ -530,6 +539,9 @@ export async function cleanupFixtures(): Promise<void> {
     where: { account_code: { startsWith: FIXTURE_PREFIX } },
     orderBy: { id: "desc" },
     select: { id: true },
+  });
+  await prisma.accAccountBook.deleteMany({
+    where: { account_id: { in: accounts.map((a) => a.id) } },
   });
   for (const a of accounts) {
     await prisma.accAccount.delete({ where: { id: a.id } });

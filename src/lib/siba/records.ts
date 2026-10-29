@@ -36,6 +36,7 @@ const DELEGATES = {
   sys_budget_partner_category_mapping: (db: Client) =>
     db.sysBudgetPartnerCategoryMapping,
   acc_account: (db: Client) => db.accAccount,
+  acc_account_book: (db: Client) => db.accAccountBook,
   acc_account_subcategory: (db: Client) => db.accAccountSubcategory,
   acc_budget_category_account: (db: Client) => db.accBudgetCategoryAccount,
   acc_fiscal_year: (db: Client) => db.accFiscalYear,
@@ -454,7 +455,7 @@ export async function accountUsage(accountId: number): Promise<string[]> {
  *
  * The account says so itself (Journal 2.0 D18): its `ledger` is `cash_bank`,
  * so it must agree with the Cash Bank Book and, for a foreign resource, with
- * its rate layers; or `subject_book`, so it must agree with that one book's
+ * its rate layers; or `partner`, so it must agree with its books'
  * positions. A mapping and a Cash & Bank resource are checked against the
  * ledger rather than deciding it.
  *
@@ -475,7 +476,6 @@ export async function controlAccountReasons(
     where: { id: accountId },
     select: {
       ledger: true,
-      ledger_book_id: true,
       cash_banks: { select: { cash_bank_label: true } },
     },
   });
@@ -485,10 +485,11 @@ export async function controlAccountReasons(
     const labels = account.cash_banks.map((c) => c.cash_bank_label).join(", ");
     return [labels ? `Buku Kas & Bank ${labels}` : "Buku Kas & Bank"];
   }
-  const book = account.ledger_book_id
-    ? subledgerForCategory(await loadSubledgers(), account.ledger_book_id)
-    : null;
-  return [book?.name ?? "Buku Subjek"];
+  const books = await loadSubledgers();
+  const names = (await accountBookIds(accountId))
+    .map((id) => subledgerForCategory(books, id)?.name)
+    .filter(Boolean) as string[];
+  return names.length ? names : ["Buku Subjek"];
 }
 
 /**
@@ -497,7 +498,7 @@ export async function controlAccountReasons(
  */
 export async function structuralControlAccountIds(): Promise<Set<number>> {
   const rows = await prisma.accAccount.findMany({
-    where: { ledger: { in: ["subject_book", "cash_bank"] } },
+    where: { ledger: { in: ["partner", "cash_bank"] } },
     select: { id: true },
   });
   return new Set(rows.map((r) => r.id));
@@ -508,7 +509,7 @@ export async function structuralControlAccountIds(): Promise<Set<number>> {
  *
  * Being one is not a property somebody sets: it is the answer to "does
  * anything outside the General Ledger reconcile against this account?" — its
- * ledger is a book's (`subject_book`, `cash_bank`), or a bridge or FX System
+ * ledger is a book's (`partner`, `cash_bank`), or a bridge or FX System
  * Account names it. So the flag is *recomputed*
  * from the structure on every event that can change that answer, in both
  * directions, the same way a parent account's posting privilege follows the
@@ -543,18 +544,27 @@ export async function syncControlAccounts(
 
 // ------------------------------------------------------- the account's ledger
 
+/** The books a `partner` account keeps (`acc_account_book`, active rows). */
+export async function accountBookIds(accountId: number): Promise<number[]> {
+  const rows = await prisma.accAccountBook.findMany({
+    where: { account_id: accountId, status: "Active" },
+    select: { budget_category_id: true },
+    orderBy: { budget_category_id: "asc" },
+  });
+  return rows.map((r) => r.budget_category_id);
+}
+
 /**
  * Whether an account of this ledger may be a mapping's target (Journal 2.0
- * D18): a category that keeps a book maps to an account of **that** book, and
- * one that keeps none to an account no book reconciles against. One account,
- * one book.
+ * D18): a category that keeps a book maps to an account keeping **that** book,
+ * and one that keeps none to an account no book reconciles against.
  */
 function ledgerFitsCategory(
-  account: { ledger: string; ledger_book_id: number | null },
+  account: { ledger: string; bookIds: number[] },
   category: { id: number; label: string; book: string | null }
 ): string | null {
   if (category.book) {
-    return account.ledger === "subject_book" && account.ledger_book_id === category.id
+    return account.ledger === "partner" && account.bookIds.includes(category.id)
       ? null
       : `Budget Category ${category.label} memakai ${category.book}, sehingga Account tujuannya harus memakai ledger ${category.book}.`;
   }
@@ -581,31 +591,46 @@ export async function checkMappingLedger(
   const [account, category] = await Promise.all([
     prisma.accAccount.findUnique({
       where: { id: accountId },
-      select: { ledger: true, ledger_book_id: true },
+      select: { ledger: true },
     }),
     categoryBook(budgetCategoryId),
   ]);
   if (!account || !category) return null;
-  return ledgerFitsCategory(account, category);
+  return ledgerFitsCategory(
+    { ledger: account.ledger, bookIds: await accountBookIds(accountId) },
+    category
+  );
 }
 
 /**
- * The ledger an account is saved with. A subject book must be a category that
- * keeps one. Once the account exists the ledger may change only while nothing
- * depends on it: a journal line locks it, and every Cash & Bank and mapping
- * naming the account must still fit the new one.
+ * The ledger an account is saved with. Each book of a `partner` account must
+ * be a category that keeps one and admits the account's Partner Category, so
+ * every Partner the account takes has a place in each of its books. Once the
+ * account exists the ledger may change, and a book be dropped, only while no
+ * journal line depends on it; every Cash & Bank and mapping naming the account
+ * must still fit.
  */
 export async function checkAccountLedger(
   currentId: number | null,
   ledger: string,
-  bookId: number | null
+  bookIds: number[],
+  partnerCategoryId: number | null
 ): Promise<string | null> {
-  if (!["none", "partner", "subject_book", "cash_bank"].includes(ledger)) {
+  if (!["none", "partner", "cash_bank"].includes(ledger)) {
     return "Pilih ledger.";
   }
-  if (ledger === "subject_book" && bookId) {
-    const category = await categoryBook(bookId);
+  if (ledger !== "partner") bookIds = [];
+  for (const id of bookIds) {
+    const category = await categoryBook(id);
     if (!category?.book) return "Budget Category tersebut tidak memiliki buku subjek.";
+    if (!partnerCategoryId) continue;
+    const admitted = await prisma.sysBudgetPartnerCategoryMapping.count({
+      where: { budget_category_id: id, partner_category_id: partnerCategoryId, status: "Active" },
+    });
+    if (!admitted) {
+      return `${category.book} tidak menerima Partner Category account ini. ` +
+        "Pilih buku yang menerimanya, atau ubah Partner Category.";
+    }
   }
   if (!currentId) return null;
 
@@ -613,19 +638,20 @@ export async function checkAccountLedger(
     where: { id: currentId },
     select: {
       ledger: true,
-      ledger_book_id: true,
       cash_banks: { select: { cash_bank_label: true } },
       mappings: { select: { budget_category_id: true } },
     },
   });
   if (!current) return null;
-  const next = { ledger, ledger_book_id: ledger === "subject_book" ? bookId : null };
-  if (current.ledger === next.ledger && current.ledger_book_id === next.ledger_book_id) {
-    return null;
-  }
+  const currentBooks = await accountBookIds(currentId);
+  const next = { ledger, bookIds };
+  const dropsBook = currentBooks.some((id) => !bookIds.includes(id));
+  if (current.ledger === ledger && !dropsBook) return null;
 
   if (await journalLineCountForAccount(currentId)) {
-    return "Ledger tidak dapat diubah: account ini sudah memiliki journal line.";
+    return current.ledger === ledger
+      ? "Buku Subjek yang sudah ada tidak dapat dilepas: account ini sudah memiliki journal line."
+      : "Ledger tidak dapat diubah: account ini sudah memiliki journal line.";
   }
   if (current.cash_banks.length && ledger !== "cash_bank") {
     return `Account ini dipakai Cash & Bank (${current.cash_banks
@@ -885,9 +911,11 @@ export async function reconcileMultiref(
 
 const JOIN_CODE_FIELD: Record<string, string> = {
   sys_budget_partner_category_mapping: "mapping_code",
+  acc_account_book: "account_book_code",
 };
 const JOIN_CODE_PREFIX: Record<string, string> = {
   sys_budget_partner_category_mapping: "bpcm",
+  acc_account_book: "acbk",
 };
 
 function codeFieldOf(entityKey: string): string {

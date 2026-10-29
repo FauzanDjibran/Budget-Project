@@ -505,7 +505,7 @@ model SysBudgetCategory {
   reclass_targets    FinItemReclassLine[]              @relation("ReclassTarget")
   sub_ledger_entries SubLedger[]
   sub_ledger_items   SubLedgerBalance[]
-  ledger_accounts    AccAccount[]
+  ledger_accounts    AccAccountBook[]
 
   @@map("sys_budget_category")
 }
@@ -1145,15 +1145,14 @@ model AccAccount {
   normal_balance         NormalBalance
   /// Not in the DBML. Locks a subledger account to a single partner category so
   /// subject histories never mix. Replaces the DBML's `partner_type`. Set
-  /// exactly when the ledger takes a Partner (`partner`, `subject_book`).
+  /// exactly when the ledger is `partner`, and admitted by each of its books.
   partner_category_id    Int?
   /// Which ledger the account belongs to (Journal 2.0 D18): what a line on it
-  /// must name. `partner` and `subject_book` take a Partner on every line
-  /// (it replaced `require_partner`); `subject_book` names its one book in
-  /// `ledger_book_id`; `cash_bank` is what a Cash & Bank resource posts to.
+  /// must name. `partner` takes a Partner and an open item on every line, in
+  /// one of the books it keeps (`acc_account_book`; it replaced
+  /// `require_partner`); `cash_bank` is what a Cash & Bank resource posts to.
   /// Locked once the account has a journal line.
   ledger                 AccountLedger @default(none)
-  ledger_book_id         Int?
   is_control_account     Boolean       @default(false)
   note                   String?
   is_active              Boolean       @default(true)
@@ -1163,7 +1162,7 @@ model AccAccount {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  ledger_book         SysBudgetCategory?    @relation(fields: [ledger_book_id], references: [id])
+  books               AccAccountBook[]
   account_subcategory AccAccountSubcategory @relation(fields: [account_subcategory_id], references: [id])
   company             SysCompany            @relation(fields: [company_id], references: [id])
   partner_category    SysPartnerCategory?   @relation(fields: [partner_category_id], references: [id])
@@ -2269,13 +2268,38 @@ enum JournalStatus {
 }
 
 /// Which ledger an account belongs to (Journal 2.0 D18). `none` touches no
-/// ledger; `partner` needs a Partner for the breakdown only; `subject_book`
-/// a Partner and an open item in its one book; `cash_bank` a Cash & Bank.
+/// ledger; `partner` a Partner and an open item in one of its books
+/// (`acc_account_book`); `cash_bank` a Cash & Bank.
 enum AccountLedger {
   none
   partner
-  subject_book
   cash_bank
+}
+
+/// The subject books a `partner` account keeps (Journal 2.0 D18, revised
+/// 28/10/2026), chosen on the account's form. One account may keep several:
+/// a Hutang Piutang Karyawan account carries both books, each still reported
+/// on its own. A book unticked is set Inactive, never deleted
+/// (`reconcileMultiref`).
+model AccAccountBook {
+  id                 Int          @id @default(autoincrement())
+  account_book_code  String       @unique
+  account_id         Int
+  budget_category_id Int
+  note               String?
+  status             ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  account         AccAccount        @relation(fields: [account_id], references: [id])
+  budget_category SysBudgetCategory @relation(fields: [budget_category_id], references: [id])
+
+  @@unique([account_id, budget_category_id])
+  @@index([budget_category_id])
+  @@map("acc_account_book")
 }
 
 /// The accounting journal. A `Posted` journal is append-only and immutable:
@@ -2436,15 +2460,17 @@ model AccGeneralJournalLine {
   description String
 
   /// A weak reference read by the account's ledger adapter (D13): the open
-  /// item (`sub_ledger_balance.id`, null for a new item) on a `subject_book`
+  /// item (`sub_ledger_balance.id`, null for a new item) on a `partner`
   /// account, the Cash & Bank (`m_cash_bank.id`) on a `cash_bank` one.
   subject_id         Int?
+  /// The book a `partner` line writes into, one of its account's books: the
+  /// named item's own, or the one a new item opens in. A plain id (D13).
+  budget_category_id Int?
   /// The rate layer a foreign Cash & Bank line draws on; the one extra
   /// reference a ledger is allowed (D19).
   cash_bank_layer_id Int?
-  /// Saldo baru as typed (D14), and the balance it was typed against. Post
-  /// refuses if the object no longer holds `balance_before`.
-  new_value          Decimal? @db.Decimal(18, 2)
+  /// What the named open item held on the journal's date when the draft was
+  /// saved; Post refuses if it no longer does.
   balance_before     Decimal? @db.Decimal(18, 2)
   /// The one netted Selisih Kurs line (D7), written by the system on save.
   is_generated       Boolean  @default(false)

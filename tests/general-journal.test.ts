@@ -13,7 +13,7 @@ import {
   createManualJournal,
   postManualJournal,
 } from "../src/lib/siba/manual-journal";
-import { openCashBankBook, recordCashBankEntry } from "../src/lib/siba/cash-bank";
+import { openCashBankBook } from "../src/lib/siba/cash-bank";
 import { openLayersOf } from "../src/lib/siba/cash-bank-layers";
 import { todayDay } from "../src/lib/siba/fiscal";
 import { syncControlAccounts } from "../src/lib/siba/records";
@@ -64,8 +64,9 @@ before(async () => {
   ymh = await makeAccount({ companyId: company, subcategoryLabel: "2.1.1", normalBalance: "Kredit" });
   pemasaran = await makeAccount({
     companyId: company,
-    subcategoryLabel: "5.3.1",
+    subcategoryLabel: "1.1.3",
     partnerCategoryLabel: "Cabang",
+    bookLabels: ["Piutang"],
   });
   partner = await makePartner({ companyId: company, categoryLabel: "Cabang" });
 
@@ -151,12 +152,9 @@ describe("valuation and the netted Selisih Kurs (§4, D7)", () => {
   });
 });
 
-describe("a rupiah Jurnal Umum of plain and Partner accounts", () => {
+describe("a rupiah Jurnal Umum", () => {
   test("Case 9 posts the journal the same manual journal posts", async () => {
-    const lines = [
-      line(pemasaran, 5_000_000, 0, { partner_id: partner }),
-      line(ymh, 0, 5_000_000),
-    ];
+    const lines = [line(beban, 5_000_000, 0), line(ymh, 0, 5_000_000)];
 
     const draft = await createGeneralJournal(header(), lines, actor);
     assert.ok(draft.ok, JSON.stringify(draft));
@@ -208,7 +206,6 @@ describe("a rupiah Jurnal Umum of plain and Partner accounts", () => {
     const fromGeneral = await linesOf(general.posted_journal_id!);
     assert.deepEqual(fromGeneral, await linesOf(manual.id), "identical to the manual journal");
     assert.deepEqual(general.lines.map(shape), fromGeneral, "the draft's rows equal what Post wrote");
-    assert.equal(fromGeneral[0].partner, partner, "the Partner breakdown, no book written");
 
     const journal = await prisma.accJournal.findUniqueOrThrow({
       where: { id: general.posted_journal_id! },
@@ -282,7 +279,7 @@ describe("the subject_book ledger (Gate B)", () => {
         subcategoryLabel: sub,
         normalBalance: sub.startsWith("1") ? "Debit" : "Kredit",
         partnerCategoryLabel: "Cabang",
-        bookLabel: label,
+        bookLabels: [label],
       });
     }
     await fx.set("induk", "fx", await makeAccount({ companyId: company, subcategoryLabel: "5.3.1" }));
@@ -332,16 +329,16 @@ describe("the subject_book ledger (Gate B)", () => {
     return { id: draft.id, preview: posted.preview, written };
   };
 
-  test("Case 1: Saldo baru lowers an item into an expense", async () => {
+  test("Case 1: a Kredit lowers an item into an expense", async () => {
     const item = await openItem("Piutang", 10_000_000, 1, baseCurrency);
     const { id } = await draftAndPost([
-      on("Piutang", 0, 0, { subject_id: item, new_value: 8_000_000 }),
+      on("Piutang", 0, 2_000_000, { subject_id: item }),
       line(beban, 2_000_000, 0),
     ]);
     const stored = await prisma.accGeneralJournalLine.findFirstOrThrow({
       where: { journal_id: id, sequence_no: 1 },
     });
-    assert.equal(stored.kredit_amount.toNumber(), 2_000_000, "Saldo baru became Kredit 2.000.000");
+    assert.equal(stored.budget_category_id, book("Piutang").categoryId, "the line names its item's book");
     assert.equal(stored.balance_before?.toNumber(), 10_000_000);
     assert.equal((await subledgerItem(item))!.remaining, 8_000_000);
 
@@ -396,6 +393,63 @@ describe("the subject_book ledger (Gate B)", () => {
       where: { source_doc_id: id, budget_category_id: book("Titipan").categoryId },
     });
     assert.deepEqual([opened.balance.toNumber(), opened.rate.toNumber()], [500, 16_300]);
+  });
+
+  test("an account keeping two books writes each line into the book its entry names", async () => {
+    const hutangPiutang = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "2.1.5",
+      normalBalance: "Kredit",
+      partnerCategoryLabel: "Cabang",
+      bookLabels: ["Hutang", "Piutang"],
+    });
+    const piutang = await openItem("Piutang", 1_000, 1, baseCurrency);
+
+    const unnamed = await checkGeneralJournal(header(), [
+      line(hutangPiutang, 0, 100, { partner_id: partner }),
+      line(beban, 100, 0),
+    ]);
+    assert.ok(!unnamed.ok);
+    assert.match(unnamed.errors["lines.0.subject_id"], /buku subjek/);
+
+    const titipan = await openItem("Titipan", 1_000, 1, baseCurrency);
+    const foreign = await checkGeneralJournal(header(), [
+      line(hutangPiutang, 100, 0, { partner_id: partner, subject_id: titipan }),
+      line(ymh, 0, 100),
+    ]);
+    assert.ok(!foreign.ok, "an item of a book the account does not keep");
+
+    const { id } = await draftAndPost([
+      // Kredit on a Hutang raises it: a new Hutang item.
+      line(hutangPiutang, 0, 300, { partner_id: partner, budget_category_id: book("Hutang").categoryId }),
+      // Kredit on a Piutang lowers it: the named item settles.
+      line(hutangPiutang, 0, 200, { partner_id: partner, subject_id: piutang }),
+      line(beban, 500, 0),
+    ]);
+    const stored = await prisma.accGeneralJournalLine.findMany({
+      where: { journal_id: id, sequence_no: { in: [1, 2] } },
+      orderBy: { sequence_no: "asc" },
+    });
+    assert.deepEqual(
+      stored.map((l) => l.budget_category_id),
+      [book("Hutang").categoryId, book("Piutang").categoryId]
+    );
+    assert.equal((await subledgerItem(piutang))!.remaining, 800);
+    const opened = await prisma.subLedger.findFirstOrThrow({
+      where: { source_doc_id: id, budget_category_id: book("Hutang").categoryId },
+    });
+    assert.equal(opened.movement.toNumber(), 300, "the Hutang book holds its own entry");
+  });
+
+  test("a Partner must hold the account's Partner Category, not only one the book admits", async () => {
+    // Piutang admits Stakeholder too, but this account is Piutang's Cabang account.
+    const stakeholder = await makePartner({ companyId: company, categoryLabel: "Stakeholder" });
+    const refused = await checkGeneralJournal(header(), [
+      line(accounts.Piutang, 100, 0, { partner_id: stakeholder, subject_id: null }),
+      line(beban, 0, 100),
+    ]);
+    assert.ok(!refused.ok);
+    assert.match(refused.errors["lines.0.partner_id"], /Partner Category/);
   });
 
   test("a lowering names its item, and never takes it below nothing", async () => {
@@ -555,41 +609,6 @@ describe("the cash_bank ledger (Gate C)", () => {
     assert.deepEqual(layers.map((l) => [l.foreignRemaining, l.rate, l.baseRemaining]), [[100, 16_250, 1_625_000]]);
   });
 
-  test("Case 7: a physical count by Saldo baru", async () => {
-    const kas = await resource(baseCurrency, 2_350_000);
-    const { id, posted } = await post([cash(kas, 0, 0, { new_value: 2_300_000 }), line(beban, 50_000, 0)]);
-    assert.ok(posted.ok, JSON.stringify(posted));
-    assert.equal(await held(kas.id), 2_300_000);
-    const stored = await prisma.accGeneralJournalLine.findFirstOrThrow({
-      where: { journal_id: id, sequence_no: 1 },
-    });
-    assert.deepEqual([stored.kredit_amount.toNumber(), stored.balance_before?.toNumber()], [50_000, 2_350_000]);
-  });
-
-  test("Saldo baru refuses at Post once the resource has moved", async () => {
-    const kas = await resource(baseCurrency, 1_000_000);
-    const draft = await createGeneralJournal(
-      header(),
-      [cash(kas, 0, 0, { new_value: 900_000 }), line(beban, 100_000, 0)],
-      actor
-    );
-    assert.ok(draft.ok);
-    await prisma.$transaction((tx) =>
-      recordCashBankEntry(tx, {
-        cashBankId: kas.id,
-        date: today,
-        type: "Transaction",
-        direction: "In",
-        amount: 5_000,
-        rate: 1,
-        actorId: actor,
-      })
-    );
-    const refused = await postGeneralJournal(draft.id, actor, scope);
-    assert.ok(!refused.ok);
-    assert.match(refused.errors._form, /berubah sejak draft disimpan/);
-  });
-
   test("a foreign payment names a layer, and cannot overdraw it", async (t) => {
     if (!foreignCurrency) return t.skip("no foreign currency in this database");
     const usd = await resource(foreignCurrency, 100, 15_900);
@@ -638,7 +657,7 @@ describe("the manual journal", () => {
       subcategoryLabel: "2.1.1",
       normalBalance: "Kredit",
       partnerCategoryLabel: "Cabang",
-      bookLabel: "Hutang",
+      bookLabels: ["Hutang"],
     });
     await syncControlAccounts([hutang], await systemAccountIds(), actor);
     const manual = await checkManualJournal(header(), [

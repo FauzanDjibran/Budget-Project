@@ -241,10 +241,6 @@ async function applicableFields(
       if (ledgerTakesPartner(String(values.ledger ?? ""))) applies.add(field.name);
       continue;
     }
-    if (field.visibleWhen === "accountKeepsBook") {
-      if (values.ledger === "subject_book") applies.add(field.name);
-      continue;
-    }
     if (field.visibleWhen === "categoryChoosesRaises") {
       // Only a category that keeps a book and moves both ways has a choice to
       // make; a single-direction one has its answer derived below.
@@ -495,7 +491,8 @@ async function validateAccount(
   const ledgerError = await checkAccountLedger(
     currentId,
     String(values.ledger ?? ""),
-    applies.has("ledger_book_id") ? refValue(values, "ledger_book_id") : null
+    applies.has("book_ids") ? idList(values.book_ids) : [],
+    applies.has("partner_category_id") ? refValue(values, "partner_category_id") : null
   );
   if (ledgerError) errors.ledger = ledgerError;
 

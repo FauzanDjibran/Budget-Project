@@ -111,20 +111,19 @@ export function compareCodes(a: string, b: string): number {
 export const LEDGER_TEXT: Record<string, string> = {
   none: "Tanpa ledger",
   partner: "Partner",
-  subject_book: "Buku Subjek",
   cash_bank: "Kas & Bank",
 };
 
 /**
  * Whether every line on an account of this ledger names a Partner (Journal 2.0
- * D18): a Partner breakdown (`partner`) or a subject book (`subject_book`).
- * What `require_partner` used to say.
+ * D18): a `partner` account, whose every Partner has a subject book. What
+ * `require_partner` used to say.
  */
 export function ledgerTakesPartner(ledger: string): boolean {
-  return ledger === "partner" || ledger === "subject_book";
+  return ledger === "partner";
 }
 
 /** Whether a book outside the General Ledger reconciles against the account. */
 export function ledgerIsControl(ledger: string): boolean {
-  return ledger === "subject_book" || ledger === "cash_bank";
+  return ledger === "partner" || ledger === "cash_bank";
 }
