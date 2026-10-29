@@ -89,7 +89,7 @@ or invariants that assume a particular row exists.
 | Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered. A chain of months (`cash_bank_period`, each with its lowest point) lets a movement be checked against every day from its date to now without reading the book from its start |
 | Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. A foreign Cash & Bank is restated by **Revaluasi Kurs**; standing foreign subject-book positions are never retranslated (§13) |
 | Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows the open ones, for one or several resources, and says when they stop reconciling with the book |
-| Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner**, so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
+| Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner and is marked a book** (`keeps_book`; one without it is a partner tag, journalled with the Partner and no book entry), so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per partner-bearing Budget Category: Titipan, Hutang, Piutang, Prive, Investasi, Hasil Investasi. Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
 | Design system port | Done — including the app's own `Select` and `DateInput`, so no control is drawn by the OS |
 | App shell (topbar, rail, submenu) | Done |
 | Dashboard | Done — two sections of tiles that open a Rincian. Posisi Saat Ini: cash per currency, Posisi Layer Kurs, the intercompany net, and one card holding a row per subject book. Periode: Rencana Pengeluaran and Rencana Penerimaan for the chosen month (the Budget page's own tile) and Laba Rugi per Company. Draft records are counted nowhere, and `tests/dashboard.test.ts` holds it. Composed in `lib/siba/dashboard.ts` from what each module says about its own records |
@@ -1021,11 +1021,19 @@ Implemented and enforced:
    which is not how a ledger reads.
 
 52. **A subject book is a Budget Category, and it keeps one exactly when it
-   names a Partner *and* says which way it runs.** `require_partner` decides
-   whether a book exists; `raises` decides which cash direction raises the
-   subject's position, and without it the category has a **setup gap** rather
-   than no book — a book running the wrong way is worse than none, so it is
-   never guessed. A book is named by the category's row id —
+   names a Partner *and* says it is a book (`keeps_book`) *and* says which way
+   it runs.** `keeps_book` is offered only when `require_partner` is on and is
+   locked once a Budget is classified into the category; `raises` is set
+   exactly when `keeps_book` is (CHECK), because a book running the wrong way is
+   worse than none. A category that names a Partner without a book is a
+   **partner tag**: Klasifikasi still picks a Partner, the account is still
+   Company × Category × the Partner's Partner Category, and Realisasi journals
+   the counter line with the Partner and writes **no** `sub_ledger` entry and no
+   open item — the user's rule (29/10/2026), so a Budget may carry a Partner on
+   the journal, like a manual journal does, without a book behind it. An account
+   holds partner tags or books, never both (`checkAccountLedger`). Klasifikasi
+   states the consequence before it is confirmed: open, settle, add to a
+   running total, or no open item. A book is named by the category's row id —
    `sub_ledger.budget_category_id`, a foreign key — and a label is never a way in. There
    is **one** Report View over all of them with the book as a parameter, so a
    category created through the GUI is readable immediately. Superseded wording
@@ -1230,8 +1238,8 @@ Implemented and enforced:
    drops a pair whose row, or whose Partner Category, is inactive.
 93. **A combination that produces nothing useful is refused, not reported.**
    The user's rule, and it decided two states that had been left reachable. A
-   Budget Category that names a Partner **keeps a book**, so `raises` is
-   mandatory the moment `require_partner` is on — leaving it optional produced
+   Budget Category that **keeps a book** must say which way it runs, so `raises`
+   is mandatory the moment `keeps_book` is on — leaving it optional produced
    a category that could be transacted while its subject book silently recorded
    nothing. And a category that names a Partner but has **no Partner Category
    paired to it** may not be Active: no Budget can be approved into it, so no
@@ -1627,8 +1635,8 @@ ERP, the name stays SIBA's.
     counter account per side fixes a deposit, a payable or a receivable
     correctly and would book income or expense against owner drawings or an
     investment's own return, so the seed turns it on for Titipan, Hutang and
-    Piutang only. Only a category that keeps a book may carry it — the form
-    hides it otherwise and a CHECK refuses it.
+    Piutang only. Only a category that keeps a book (`keeps_book`) may carry
+    it — the form hides it otherwise and a CHECK refuses it.
 100. **Every line names one item and its new value; nothing below zero.** The
     item is chosen and the value typed, never preselected or distributed, and
     one item is adjusted once per document. A new value may be above what the
@@ -1756,8 +1764,9 @@ ERP, the name stays SIBA's.
     item it opened (`opened_item_id`), and the Budget's Realisasi card follows
     it into any posted reclassification (`reclassTrail`, one step). Lines
     posted before the column existed carry none and are not backfilled.
-115. **Any category that names a Partner may be a source or a target** — the
-    user's rule, with no eligibility flag. A target must allow the direction
+115. **Any category that keeps a book may be a source or a target** — the
+    user's rule, with no eligibility flag; a partner tag (rule 52) keeps no
+    items, so it is neither. A target must allow the direction
     that raised the source, admit the target Partner's category, and be in the
     same Company and currency; it may not be the source position itself. A
     category that names no Partner (Biaya, Asset) is not a target: clearing held
@@ -2539,11 +2548,16 @@ Specified in the concept doc, **not yet implemented** (see §13):
   six hand-written entries. Stored on the category: **`raises`**, which cash
   direction raises the subject's position, the one fact nothing else predicts;
   and **`book_icon`** / **`book_closing_label`**, presentation that falls back.
-- **A book exists when the category names a Partner *and* says which way it
-  runs.** A category with a Partner but no `raises` is a **setup gap**, not a
-  category without a book: the list says `arah belum diatur` rather than a dash,
-  because the two are different things somebody would act on differently. A book
-  running the wrong way is worse than no book, so it is not guessed.
+- **A book exists when the category names a Partner, is marked a book
+  (`keeps_book`), and says which way it runs.** Supersedes "names a Partner
+  *and* says which way it runs", on the user's decision (29/10/2026), which
+  also revised KB `accounting/subject-books` §1 for every project. A category
+  with a Partner and no book is a **partner tag** — the list says `Tanpa buku`
+  — and its postings carry the Partner on the journal and nothing in
+  `sub_ledger`. The CHECKs make the old setup gap (a Partner, a book, no
+  `raises`) unrepresentable. `keeps_book` is locked once a Budget is classified
+  into the category: switched on later, the book would start without the items
+  earlier realizations never opened; off, it would orphan them.
 - **The book is the category's id, held as a foreign key.**
   `sub_ledger.budget_category_id` and `sub_ledger_balance.budget_category_id`
   reference `sys_budget_category`, on the user's instruction; they replaced a
@@ -2904,6 +2918,13 @@ Specified in the concept doc, **not yet implemented** (see §13):
   **Company filter**, **several accounts** (`?accounts=3,17,42`) and a date
   range. Each account gets its own table, rolled up to opening / debit /
   credit / closing and expandable to its entries.
+- **It may be narrowed to several Partners** (`?partners=4,9`, the user's
+  decision of 29/10/2026). Every chosen account then shows only the lines
+  naming those Partners, and its opening is filtered the same way — the
+  snapshot is read at its `(account, partner?)` grain (`byPair`), never
+  pro-rated. None chosen is every line. The export notes the Partners.
+  `tests/ledger-opening.test.ts` holds that each Partner's run adds up to the
+  whole, at three boundaries.
 - **An entry states its journal line's Partner, in a column of its own** —
   Tanggal · Journal · Partner · Keterangan · Debit · Kredit · Saldo — as a code
   chip and name, or a dash where the line recorded none. It is read off the
@@ -4911,6 +4932,9 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
   **not** compute a balance anywhere but `src/lib/siba/cash-bank.ts` (§9, §12).
 - Do **not** add an update or delete path to `cash_bank_ledger` or `sub_ledger`.
   A book is append-only; a correction is a further entry.
+- Do **not** infer a book from `require_partner` alone, let `keeps_book` change
+  once a Budget is classified into the category, or let one account hold a book
+  and a partner tag together (§10 rule 52, §12).
 - Do **not** split the subject books into separate tables, give one its own bespoke
   report, or add a book for a Budget Category that names no Partner. A book **is** a
   Budget Category, derived by `subledger-catalogue.ts` from the row (§12).
