@@ -57,7 +57,7 @@ export type AdapterAccount = {
   id: number;
   account_label: string;
   partner_category_id: number | null;
-  /** The books a `partner` account keeps (`acc_account_book`). */
+  /** The Budget Categories a `category` account holds (`acc_account_book`). */
   bookIds: number[];
 };
 
@@ -100,18 +100,30 @@ const cents = (n: number) => Math.round(n * 100);
 const raisingSide = (book: SubledgerDef) => (book.raises === "In" ? "credit" : "debit");
 
 /**
- * `partner`: a Partner and an open item in one of the account's books (D18,
- * revised 28/10/2026). A named item brings its own book; a new item opens in
- * the book the line names, always (D20). Whether the line raises or lowers is read from its side against that
+ * `category`: one of the Budget Categories the account holds (D25). Where
+ * they take no Partner (Biaya, Asset) the category is the whole entry and no
+ * book is written. Where they take one, a Partner and an open item in one of
+ * the account's books (D18, revised 28/10/2026): a named item brings its own
+ * book; a new item opens in the book the line names, always (D20). Whether the line raises or lowers is read from its side against that
  * book's `raises` (D19). Lowering names an Open item and relieves it at its
  * own kurs; raising grows a named Open item at its own kurs, or opens a new
  * one at the kurs typed. Every named item holds the balance the draft was
  * saved against, or Post refuses it (Case 10).
  */
-const partnerAdapter: LedgerAdapter = {
-  ledger: "partner",
+const categoryAdapter: LedgerAdapter = {
+  ledger: "category",
 
   async check(line, account, ctx): Promise<Record<string, string>> {
+    if (account.partner_category_id == null) {
+      line.partnerId = null;
+      line.subjectId = null;
+      line.layerId = null;
+      line.balanceBefore = null;
+      if (line.bookId == null || !account.bookIds.includes(line.bookId)) {
+        return { account_id: `Pilih Kategori yang dipegang Account ${account.account_label}.` };
+      }
+      return {};
+    }
     if (!line.partnerId) return { partner_id: "Account ini wajib menyebut Partner." };
     const item = line.subjectId == null ? null : await subledgerItem(line.subjectId);
     if (line.subjectId != null && !item) return { subject_id: "Open item tidak ditemukan." };
@@ -213,6 +225,7 @@ const partnerAdapter: LedgerAdapter = {
   },
 
   lockKeys(line) {
+    if (line.partnerId == null) return [];
     return [{ rank: 1, key: `${line.bookId}:${line.partnerId}:${line.currencyId}` }];
   },
 
@@ -222,6 +235,7 @@ const partnerAdapter: LedgerAdapter = {
   },
 
   async write(tx, line, _account, ctx) {
+    if (line.partnerId == null) return;
     const book = subledgerForCategory(await loadSubledgers(), line.bookId)!;
     if (line.subjectId != null) {
       const held = await itemBalanceOn(line.subjectId, ctx.date, tx);
@@ -376,7 +390,7 @@ const cashBankAdapter: LedgerAdapter = {
 };
 
 const ADAPTERS: Record<string, LedgerAdapter> = {
-  [partnerAdapter.ledger]: partnerAdapter,
+  [categoryAdapter.ledger]: categoryAdapter,
   [cashBankAdapter.ledger]: cashBankAdapter,
 };
 

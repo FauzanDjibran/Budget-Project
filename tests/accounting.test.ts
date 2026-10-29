@@ -30,6 +30,7 @@ import {
   checkAccountNumber,
   listRows,
   checkCashBankAccount,
+  controlAccountReasons,
   partnerCategoriesForBudgetCategory,
 } from "../src/lib/siba/records";
 import {
@@ -40,6 +41,7 @@ import {
   disconnect,
   makeAccount,
   makeMapping,
+  mappingAccountId,
   parentCompanyId,
   partnerCategoryId,
   budgetCategoryId,
@@ -267,7 +269,7 @@ describe("an account already in use cannot be given a sub-account", () => {
     assert.deepEqual(await accountUsage(cash), []);
   });
 
-  test("a mapping counts as use, and is named", async () => {
+  test("a Kategori held counts as use, and is named", async () => {
     const mappingId = await makeMapping({
       companyId: parent,
       budgetCategoryLabel: "Prive",
@@ -277,14 +279,10 @@ describe("an account already in use cannot be given a sub-account", () => {
         subcategoryLabel: "1.1.3",
       }),
     });
-    // Read the account back off the mapping rather than assuming the fixture's
-    // own: `makeMapping` reuses a combination that already exists, because the
-    // three-part key is unique per Company.
-    const mapping = await prisma.accBudgetCategoryAccount.findUniqueOrThrow({
-      where: { id: mappingId },
-      select: { account_id: true },
-    });
-    assert.match((await accountUsage(mapping.account_id)).join(" "), /mapping/i);
+    // Read the account back rather than assuming the fixture's own:
+    // `makeMapping` reuses a combination some account already holds, because
+    // the key is unique per Company (D25).
+    assert.match((await accountUsage(await mappingAccountId(mappingId))).join(" "), /Kategori/);
   });
 });
 
@@ -699,10 +697,10 @@ describe("a Partner account and its books (Journal 2.0 D18)", () => {
       ["Hutang", "Piutang", "Prive"].map((l) => budgetCategoryId(l))
     );
     const karyawan = await partnerCategoryId("Karyawan");
-    assert.equal(await checkAccountLedger(null, "partner", [hutang, piutang], karyawan, null), null);
+    assert.equal(await checkAccountLedger(null, "category", [hutang, piutang], karyawan, null), null);
     // Prive admits Stakeholder only, so a Karyawan account cannot keep it.
     assert.match(
-      (await checkAccountLedger(null, "partner", [hutang, prive], karyawan, null)) ?? "",
+      (await checkAccountLedger(null, "category", [hutang, prive], karyawan, null)) ?? "",
       /tidak menerima/
     );
   });
@@ -721,10 +719,31 @@ describe("a Partner account and its books (Journal 2.0 D18)", () => {
     const label = (await prisma.accAccount.findUniqueOrThrow({ where: { id: owner } })).account_label;
 
     // The real chart may hold the pair too, so only "someone holds it" is certain.
-    const second = await checkAccountLedger(null, "partner", [hutang], karyawan, company);
+    const second = await checkAccountLedger(null, "category", [hutang], karyawan, company);
     assert.match(second ?? "", /sudah dipegang Account/);
-    const itself = await checkAccountLedger(owner, "partner", [hutang], karyawan, null);
+    const itself = await checkAccountLedger(owner, "category", [hutang], karyawan, null);
     assert.doesNotMatch(itself ?? "", new RegExp(`Account ${label.replaceAll(".", "\\.")} `),
       "an account never collides with itself, its Company read off the account");
+  });
+
+  test("a Kategori without a Partner is held once per Company, and never beside one with (D25)", async () => {
+    const company = (await prisma.sysCompany.findFirstOrThrow({ where: { is_parent: true } })).id;
+    const [hutang, biaya] = await Promise.all(["Hutang", "Biaya"].map((l) => budgetCategoryId(l)));
+    const karyawan = await partnerCategoryId("Karyawan");
+    assert.match(
+      (await checkAccountLedger(null, "category", [hutang, biaya], karyawan, company)) ?? "",
+      /tidak dapat dipegang satu account/
+    );
+
+    const owner = await makeAccount({ companyId: company, subcategoryLabel: "5.3.1", bookLabels: ["Biaya"] });
+    assert.match(
+      (await checkAccountLedger(null, "category", [biaya], null, company)) ?? "",
+      /Kategori .* sudah dipegang Account/
+    );
+    assert.deepEqual(
+      (await controlAccountReasons(owner)).length > 0,
+      true,
+      "any ledger but Tanpa is a control account, so Biaya is reached through its Kategori"
+    );
   });
 });

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { categoryAccounts } from "./category-accounts";
 import { layerDateRefusal } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL, isBaseCurrency, rateSource, settlementRefusal } from "./currency";
 import { allocateBase, drawLayer, fxDifference, relieve, roundBase } from "./fx";
@@ -239,10 +240,7 @@ async function lineAccountIds(
       where: { id: { in: partnerIds } },
       select: { id: true, category_id: true, category: { select: { category_label: true } } },
     }),
-    prisma.accBudgetCategoryAccount.findMany({
-      where: { company_id: companyId, budget_category_id: { in: categoryIds } },
-      select: { budget_category_id: true, partner_category_id: true, account_id: true },
-    }),
+    categoryAccounts({ companyId, categoryIds }),
     prisma.sysBudgetCategory.findMany({
       where: { id: { in: categoryIds } },
       select: { id: true, category_label: true },
@@ -272,19 +270,19 @@ async function lineAccountIds(
       missing.push(`${b.budget_no} (${combination})`);
       continue;
     }
-    accounts.set(b.id, mapping.account_id);
+    accounts.set(b.id, mapping.account.id);
   }
 
   if (missing.length) {
-    // Approval tolerates a missing mapping (§10 rule 28) because that gap
-    // belongs to Accounting. Posting cannot: without a mapping there is no
-    // account to journal against, and money must not move unaccounted for.
+    // Approval tolerates a missing account (§10 rule 28) because that gap
+    // belongs to Accounting. Posting cannot: without one there is nothing to
+    // journal against, and money must not move unaccounted for.
     return {
       ok: false,
       errors: {
         _form:
-          `Belum ada Mapping Budget ke Account untuk: ${missing.join(", ")}. ` +
-          "Lengkapi mapping di Accounting sebelum dokumen diposting.",
+          `Belum ada Account yang memegang Kategori untuk: ${missing.join(", ")}. ` +
+          "Tambahkan Kategori itu pada Account di Chart of Accounts sebelum dokumen diposting.",
       },
     };
   }

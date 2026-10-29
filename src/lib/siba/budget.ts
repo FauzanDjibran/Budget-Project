@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { categoryAccounts } from "./category-accounts";
 import type { Prisma } from "@/generated/prisma/client";
 import { nextDocumentNumber } from "./document-number";
 import {
@@ -349,8 +350,8 @@ export type BudgetMapping = {
 };
 
 /**
- * The Accounting mapping table — Company × Budget Category × Partner Category
- * to exactly one account — read whole so the approval dialog can resolve the
+ * Every account a Budget Category posts to — Company × Budget Category ×
+ * Partner Category to exactly one account, held on the account (D25) — read whole so the approval dialog can resolve the
  * destination account live as the approver picks.
  *
  * Showing it lets an approver see *why* the classification matters before
@@ -360,14 +361,7 @@ export type BudgetMapping = {
  * instead.
  */
 export async function budgetMappings(): Promise<BudgetMapping[]> {
-  const rows = await prisma.accBudgetCategoryAccount.findMany({
-    select: {
-      company_id: true,
-      budget_category_id: true,
-      partner_category_id: true,
-      account: { select: { account_label: true, account_name: true } },
-    },
-  });
+  const rows = await categoryAccounts();
   return rows.map((m) => ({
     companyId: m.company_id,
     budgetCategoryId: m.budget_category_id,

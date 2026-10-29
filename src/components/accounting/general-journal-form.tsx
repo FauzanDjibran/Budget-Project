@@ -59,12 +59,12 @@ type Side = "debit" | "credit";
  */
 type Kind = "book" | "cash" | "gl";
 const KIND_OPTIONS: { value: Kind; label: string }[] = [
-  { value: "book", label: "Buku Subjek" },
+  { value: "book", label: "Kategori" },
   { value: "cash", label: "Kas & Bank" },
   { value: "gl", label: "Account" },
 ];
 const kindOfLedger = (ledger: string): Kind =>
-  ledger === "partner" ? "book" : ledger === "cash_bank" ? "cash" : "gl";
+  ledger === "category" ? "book" : ledger === "cash_bank" ? "cash" : "gl";
 
 /** One row of the editor, before it is a database row. */
 type DraftLine = {
@@ -107,7 +107,7 @@ const NEW_ITEM = "new";
 const cents = (n: number) => Math.round(n * 100);
 const other = (s: Side): Side => (s === "debit" ? "credit" : "debit");
 /** The side that raises a book: money in raises a Hutang, credited. */
-const raiseOf = (book: { raises: "In" | "Out" } | null | undefined): Side =>
+const raiseOf = (book: { raises: "In" | "Out" | null } | null | undefined): Side =>
   book?.raises === "In" ? "credit" : "debit";
 
 const EMPTY: GeneralJournalOptions = {
@@ -170,7 +170,7 @@ export function GeneralJournalForm({
             account_id: l.accountId,
             book_id: l.bookId,
             partner_id: l.partnerId,
-            subject: l.subjectId ? String(l.subjectId) : l.ledger === "partner" ? NEW_ITEM : "",
+            subject: l.subjectId ? String(l.subjectId) : l.partnerId && l.ledger === "category" ? NEW_ITEM : "",
             layer_id: l.layerId
               ? String(l.layerId)
               : l.ledger === "cash_bank" && l.foreign && l.debit > 0
@@ -221,14 +221,15 @@ export function GeneralJournalForm({
   );
 
   /** The one account keeping a book for a Partner Category (D21). */
-  const bookAccount = (bookId: number | null, categoryId: number | undefined) =>
+  const bookAccount = (bookId: number | null, categoryId: number | null | undefined) =>
     options.accounts.find(
-      (a) => a.ledger === "partner" && bookId != null && a.bookIds.includes(bookId) && a.partnerCategoryId === categoryId
+      (a) =>
+        a.ledger === "category" && bookId != null && a.bookIds.includes(bookId) && a.partnerCategoryId === categoryId
     ) ?? null;
 
   /** What one draft line resolves to, as the adapters resolve it. */
   const resolve = (l: DraftLine) => {
-    const ledger = l.kind === "book" ? "partner" : l.kind === "cash" ? "cash_bank" : "none";
+    const ledger = l.kind === "book" ? "category" : l.kind === "cash" ? "cash_bank" : "none";
     const book = l.kind === "book" && l.book_id ? by.book.get(l.book_id) ?? null : null;
     const cash = l.kind === "cash" ? by.cash.get(l.subject) ?? null : null;
     // A book's account follows from the Partner's category, a Cash & Bank's
@@ -239,7 +240,7 @@ export function GeneralJournalForm({
         : l.kind === "cash"
           ? (cash && by.account.get(cash.accountId)) || null
           : book
-            ? bookAccount(book.id, by.partner.get(l.partner_id ?? 0)?.categoryId)
+            ? bookAccount(book.id, book.takesPartner ? by.partner.get(l.partner_id ?? 0)?.categoryId : null)
             : null;
     const item = l.kind === "book" ? by.item.get(l.subject) ?? null : null;
     const isNew = l.kind === "book" && l.subject === NEW_ITEM;
@@ -328,10 +329,10 @@ export function GeneralJournalForm({
       return {
         account_id: r.account ? String(r.account.id) : "",
         side: r.side,
-        partner_id: l.kind === "book" && l.partner_id ? String(l.partner_id) : "",
+        partner_id: r.book?.takesPartner && l.partner_id ? String(l.partner_id) : "",
         subject_id: l.kind === "cash" || r.item ? l.subject : "",
         // Naming the book without an item is what makes a new item (D20).
-        budget_category_id: r.book && (r.item || r.isNew) ? String(r.book.id) : "",
+        budget_category_id: r.book && (r.item || r.isNew || !r.book.takesPartner) ? String(r.book.id) : "",
         cash_bank_layer_id: l.layer_id === NEW_ITEM ? "" : l.layer_id,
         currency_id: r.currency ? String(r.currency.id) : "",
         exchange_rate: l.exchange_rate,
@@ -648,7 +649,8 @@ export function GeneralJournalForm({
                           setLine(l.key, { ...blankLine(), key: l.key, kind: l.kind, description: l.description, ...patch });
                         const fixedRate = Boolean(r.item) || Boolean(r.layer);
                         // A kurs is typed only for something new; an entry brings its own.
-                        const typedRate = l.kind === "gl" || r.isNew || l.layer_id === NEW_ITEM;
+                        const typedRate =
+                          l.kind === "gl" || r.isNew || l.layer_id === NEW_ITEM || r.book?.takesPartner === false;
                         /** One side's amount: typed, or closed to this entry. */
                         const amountCell = (side: Side) => (
                           <td className="num">
@@ -690,10 +692,10 @@ export function GeneralJournalForm({
                                 <Select
                                   size="sm"
                                   value={l.book_id ? String(l.book_id) : ""}
-                                  placeholder="Pilih Buku…"
+                                  placeholder="Pilih Kategori…"
                                   ariaLabel={`Buku subjek baris ${i + 1}`}
                                   options={options.books
-                                    .filter((b) => options.accounts.some((a) => a.ledger === "partner" && a.bookIds.includes(b.id)))
+                                    .filter((b) => options.accounts.some((a) => a.ledger === "category" && a.bookIds.includes(b.id)))
                                     .map((b) => ({ value: String(b.id), label: b.name }))}
                                   onChange={(v) => restart({ book_id: v ? Number(v) : null })}
                                 />
@@ -730,12 +732,12 @@ export function GeneralJournalForm({
                               {l.kind === "cash" && err(i, "subject_id")}
                             </td>
                             <td>
-                              {l.kind === "book" ? (
+                              {r.book?.takesPartner ? (
                                 <Combobox
                                   value={l.partner_id}
                                   placeholder="Pilih Partner…"
                                   size="sm"
-                                  waitingFor={l.book_id ? null : "Pilih Buku dulu…"}
+                                  waitingFor={l.book_id ? null : "Pilih Kategori dulu…"}
                                   invalid={Boolean(errors[`lines.${i}.partner_id`])}
                                   options={partners.map((p) => ({ id: p.id, label: p.label, name: p.name, active: true }))}
                                   onChange={(v) => setLine(l.key, { partner_id: v, subject: "" })}
@@ -746,7 +748,7 @@ export function GeneralJournalForm({
                               {err(i, "partner_id")}
                             </td>
                             <td>
-                              {l.kind === "book" ? (
+                              {r.book?.takesPartner ? (
                                 // Choosing an item and opening a new one are two controls (D20).
                                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                                   <label className={`chk sm${l.partner_id ? "" : " dis"}`} title="Buka item baru">
@@ -901,10 +903,11 @@ export function GeneralJournalForm({
                             ) : (
                               <PartnerCell label={l.partnerLabel} name={l.partnerName} mismatch={null} />
                             )}
-                            {l.ledger === "partner" && (
+                            {l.ledger === "category" && (
                               <span className="rsub">
-                                {l.subjectLabel ?? "Item baru"}
-                                {l.bookName && ` · ${l.bookName}`}
+                                {l.partnerId ? l.subjectLabel ?? "Item baru" : null}
+                                {l.partnerId && l.bookName ? " · " : null}
+                                {l.bookName}
                               </span>
                             )}
                             {l.layerNo && <span className="rsub">{l.layerNo}</span>}
@@ -1064,7 +1067,7 @@ function LineDetail({ line, onClose }: { line: GeneralJournalLineRow; onClose: (
         </div>
         <div>
           <span>{line.ledger === "cash_bank" ? "Cash & Bank" : "Open Item"}</span>
-          <b>{line.subjectLabel ?? "Item baru"}</b>
+          <b>{line.ledger === "category" && !line.partnerId ? "—" : line.subjectLabel ?? "Item baru"}</b>
         </div>
         <div>
           <span>Layer</span>

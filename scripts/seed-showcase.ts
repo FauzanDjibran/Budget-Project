@@ -2304,53 +2304,29 @@ async function insertMappings(companyId: number, companyLabel: string, actor: nu
       );
     }
 
-    const existing = await prisma.accBudgetCategoryAccount.findFirst({
-      where: {
-        company_id: companyId,
-        budget_category_id: budgetCategoryId,
-        partner_category_id: partnerCategoryId,
-      },
-      select: { id: true },
-    });
-    if (existing) continue;
-
-    // A book's mapping target keeps that book (Journal 2.0 D18), as the user
-    // would tick it on the account form.
-    const keepsBook = await prisma.sysBudgetCategory.count({
-      where: { id: budgetCategoryId, require_partner: true, raises: { not: null } },
-    });
+    // The account holds the category itself (Journal 2.0 D25), as the user
+    // would tick it on the account form; any ledger but none is a control
+    // account.
     const kept = await prisma.accAccountBook.count({
       where: { account_id: account.id, budget_category_id: budgetCategoryId },
     });
-    if (keepsBook && !kept) {
-      const bookCodes = await prisma.accAccountBook.findMany({ select: { account_book_code: true } });
-      await prisma.accAccount.update({ where: { id: account.id }, data: { ledger: "partner" } });
-      await prisma.accAccountBook.create({
-        data: {
-          account_book_code: await nextCode("acbk", bookCodes.map((c) => c.account_book_code)),
-          account_id: account.id,
-          budget_category_id: budgetCategoryId,
-          created_by: actor,
-        },
-      });
-    }
-
-    const codes = await prisma.accBudgetCategoryAccount.findMany({
-      select: { bca_code: true },
+    if (kept) continue;
+    const bookCodes = await prisma.accAccountBook.findMany({ select: { account_book_code: true } });
+    await prisma.accAccount.update({
+      where: { id: account.id },
+      data: { ledger: "category", is_control_account: true },
     });
-    const row = await prisma.accBudgetCategoryAccount.create({
+    const row = await prisma.accAccountBook.create({
       data: {
-        bca_code: await nextCode("bcam", codes.map((c) => c.bca_code)),
-        company_id: companyId,
-        budget_category_id: budgetCategoryId,
-        partner_category_id: partnerCategoryId,
+        account_book_code: await nextCode("acbk", bookCodes.map((c) => c.account_book_code)),
         account_id: account.id,
+        budget_category_id: budgetCategoryId,
         created_by: actor,
       },
       select: { id: true },
     });
-    await audit("acc_budget_category_account", row.id, actor);
-    tally(`mappings (${companyLabel})`);
+    await audit("acc_account_book", row.id, actor);
+    tally(`account categories (${companyLabel})`);
   }
 }
 
@@ -2457,8 +2433,8 @@ async function insertNode(node: AccountNode, ctx: Context): Promise<number> {
       parent_account: ctx.parentId,
       is_postable: !node.header,
       normal_balance: node.balance ?? ctx.groupBalance,
-      // A Partner account; its mapping makes it a subject book's, below.
-      ledger: partnerCategoryId ? "partner" : "none",
+      // A Partner account; the categories it holds are added below (D25).
+      ledger: partnerCategoryId ? "category" : "none",
       partner_category_id: partnerCategoryId,
       // A subledger account is exactly the thing a control account reconciles:
       // its GL balance against the Hutang / Piutang / Titipan / Prive book.

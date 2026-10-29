@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { categoryAccount } from "./category-accounts";
 import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 
@@ -220,25 +221,14 @@ export async function applyItemAdjustment(
 
   // The Partner's side: the account its position is mapped to, exactly as a
   // cash posting resolves it — Company × Budget Category × Partner Category.
-  const mapping = await prisma.accBudgetCategoryAccount.findFirst({
-    where: {
-      company_id: doc.company_id,
-      budget_category_id: doc.budget_category_id,
-      partner_category_id: header.partnerCategoryId,
-    },
-    select: {
-      account: {
-        select: { id: true, company_id: true, is_active: true, is_postable: true, account_label: true },
-      },
-    },
-  });
+  const mapping = await categoryAccount(doc.company_id, doc.budget_category_id, header.partnerCategoryId);
   if (!mapping) {
     return {
       ok: false,
       errors: {
         _form:
-          `Belum ada Mapping Budget ke Account untuk ${header.book.name} dan ` +
-          "Partner Category Partner ini. Lengkapi mapping di Accounting sebelum " +
+          `Belum ada Account yang memegang ${header.book.name} untuk Partner Category ` +
+          "Partner ini. Tambahkan pada Account di Chart of Accounts sebelum " +
           "dokumen diposting.",
       },
     };

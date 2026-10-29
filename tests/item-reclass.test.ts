@@ -618,11 +618,11 @@ describe("refusals", () => {
       partnerId: unknown,
       lines: [{ book: hutang, partnerId: karyawan, sources: [[source, 1_000]] }],
     });
-    const hutangKaryawan = await prisma.accBudgetCategoryAccount.findFirst({
+    const hutangKaryawan = await prisma.accAccountBook.findFirst({
       where: {
-        company_id: induk,
+        status: "Active",
         budget_category_id: hutang.categoryId,
-        partner_category: { category_label: "Karyawan" },
+        account: { company_id: induk, ledger: "category", partner_category: { category_label: "Karyawan" } },
       },
     });
     const result = await applyReclass(id, actor);
@@ -631,7 +631,7 @@ describe("refusals", () => {
       assert.ok(result.ok);
     } else {
       assert.equal(result.ok, false);
-      assert.match(String(!result.ok && result.errors._form), /Mapping Budget ke Account untuk Buku Hutang/);
+      assert.match(String(!result.ok && result.errors._form), /Belum ada Account yang memegang Buku Hutang/);
     }
   });
 });

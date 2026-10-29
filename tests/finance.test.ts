@@ -1332,14 +1332,16 @@ describe("posting writes a balanced journal alongside the book", () => {
     // Approval tolerates a missing mapping (§10 rule 28) because that gap
     // belongs to Accounting. Posting cannot: there is no account to journal
     // against, and money must not move unaccounted for.
-    // Taken whole and put back whole. This row may be one a real user created
-    // through the application, and restoring it through the fixture helper
-    // would hand it a fixture code that `cleanupFixtures` then deletes — the
-    // suite would quietly destroy a mapping it only meant to borrow.
-    const mapping = await prisma.accBudgetCategoryAccount.findFirstOrThrow({
-      where: { company_id: induk, budget_category: { category_label: "Asset" } },
+    // Borrowed, never deleted: the row may be one a real user made, so it is
+    // set Inactive and put back exactly as it was (D25).
+    const held = await prisma.accAccountBook.findFirstOrThrow({
+      where: {
+        status: "Active",
+        budget_category: { category_label: "Asset" },
+        account: { company_id: induk, ledger: "category" },
+      },
     });
-    await prisma.accBudgetCategoryAccount.delete({ where: { id: mapping.id } });
+    await prisma.accAccountBook.update({ where: { id: held.id }, data: { status: "Inactive" } });
 
     try {
       const cashBank = await makeCashBank({ opening: 2_000_000 });
@@ -1356,7 +1358,7 @@ describe("posting writes a balanced journal alongside the book", () => {
 
       const result = await applyPosting(doc, actor);
       assert.equal(result.ok, false);
-      assert.match(String(result.errors?._form), /Mapping Budget ke Account/);
+      assert.match(String(result.errors?._form), /Belum ada Account yang memegang Kategori/);
 
       const doc2 = await prisma.finCashBankTransaction.findUniqueOrThrow({
         where: { id: doc },
@@ -1369,17 +1371,7 @@ describe("posting writes a balanced journal alongside the book", () => {
         "and moves no money"
       );
     } finally {
-      await prisma.accBudgetCategoryAccount.create({
-        data: {
-          bca_code: mapping.bca_code,
-          company_id: mapping.company_id,
-          budget_category_id: mapping.budget_category_id,
-          partner_category_id: mapping.partner_category_id,
-          account_id: mapping.account_id,
-          created_by: mapping.created_by,
-          updated_by: mapping.updated_by,
-        },
-      });
+      await prisma.accAccountBook.update({ where: { id: held.id }, data: { status: "Active" } });
     }
   });
 });
@@ -2066,10 +2058,16 @@ describe("one document realizes Budgets of several categories and partners", () 
   });
 
   test("a line whose classification has no mapping refuses the post, by Budget", async () => {
-    const mapping = await prisma.accBudgetCategoryAccount.findFirstOrThrow({
-      where: { company_id: induk, budget_category: { category_label: "Asset" } },
+    // Borrowed, never deleted: the row may be one a real user made, so it is
+    // set Inactive and put back exactly as it was (D25).
+    const held = await prisma.accAccountBook.findFirstOrThrow({
+      where: {
+        status: "Active",
+        budget_category: { category_label: "Asset" },
+        account: { company_id: induk, ledger: "category" },
+      },
     });
-    await prisma.accBudgetCategoryAccount.delete({ where: { id: mapping.id } });
+    await prisma.accAccountBook.update({ where: { id: held.id }, data: { status: "Inactive" } });
 
     try {
       const cashBank = await makeCashBank({ opening: 2_000_000 });
@@ -2100,17 +2098,7 @@ describe("one document realizes Budgets of several categories and partners", () 
         "and the mapped line did not move money on its own"
       );
     } finally {
-      await prisma.accBudgetCategoryAccount.create({
-        data: {
-          bca_code: mapping.bca_code,
-          company_id: mapping.company_id,
-          budget_category_id: mapping.budget_category_id,
-          partner_category_id: mapping.partner_category_id,
-          account_id: mapping.account_id,
-          created_by: mapping.created_by,
-          updated_by: mapping.updated_by,
-        },
-      });
+      await prisma.accAccountBook.update({ where: { id: held.id }, data: { status: "Active" } });
     }
   });
 });

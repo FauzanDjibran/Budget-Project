@@ -8,11 +8,8 @@
  * form stay generic.
  */
 import type { IconName } from "@/components/icon";
-import {
-  type ClassificationCatalogue,
-  budgetCategoryNeedsPartner,
-} from "./classification";
-import { LEDGER_TEXT, ledgerTakesPartner } from "./account-code";
+import { type ClassificationCatalogue } from "./classification";
+import { LEDGER_TEXT } from "./account-code";
 import { isBaseCurrency } from "./currency";
 import type { SystemDefaultKey } from "./system-defaults";
 
@@ -126,10 +123,11 @@ export type Field = {
     | "cashBankAccount"
     | "postableAccount"
     | "parentAccount"
-    /** Only the Partner Categories the chosen Budget Category admits. */
-    | "admittedPartnerCategory"
-    /** Only the Budget Categories that keep a subject book. */
-    | "bookCategory";
+    /**
+     * The Budget Categories an account may hold (D25): every one that takes
+     * no Partner, and those taking one that keep a book.
+     */
+    | "accountCategory";
   /**
    * Named predicate deciding whether the field applies at all. A field that
    * does not apply is hidden and stored as null — the Server Action evaluates
@@ -137,9 +135,10 @@ export type Field = {
    */
   visibleWhen?:
     | "accountRequiresPartner"
-    /** The account's ledger takes a Partner on every line (Journal 2.0 D18). */
+    /** The account's ledger is Kategori (D25). */
+    | "accountHoldsCategories"
+    /** The categories the account holds take a Partner on every line (D25). */
     | "accountTakesPartner"
-    | "budgetCategoryRequiresPartner"
     /**
      * A Budget Category that keeps a book **and** moves both ways, so which
      * direction raises its subject is a real choice. A single-direction
@@ -865,14 +864,14 @@ export const ENTITIES: Entity[] = [
         defaultValue: "Debit",
       },
       {
-        // Which ledger the account belongs to (Journal 2.0 D18): what every
-        // line on it must name. One account, one ledger — a Cash & Bank or a
-        // mapping is checked against it, and it is locked once the account has
-        // a journal line (`validateAccount`).
+        // Which ledger the account belongs to (Journal 2.0 D18, D25): what
+        // every line on it must name. Anything but Tanpa is a control account.
+        // A Cash & Bank is checked against it, and it is locked once the
+        // account has a journal line (`validateAccount`).
         name: "ledger",
         label: "Ledger",
         type: "select",
-        options: ["none", "partner", "cash_bank"],
+        options: ["none", "category", "cash_bank"],
         optionLabels: LEDGER_TEXT,
         required: true,
         defaultValue: "none",
@@ -880,19 +879,22 @@ export const ENTITIES: Entity[] = [
         help: "yang wajib disebut setiap baris journal",
       },
       {
-        // A Partner account keeps one or more books — a Hutang Piutang
-        // account keeps both, each still reported on its own. Written in the
-        // account's own transaction (`reconcileMultiref`).
+        // The Budget Categories the account holds (D25) — where Realisasi and
+        // Jurnal Umum find their account. A Hutang Piutang account holds both;
+        // Biaya Listrik and Biaya Air may share Beban Utilitas. All take a
+        // Partner or none do. Written in the account's own transaction
+        // (`reconcileMultiref`).
         name: "book_ids",
-        label: "Buku Subjek",
+        label: "Kategori",
         type: "multiref",
         ref: "sys_budget_category",
-        refFilter: "bookCategory",
+        refFilter: "accountCategory",
         joinTable: "acc_account_book",
         virtual: true,
         required: true,
-        visibleWhen: "accountTakesPartner",
-        help: "buku yang ditampung account ini",
+        visibleWhen: "accountHoldsCategories",
+        resets: ["partner_category_id"],
+        help: "Budget Category yang diposting ke account ini",
       },
       {
         name: "partner_category_id",
@@ -937,71 +939,6 @@ export const ENTITIES: Entity[] = [
       { field: "normal_balance", label: "Normal", isTag: true, width: "96px", filter: "enum" },
       { field: "partner_category_id", label: "Partner Cat.", isRef: true, refLabelOnly: true, width: "116px", filter: "ref" },
       { field: "is_active", label: "Status", isBool: true, width: "100px", filter: "bool" },
-    ],
-  },
-
-  // ------------------------------------------------------- accounting · mapping
-
-  {
-    key: "acc_budget_category_account",
-    slug: "budget-category-account",
-    module: "accounting",
-    name: "Mapping Budget ke Account",
-    single: "Mapping",
-    icon: "link",
-    desc: "Menghubungkan Budget Category, Company, dan Account tujuan — jembatan antara klasifikasi planning dan account accounting.",
-    codeField: "bca_code",
-    codePrefix: "bcam",
-    titleRefs: ["budget_category_id", "partner_category_id", "account_id"],
-    scope: "company_id",
-    fields: [
-      {
-        name: "company_id",
-        label: "Company",
-        type: "ref",
-        ref: "sys_company",
-        required: true,
-        locked: true,
-        resets: ["account_id"],
-        help: "bagan akun berbeda per Company",
-      },
-      {
-        name: "budget_category_id",
-        label: "Budget Category",
-        type: "ref",
-        ref: "sys_budget_category",
-        required: true,
-        resets: ["partner_category_id", "account_id"],
-        help: "menentukan Partner Category yang boleh dipasangkan",
-      },
-      {
-        name: "partner_category_id",
-        label: "Partner Category",
-        type: "ref",
-        ref: "sys_partner_category",
-        required: true,
-        refFilter: "admittedPartnerCategory",
-        visibleWhen: "budgetCategoryRequiresPartner",
-        resets: ["account_id"],
-        help: "satu kombinasi menuju tepat satu Account",
-      },
-      {
-        name: "account_id",
-        label: "Account",
-        type: "ref",
-        ref: "acc_account",
-        required: true,
-        full: true,
-        refFilter: "postableAccount",
-        help: "hanya account postable milik Company ini",
-      },
-    ],
-    columns: [
-      { field: "company_id", label: "Company", isRef: true, refLabelOnly: true, width: "104px", filter: "ref" },
-      { field: "budget_category_id", label: "Budget Category", isRef: true, refLabelOnly: true, width: "150px", filter: "ref" },
-      { field: "partner_category_id", label: "Partner Category", isRef: true, refLabelOnly: true, width: "150px", filter: "ref" },
-      { field: "account_id", label: "Account Tujuan", isRef: true, primary: true, filter: "ref" },
-      { field: "normal_balance", label: "Normal", computed: true, width: "96px" },
     ],
   },
 
@@ -1150,8 +1087,13 @@ export function fieldApplies(
     const v = values.require_partner;
     return v === true || v === "true";
   }
+  if (field.visibleWhen === "accountHoldsCategories") return values.ledger === "category";
   if (field.visibleWhen === "accountTakesPartner") {
-    return ledgerTakesPartner(String(values.ledger ?? ""));
+    // The categories chosen decide it (D25); `validateAccount` asks the same.
+    if (values.ledger !== "category") return false;
+    const raw = values.book_ids;
+    const ids = (Array.isArray(raw) ? raw : String(raw ?? "").split(",")).map(Number);
+    return ids.some((id) => classification?.find((r) => r.id === id)?.requirePartner);
   }
   if (field.visibleWhen === "categoryChoosesRaises") {
     const v = values.require_partner;
@@ -1163,11 +1105,7 @@ export function fieldApplies(
     // known, rather than flickering in on an empty picker.
     return label ? !isBaseCurrency(label) : false;
   }
-  // budgetCategoryRequiresPartner
-  const label = categoryLabelOf?.(values.budget_category_id);
-  return label && classification
-    ? budgetCategoryNeedsPartner(classification, label)
-    : false;
+  return false;
 }
 
 // The Budget Category rules themselves moved to `classification.ts` and are

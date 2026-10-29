@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { AccountSection, Prisma } from "@/generated/prisma/client";
-import { compareCodes, ledgerTakesPartner } from "./account-code";
+import { compareCodes, accountTakesPartner } from "./account-code";
 import { isBaseCurrency } from "./currency";
 import { roundBase } from "./fx";
 import { partnerMismatch, type PartnerMismatch } from "./journal";
@@ -344,6 +344,7 @@ export async function generalLedgerReport(
       account_name: true,
       normal_balance: true,
       ledger: true,
+      partner_category_id: true,
       company_id: true,
       company: { select: { company_label: true } },
     },
@@ -408,7 +409,7 @@ export async function generalLedgerReport(
       const isForeign = !isBaseCurrency(label);
       if (isForeign) foreign.add(label);
 
-      const mismatch = partnerMismatch(ledgerTakesPartner(a.ledger), l.partner_id);
+      const mismatch = partnerMismatch(accountTakesPartner(a), l.partner_id);
       if (mismatch) mismatches += 1;
 
       entries.push({
@@ -440,7 +441,7 @@ export async function generalLedgerReport(
       name: a.account_name,
       companyLabel: a.company.company_label,
       normalBalance: a.normal_balance,
-      requirePartner: ledgerTakesPartner(a.ledger),
+      requirePartner: accountTakesPartner(a),
       opening,
       debit,
       credit,
@@ -470,11 +471,11 @@ const LINE_ORDER: Prisma.AccJournalLineOrderByWithRelationInput[] = [
  * breaking the account's Partner rule, and which currencies fed it.
  */
 async function ledgerRollup(
-  accounts: { id: number; ledger: string }[],
+  accounts: { id: number; ledger: string; partner_category_id: number | null }[],
   within: { journal: { status: "Posted"; accounting_date: { gte: Date; lte: Date } } }
 ) {
-  const required = accounts.filter((a) => ledgerTakesPartner(a.ledger)).map((a) => a.id);
-  const unrequired = accounts.filter((a) => !ledgerTakesPartner(a.ledger)).map((a) => a.id);
+  const required = accounts.filter((a) => accountTakesPartner(a)).map((a) => a.id);
+  const unrequired = accounts.filter((a) => !accountTakesPartner(a)).map((a) => a.id);
   const ids = accounts.map((a) => a.id);
 
   const [sums, missing, unexpected, currencies] = await Promise.all([
@@ -557,7 +558,7 @@ export async function ledgerEntriesPage(
 ): Promise<LedgerEntryPage | null> {
   const account = await prisma.accAccount.findFirst({
     where: { id: accountId, company_id: { in: companyIds } },
-    select: { id: true, normal_balance: true, ledger: true, company_id: true },
+    select: { id: true, normal_balance: true, ledger: true, partner_category_id: true, company_id: true },
   });
   if (!account) return null;
 
@@ -623,7 +624,7 @@ export async function ledgerEntriesPage(
       description: l.description,
       partnerLabel: l.partner?.partner_label ?? null,
       partnerName: l.partner?.partner_name ?? null,
-      partnerMismatch: partnerMismatch(ledgerTakesPartner(account.ledger), l.partner_id),
+      partnerMismatch: partnerMismatch(accountTakesPartner(account), l.partner_id),
       debit: d,
       credit: c,
       balance: running,

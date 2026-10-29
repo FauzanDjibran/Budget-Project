@@ -235,11 +235,12 @@ export async function makeAccount(options: {
   /** Names a Partner on every line, of this category. */
   partnerCategoryLabel?: string | null;
   /**
-   * The account's ledger (Journal 2.0 D18). Defaults to `partner` when a
-   * Partner Category is named and `none` otherwise. `bookLabels` are the
-   * books a `partner` account keeps; `cash_bank` the Cash Bank Book's.
+   * The account's ledger (Journal 2.0 D18, D25). Defaults to `category`
+   * when a Partner Category or a book is named and `none` otherwise.
+   * `bookLabels` are the Budget Categories a `category` account holds;
+   * `cash_bank` the Cash Bank Book's.
    */
-  ledger?: "none" | "partner" | "cash_bank";
+  ledger?: "none" | "category" | "cash_bank";
   bookLabels?: string[];
 }): Promise<number> {
   const key = nextFixture();
@@ -268,8 +269,8 @@ export async function makeAccount(options: {
       normal_balance: options.normalBalance ?? "Debit",
       is_control_account: options.controlAccount ?? false,
       ledger: options.bookLabels?.length
-        ? "partner"
-        : options.ledger ?? (options.partnerCategoryLabel ? "partner" : "none"),
+        ? "category"
+        : options.ledger ?? (options.partnerCategoryLabel ? "category" : "none"),
       partner_category_id: options.partnerCategoryLabel
         ? await partnerCategoryId(options.partnerCategoryLabel)
         : null,
@@ -291,11 +292,14 @@ export async function makeAccount(options: {
 }
 
 /**
- * A Company x Budget Category x Partner Category -> account mapping.
+ * Makes an account hold a Budget Category for a Partner Category, or for none
+ * (Journal 2.0 D25) — what Mapping Budget ke Account used to say.
  *
- * Posting needs one: a document whose Purpose resolves to no account cannot be
+ * Posting needs one: a Budget whose category no account holds cannot be
  * journalled, and money must not move unaccounted for. Approval deliberately
- * tolerates a missing mapping (CLAUDE.md §10 rule 28); posting cannot.
+ * tolerates the gap (CLAUDE.md §10 rule 28); posting cannot.
+ *
+ * Returns the `acc_account_book` row that answers for the combination.
  */
 export async function makeMapping(options: {
   companyId: number;
@@ -309,26 +313,37 @@ export async function makeMapping(options: {
     ? await partnerCategoryId(options.partnerCategoryLabel)
     : null;
 
-  const existing = await prisma.accBudgetCategoryAccount.findFirst({
+  const existing = await prisma.accAccountBook.findFirst({
     where: {
-      company_id: options.companyId,
       budget_category_id: budgetCategory,
-      partner_category_id: partnerCategory,
+      status: "Active",
+      account: {
+        company_id: options.companyId,
+        ledger: "category",
+        partner_category_id: partnerCategory,
+      },
     },
     select: { id: true },
   });
-  // Reused, never repointed: the row may be one the showcase seed or a user
-  // created, and cleanup deletes only rows carrying the fixture prefix. A
+  // Reused, never repointed: the account may be one the showcase seed or a
+  // user created, and cleanup deletes only rows carrying the fixture prefix. A
   // caller that needs the account asks `mappingAccountId`.
   if (existing) return existing.id;
 
-  const row = await prisma.accBudgetCategoryAccount.create({
-    data: {
-      bca_code: `${FIXTURE_PREFIX}.${key}`,
-      company_id: options.companyId,
-      budget_category_id: budgetCategory,
-      partner_category_id: partnerCategory,
+  await prisma.accAccount.update({
+    where: { id: options.accountId },
+    data: { ledger: "category", partner_category_id: partnerCategory, is_control_account: true },
+  });
+  // The fixture account may already hold the category (`bookLabels`).
+  const row = await prisma.accAccountBook.upsert({
+    where: {
+      account_id_budget_category_id: { account_id: options.accountId, budget_category_id: budgetCategory },
+    },
+    update: { status: "Active" },
+    create: {
+      account_book_code: `${FIXTURE_PREFIX}.${key}`,
       account_id: options.accountId,
+      budget_category_id: budgetCategory,
       created_by: await systemUserId(),
     },
     select: { id: true },
@@ -337,15 +352,15 @@ export async function makeMapping(options: {
 }
 
 /**
- * The account a mapping points at.
+ * The account a combination resolves to.
  *
- * `makeMapping` reuses an existing mapping for the combination rather than
+ * `makeMapping` reuses an account already holding the combination rather than
  * repointing it — repointing would mutate a row cleanup cannot restore. A test
- * that cares which account the mapping resolves to therefore asks, instead of
- * assuming it is the one it just passed in.
+ * that cares which account it resolves to therefore asks, instead of assuming
+ * it is the one it just passed in.
  */
 export async function mappingAccountId(mappingId: number): Promise<number> {
-  const row = await prisma.accBudgetCategoryAccount.findUniqueOrThrow({
+  const row = await prisma.accAccountBook.findUniqueOrThrow({
     where: { id: mappingId },
     select: { account_id: true },
   });
@@ -378,11 +393,6 @@ export async function makePartner(options: {
  * -referencing account tree never blocks a delete.
  */
 export async function cleanupFixtures(): Promise<void> {
-  // Mappings and journals point at accounts, so they go before the accounts do.
-  await prisma.accBudgetCategoryAccount.deleteMany({
-    where: { bca_code: { startsWith: FIXTURE_PREFIX } },
-  });
-
   // A Jurnal Umum names an account and a Partner on each line, and goes first:
   // a posted one points at the acc_journal removed below.
   const generalIds = [

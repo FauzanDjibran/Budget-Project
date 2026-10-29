@@ -41,10 +41,7 @@ import {
   type Entity,
   type Field,
 } from "@/lib/siba/entities";
-import {
-  type ClassificationCatalogue,
-  allowedPartnerCategories,
-} from "@/lib/siba/classification";
+import { type ClassificationCatalogue } from "@/lib/siba/classification";
 import { moduleByKey } from "@/lib/siba/nav";
 import type { RefOption, Row } from "@/lib/siba/records";
 import type { SystemDefaultKey } from "@/lib/siba/system-defaults";
@@ -230,12 +227,6 @@ export function EntityForm({
             o.subcategoryId === subcategoryId &&
             o.id !== row?.id
         );
-      }
-      case "admittedPartnerCategory": {
-        const label = budgetCategoryLabel(values.budget_category_id);
-        if (!label) return [];
-        const allowed = allowedPartnerCategories(classification, label);
-        return all.filter((o) => allowed.includes(o.label));
       }
       default:
         return all;

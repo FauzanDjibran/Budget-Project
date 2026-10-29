@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney } from "@/lib/format";
-import { compareCodes, ledgerIsControl, ledgerTakesPartner } from "./account-code";
+import { compareCodes, ledgerIsControl, accountTakesPartner } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
 import { journalLineCountForAccount } from "./journal";
 import { subledgerForCategory } from "./subledger-catalogue";
@@ -38,7 +38,6 @@ const DELEGATES = {
   acc_account: (db: Client) => db.accAccount,
   acc_account_book: (db: Client) => db.accAccountBook,
   acc_account_subcategory: (db: Client) => db.accAccountSubcategory,
-  acc_budget_category_account: (db: Client) => db.accBudgetCategoryAccount,
   acc_fiscal_year: (db: Client) => db.accFiscalYear,
 } as const;
 
@@ -263,10 +262,10 @@ export async function optionsFor(
     }
     case "sys_budget_category": {
       const rows = await prisma.sysBudgetCategory.findMany({
-        // A book is a category that names a Partner and says which way it runs.
+        // An account may hold a category taking no Partner, or one keeping a book (D25).
         where:
-          filter === "bookCategory"
-            ? { require_partner: true, raises: { not: null } }
+          filter === "accountCategory"
+            ? { OR: [{ require_partner: false }, { raises: { not: null } }] }
             : undefined,
         orderBy: { id: "asc" },
       });
@@ -372,7 +371,7 @@ function accountWhere(filter?: Field["refFilter"]) {
       return {
         journal_lines: { none: {} },
         cash_banks: { none: {} },
-        mappings: { none: {} },
+        books: { none: { status: "Active" as const } },
       };
     default:
       return {};
@@ -433,7 +432,7 @@ export async function accountUsage(accountId: number): Promise<string[]> {
       where: { account_id: accountId },
       select: { cash_bank_label: true },
     }),
-    prisma.accBudgetCategoryAccount.count({ where: { account_id: accountId } }),
+    prisma.accAccountBook.count({ where: { account_id: accountId, status: "Active" } }),
   ]);
 
   const used: string[] = [];
@@ -443,7 +442,7 @@ export async function accountUsage(accountId: number): Promise<string[]> {
       `Cash & Bank ${cashBanks.map((c) => c.cash_bank_label).join(", ")}`
     );
   }
-  if (mappings) used.push(`${mappings} mapping Budget Category`);
+  if (mappings) used.push(`${mappings} Kategori`);
   return used;
 }
 
@@ -453,11 +452,11 @@ export async function accountUsage(accountId: number): Promise<string[]> {
  * Why an account is a **control account** — an account whose balance is
  * reconciled against a book that lives outside the General Ledger.
  *
- * The account says so itself (Journal 2.0 D18): its `ledger` is `cash_bank`,
- * so it must agree with the Cash Bank Book and, for a foreign resource, with
- * its rate layers; or `partner`, so it must agree with its books'
- * positions. A mapping and a Cash & Bank resource are checked against the
- * ledger rather than deciding it.
+ * The account says so itself (Journal 2.0 D18, D25): any ledger but `none`.
+ * `cash_bank` must agree with the Cash Bank Book and, for a foreign resource,
+ * with its rate layers; `category` with its books' positions where its
+ * categories take a Partner, and where they do not it is still closed to hand
+ * entry, so every Biaya kind is reached through its Kategori and nowhere else.
  *
  * Writing to such an account by any route other than the posting that also
  * writes the book would put the two out of agreement silently — nothing would
@@ -486,10 +485,15 @@ export async function controlAccountReasons(
     return [labels ? `Buku Kas & Bank ${labels}` : "Buku Kas & Bank"];
   }
   const books = await loadSubledgers();
-  const names = (await accountBookIds(accountId))
-    .map((id) => subledgerForCategory(books, id)?.name)
-    .filter(Boolean) as string[];
-  return names.length ? names : ["Buku Subjek"];
+  const categories = await prisma.sysBudgetCategory.findMany({
+    where: { id: { in: await accountBookIds(accountId) } },
+    select: { id: true, category_name: true },
+    orderBy: { id: "asc" },
+  });
+  const names = categories.map(
+    (c) => subledgerForCategory(books, c.id)?.name ?? `Kategori ${c.category_name}`
+  );
+  return names.length ? names : ["Kategori"];
 }
 
 /**
@@ -498,7 +502,7 @@ export async function controlAccountReasons(
  */
 export async function structuralControlAccountIds(): Promise<Set<number>> {
   const rows = await prisma.accAccount.findMany({
-    where: { ledger: { in: ["partner", "cash_bank"] } },
+    where: { ledger: { not: "none" } },
     select: { id: true },
   });
   return new Set(rows.map((r) => r.id));
@@ -509,7 +513,7 @@ export async function structuralControlAccountIds(): Promise<Set<number>> {
  *
  * Being one is not a property somebody sets: it is the answer to "does
  * anything outside the General Ledger reconcile against this account?" — its
- * ledger is a book's (`partner`, `cash_bank`), or a bridge or FX System
+ * ledger is anything but `none` (D25), or a bridge or FX System
  * Account names it. So the flag is *recomputed*
  * from the structure on every event that can change that answer, in both
  * directions, the same way a parent account's posting privilege follows the
@@ -544,7 +548,7 @@ export async function syncControlAccounts(
 
 // ------------------------------------------------------- the account's ledger
 
-/** The books a `partner` account keeps (`acc_account_book`, active rows). */
+/** The Budget Categories a `category` account holds (`acc_account_book`, active rows). */
 export async function accountBookIds(accountId: number): Promise<number[]> {
   const rows = await prisma.accAccountBook.findMany({
     where: { account_id: accountId, status: "Active" },
@@ -555,67 +559,35 @@ export async function accountBookIds(accountId: number): Promise<number[]> {
 }
 
 /**
- * Whether an account of this ledger may be a mapping's target (Journal 2.0
- * D18): a category that keeps a book maps to an account keeping **that** book,
- * and one that keeps none to an account no book reconciles against.
+ * Whether the Budget Categories an account would hold take a Partner (D25):
+ * true or false when they agree, `null` for none, `"mixed"` when they do not.
  */
-function ledgerFitsCategory(
-  account: { ledger: string; bookIds: number[] },
-  category: { id: number; label: string; book: string | null }
-): string | null {
-  if (category.book) {
-    return account.ledger === "partner" && account.bookIds.includes(category.id)
-      ? null
-      : `Budget Category ${category.label} memakai ${category.book}, sehingga Account tujuannya harus memakai ledger ${category.book}.`;
-  }
-  return ledgerIsControl(account.ledger)
-    ? `Budget Category ${category.label} tidak memakai buku subjek, sehingga Account tujuannya tidak boleh memakai ledger buku.`
-    : null;
-}
-
-async function categoryBook(categoryId: number) {
-  const row = await prisma.sysBudgetCategory.findUnique({
-    where: { id: categoryId },
-    select: { id: true, category_label: true },
+export async function categoriesTakePartner(
+  categoryIds: number[]
+): Promise<boolean | null | "mixed"> {
+  if (!categoryIds.length) return null;
+  const rows = await prisma.sysBudgetCategory.findMany({
+    where: { id: { in: categoryIds } },
+    select: { require_partner: true },
   });
-  if (!row) return null;
-  const book = subledgerForCategory(await loadSubledgers(), categoryId);
-  return { id: row.id, label: row.category_label, book: book?.name ?? null };
-}
-
-/** A mapping's target, checked against the account's ledger. */
-export async function checkMappingLedger(
-  accountId: number,
-  budgetCategoryId: number
-): Promise<string | null> {
-  const [account, category] = await Promise.all([
-    prisma.accAccount.findUnique({
-      where: { id: accountId },
-      select: { ledger: true },
-    }),
-    categoryBook(budgetCategoryId),
-  ]);
-  if (!account || !category) return null;
-  return ledgerFitsCategory(
-    { ledger: account.ledger, bookIds: await accountBookIds(accountId) },
-    category
-  );
+  const kinds = new Set(rows.map((r) => r.require_partner));
+  return kinds.size > 1 ? "mixed" : rows[0]?.require_partner ?? null;
 }
 
 /**
- * The ledger an account is saved with. Each book of a `partner` account must
- * be a category that keeps one and admits the account's Partner Category, so
- * every Partner the account takes has a place in each of its books. Once the
- * account exists the ledger may change, and a book be dropped, only while no
- * journal line depends on it, and a Cash & Bank naming the account must still
- * fit. A mapping does not hold an account back (D24): the account is where a
- * book's account is decided, and a mapping left behind is repointed on its
- * own form, which still checks it.
+ * The ledger an account is saved with (Journal 2.0 D25). A `category` account
+ * holds one or more Budget Categories, all taking a Partner or none of them:
+ * where they take one, each must keep a book and admit the account's one
+ * Partner Category, so every Partner the account takes has a place in each of
+ * its books; where they take none, the account names no Partner Category.
+ * Once the account exists the ledger may change, and a category be dropped,
+ * only while no journal line depends on it, and a Cash & Bank naming the
+ * account must still fit.
  *
- * A book and a Partner Category belong to one account of a Company (D21), as a
- * posting group names one account: Jurnal Umum finds the account from the book
- * and the Partner's category, and a book split over two accounts for one
- * category would reconcile against neither.
+ * A Budget Category and a Partner Category (or none) belong to one account of
+ * a Company (D21, D25), as a posting group names one account: Realisasi and
+ * Jurnal Umum find the account from the pair, and a book split over two
+ * accounts for one category would reconcile against neither.
  */
 export async function checkAccountLedger(
   currentId: number | null,
@@ -624,32 +596,46 @@ export async function checkAccountLedger(
   partnerCategoryId: number | null,
   companyId: number | null
 ): Promise<string | null> {
-  if (!["none", "partner", "cash_bank"].includes(ledger)) {
+  if (!["none", "category", "cash_bank"].includes(ledger)) {
     return "Pilih ledger.";
   }
-  if (ledger !== "partner") bookIds = [];
+  if (ledger !== "category") bookIds = [];
+  if (ledger === "category" && !bookIds.length) return "Pilih Kategori yang dipegang account ini.";
+  const takesPartner = await categoriesTakePartner(bookIds);
+  if (takesPartner === "mixed") {
+    return "Kategori dengan Partner dan tanpa Partner tidak dapat dipegang satu account.";
+  }
+  if (!takesPartner) partnerCategoryId = null;
   // Company is locked after creation, so an edit may not carry it.
   if (!companyId && currentId && bookIds.length) {
     companyId =
       (await prisma.accAccount.findUnique({ where: { id: currentId }, select: { company_id: true } }))
         ?.company_id ?? null;
   }
+  const books = await loadSubledgers();
   for (const id of bookIds) {
-    const category = await categoryBook(id);
-    if (!category?.book) return "Budget Category tersebut tidak memiliki buku subjek.";
-    if (!partnerCategoryId) continue;
-    const admitted = await prisma.sysBudgetPartnerCategoryMapping.count({
-      where: { budget_category_id: id, partner_category_id: partnerCategoryId, status: "Active" },
+    const category = await prisma.sysBudgetCategory.findUnique({
+      where: { id },
+      select: { category_name: true },
     });
-    if (!admitted) {
-      return `${category.book} tidak menerima Partner Category account ini. ` +
-        "Pilih buku yang menerimanya, atau ubah Partner Category.";
+    if (!category) return "Kategori tidak ditemukan.";
+    const book = subledgerForCategory(books, id);
+    if (takesPartner) {
+      if (!book) return `Kategori ${category.category_name} belum menyebut arah bukunya.`;
+      if (!partnerCategoryId) continue;
+      const admitted = await prisma.sysBudgetPartnerCategoryMapping.count({
+        where: { budget_category_id: id, partner_category_id: partnerCategoryId, status: "Active" },
+      });
+      if (!admitted) {
+        return `${book.name} tidak menerima Partner Category account ini. ` +
+          "Pilih Kategori yang menerimanya, atau ubah Partner Category.";
+      }
     }
     const taken = companyId
       ? await prisma.accAccount.findFirst({
           where: {
             company_id: companyId,
-            ledger: "partner",
+            ledger: "category",
             partner_category_id: partnerCategoryId,
             books: { some: { budget_category_id: id, status: "Active" } },
             ...(currentId && { id: { not: currentId } }),
@@ -658,8 +644,8 @@ export async function checkAccountLedger(
         })
       : null;
     if (taken) {
-      return `${category.book} untuk Partner Category ini sudah dipegang Account ` +
-        `${taken.account_label} ${taken.account_name}.`;
+      return `Kategori ${category.category_name}${takesPartner ? " untuk Partner Category ini" : ""} ` +
+        `sudah dipegang Account ${taken.account_label} ${taken.account_name}.`;
     }
   }
   if (!currentId) return null;
@@ -1102,16 +1088,6 @@ export async function computedValues(
     }
   }
 
-  if (entity.key === "acc_budget_category_account") {
-    const accounts = await prisma.accAccount.findMany({
-      select: { id: true, normal_balance: true },
-    });
-    const byId = new Map(accounts.map((a) => [a.id, a.normal_balance]));
-    for (const r of rows) {
-      out[r.id] = { normal_balance: byId.get(r.account_id as number) ?? "—" };
-    }
-  }
-
   if (entity.key === "acc_fiscal_year") {
     const groups = await prisma.accFiscalPeriod.groupBy({
       by: ["fiscal_year_id"],
@@ -1224,7 +1200,7 @@ export async function accountTree(companyId: number): Promise<{
         normalBalance: a.normal_balance,
         isPostable: a.is_postable,
         isActive: a.is_active,
-        requirePartner: ledgerTakesPartner(a.ledger),
+        requirePartner: accountTakesPartner(a),
         partnerCategoryLabel: a.partner_category_id
           ? partnerLabel.get(a.partner_category_id) ?? null
           : null,

@@ -238,23 +238,18 @@ describe("a manual journal may not touch a control account", () => {
     );
   });
 
-  test("a Biaya mapping target is NOT a control account", async () => {
-    // The distinction the whole feature turns on: Biaya keeps no subject book,
-    // so its account reconciles against the General Ledger alone. If this
-    // became a control account, a manual journal could reach almost nothing —
-    // depreciation and accruals are exactly this kind of entry.
-    const biaya = await makeAccount({
-      companyId: company,
-      subcategoryLabel: "5.3.1",
-    });
-    await makeMapping({
-      companyId: company,
-      budgetCategoryLabel: "Biaya",
-      partnerCategoryLabel: null,
-      accountId: biaya,
-    });
+  test("an account holding a Biaya Kategori is a control account too (D25)", async () => {
+    // One door: a Biaya kind is reached through its Kategori — Realisasi or
+    // Jurnal Umum — never by hand. Depreciation and accruals post to Tanpa
+    // accounts, which stay open to the manual journal.
+    const biaya = await makeAccount({ companyId: company, subcategoryLabel: "5.3.1", bookLabels: ["Biaya"] });
 
-    assert.deepEqual(await controlAccountReasons(biaya), []);
+    const reasons = await controlAccountReasons(biaya);
+    assert.equal(reasons.length, 1);
+    assert.match(reasons[0], /^Kategori /);
+    await syncControlAccounts([biaya], await systemAccountIds(), actor);
+    const refused = await checkManualJournal(headerFor(), [line(biaya, 10_000, 0), line(expense, 0, 10_000)]);
+    assert.equal(refused.ok, false);
   });
 
   test("the flag follows the account's ledger in both directions", async () => {

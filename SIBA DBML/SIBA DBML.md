@@ -721,18 +721,20 @@ table acc_account {
 
   normal_balance              enum('Debit', 'Kredit') [not null]
 
-  // Set exactly when the ledger is 'partner', and admitted by each of its books.
+  // Set exactly when the ledger is 'category' and its categories take a
+  // Partner, and admitted by each of them.
   partner_category_id         int [ref : >? sys_partner_category.id]
 
-  // Which ledger the account belongs to (Journal 2.0 D18), and so what every
-  // line on it must name: 'none' nothing; 'partner' a Partner and an open
-  // item in one of the books it keeps (acc_account_book); 'cash_bank' a Cash &
-  // Bank, and the only ledger a resource may post to. Replaced require_partner
-  // (dropped in 20261028150000); 'subject_book' and ledger_book_id merged into
-  // 'partner' in 20261028230000. is_control_account is 'partner' or
-  // 'cash_bank', plus the System Account claims. Locked once the account has a
-  // journal line.
-  ledger                      enum('none', 'partner', 'cash_bank') [not null, default: 'none']
+  // Which ledger the account belongs to (Journal 2.0 D18, D25), and so what
+  // every line on it must name: 'none' nothing; 'category' one of the Budget
+  // Categories it holds (acc_account_book) — with a Partner and an open item
+  // where they take a Partner; 'cash_bank' a Cash & Bank, and the only ledger a
+  // resource may post to. Replaced require_partner (dropped in
+  // 20261028150000); 'subject_book' and ledger_book_id merged into 'partner' in
+  // 20261028230000, renamed 'category' in 20261029100000. is_control_account is
+  // any ledger but 'none', plus the System Account claims. Locked once the
+  // account has a journal line.
+  ledger                      enum('none', 'category', 'cash_bank') [not null, default: 'none']
 
   is_control_account          boolean [not null, default: false]
 
@@ -753,10 +755,15 @@ table acc_account {
   }
 }
 
-// The subject books a 'partner' account keeps, chosen on the account's form.
-// One account may keep several — a Hutang Piutang Karyawan account carries
-// both books, each still reported on its own. A book unticked is set
-// Inactive, never deleted.
+// The Budget Categories a 'category' account holds, chosen on the account's
+// form (Journal 2.0 D25) — where Realisasi and Jurnal Umum find the account.
+// All take a Partner or none do. One account may hold several: a Hutang
+// Piutang Karyawan account carries both books, each still reported on its
+// own; Biaya Listrik and Biaya Air may share one expense account. A Company
+// holds each (Budget Category, the account's Partner Category or none) on
+// one account — checked on the form, not by a constraint. Replaced
+// acc_budget_category_account (dropped in 20261029100000). A category
+// unticked is set Inactive, never deleted.
 table acc_account_book {
   id                          int [pk, increment, not null]
 
@@ -801,29 +808,6 @@ table acc_system_account {
 
   indexes {
     (company_id, account_key) [unique]
-  }
-}
-
-table acc_budget_category_account {
-  id                          int [pk, increment, not null]
-
-  bca_code                    varchar(255) [not null, unique]
-
-  budget_category_id          int [not null, ref : > sys_budget_category.id]
-  company_id                  int [not null, ref : > sys_company.id]
-  partner_category_id         int [ref : >? sys_partner_category.id]
-
-  account_id                  int [not null, ref : > acc_account.id]
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    (company_id, budget_category_id, partner_category_id) [unique]
-    company_id
   }
 }
 
@@ -1163,11 +1147,12 @@ table acc_general_journal_line {
   description                 text [not null]
 
   // A weak reference read by the account's ledger adapter, no foreign key:
-  //   partner   → sub_ledger_balance.id, the open item (null: a new item)
+  //   category  → sub_ledger_balance.id, the open item (null: a new item)
   //   cash_bank → m_cash_bank.id
   subject_id                  int
-  // The book a 'partner' line writes into: one of its account's books, the
-  // named item's own or the one a new item opens in. A plain id.
+  // The Budget Category a 'category' line posts by: one its account holds —
+  // the named item's own book, the one a new item opens in, or a category
+  // taking no Partner (D25). A plain id.
   budget_category_id          int
   // The rate layer a foreign Cash & Bank line draws on.
   cash_bank_layer_id          int [ref : >? cash_bank_layer.id]

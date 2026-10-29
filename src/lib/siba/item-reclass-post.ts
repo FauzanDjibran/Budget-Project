@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { categoryAccount } from "./category-accounts";
 import { formatMoney } from "@/lib/format";
 import { BASE_CURRENCY_LABEL } from "./currency";
 import { PeriodShut, checkTransactionDate, holdPostingPeriod, todayDay } from "./fiscal";
@@ -45,24 +46,13 @@ async function mappedAccount(
   partnerCategoryId: number,
   partnerLabel: string
 ): Promise<{ ok: true; accountId: number } | { ok: false; message: string }> {
-  const mapping = await prisma.accBudgetCategoryAccount.findFirst({
-    where: {
-      company_id: companyId,
-      budget_category_id: book.categoryId,
-      partner_category_id: partnerCategoryId,
-    },
-    select: {
-      account: {
-        select: { id: true, company_id: true, is_active: true, is_postable: true, account_label: true },
-      },
-    },
-  });
+  const mapping = await categoryAccount(companyId, book.categoryId, partnerCategoryId);
   if (!mapping) {
     return {
       ok: false,
       message:
-        `Belum ada Mapping Budget ke Account untuk ${book.name} dan Partner Category ` +
-        `${partnerLabel}. Lengkapi mapping di Accounting sebelum dokumen diposting.`,
+        `Belum ada Account yang memegang ${book.name} untuk Partner Category ` +
+        `${partnerLabel}. Tambahkan pada Account di Chart of Accounts sebelum dokumen diposting.`,
     };
   }
   const account = mapping.account;

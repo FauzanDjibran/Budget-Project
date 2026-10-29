@@ -329,9 +329,15 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
     no: 14,
     name: "Buku Subjek = General Ledger, per account dan Partner (tanpa journal CLS-)",
     sql: `
-, acct AS (
+, mapping AS (
+  -- The account holds its categories itself (Journal 2.0 D25).
+  SELECT a.company_id, ab.budget_category_id, a.partner_category_id, ab.account_id
+  FROM acc_account_book ab
+  JOIN acc_account a ON a.id = ab.account_id
+  WHERE ab.status = 'Active' AND a.ledger = 'category'
+), acct AS (
   SELECT DISTINCT m.account_id, c.raises::text AS raises
-  FROM acc_budget_category_account m
+  FROM mapping m
   JOIN book_cat c ON c.id = m.budget_category_id
   WHERE c.keeps_book
 ), book AS (
@@ -339,7 +345,7 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
   FROM sub_ledger s
   JOIN book_cat c ON c.id = s.budget_category_id
   JOIN m_partner p ON p.id = s.partner_id
-  JOIN acc_budget_category_account m
+  JOIN mapping m
     ON m.company_id = p.company_id AND m.budget_category_id = c.id
    AND m.partner_category_id IS NOT DISTINCT FROM p.category_id
   GROUP BY m.account_id, s.partner_id

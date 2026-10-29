@@ -107,23 +107,30 @@ export function compareCodes(a: string, b: string): number {
   return 0;
 }
 
-/** An account's ledger, in the reader's words (Journal 2.0 D18). */
+/** An account's ledger, in the reader's words (Journal 2.0 D18, D25). */
 export const LEDGER_TEXT: Record<string, string> = {
-  none: "Tanpa ledger",
-  partner: "Partner",
+  none: "Tanpa",
+  category: "Kategori",
   cash_bank: "Kas & Bank",
 };
 
 /**
- * Whether every line on an account of this ledger names a Partner (Journal 2.0
- * D18): a `partner` account, whose every Partner has a subject book. What
- * `require_partner` used to say.
+ * Whether every line on an account names a Partner (Journal 2.0 D25): a
+ * `category` account whose categories take one, which is exactly when it
+ * names a Partner Category. What `require_partner` used to say.
  */
-export function ledgerTakesPartner(ledger: string): boolean {
-  return ledger === "partner";
+export function accountTakesPartner(account: {
+  ledger: string;
+  partner_category_id: number | null;
+}): boolean {
+  return account.ledger === "category" && account.partner_category_id != null;
 }
 
-/** Whether a book outside the General Ledger reconciles against the account. */
+/**
+ * Whether the account is closed to hand entry (D25): any ledger but `none`.
+ * A `category` account is reached through its Budget Category, so one door
+ * serves every Biaya kind as it serves every book.
+ */
 export function ledgerIsControl(ledger: string): boolean {
-  return ledger === "partner" || ledger === "cash_bank";
+  return ledger !== "none";
 }

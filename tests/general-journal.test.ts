@@ -22,6 +22,7 @@ import type { SubledgerDef } from "../src/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "../src/lib/siba/subledger-data";
 import { systemAccountIds } from "../src/lib/siba/system-account-data";
 import {
+  budgetCategoryId,
   childCompanyId,
   cleanupFiscalYear,
   cleanupFixtures,
@@ -396,6 +397,25 @@ describe("the subject_book ledger (Gate B)", () => {
       where: { source_doc_id: id, budget_category_id: book("Titipan").categoryId },
     });
     assert.deepEqual([opened.balance.toNumber(), opened.rate.toNumber()], [500, 16_300]);
+  });
+
+  test("a Kategori without a Partner is the whole entry, and writes no book (D25)", async () => {
+    const biaya = await budgetCategoryId("Biaya");
+    const listrik = await makeAccount({ companyId: company, subcategoryLabel: "5.3.1", bookLabels: ["Biaya"] });
+
+    const unnamed = await checkGeneralJournal(header(), [line(listrik, 400, 0), line(ymh, 0, 400)]);
+    assert.ok(!unnamed.ok);
+    assert.match(unnamed.errors["lines.0.account_id"], /Pilih Kategori/);
+
+    const { id } = await draftAndPost([
+      line(listrik, 400, 0, { budget_category_id: biaya, partner_id: partner }),
+      line(ymh, 0, 400),
+    ]);
+    const stored = await prisma.accGeneralJournalLine.findFirstOrThrow({
+      where: { journal_id: id, sequence_no: 1 },
+    });
+    assert.deepEqual([stored.budget_category_id, stored.partner_id], [biaya, null], "a Partner sent is dropped");
+    assert.equal(await prisma.subLedger.count({ where: { source_doc_id: id } }), 0);
   });
 
   test("an account keeping two books writes each line into the book its entry names", async () => {

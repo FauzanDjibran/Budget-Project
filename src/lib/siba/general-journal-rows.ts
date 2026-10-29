@@ -123,9 +123,13 @@ export async function getGeneralJournal(
 
   const subjectIds = (ledger: string) =>
     j.lines.filter((l) => l.account.ledger === ledger && l.subject_id).map((l) => l.subject_id!);
-  const [books, items, cashBanks, layers] = await Promise.all([
+  const [books, categories, items, cashBanks, layers] = await Promise.all([
     loadSubledgers(),
-    subledgerItemsByIds(subjectIds("partner")),
+    prisma.sysBudgetCategory.findMany({
+      where: { id: { in: j.lines.map((l) => l.budget_category_id).filter((c): c is number => c != null) } },
+      select: { id: true, category_name: true },
+    }),
+    subledgerItemsByIds(subjectIds("category")),
     prisma.mCashBank.findMany({
       where: { id: { in: subjectIds("cash_bank") } },
       select: { id: true, cash_bank_label: true },
@@ -144,7 +148,8 @@ export async function getGeneralJournal(
       accountName: l.account.account_name,
       ledger: l.account.ledger,
       bookId: l.budget_category_id,
-      bookName: book?.name ?? null,
+      // A category without a Partner keeps no book; it is named as itself (D25).
+      bookName: book?.name ?? categories.find((c) => c.id === l.budget_category_id)?.category_name ?? null,
       raises: book?.raises ?? null,
       partnerId: l.partner_id,
       partnerLabel: l.partner?.partner_label ?? null,
@@ -193,12 +198,16 @@ export type GeneralJournalOptions = {
     label: string;
     name: string;
     ledger: string;
-    /** The books a Partner account keeps. */
+    /** The Budget Categories a Kategori account holds (D25). */
     bookIds: number[];
     partnerCategoryId: number | null;
   }[];
   partners: { id: number; label: string; name: string; categoryId: number }[];
-  books: { id: number; name: string; raises: "In" | "Out" }[];
+  /**
+   * Every Budget Category an account may hold (D25): a book where it takes a
+   * Partner, named and run as the book; otherwise the category itself.
+   */
+  books: { id: number; name: string; raises: "In" | "Out" | null; takesPartner: boolean }[];
   items: SubledgerItem[];
   cashBanks: {
     id: number;
@@ -218,7 +227,7 @@ export type GeneralJournalOptions = {
  * pickers offer. The Server Action re-checks every choice.
  */
 export async function generalJournalOptions(companyId: number): Promise<GeneralJournalOptions> {
-  const [accounts, partners, currencies, books, cashBanks, balances] = await Promise.all([
+  const [accounts, partners, currencies, books, cashBanks, balances, categories] = await Promise.all([
     prisma.accAccount.findMany({
       where: { company_id: companyId, is_active: true, is_postable: true, children: { none: {} } },
       select: {
@@ -251,6 +260,11 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
       select: { id: true, cash_bank_label: true, cash_bank_name: true, account_id: true, currency_id: true },
     }),
     cashBankBalanceMap(),
+    prisma.sysBudgetCategory.findMany({
+      where: { status: "Active" },
+      orderBy: { id: "asc" },
+      select: { id: true, category_name: true },
+    }),
   ]);
   const [items, layers] = await Promise.all([
     openSubledgerItemsFor(
@@ -277,11 +291,12 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
       name: p.partner_name,
       categoryId: p.category_id,
     })),
-    books: books.map((b) => ({
-      id: b.categoryId,
-      name: b.name,
-      raises: b.raises,
-    })),
+    books: categories.map((c) => {
+      const book = books.find((b) => b.categoryId === c.id);
+      return book
+        ? { id: c.id, name: book.name, raises: book.raises, takesPartner: true }
+        : { id: c.id, name: c.category_name, raises: null, takesPartner: false };
+    }),
     items,
     cashBanks: cashBanks.map((c) => ({
       id: c.id,

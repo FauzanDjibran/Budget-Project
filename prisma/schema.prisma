@@ -21,7 +21,8 @@
 //   * SysCompany.is_parent         — marks the single induk of the fixed
 //                             two-company structure (one induk, one anak)
 //   * AccAccount.partner_category_id       — one account holds one partner category
-//   * AccBudgetCategoryAccount.partner_category_id — category x partner-category -> account
+//   * AccAccountBook               — the Budget Categories an account holds; it
+//                             replaced acc_budget_category_account (D25)
 //   * AuditLog                     — one trail spanning every table
 //   * SysRole / SysPermission / SysUserRole / SysRolePermission / SysSession
 //                                  — authentication and RBAC; the DBML has no
@@ -30,6 +31,8 @@
 // Dropped vs the DBML:
 //   * AccAccount.partner_type — flagged `// diganti nanti` in the source and
 //     superseded by partner_category_id.
+//   * acc_budget_category_account — the account holds its Budget Categories
+//     itself (acc_account_book, Journal 2.0 D25).
 //
 // Not yet modelled (present in the DBML and/or the concept doc):
 //   general_ledger and intercompany_event — both deliberately. The General
@@ -368,7 +371,6 @@ model SysCompany {
   partners         MPartner[]
   cash_banks       MCashBank[]
   accounts         AccAccount[]
-  mappings         AccBudgetCategoryAccount[]
   budgets          BudBudget[]
   transactions     FinCashBankTransaction[]
   transfers        FinCashBankTransfer[]
@@ -497,7 +499,6 @@ model SysBudgetCategory {
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   budgets            BudBudget[]
-  mappings           AccBudgetCategoryAccount[]
   partner_categories SysBudgetPartnerCategoryMapping[]
   item_adjustments   FinItemAdjustment[]
   conversions        FinItemConversion[]
@@ -525,7 +526,6 @@ model SysPartnerCategory {
 
   partners          MPartner[]
   accounts          AccAccount[]
-  mappings          AccBudgetCategoryAccount[]
   budget_categories SysBudgetPartnerCategoryMapping[]
 
   @@map("sys_partner_category")
@@ -1170,7 +1170,6 @@ model AccAccount {
   children            AccAccount[]          @relation("AccountTree")
 
   cash_banks    MCashBank[]
-  mappings      AccBudgetCategoryAccount[]
   journal_lines AccJournalLine[]
 
   opening_balance_lines AccOpeningBalanceLine[]
@@ -1181,31 +1180,6 @@ model AccAccount {
   @@index([company_id])
   @@index([account_subcategory_id])
   @@map("acc_account")
-}
-
-model AccBudgetCategoryAccount {
-  id                  Int    @id @default(autoincrement())
-  bca_code            String @unique
-  budget_category_id  Int
-  company_id          Int
-  /// Not in the DBML. Without it a single budget category cannot resolve to a
-  /// different account per partner category.
-  partner_category_id Int?
-  account_id          Int
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  budget_category  SysBudgetCategory   @relation(fields: [budget_category_id], references: [id])
-  company          SysCompany          @relation(fields: [company_id], references: [id])
-  partner_category SysPartnerCategory? @relation(fields: [partner_category_id], references: [id])
-  account          AccAccount          @relation(fields: [account_id], references: [id])
-
-  @@unique([company_id, budget_category_id, partner_category_id])
-  @@index([company_id])
-  @@map("acc_budget_category_account")
 }
 
 /// One Company's fiscal year. Each Company keeps its own calendar, so it
@@ -2267,19 +2241,20 @@ enum JournalStatus {
   Cancelled
 }
 
-/// Which ledger an account belongs to (Journal 2.0 D18). `none` touches no
-/// ledger; `partner` a Partner and an open item in one of its books
-/// (`acc_account_book`); `cash_bank` a Cash & Bank.
+/// Which ledger an account belongs to (Journal 2.0 D18, D25). `none` touches
+/// no ledger; `category` holds Budget Categories (`acc_account_book`), with a
+/// Partner and an open item where they take one; `cash_bank` a Cash & Bank.
+/// Anything but `none` is a control account.
 enum AccountLedger {
   none
-  partner
+  category
   cash_bank
 }
 
-/// The subject books a `partner` account keeps (Journal 2.0 D18, revised
-/// 28/10/2026), chosen on the account's form. One account may keep several:
-/// a Hutang Piutang Karyawan account carries both books, each still reported
-/// on its own. A book unticked is set Inactive, never deleted
+/// The Budget Categories a `category` account holds (Journal 2.0 D18, D25),
+/// chosen on the account's form; a category with a Partner is a subject book.
+/// One account may hold several: a Hutang Piutang Karyawan account carries
+/// both books, each still reported on its own. A book unticked is set Inactive, never deleted
 /// (`reconcileMultiref`).
 model AccAccountBook {
   id                 Int          @id @default(autoincrement())

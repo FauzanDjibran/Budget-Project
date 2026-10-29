@@ -15,7 +15,6 @@ import { type Entity, type Field } from "@/lib/siba/entities";
 import {
   SEGMENT_RANGE_TEXT,
   joinCode,
-  ledgerTakesPartner,
   parseSegment,
 } from "@/lib/siba/account-code";
 import { openCashBankBook } from "@/lib/siba/cash-bank";
@@ -26,14 +25,12 @@ import {
   CASH_BANK_SUBCATEGORY,
   accountDescendants,
   accountUsage,
-  checkAccountIsLeaf,
+  categoriesTakePartner,
   checkAccountNumber,
   checkAccountLedger,
   checkCashBankAccount,
-  checkMappingLedger,
   delegate,
   nextCode,
-  partnerCategoriesForBudgetCategory,
   refLabel,
   reconcileMultiref,
   requireEntity,
@@ -223,7 +220,6 @@ async function applicableFields(
   exists: boolean
 ): Promise<Set<string>> {
   const applies = new Set<string>();
-  let budgetCategoryNeedsPartner: boolean | null = null;
 
   for (const field of entity.fields) {
     // A create-only field is not merely hidden on edit: it is not part of the
@@ -237,8 +233,18 @@ async function applicableFields(
       if (boolValue(values, "require_partner")) applies.add(field.name);
       continue;
     }
+    if (field.visibleWhen === "accountHoldsCategories") {
+      if (values.ledger === "category") applies.add(field.name);
+      continue;
+    }
     if (field.visibleWhen === "accountTakesPartner") {
-      if (ledgerTakesPartner(String(values.ledger ?? ""))) applies.add(field.name);
+      // The categories chosen decide it (D25), as the form does.
+      if (
+        values.ledger === "category" &&
+        (await categoriesTakePartner(idList(values.book_ids))) === true
+      ) {
+        applies.add(field.name);
+      }
       continue;
     }
     if (field.visibleWhen === "categoryChoosesRaises") {
@@ -255,14 +261,6 @@ async function applicableFields(
       if (label && !isBaseCurrency(label)) applies.add(field.name);
       continue;
     }
-    if (budgetCategoryNeedsPartner === null) {
-      const categoryId = refValue(values, "budget_category_id");
-      const rule = categoryId
-        ? await partnerCategoriesForBudgetCategory(categoryId)
-        : null;
-      budgetCategoryNeedsPartner = rule?.needsPartner ?? false;
-    }
-    if (budgetCategoryNeedsPartner) applies.add(field.name);
   }
   return applies;
 }
@@ -315,9 +313,6 @@ async function validate(
   }
   if (entity.key === "acc_account") {
     Object.assign(errors, await validateAccount(values, currentId, errors, applies));
-  }
-  if (entity.key === "acc_budget_category_account") {
-    Object.assign(errors, await validateMapping(values, currentId, errors, applies));
   }
   if (entity.key === "sys_budget_category") {
     Object.assign(errors, validateBudgetCategory(values));
@@ -561,80 +556,6 @@ function validateBudgetCategory(values: FormValues): Record<string, string> {
   return errors;
 }
 
-async function validateMapping(
-  values: FormValues,
-  currentId: number | null,
-  existing: Record<string, string>,
-  applies: Set<string>
-): Promise<Record<string, string>> {
-  const errors: Record<string, string> = {};
-  const companyId = refValue(values, "company_id");
-  const budgetCategoryId = refValue(values, "budget_category_id");
-  const partnerCategoryId = applies.has("partner_category_id")
-    ? refValue(values, "partner_category_id")
-    : null;
-  const accountId = refValue(values, "account_id");
-
-  if (budgetCategoryId) {
-    const rule = await partnerCategoriesForBudgetCategory(budgetCategoryId);
-    if (rule) {
-      if (rule.needsPartner && !partnerCategoryId) {
-        errors.partner_category_id =
-          "Budget Category ini mensyaratkan Partner Category.";
-      }
-      if (
-        partnerCategoryId &&
-        !rule.allowedIds.includes(partnerCategoryId)
-      ) {
-        errors.partner_category_id =
-          "Partner Category tersebut tidak berlaku untuk Budget Category ini.";
-      }
-    }
-  }
-
-  if (accountId && companyId && !existing.account_id) {
-    const account = await prisma.accAccount.findUnique({
-      where: { id: accountId },
-      select: { company_id: true, is_postable: true, is_active: true },
-    });
-    if (!account) errors.account_id = "Account tidak ditemukan.";
-    else if (account.company_id !== companyId) {
-      errors.account_id = "Account harus milik Company yang sama.";
-    } else if (!account.is_postable) {
-      errors.account_id = "Account header tidak dapat menjadi tujuan posting.";
-    } else if (!account.is_active) {
-      errors.account_id = "Account tersebut non-aktif dan tidak dapat dipilih.";
-    } else {
-      // A parent account is a heading over where money lands, not a place it
-      // lands — so a mapping may never resolve to one.
-      const notLeaf = await checkAccountIsLeaf(accountId);
-      if (notLeaf) errors.account_id = notLeaf;
-      else if (budgetCategoryId) {
-        const misfit = await checkMappingLedger(accountId, budgetCategoryId);
-        if (misfit) errors.account_id = misfit;
-      }
-    }
-  }
-
-  if (companyId && budgetCategoryId && !errors.partner_category_id) {
-    const clash = await prisma.accBudgetCategoryAccount.findFirst({
-      where: {
-        company_id: companyId,
-        budget_category_id: budgetCategoryId,
-        partner_category_id: partnerCategoryId,
-        ...(currentId ? { id: { not: currentId } } : {}),
-      },
-      select: { id: true },
-    });
-    if (clash) {
-      errors.account_id =
-        "Kombinasi Company, Budget Category, dan Partner Category ini sudah dipetakan.";
-    }
-  }
-
-  return errors;
-}
-
 /**
  * Columns an entity writes that no field on its form offers.
  *
@@ -749,7 +670,7 @@ async function syncControlAccountsFor(
     }
     return;
   }
-  if (entityKey !== "m_cash_bank" && entityKey !== "acc_budget_category_account") {
+  if (entityKey !== "m_cash_bank") {
     return;
   }
 
@@ -762,13 +683,13 @@ async function syncControlAccountsFor(
   await syncControlAccounts(touched, await systemAccountIds(), actorId);
 }
 
-/** The account a Cash & Bank or a mapping names today, before it is rewritten. */
+/** The account a Cash & Bank names today, before it is rewritten. */
 async function currentAccountId(
   entityKey: string,
   id: number
 ): Promise<number | null> {
   if (entityKey === "acc_account") return id;
-  if (entityKey !== "m_cash_bank" && entityKey !== "acc_budget_category_account") {
+  if (entityKey !== "m_cash_bank") {
     return null;
   }
   const row = await delegate(entityKey).findUnique({

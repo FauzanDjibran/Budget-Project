@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { JournalStatus, Prisma } from "@/generated/prisma/client";
-import { ledgerTakesPartner } from "./account-code";
+import { accountTakesPartner } from "./account-code";
 import { nextDocumentNumber } from "./document-number";
 import { isBaseCurrency } from "./currency";
 import { roundBase } from "./fx";
@@ -901,7 +901,7 @@ export async function getJournal(
         orderBy: { sequence_no: "asc" },
         include: {
           account: {
-            select: { account_label: true, account_name: true, ledger: true },
+            select: { account_label: true, account_name: true, ledger: true, partner_category_id: true },
           },
           partner: { select: { partner_label: true, partner_name: true } },
           currency: { select: { currency_label: true } },
@@ -935,7 +935,7 @@ export async function getJournal(
       partnerId: l.partner_id,
       partnerLabel: l.partner?.partner_label ?? null,
       partnerName: l.partner?.partner_name ?? null,
-      partnerMismatch: partnerMismatch(ledgerTakesPartner(l.account.ledger), l.partner_id),
+      partnerMismatch: partnerMismatch(accountTakesPartner(l.account), l.partner_id),
       currencyId: l.currency_id,
       currencyLabel: l.currency.currency_label,
       debit: l.debit_amount.toNumber(),

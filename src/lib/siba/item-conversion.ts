@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { categoryAccount } from "./category-accounts";
 
 import { formatMoney, formatRate } from "@/lib/format";
 import { InsufficientFunds, lockCashBanks, recordCashBankEntry } from "./cash-bank";
@@ -200,25 +201,14 @@ export async function applyConversion(
 
   // The Partner's account, exactly as a cash posting resolves it — Company ×
   // Budget Category × Partner Category. One account for both currencies.
-  const mapping = await prisma.accBudgetCategoryAccount.findFirst({
-    where: {
-      company_id: doc.company_id,
-      budget_category_id: doc.budget_category_id,
-      partner_category_id: header.partnerCategoryId,
-    },
-    select: {
-      account: {
-        select: { id: true, company_id: true, is_active: true, is_postable: true, account_label: true },
-      },
-    },
-  });
+  const mapping = await categoryAccount(doc.company_id, doc.budget_category_id, header.partnerCategoryId);
   if (!mapping) {
     return {
       ok: false,
       errors: {
         _form:
-          `Belum ada Mapping Budget ke Account untuk ${header.book.name} dan ` +
-          `Partner Category ${header.partnerLabel}. Lengkapi mapping di Accounting ` +
+          `Belum ada Account yang memegang ${header.book.name} untuk Partner Category ` +
+          `${header.partnerLabel}. Tambahkan pada Account di Chart of Accounts ` +
           "sebelum dokumen diposting.",
       },
     };
