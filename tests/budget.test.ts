@@ -27,6 +27,7 @@ import {
   cleanupFixtures,
   disconnect,
   FIXTURE_PREFIX,
+  makeBudgetCategory,
   makePartner,
   openFiscalYear,
   parentCompanyId,
@@ -73,6 +74,16 @@ const ALL_STATUSES: BudgetStatus[] = [
 ];
 
 const categoryId = budgetCategoryId;
+
+/** A book admitting Stakeholder alone — a shape the seed does not carry. */
+let stakeholderOnlyId: number | null = null;
+const stakeholderOnly = async () =>
+  (stakeholderOnlyId ??= await makeBudgetCategory({
+    label: "Stakeholder Saja",
+    directions: ["In", "Out"],
+    partnerCategoryLabels: ["Stakeholder"],
+    raises: "Out",
+  }));
 
 let parent = 0;
 let child = 0;
@@ -241,24 +252,16 @@ describe("approval classification is enforced, not merely offered", () => {
   });
 
   test("a category is refused when the direction does not apply to it", async () => {
-    // Hasil Investasi is In-only; approving an Out budget with it would put the
-    // amount on the wrong side of the balance sheet.
-    const budget = { company_id: parent, budget_type: "Out" };
-    const problems = await checkClassification(
-      budget,
-      await categoryId("Hasil Investasi"),
-      null
-    );
-    assert.ok(problems.category_id, "an In-only category must be refused for Out");
+    // Biaya is Out-only; approving an In budget with it would put the amount
+    // on the wrong side of the balance sheet.
+    const budget = { company_id: parent, budget_type: "In" };
+    const problems = await checkClassification(budget, await categoryId("Biaya"), null);
+    assert.ok(problems.category_id, "an Out-only category must be refused for In");
   });
 
   test("the same category is accepted in the direction it does apply to", async () => {
-    const budget = { company_id: parent, budget_type: "In" };
-    const problems = await checkClassification(
-      budget,
-      await categoryId("Hasil Investasi"),
-      parentCabang
-    );
+    const budget = { company_id: parent, budget_type: "Out" };
+    const problems = await checkClassification(budget, await categoryId("Biaya"), null);
     assert.deepEqual(problems, {});
   });
 
@@ -283,13 +286,8 @@ describe("approval classification is enforced, not merely offered", () => {
   });
 
   test("a partner of a category the budget category does not admit is refused", async () => {
-    // Prive admits Stakeholder only.
-    const problems = await checkClassification(
-      await outBudget(),
-      await categoryId("Prive"),
-      parentCabang
-    );
-    assert.ok(problems.partner_id, "Prive must not accept a Cabang partner");
+    const problems = await checkClassification(await outBudget(), await stakeholderOnly(), parentCabang);
+    assert.ok(problems.partner_id, "a Stakeholder-only category must not accept a Cabang partner");
   });
 
   test("a partner belonging to another Company is refused", async () => {
@@ -311,10 +309,10 @@ describe("approval classification is enforced, not merely offered", () => {
     assert.deepEqual(problems, {});
   });
 
-  test("Prive accepts the one Partner Category it admits", async () => {
+  test("a category accepts the one Partner Category it admits", async () => {
     const problems = await checkClassification(
       await outBudget(),
-      await categoryId("Prive"),
+      await stakeholderOnly(),
       parentStakeholder
     );
     assert.deepEqual(problems, {});

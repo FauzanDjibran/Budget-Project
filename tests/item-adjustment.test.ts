@@ -31,6 +31,7 @@ import {
   disconnect,
   makeAccount,
   makeMapping,
+  makeBudgetCategory,
   makePartner,
   mappingAccountId,
   openFiscalYear,
@@ -311,20 +312,27 @@ describe("one rule signs every book", () => {
     assert.equal(adjustmentKind([]), null);
   });
 
-  test("only books carrying allows_item_adjustment are adjustable, and the seed flags three", async () => {
+  test("only books carrying allows_item_adjustment are adjustable, and the seed flags its two books", async () => {
     const flagged = await prisma.sysBudgetCategory.findMany({
       where: { allows_item_adjustment: true },
       select: { category_label: true },
     });
     const labels = flagged.map((f) => f.category_label);
-    for (const off of ["Prive", "Investasi", "Hasil Investasi", "Asset", "Biaya"]) {
+    for (const on of ["Piutang", "Hutang"]) assert.ok(labels.includes(on), `${on} allows a Penyesuaian Open Item`);
+    for (const off of ["Piutang (N)", "Hutang (N)", "Asset", "Biaya"]) {
       assert.ok(!labels.includes(off), `${off} must not allow a Penyesuaian Open Item`);
     }
 
     const partner = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
     const checked = await checkItemAdjustmentHeader(
       {
-        budget_category_id: await budgetCategoryId("Prive"),
+        // A book without the flag, a shape the seed does not carry.
+        budget_category_id: await makeBudgetCategory({
+          label: "Tanpa Penyesuaian",
+          directions: ["In", "Out"],
+          partnerCategoryLabels: ["Stakeholder"],
+          raises: "Out",
+        }),
         partner_id: partner,
         currency_id: idr,
         exchange_rate: null,
@@ -378,11 +386,17 @@ describe("the header", () => {
   });
 
   test("a Partner of a category the book does not admit is refused", async () => {
-    // Titipan admits Cabang and Stakeholder, never Karyawan.
+    // An adjustable book admitting Cabang and Stakeholder, never Karyawan.
     const partner = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
-    const titipan = subledgerForCategory(books, await budgetCategoryId("Titipan"))!;
+    const book = await makeBudgetCategory({
+      label: "Tanpa Karyawan",
+      directions: ["In", "Out"],
+      partnerCategoryLabels: ["Cabang", "Stakeholder"],
+      raises: "In",
+      allowsItemAdjustment: true,
+    });
     const checked = await checkItemAdjustmentHeader(
-      header(partner, { budget_category_id: titipan.categoryId }) as never,
+      header(partner, { budget_category_id: book }) as never,
       [induk]
     );
     assert.ok(!checked.ok && checked.errors.partner_id);

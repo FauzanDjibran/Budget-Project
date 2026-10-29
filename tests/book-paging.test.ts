@@ -98,7 +98,7 @@ before(async () => {
 
   // ---------------------------------------------------------- a subject book
   books = await loadSubledgers();
-  titipan = books.find((b) => b.budgetCategory === "Titipan")!;
+  titipan = books.find((b) => b.budgetCategory === "Hutang")!;
   partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
   otherPartner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
 

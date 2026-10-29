@@ -216,7 +216,7 @@ const journalOf = (conversionId: number) =>
 
 const num = (d: { toNumber(): number }) => d.toNumber();
 
-/** The book, the induk's two resources, and a Partner holding a Titipan. */
+/** The book (Hutang stands in for the worked Titipan: both rise on money in), the induk's two resources, and a Partner holding it. */
 async function scenario(book: SubledgerDef, itemRate = 17150) {
   const partnerId = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
   const itemId = await makeItem(book, partnerId, 300_000, itemRate);
@@ -240,13 +240,13 @@ before(async () => {
   usd = foreign.id;
 
   books = await loadSubledgers();
-  titipan = subledgerForCategory(books, await budgetCategoryId("Titipan"))!;
+  titipan = subledgerForCategory(books, await budgetCategoryId("Hutang"))!;
   piutang = subledgerForCategory(books, await budgetCategoryId("Piutang"))!;
 
   titipanAccount = await mappingAccountId(
     await makeMapping({
       companyId: induk,
-      budgetCategoryLabel: "Titipan",
+      budgetCategoryLabel: "Hutang",
       partnerCategoryLabel: "Stakeholder",
       accountId: await makeAccount({
         companyId: induk,
@@ -346,7 +346,7 @@ describe("one kurs values both legs", () => {
 // ------------------------------------------------------------------ posting
 
 describe("Post writes the journal of the worked example", () => {
-  test("Titipan: five lines, one Selisih Kurs credit of 5.000.000", async () => {
+  test("Hutang (the worked Titipan case): five lines, one Selisih Kurs credit of 5.000.000", async () => {
     const s = await scenario(titipan);
     const id = await makeConversion({
       from: s.usdBank,

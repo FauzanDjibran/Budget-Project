@@ -186,6 +186,58 @@ export async function bookId(categoryLabel: string): Promise<number> {
   return row.id;
 }
 
+/**
+ * A Budget Category of a shape the seed does not carry — a running-total book,
+ * a book admitting one Partner Category, a holding book. The seed holds only
+ * Piutang, Hutang, their (N) partner tags, Biaya and Asset, so a suite needing
+ * anything else makes it here, under a label of its own: suites run in
+ * parallel, and two of them sharing one fixture category would race.
+ * `cleanupFixtures` removes it.
+ */
+/** The fixture categories this process made; each suite is its own process. */
+const madeCategories: number[] = [];
+
+export async function makeBudgetCategory(options: {
+  /** Prefixed with FIXTURE_PREFIX, so it never meets a real category. */
+  label: string;
+  directions: ("In" | "Out")[];
+  partnerCategoryLabels?: string[];
+  /** Set for a book; null or absent for a partner tag or a category naming no Partner. */
+  raises?: "In" | "Out" | null;
+  allowsItemAdjustment?: boolean;
+}): Promise<number> {
+  const actor = await systemUserId();
+  const partners = options.partnerCategoryLabels ?? [];
+  const label = `${FIXTURE_PREFIX} ${options.label}`;
+  const row = await prisma.sysBudgetCategory.create({
+    data: {
+      category_code: `bcat.${nextFixture()}`,
+      category_label: label,
+      category_name: label,
+      allows_in: options.directions.includes("In"),
+      allows_out: options.directions.includes("Out"),
+      require_partner: partners.length > 0,
+      keeps_book: options.raises != null,
+      raises: options.raises ?? null,
+      allows_item_adjustment: options.allowsItemAdjustment ?? false,
+      created_by: actor,
+    },
+    select: { id: true },
+  });
+  madeCategories.push(row.id);
+  for (const p of partners) {
+    await prisma.sysBudgetPartnerCategoryMapping.create({
+      data: {
+        mapping_code: `bpcm.${nextFixture()}`,
+        budget_category_id: row.id,
+        partner_category_id: await partnerCategoryId(p),
+        created_by: actor,
+      },
+    });
+  }
+  return row.id;
+}
+
 export async function partnerCategoryId(label: string): Promise<number> {
   const row = await prisma.sysPartnerCategory.findFirstOrThrow({
     where: { category_label: label },
@@ -617,6 +669,13 @@ export async function cleanupFixtures(): Promise<void> {
   await prisma.mPartner.deleteMany({
     where: { partner_label: { startsWith: FIXTURE_PREFIX } },
   });
+
+  // This suite's fixture categories last: everything above may name one.
+  await prisma.sysBudgetPartnerCategoryMapping.deleteMany({
+    where: { budget_category_id: { in: madeCategories } },
+  });
+  await prisma.sysBudgetCategory.deleteMany({ where: { id: { in: madeCategories } } });
+  madeCategories.length = 0;
 }
 
 // ------------------------------------------------------------ fiscal calendar

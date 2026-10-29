@@ -37,8 +37,8 @@ import {
   disconnect,
   makeAccount,
   makeMapping,
+  makeBudgetCategory,
   makePartner,
-  partnerCategoryId,
   parentCompanyId,
   prisma,
   setSystemAccount,
@@ -694,9 +694,9 @@ describe("only a budget the header admits is eligible", () => {
 
   test("a budget pointing the other way is never offered", async () => {
     const cashBank = await makeCashBank({});
-    // HIN_CAB_IN is an In purpose; this budget is an Out plan.
+    // The document is a receipt; this budget is an Out plan.
     const outward = await makeBudget({
-      categoryLabel: "Hasil Investasi",
+      categoryLabel: "Hutang",
       type: "Out",
       amount: 400_000,
       partnerId: await makePartner({ companyId: induk, categoryLabel: "Cabang" }),
@@ -754,7 +754,7 @@ describe("only a budget the header admits is eligible", () => {
     const cashBank = await makeCashBank({});
     const mine = await makePartner({ companyId: induk, categoryLabel: "Stakeholder" });
     const theirs = await makePartner({ companyId: induk, categoryLabel: "Karyawan" });
-    const prive = await makeBudget({ categoryLabel: "Prive", amount: 2_000_000, partnerId: mine });
+    const prive = await makeBudget({ categoryLabel: "Piutang (N)", amount: 2_000_000, partnerId: mine });
     const advance = await makeBudget({ categoryLabel: "Piutang", amount: 500_000, partnerId: theirs });
     const expense = await makeBudget({ categoryLabel: "Biaya", amount: 300_000 });
 
@@ -1001,7 +1001,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     const cashBank = await makeCashBank({ opening: 1_000_000 });
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
     const budget = await makeBudget({
-      categoryLabel: "Hasil Investasi",
+      categoryLabel: "Hutang",
       type: "In",
       partnerId: partner,
       amount: 750_000,
@@ -1394,22 +1394,8 @@ describe("posting writes a balanced journal alongside the book", () => {
  */
 describe("posting writes the subject book alongside the cash book", () => {
   test("a partner tag journals the Partner and writes no subject book", async () => {
-    const karyawan = await partnerCategoryId("Karyawan");
+    await makeBudgetCategory({ label: "Uang Makan", directions: ["Out"], partnerCategoryLabels: ["Karyawan"] });
     const label = `${FIXTURE_PREFIX} Uang Makan`;
-    await prisma.sysBudgetCategory.create({
-      data: {
-        category_code: `bcat.${FIXTURE_PREFIX}tag`,
-        category_label: label,
-        category_name: label,
-        allows_out: true,
-        require_partner: true,
-        keeps_book: false,
-        created_by: actor,
-        partner_categories: {
-          create: { mapping_code: `bpcm.${FIXTURE_PREFIX}tag`, partner_category_id: karyawan, created_by: actor },
-        },
-      },
-    });
     const account = await makeAccount({
       companyId: induk,
       subcategoryLabel: "5.3.1",
@@ -1509,7 +1495,7 @@ describe("posting writes the subject book alongside the cash book", () => {
     const cashBank = await makeCashBank({ opening: 4_000_000 });
     const budget = await makeBudget({
       type: "Out",
-      categoryLabel: "Prive",
+      categoryLabel: "Piutang",
       partnerId: partner,
       amount: 500_000,
     });
@@ -2411,10 +2397,10 @@ describe("a line lowering a position settles the open item it names", () => {
     return { cashBank, layer: layer.id };
   }
 
-  /** A posted Titipan receipt of `amount`, into `cashBank` at `rate`. */
+  /** A posted Hutang receipt (the worked Titipan case) of `amount`, into `cashBank` at `rate`. */
   async function receive(partner: number, cashBank: number, amount: number, rate: number) {
     const budget = await makeBudget({
-      categoryLabel: "Titipan",
+      categoryLabel: "Hutang",
       type: "In",
       partnerId: partner,
       amount,
@@ -2442,7 +2428,7 @@ describe("a line lowering a position settles the open item it names", () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
     const bank = await makeCashBank({ currencyId: otherCurrency });
     const budget = await makeBudget({
-      categoryLabel: "Titipan",
+      categoryLabel: "Hutang",
       type: "In",
       partnerId: partner,
       amount: 500,
@@ -2474,7 +2460,7 @@ describe("a line lowering a position settles the open item it names", () => {
     await receive(partner, bankA, 1_000, 15_000);
     await receive(partner, bankA, 1_000, 13_000);
 
-    const titipan = await bookId("Titipan");
+    const titipan = await bookId("Hutang");
     const items = await prisma.subLedgerBalance.findMany({
       where: { budget_category_id: titipan, partner_id: partner, currency_id: otherCurrency },
       orderBy: { id: "asc" },
@@ -2492,7 +2478,7 @@ describe("a line lowering a position settles the open item it names", () => {
     for (const item of items) {
       const bankB = await foreignCash(14_000, 1_000);
       const budget = await makeBudget({
-        categoryLabel: "Titipan",
+        categoryLabel: "Hutang",
         type: "Out",
         partnerId: partner,
         amount: 1_000,
@@ -2692,7 +2678,7 @@ describe("a line lowering a position settles the open item it names", () => {
     const bankA = await makeCashBank({ currencyId: otherCurrency });
     await receive(partner, bankA, 1_000, 15_000);
     await receive(partner, bankA, 1_000, 13_000);
-    const titipan = await bookId("Titipan");
+    const titipan = await bookId("Hutang");
     const [i15, i13] = await prisma.subLedgerBalance.findMany({
       where: { budget_category_id: titipan, partner_id: partner, currency_id: otherCurrency },
       orderBy: { id: "asc" },
@@ -2700,7 +2686,7 @@ describe("a line lowering a position settles the open item it names", () => {
 
     const bankB = await foreignCash(14_000, 2_000);
     const budget = await makeBudget({
-      categoryLabel: "Titipan",
+      categoryLabel: "Hutang",
       type: "Out",
       partnerId: partner,
       amount: 2_000,
@@ -2911,11 +2897,11 @@ describe("a line lowering a position settles the open item it names", () => {
     const partner = await makePartner({ companyId: induk, categoryLabel: "Cabang" });
     const bankA = await makeCashBank({ currencyId: otherCurrency });
     await receive(partner, bankA, 1_000, 15_000);
-    const item = await openItem(await bookId("Titipan"), partner, otherCurrency);
+    const item = await openItem(await bookId("Hutang"), partner, otherCurrency);
 
     const bankB = await foreignCash(14_000, 500);
     const budget = await makeBudget({
-      categoryLabel: "Titipan",
+      categoryLabel: "Hutang",
       type: "Out",
       partnerId: partner,
       amount: 500,

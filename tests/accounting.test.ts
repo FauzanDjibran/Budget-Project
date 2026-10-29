@@ -39,6 +39,7 @@ import {
   childCompanyId,
   subcategoryId,
   cleanupFixtures,
+  makeBudgetCategory,
   disconnect,
   makeAccount,
   makeMapping,
@@ -273,7 +274,7 @@ describe("an account already in use cannot be given a sub-account", () => {
   test("a Kategori held counts as use, and is named", async () => {
     const mappingId = await makeMapping({
       companyId: parent,
-      budgetCategoryLabel: "Prive",
+      budgetCategoryLabel: "Hutang (N)",
       partnerCategoryLabel: "Stakeholder",
       accountId: await makeAccount({
         companyId: parent,
@@ -304,12 +305,15 @@ describe("an account cannot become its own ancestor", () => {
 });
 
 describe("a mapping's Partner Category follows the Budget Category", () => {
-  test("Prive admits Stakeholder and nothing else", async () => {
-    const category = await prisma.sysBudgetCategory.findFirstOrThrow({
-      where: { category_label: "Prive" },
-      select: { id: true },
-    });
-    const rule = await partnerCategoriesForBudgetCategory(category.id);
+  test("a category admitting Stakeholder admits nothing else", async () => {
+    const rule = await partnerCategoriesForBudgetCategory(
+      await makeBudgetCategory({
+        label: "Stakeholder Saja",
+        directions: ["In", "Out"],
+        partnerCategoryLabels: ["Stakeholder"],
+        raises: "Out",
+      })
+    );
     assert.ok(rule);
     assert.equal(rule.needsPartner, true);
 
@@ -706,25 +710,9 @@ describe("the account names its ledger; Mapping Budget ke Account names the acco
 
   test("a book and a partner tag may post to one account", async () => {
     const company = await parentCompanyId();
-    const actor = await systemUserId();
     const karyawan = await partnerCategoryId("Karyawan");
+    const tag = { id: await makeBudgetCategory({ label: "Piutang (n)", directions: ["In", "Out"], partnerCategoryLabels: ["Karyawan"] }) };
     const tagLabel = `${FIXTURE_PREFIX} Piutang (n)`;
-    const tag = await prisma.sysBudgetCategory.create({
-      data: {
-        category_code: `bcat.${FIXTURE_PREFIX}tag`,
-        category_label: tagLabel,
-        category_name: tagLabel,
-        allows_in: true,
-        allows_out: true,
-        require_partner: true,
-        keeps_book: false,
-        created_by: actor,
-        partner_categories: {
-          create: { mapping_code: `bpcm.${FIXTURE_PREFIX}tag`, partner_category_id: karyawan, created_by: actor },
-        },
-      },
-      select: { id: true },
-    });
     try {
       // The real chart may already map Piutang for Karyawan; then only the tag is new.
       const piutang = await budgetCategoryId("Piutang");
@@ -746,8 +734,6 @@ describe("the account names its ledger; Mapping Budget ke Account names the acco
       assert.equal((await categoryAccount(company, tag.id, karyawan))?.account.id, target);
     } finally {
       await prisma.accBudgetCategoryAccount.deleteMany({ where: { budget_category_id: tag.id } });
-      await prisma.sysBudgetPartnerCategoryMapping.deleteMany({ where: { budget_category_id: tag.id } });
-      await prisma.sysBudgetCategory.delete({ where: { id: tag.id } });
     }
   });
 });

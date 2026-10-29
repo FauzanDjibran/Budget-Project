@@ -29,6 +29,7 @@ import {
   cleanupFixtures,
   disconnect,
   makeAccount,
+  makeBudgetCategory,
   makePartner,
   openFiscalYear,
   parentCompanyId,
@@ -271,6 +272,9 @@ describe("a rupiah Jurnal Umum", () => {
   });
 });
 
+const TITIPAN = `${FIXTURE_PREFIX} Titipan`;
+const HELD = `${FIXTURE_PREFIX} Penerimaan Belum Teridentifikasi`;
+
 describe("the subject_book ledger (Gate B)", () => {
   const today = todayDay();
   let books: SubledgerDef[] = [];
@@ -278,12 +282,15 @@ describe("the subject_book ledger (Gate B)", () => {
   const accounts: Record<string, number> = {};
 
   before(async () => {
+    // The seed carries Piutang and Hutang only; Titipan and a holding book are this suite's own.
+    await makeBudgetCategory({ label: "Titipan", directions: ["In", "Out"], partnerCategoryLabels: ["Cabang", "Stakeholder"], raises: "In" });
+    await makeBudgetCategory({ label: "Penerimaan Belum Teridentifikasi", directions: ["In", "Out"], partnerCategoryLabels: ["Cabang", "Lainnya"], raises: "In" });
     books = await loadSubledgers();
     for (const [label, sub] of [
       ["Piutang", "1.1.3"],
       ["Hutang", "2.1.1"],
-      ["Titipan", "2.1.5"],
-      ["Penerimaan Belum Teridentifikasi", "2.1.5"],
+      [TITIPAN, "2.1.5"],
+      [HELD, "2.1.5"],
     ]) {
       accounts[label] = await makeAccount({
         companyId: company,
@@ -393,15 +400,15 @@ describe("the subject_book ledger (Gate B)", () => {
 
   test("Case 4: held money moves to its book as a new item", async (t) => {
     if (!foreignCurrency) return t.skip("no foreign currency in this database");
-    const held = await openItem("Penerimaan Belum Teridentifikasi", 500, 16_000, foreignCurrency);
+    const held = await openItem(HELD, 500, 16_000, foreignCurrency);
     const { id, preview } = await draftAndPost([
-      on("Penerimaan Belum Teridentifikasi", 500, 0, { subject_id: held, ...usd(0) }),
-      on("Titipan", 0, 500, { subject_id: null, budget_category_id: book("Titipan").categoryId, ...usd(16_300) }),
+      on(HELD, 500, 0, { subject_id: held, ...usd(0) }),
+      on(TITIPAN, 0, 500, { subject_id: null, budget_category_id: book(TITIPAN).categoryId, ...usd(16_300) }),
     ]);
     assert.equal(preview.at(-1)!.debit, 150_000, "Debit Selisih 150.000");
     assert.equal((await subledgerItem(held))!.status, "Cleared");
     const opened = await prisma.subLedgerBalance.findFirstOrThrow({
-      where: { source_doc_id: id, budget_category_id: book("Titipan").categoryId },
+      where: { source_doc_id: id, budget_category_id: book(TITIPAN).categoryId },
     });
     assert.deepEqual([opened.balance.toNumber(), opened.rate.toNumber()], [500, 16_300]);
   });
@@ -449,7 +456,7 @@ describe("the subject_book ledger (Gate B)", () => {
     assert.ok(!unnamed.ok);
     assert.match(unnamed.errors["lines.0.budget_category_id"], /Pilih Kategori/, "no line becomes a new item by omission");
 
-    const titipan = await openItem("Titipan", 1_000, 1, baseCurrency);
+    const titipan = await openItem(TITIPAN, 1_000, 1, baseCurrency);
     const foreign = await checkGeneralJournal(header(), [
       line(hutangPiutang, 100, 0, { partner_id: partner, subject_id: titipan }),
       line(ymh, 0, 100),

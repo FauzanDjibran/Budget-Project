@@ -209,45 +209,33 @@ const BUDGET_CATEGORIES: [
    * Which cash direction **raises** the subject's position, and so whether the
    * category keeps a subject book at all.
    *
-   * Balance-sheet logic, never cash direction: money leaving raises a Piutang,
-   * a Prive and an Investasi, and *lowers* a Hutang or a Titipan. A book that
-   * mirrored the cash flow would print every position backwards.
+   * Balance-sheet logic, never cash direction: money leaving raises a Piutang
+   * and *lowers* a Hutang. A book that mirrored the cash flow would print every
+   * position backwards.
    *
    * Null exactly where the category keeps no book, and `keeps_book` is written
-   * from it: every seeded category naming a Partner is a book. One naming a
-   * Partner without a book (a partner tag) is the user's to create. The pairing is mandatory in both directions:
-   * `sys_budget_category_partner_implies_book` refuses a row that names a
-   * Partner without saying which way its book runs, so a fresh database cannot
-   * be seeded at all without this column. It was missing until a reset proved
-   * it — the categories already in a database had been repaired by migration,
-   * so only a database with none showed the gap.
+   * from it (`sys_budget_category_book_has_direction` holds the two together):
+   * a category with Partner Categories and no `raises` is a partner tag.
    */
   raises: "In" | "Out" | null,
   /**
-   * Whether a Penyesuaian Open Item may adjust this category's book. On for the
-   * three books one Profit & Loss counter account fixes correctly — a deposit
-   * held, a payable, a receivable — and off for Prive, Investasi and Hasil
-   * Investasi, whose counter entry is not an income or an expense. Written on
-   * create only: afterwards the flag is the category's own, set on its form.
+   * Whether a Penyesuaian Open Item may adjust this category's book: on for the
+   * payable and the receivable, which one Profit & Loss counter account fixes
+   * correctly. Written on create only: afterwards the flag is the category's
+   * own, set on its form.
    */
   allowsItemAdjustment: boolean,
 ][] = [
-  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali. Wajib Partner: Cabang atau Stakeholder.", ["In", "Out"], ["Cabang", "Stakeholder"], "In", true],
-  ["Hutang", "Kewajiban kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "In", true],
-  ["Piutang", "Hak tagih kepada pihak lain. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "Out", true],
-  ["Prive", "Pengambilan oleh pemilik. Wajib Partner: Stakeholder.", ["In", "Out"], ["Stakeholder"], "Out", false],
-  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null, false],
+  // Seeded in this order (the user's, 29/10/2026): the two books, the same
+  // two as partner tags — a Partner on the journal, no open item — then the
+  // two categories that name no Partner. Anything else (Titipan, Prive,
+  // Investasi, a holding book) is the user's to create through the GUI.
+  ["Piutang", "Hak tagih kepada pihak lain, dicatat per open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "Out", true],
+  ["Hutang", "Kewajiban kepada pihak lain, dicatat per open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "In", true],
+  ["Piutang (N)", "Piutang tanpa Buku Subjek: journal menyebut Partner, tanpa open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], null, false],
+  ["Hutang (N)", "Hutang tanpa Buku Subjek: journal menyebut Partner, tanpa open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], null, false],
   ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null, false],
-  ["Investasi", "Penyertaan dana ke entitas lain. Wajib Partner Cabang, hanya arah Pengeluaran.", ["Out"], ["Cabang"], "Out", false],
-  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi. Wajib Partner Cabang, hanya arah Penerimaan.", ["In"], ["Cabang"], "In", false],
-  // The two holding books: money whose real place is not known yet waits here,
-  // each on its own open item, until a Reklasifikasi Open Item moves it to the
-  // book it belongs in. Two rather than one because a book runs one way and
-  // never goes below zero — a receipt held is something owed, a payment held
-  // something owed to the Company, and in one book they would cancel. Both
-  // directions, so held money can also be sent back through a Realisasi.
-  ["Penerimaan Belum Teridentifikasi", "Penerimaan yang belum diketahui peruntukannya, ditampung sampai direklasifikasi. Wajib Partner.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "In", false],
-  ["Pengeluaran Belum Teridentifikasi", "Pengeluaran yang belum diketahui peruntukannya, ditampung sampai direklasifikasi. Wajib Partner.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "Out", false],
+  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null, false],
 ];
 
 const PARTNER_CATEGORIES: [label: string, name: string, note: string][] = [

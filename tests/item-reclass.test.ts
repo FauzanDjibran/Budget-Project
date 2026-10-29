@@ -14,7 +14,9 @@ import {
   cleanupFiscalYear,
   cleanupFixtures,
   disconnect,
+  FIXTURE_PREFIX,
   makeAccount,
+  makeBudgetCategory,
   makeMapping,
   makePartner,
   mappingAccountId,
@@ -228,18 +230,26 @@ before(async () => {
   ).id;
   usd = await fixtureCurrency("RKLA");
 
+  // The seed carries Piutang and Hutang only: the two holding books and a
+  // second book rising on money in (Titipan) are this suite's own.
+  const everyone = ["Cabang", "Karyawan", "Stakeholder", "Lainnya"];
+  await makeBudgetCategory({ label: "Penerimaan Belum Teridentifikasi", directions: ["In", "Out"], partnerCategoryLabels: everyone, raises: "In" });
+  await makeBudgetCategory({ label: "Pengeluaran Belum Teridentifikasi", directions: ["In", "Out"], partnerCategoryLabels: everyone, raises: "Out" });
+  await makeBudgetCategory({ label: "Titipan", directions: ["In", "Out"], partnerCategoryLabels: ["Cabang", "Stakeholder"], raises: "In" });
+  const fx = (label: string) => `${FIXTURE_PREFIX} ${label}`;
+
   const books = await loadSubledgers();
   const bookOf = async (label: string) => subledgerForCategory(books, await budgetCategoryId(label))!;
-  held = await bookOf("Penerimaan Belum Teridentifikasi");
-  heldOut = await bookOf("Pengeluaran Belum Teridentifikasi");
+  held = await bookOf(fx("Penerimaan Belum Teridentifikasi"));
+  heldOut = await bookOf(fx("Pengeluaran Belum Teridentifikasi"));
   hutang = await bookOf("Hutang");
-  titipan = await bookOf("Titipan");
+  titipan = await bookOf(fx("Titipan"));
   piutang = await bookOf("Piutang");
 
-  heldAccount = await mapped("Penerimaan Belum Teridentifikasi", "Lainnya", "2.1.1", "Kredit");
-  heldOutAccount = await mapped("Pengeluaran Belum Teridentifikasi", "Lainnya", "1.1.4", "Debit");
+  heldAccount = await mapped(fx("Penerimaan Belum Teridentifikasi"), "Lainnya", "2.1.1", "Kredit");
+  heldOutAccount = await mapped(fx("Pengeluaran Belum Teridentifikasi"), "Lainnya", "1.1.4", "Debit");
   hutangAccount = await mapped("Hutang", "Stakeholder", "2.1.1", "Kredit");
-  await mapped("Titipan", "Stakeholder", "2.1.1", "Kredit");
+  await mapped(fx("Titipan"), "Stakeholder", "2.1.1", "Kredit");
   piutangAccount = await mapped("Piutang", "Stakeholder", "1.1.4", "Debit");
 
   fxAccount = await makeAccount({ companyId: induk, subcategoryLabel: "5.3.1" });
@@ -544,7 +554,9 @@ describe("refusals", () => {
       /buku subjek/,
       "a category that names no Partner keeps no book"
     );
-    const investasi = subledgerForCategory(await loadSubledgers(), await budgetCategoryId("Investasi"))!;
+    // A book allowing only Pengeluaran — a shape the seed does not carry.
+    const outOnly = await makeBudgetCategory({ label: "Investasi", directions: ["Out"], partnerCategoryLabels: ["Stakeholder"], raises: "Out" });
+    const investasi = subledgerForCategory(await loadSubledgers(), outOnly)!;
     await refused(
       [line(investasi, owner, [[source, 1_000]])],
       /tidak menerima arah penerimaan/,

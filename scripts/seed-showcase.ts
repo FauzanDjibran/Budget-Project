@@ -102,9 +102,10 @@ type Group = { kelompok: string; balance: Balance; accounts: AccountNode[] };
 // --------------------------------------------------------------- the chart
 //
 // Built for the skeleton in `prisma/seed.ts`, and shaped so every Budget
-// Category in `lib/siba/rules.ts` has somewhere to map to: Titipan, Hutang and
+// Category this year uses has somewhere to map to: Titipan, Hutang and
 // Piutang per Partner Category, Prive for a Stakeholder, Investasi and Hasil
-// Investasi per Cabang, plus general Asset and Biaya accounts.
+// Investasi per Cabang, plus general Asset and Biaya accounts. All but Hutang,
+// Piutang, Biaya and Asset are created by `insertBudgetCategories`.
 
 /**
  * Kas & Bank, the one kelompok where the two charts differ. The induk holds
@@ -480,6 +481,15 @@ const MAPPINGS: [
   ["Piutang", "Cabang", "Piutang Cabang"],
   ["Piutang", "Karyawan", "Piutang Karyawan"],
   ["Piutang", "Stakeholder", "Piutang Stakeholder"],
+
+  // The partner tags post to the same accounts as their books: one account,
+  // some lines with an open item and some without (the user's concept).
+  ["Hutang (N)", "Cabang", "Hutang kepada Cabang"],
+  ["Hutang (N)", "Karyawan", "Hutang kepada Karyawan"],
+  ["Hutang (N)", "Stakeholder", "Hutang kepada Stakeholder"],
+  ["Piutang (N)", "Cabang", "Piutang Cabang"],
+  ["Piutang (N)", "Karyawan", "Piutang Karyawan"],
+  ["Piutang (N)", "Stakeholder", "Piutang Stakeholder"],
 
   ["Prive", "Stakeholder", "Prive Stakeholder"],
 
@@ -2131,6 +2141,7 @@ async function main() {
   const induk = companies.find((c) => c.is_parent)!;
   await nameCompanies(actor);
   const foreignId = await ensureForeignCurrency(actor);
+  await insertBudgetCategories(actor);
   await insertPartners(induk.id, PARTNERS, actor);
   await insertPartners(companies.find((c) => !c.is_parent)!.id, ANAK_PARTNERS, actor);
 
@@ -2203,6 +2214,77 @@ async function nextCode(prefix: string, existing: string[]): Promise<string> {
     if (Number.isFinite(n) && n > max) max = n;
   }
   return `${prefix}.${String(max + 1).padStart(4, "0")}`;
+}
+
+// -------------------------------------------------------- budget categories
+
+/**
+ * The categories this year uses beyond the six the system seed carries
+ * (Piutang, Hutang, their (N) partner tags, Biaya, Asset), created as a user
+ * would on Pengaturan › Klasifikasi: label, note, directions, Partner
+ * Categories admitted, the direction that raises the book, and whether a
+ * Penyesuaian Open Item may adjust it. Reused where it already exists.
+ */
+const SHOWCASE_CATEGORIES: [
+  label: string,
+  note: string,
+  directions: ("In" | "Out")[],
+  partnerCategories: string[],
+  raises: "In" | "Out",
+  allowsItemAdjustment: boolean,
+][] = [
+  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali.", ["In", "Out"], ["Cabang", "Stakeholder"], "In", true],
+  ["Prive", "Pengambilan oleh pemilik.", ["In", "Out"], ["Stakeholder"], "Out", false],
+  ["Investasi", "Penyertaan dana ke entitas lain, hanya arah Pengeluaran.", ["Out"], ["Cabang"], "Out", false],
+  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi, hanya arah Penerimaan.", ["In"], ["Cabang"], "In", false],
+  // The two holding books: money whose place is not known yet waits here until
+  // a Reklasifikasi Open Item moves it to the book it belongs in.
+  ["Penerimaan Belum Teridentifikasi", "Penerimaan yang belum diketahui peruntukannya, ditampung sampai direklasifikasi.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "In", false],
+  ["Pengeluaran Belum Teridentifikasi", "Pengeluaran yang belum diketahui peruntukannya, ditampung sampai direklasifikasi.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "Out", false],
+];
+
+async function insertBudgetCategories(actor: number) {
+  const partnerCategory = new Map(
+    (await prisma.sysPartnerCategory.findMany({ select: { id: true, category_label: true } })).map((c) => [
+      c.category_label,
+      c.id,
+    ])
+  );
+  for (const [label, note, directions, partners, raises, allowsItemAdjustment] of SHOWCASE_CATEGORIES) {
+    if (await prisma.sysBudgetCategory.findFirst({ where: { category_label: label }, select: { id: true } })) continue;
+    const codes = await prisma.sysBudgetCategory.findMany({ select: { category_code: true } });
+    const row = await prisma.sysBudgetCategory.create({
+      data: {
+        category_code: await nextCode("bcat", codes.map((c) => c.category_code)),
+        category_label: label,
+        category_name: label,
+        allows_in: directions.includes("In"),
+        allows_out: directions.includes("Out"),
+        require_partner: true,
+        keeps_book: true,
+        raises,
+        allows_item_adjustment: allowsItemAdjustment,
+        note,
+        created_by: actor,
+      },
+      select: { id: true },
+    });
+    await audit("sys_budget_category", row.id, actor);
+    for (const p of partners) {
+      const id = partnerCategory.get(p);
+      if (!id) throw new Error(`Partner Category "${p}" is not seeded.`);
+      const mappingCodes = await prisma.sysBudgetPartnerCategoryMapping.findMany({ select: { mapping_code: true } });
+      await prisma.sysBudgetPartnerCategoryMapping.create({
+        data: {
+          mapping_code: await nextCode("bpcm", mappingCodes.map((m) => m.mapping_code)),
+          budget_category_id: row.id,
+          partner_category_id: id,
+          created_by: actor,
+        },
+      });
+    }
+    tally("budget categories");
+  }
 }
 
 // ----------------------------------------------------------------- partners

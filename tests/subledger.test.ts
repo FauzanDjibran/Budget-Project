@@ -28,16 +28,16 @@ import {
 } from "./helpers";
 
 /**
- * The subject books — Titipan, Hutang, Piutang, Prive, Investasi and Hasil
- * Investasi.
+ * The subject books — seeded: Piutang and Hutang; any other a user creates.
  *
  * A subledger is the Cash Bank Book with a Partner as its subject: an
  * independent, append-only historical store written straight from the business
  * transaction at Post, never derived from a journal line (concept doc §11,
  * §13, §14). Three things have to hold, and each is tested below.
  *
- *  1. The catalogue and the categories agree — every category that names a
- *     Partner keeps a book, and every book knows which way it moves.
+ *  1. The catalogue and the categories agree — a category keeps a book exactly
+ *     when it names a Partner and is marked a book, and every book knows which
+ *     way it moves.
  *  2. A book signs by **its own** direction, not by the cash direction. Money
  *     leaving the company raises a Piutang and lowers a Hutang; a book that
  *     mirrored the cash flow would report every position backwards.
@@ -87,7 +87,7 @@ after(async () => {
 // are now rows. The properties are unchanged — a book still exists exactly where
 // a category names a subject — but they are now checked against what the
 // database actually holds, which is also what the application reads.
-describe("a category keeps a book exactly when it names a Partner", () => {
+describe("a category keeps a book exactly when it names a Partner and is marked one", () => {
   test("every book names a real Budget Category", async () => {
     const catalogue = await loadClassification();
     for (const book of books) {
@@ -98,20 +98,16 @@ describe("a category keeps a book exactly when it names a Partner", () => {
     }
   });
 
-  test("every category that takes a Partner has a book, and no other does", async () => {
+  test("every category marked a book has one, and no other does", async () => {
+    const marked = new Map(
+      (await prisma.sysBudgetCategory.findMany({ select: { id: true, keeps_book: true } })).map((r) => [r.id, r.keeps_book])
+    );
     for (const rule of await loadClassification()) {
       const book = subledgerForCategory(books, rule.id);
-      if (rule.requirePartner) {
-        assert.ok(
-          book,
-          `${rule.label} names a Partner, so its postings move a subject — that subject needs a book`
-        );
+      if (rule.requirePartner && marked.get(rule.id)) {
+        assert.ok(book, `${rule.label} is marked a book, so its postings move a subject — that subject needs a book`);
       } else {
-        assert.equal(
-          book,
-          null,
-          `${rule.label} takes no Partner, so a book of it would have no subject`
-        );
+        assert.equal(book, null, `${rule.label} keeps no book: it names no Partner, or is a partner tag`);
       }
     }
   });
@@ -128,17 +124,12 @@ describe("a category keeps a book exactly when it names a Partner", () => {
     }
   });
 
-  test("every seeded category that names a Partner posts into a book", async () => {
+  test("the seeded books are Piutang and Hutang; their (N) versions are partner tags", () => {
     // A realization line posts into the book its own Budget's category keeps,
-    // resolved through the category's id. A seeded category naming a Partner
-    // with no book would realize Budgets whose subject moved nowhere.
-    const catalogue = await loadClassification();
-    for (const rule of catalogue) {
-      if (!rule.requirePartner) continue;
-      assert.ok(
-        subledgerForCategory(books, rule.id),
-        `${rule.label} names a Partner but keeps no subject book`
-      );
+    // resolved through the category's id.
+    for (const label of ["Piutang", "Hutang"]) assert.ok(bookOf(label));
+    for (const label of ["Piutang (N)", "Hutang (N)"]) {
+      assert.ok(!books.some((b) => b.budgetCategory === label), `${label} keeps no book`);
     }
   });
 
@@ -210,15 +201,9 @@ describe("a book signs by its own direction, not by the cash direction", () => {
     // Liabilities: money received raises what is owed.
     ["Hutang", "In", 100],
     ["Hutang", "Out", -100],
-    ["Titipan", "In", 100],
-    ["Titipan", "Out", -100],
     // Assets and contra-equity: money paid out raises the position.
     ["Piutang", "Out", 100],
     ["Piutang", "In", -100],
-    ["Prive", "Out", 100],
-    ["Prive", "In", -100],
-    ["Investasi", "Out", 100],
-    ["Hasil Investasi", "In", 100],
   ];
 
   for (const [category, direction, expected] of cases) {
@@ -402,7 +387,7 @@ describe("the book is append-only, and its total is derived", () => {
       ] as const) {
         await prisma.$transaction((tx) =>
           recordSubledgerEntry(tx, {
-            book: bookOf("Titipan"),
+            book: bookOf("Hutang"),
             partnerId: partner,
             currencyId,
             date: "2026-03-01",
@@ -417,7 +402,7 @@ describe("the book is append-only, and its total is derived", () => {
 
       const report = await subledgerReport(
         books,
-        bookOf("Titipan").categoryId,
+        bookOf("Hutang").categoryId,
         { from: "2026-01-01", to: "2026-12-31" },
         { partnerIds: [partner], companyIds: [induk] }
       );
@@ -448,12 +433,12 @@ describe("a subledger report reconciles on its own page", () => {
       ["2026-01-31", "Out", 600_000], // exactly `to`: inside
       ["2026-02-01", "Out", 999_999], // after the period: excluded
     ];
-    // Money out raises a Prive; the one In lowers it, settling the first item.
+    // Money out raises a Piutang; the one In lowers it, settling the first item.
     let firstItem: number | undefined;
     for (const [date, direction, amount] of entries) {
       const written = await prisma.$transaction((tx) =>
         recordSubledgerEntry(tx, {
-          book: bookOf("Prive"),
+          book: bookOf("Piutang"),
           partnerId: partner,
           currencyId: currency,
           date,
@@ -472,7 +457,7 @@ describe("a subledger report reconciles on its own page", () => {
   const january = { from: "2026-01-01", to: "2026-01-31" };
 
   test("opening + naik − turun = closing", async () => {
-    const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
+    const report = await subledgerReport(books, bookOf("Piutang").categoryId, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -489,7 +474,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("both ends of the range are inside it, and earlier rows are not listed", async () => {
-    const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
+    const report = await subledgerReport(books, bookOf("Piutang").categoryId, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -498,7 +483,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("the summed book agrees with its stored balance", async () => {
-    const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
+    const report = await subledgerReport(books, bookOf("Piutang").categoryId, january, {
       partnerIds: [partner],
       companyIds: [induk],
     });
@@ -508,7 +493,7 @@ describe("a subledger report reconciles on its own page", () => {
   test("a period with no movement still reports its position", async () => {
     const report = await subledgerReport(
       books,
-      bookOf("Prive").categoryId,
+      bookOf("Piutang").categoryId,
       { from: "2026-06-01", to: "2026-06-30" },
       { partnerIds: [partner], companyIds: [induk] }
     );
@@ -523,7 +508,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("a Company the reader may not see is not reported", async () => {
-    const report = await subledgerReport(books, bookOf("Prive").categoryId, january, {
+    const report = await subledgerReport(books, bookOf("Piutang").categoryId, january, {
       partnerIds: [partner],
       companyIds: [-1],
     });
@@ -531,7 +516,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("the filter offers only subjects the book actually holds", async () => {
-    const subjects = await subledgerSubjects(books, bookOf("Prive").categoryId, [induk]);
+    const subjects = await subledgerSubjects(books, bookOf("Piutang").categoryId, [induk]);
     assert.ok(
       subjects.some((s) => s.id === partner),
       "a Partner with entries is offered"
@@ -552,7 +537,7 @@ describe("a subledger report reconciles on its own page", () => {
       [{ from: "2025-12-01", to: "2025-12-31" }, 2_000_000, [2_000_000]],
       [{ from: "2026-06-01", to: "2026-06-30" }, 4_199_999, [1_600_000, 1_000_000, 600_000, 999_999]],
     ] as const) {
-      const report = await subledgerBalanceReport(books, bookOf("Prive").categoryId, range, {
+      const report = await subledgerBalanceReport(books, bookOf("Piutang").categoryId, range, {
         partnerIds: [partner],
         companyIds: [induk],
       });
@@ -584,7 +569,7 @@ describe("a subledger report reconciles on its own page", () => {
   });
 
   test("Saldo Buku Subjek respects the Company scope", async () => {
-    const report = await subledgerBalanceReport(books, bookOf("Prive").categoryId, january, {
+    const report = await subledgerBalanceReport(books, bookOf("Piutang").categoryId, january, {
       partnerIds: [partner],
       companyIds: [-1],
     });
