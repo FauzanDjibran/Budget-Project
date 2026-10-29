@@ -137,8 +137,6 @@ export async function checkGeneralJournal(
         is_postable: true,
         is_active: true,
         ledger: true,
-        partner_category_id: true,
-        books: { where: { status: "Active" }, select: { budget_category_id: true } },
         _count: { select: { children: true } },
       },
     }),
@@ -147,9 +145,7 @@ export async function checkGeneralJournal(
       select: { id: true, currency_label: true },
     }),
   ]);
-  const accountById = new Map(
-    accounts.map((a) => [a.id, { ...a, bookIds: a.books.map((b) => b.budget_category_id) }])
-  );
+  const accountById = new Map(accounts.map((a) => [a.id, a]));
   const currencyById = new Map(currencies.map((c) => [c.id, c]));
   const ctx = { companyId, date: dated.date };
 

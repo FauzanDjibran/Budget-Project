@@ -17,6 +17,7 @@ import {
 } from "./subledger";
 import { subledgerForCategory, type SubledgerDef } from "./subledger-catalogue";
 import { loadSubledgers } from "./subledger-data";
+import { categoryAccount } from "./category-accounts";
 
 /**
  * The open ledger contract (Journal 2.0 §3). An account names its ledger
@@ -38,7 +39,7 @@ export type AdapterLine = {
   rate: number;
   /** What the line moves: an open item (null for a new one), or a Cash & Bank. */
   subjectId: number | null;
-  /** Partner only: which of the account's books the line writes into. */
+  /** Kategori only: the line's Budget Category, a book where it keeps one. */
   bookId: number | null;
   /** Cash & Bank only: the rate layer a foreign payment draws on. */
   layerId: number | null;
@@ -56,9 +57,6 @@ export type AdapterLine = {
 export type AdapterAccount = {
   id: number;
   account_label: string;
-  partner_category_id: number | null;
-  /** The Budget Categories a `category` account holds (`acc_account_book`). */
-  bookIds: number[];
 };
 
 export type AdapterContext = { companyId: number; date: string };
@@ -100,44 +98,46 @@ const cents = (n: number) => Math.round(n * 100);
 const raisingSide = (book: SubledgerDef) => (book.raises === "In" ? "credit" : "debit");
 
 /**
- * `category`: one of the Budget Categories the account holds (D25). Where
- * they take no Partner (Biaya, Asset) the category is the whole entry and no
- * book is written. Where they take one, a Partner and an open item in one of
- * the account's books (D18, revised 28/10/2026): a named item brings its own
- * book; a new item opens in the book the line names, always (D20). Whether the line raises or lowers is read from its side against that
- * book's `raises` (D19). Lowering names an Open item and relieves it at its
- * own kurs; raising grows a named Open item at its own kurs, or opens a new
- * one at the kurs typed. Every named item holds the balance the draft was
- * saved against, or Post refuses it (Case 10).
+ * `category`: the line names its Budget Category, and the Partner where the
+ * category takes one; Mapping Budget ke Account must send that Company ×
+ * Category × Partner Category to this account. A category naming no Partner is
+ * the whole entry. A partner tag (a Partner, no book) carries the Partner and
+ * writes no book. A book takes an open item (D18, revised 28/10/2026): a named
+ * item brings its own book; a new item opens in the book the line names,
+ * always (D20). Whether the line raises or lowers is read from its side
+ * against that book's `raises` (D19). Lowering names an Open item and
+ * relieves it at its own kurs; raising grows a named Open item at its own
+ * kurs, or opens a new one at the kurs typed. Every named item holds the
+ * balance the draft was saved against, or Post refuses it (Case 10).
  */
 const categoryAdapter: LedgerAdapter = {
   ledger: "category",
 
   async check(line, account, ctx): Promise<Record<string, string>> {
-    if (account.partner_category_id == null) {
-      line.partnerId = null;
-      line.subjectId = null;
-      line.layerId = null;
-      line.balanceBefore = null;
-      if (line.bookId == null || !account.bookIds.includes(line.bookId)) {
-        return { account_id: `Pilih Kategori yang dipegang Account ${account.account_label}.` };
-      }
-      return {};
-    }
-    if (!line.partnerId) return { partner_id: "Account ini wajib menyebut Partner." };
+    line.layerId = null;
     const item = line.subjectId == null ? null : await subledgerItem(line.subjectId);
     if (line.subjectId != null && !item) return { subject_id: "Open item tidak ditemukan." };
-    // A new item is a choice the line states by naming its book (D20), even
-    // where the account keeps one: no line becomes a new item by omission.
     line.bookId = item?.bookId ?? line.bookId;
-    if (line.bookId == null) return { subject_id: "Pilih open item, atau centang Baru dan pilih bukunya." };
-    if (!account.bookIds.includes(line.bookId)) {
-      return { subject_id: `Buku tersebut tidak ditampung Account ${account.account_label}.` };
+    if (line.bookId == null) return { budget_category_id: "Pilih Kategori." };
+    const category = await prisma.sysBudgetCategory.findUnique({
+      where: { id: line.bookId },
+      select: { category_label: true, require_partner: true },
+    });
+    if (!category) return { budget_category_id: "Kategori tidak ditemukan." };
+    const notMapped = {
+      budget_category_id: `Mapping Budget ke Account tidak mengirim ${category.category_label} ` +
+        `ke Account ${account.account_label}.`,
+    };
+
+    if (!category.require_partner) {
+      line.partnerId = null;
+      line.subjectId = null;
+      line.balanceBefore = null;
+      const mapped = await categoryAccount(ctx.companyId, line.bookId, null);
+      return mapped?.account.id === account.id ? {} : notMapped;
     }
-    const book = subledgerForCategory(await loadSubledgers(), line.bookId);
-    if (!book) {
-      return { account_id: `Account ${account.account_label} menunjuk buku subjek yang tidak aktif.` };
-    }
+
+    if (!line.partnerId) return { partner_id: `${category.category_label} wajib menyebut Partner.` };
     const partner = await prisma.mPartner.findUnique({
       where: { id: line.partnerId },
       select: { company_id: true, status: true, category_id: true, partner_label: true },
@@ -146,16 +146,19 @@ const categoryAdapter: LedgerAdapter = {
     if (partner.company_id !== ctx.companyId) {
       return { partner_id: "Partner tersebut milik Company lain." };
     }
-    // A book's Partners are split over its accounts by Partner Category; a
-    // Partner on another category's account puts the book and the General
-    // Ledger on different accounts.
-    if (account.partner_category_id && partner.category_id !== account.partner_category_id) {
-      return {
-        partner_id: "Partner Category tidak sesuai dengan yang ditetapkan pada Account.",
-      };
+    const mapped = await categoryAccount(ctx.companyId, line.bookId, partner.category_id);
+    if (mapped?.account.id !== account.id) return notMapped;
+
+    const book = subledgerForCategory(await loadSubledgers(), line.bookId);
+    if (!book) {
+      // A partner tag: the Partner rides on the journal, no item is written.
+      if (line.subjectId != null) {
+        return { subject_id: `${category.category_label} tidak memakai Buku Subjek.` };
+      }
+      line.balanceBefore = null;
+      return partner.status === "Active" ? {} : { partner_id: "Partner tersebut non-aktif." };
     }
     const raise = raisingSide(book);
-    line.layerId = null;
 
     if (!item) {
       if (line.side !== raise) {
@@ -236,7 +239,8 @@ const categoryAdapter: LedgerAdapter = {
 
   async write(tx, line, _account, ctx) {
     if (line.partnerId == null) return;
-    const book = subledgerForCategory(await loadSubledgers(), line.bookId)!;
+    const book = subledgerForCategory(await loadSubledgers(), line.bookId);
+    if (!book) return;
     if (line.subjectId != null) {
       const held = await itemBalanceOn(line.subjectId, ctx.date, tx);
       if (cents(held) !== cents(line.balanceBefore ?? NaN)) {

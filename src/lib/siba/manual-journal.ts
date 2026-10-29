@@ -167,7 +167,6 @@ export async function manualJournalOptions(
         account_name: true,
         normal_balance: true,
         ledger: true,
-        partner_category_id: true,
       },
     }),
     prisma.mPartner.findMany({
@@ -196,7 +195,7 @@ export async function manualJournalOptions(
         name: a.account_name,
         normalBalance: a.normal_balance,
         requirePartner: accountTakesPartner(a),
-        partnerCategoryId: a.partner_category_id,
+        partnerCategoryId: null,
       })),
     partners: partners.map((p) => ({
       id: p.id,
@@ -318,7 +317,6 @@ export async function checkManualJournal(
         is_active: true,
         is_control_account: true,
         ledger: true,
-        partner_category_id: true,
         _count: { select: { children: true } },
       },
     }),
@@ -359,9 +357,8 @@ export async function checkManualJournal(
       continue;
     }
 
-    // An account that names a Partner Category keeps a subject history per
-    // Partner, so a line on it without a Partner would be a movement with no
-    // subject. The category must match too — that is what the column is for.
+    // Only a Kategori account takes a Partner, and the picker offers none (a
+    // control account), so this is a backstop for a crafted request.
     let partnerId: number | null = null;
     if (accountTakesPartner(account)) {
       const partner = line.partner_id ? partnerById.get(line.partner_id) : null;
@@ -373,12 +370,6 @@ export async function checkManualJournal(
           "Partner tersebut milik Company lain.";
       } else if (partner.status !== "Active") {
         errors[lineKey(i, "partner_id")] = "Partner tersebut non-aktif.";
-      } else if (
-        account.partner_category_id &&
-        partner.category_id !== account.partner_category_id
-      ) {
-        errors[lineKey(i, "partner_id")] =
-          "Partner Category tidak sesuai dengan yang ditetapkan pada Account.";
       } else {
         partnerId = partner.id;
       }

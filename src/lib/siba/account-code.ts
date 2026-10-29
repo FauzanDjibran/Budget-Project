@@ -115,15 +115,13 @@ export const LEDGER_TEXT: Record<string, string> = {
 };
 
 /**
- * Whether every line on an account names a Partner (Journal 2.0 D25): a
- * `category` account whose categories take one, which is exactly when it
- * names a Partner Category. What `require_partner` used to say.
+ * Whether a line on the account may name a Partner: a `category` account,
+ * reached through a mapping whose Budget Category decides whether it must.
+ * One account may receive categories with a Partner and without, so the
+ * account can no longer say that every line has one.
  */
-export function accountTakesPartner(account: {
-  ledger: string;
-  partner_category_id: number | null;
-}): boolean {
-  return account.ledger === "category" && account.partner_category_id != null;
+export function accountTakesPartner(account: { ledger: string }): boolean {
+  return account.ledger === "category";
 }
 
 /**

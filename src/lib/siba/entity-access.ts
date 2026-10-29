@@ -68,8 +68,14 @@ const ENTITY_PERMISSIONS: Record<string, EntityPermissions> = {
   // Fiscal Period has no row because it has no screen: periods are generated
   // when a Fiscal Year is opened and read from inside it, so the year's
   // permissions are the only ones at stake.
-  // The fiscal calendar has no activate/deactivate: a fiscal record moves
-  // Draft -> Open -> Closed through an edit rather than a toggle.
+  // Mapping and the fiscal calendar have no activate/deactivate: a mapping
+  // either exists or does not, and a fiscal record moves Draft -> Open ->
+  // Closed through an edit rather than a toggle.
+  acc_budget_category_account: {
+    view: "MAPPING_VIEW",
+    create: "MAPPING_CREATE",
+    edit: "MAPPING_EDIT",
+  },
   acc_fiscal_year: {
     view: "FISCAL_YEAR_VIEW",
     create: "FISCAL_YEAR_CREATE",

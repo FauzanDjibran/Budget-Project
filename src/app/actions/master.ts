@@ -26,7 +26,8 @@ import {
   CASH_BANK_SUBCATEGORY,
   accountDescendants,
   accountUsage,
-  categoriesTakePartner,
+  partnerCategoriesForBudgetCategory,
+  checkAccountIsLeaf,
   checkAccountNumber,
   checkAccountLedger,
   checkCashBankAccount,
@@ -234,18 +235,10 @@ async function applicableFields(
       if (boolValue(values, "require_partner")) applies.add(field.name);
       continue;
     }
-    if (field.visibleWhen === "accountHoldsCategories") {
-      if (values.ledger === "category") applies.add(field.name);
-      continue;
-    }
-    if (field.visibleWhen === "accountTakesPartner") {
-      // The categories chosen decide it (D25), as the form does.
-      if (
-        values.ledger === "category" &&
-        (await categoriesTakePartner(idList(values.book_ids))) === true
-      ) {
-        applies.add(field.name);
-      }
+    if (field.visibleWhen === "budgetCategoryRequiresPartner") {
+      const categoryId = refValue(values, "budget_category_id");
+      const rule = categoryId ? await partnerCategoriesForBudgetCategory(categoryId) : null;
+      if (rule?.needsPartner) applies.add(field.name);
       continue;
     }
     if (field.visibleWhen === "categoryKeepsBook") {
@@ -321,6 +314,9 @@ async function validate(
 
   if (entity.key === "m_cash_bank") {
     Object.assign(errors, await validateCashBank(values, errors));
+  }
+  if (entity.key === "acc_budget_category_account") {
+    Object.assign(errors, await validateMapping(values, currentId, errors, applies));
   }
   if (entity.key === "acc_account") {
     Object.assign(errors, await validateAccount(values, currentId, errors, applies));
@@ -494,14 +490,78 @@ async function validateAccount(
     }
   }
 
-  const ledgerError = await checkAccountLedger(
-    currentId,
-    String(values.ledger ?? ""),
-    applies.has("book_ids") ? idList(values.book_ids) : [],
-    applies.has("partner_category_id") ? refValue(values, "partner_category_id") : null,
-    companyId
-  );
+  const ledgerError = await checkAccountLedger(currentId, String(values.ledger ?? ""));
   if (ledgerError) errors.ledger = ledgerError;
+
+  return errors;
+}
+
+/**
+ * One mapping: Company × Budget Category × Partner Category (or none) to one
+ * Kategori account of that Company, postable, active and a leaf. Many
+ * mappings may name the same account, whatever their categories keep.
+ */
+async function validateMapping(
+  values: FormValues,
+  currentId: number | null,
+  existing: Record<string, string>,
+  applies: Set<string>
+): Promise<Record<string, string>> {
+  const errors: Record<string, string> = {};
+  const companyId = refValue(values, "company_id");
+  const budgetCategoryId = refValue(values, "budget_category_id");
+  const partnerCategoryId = applies.has("partner_category_id")
+    ? refValue(values, "partner_category_id")
+    : null;
+  const accountId = refValue(values, "account_id");
+
+  if (budgetCategoryId) {
+    const rule = await partnerCategoriesForBudgetCategory(budgetCategoryId);
+    if (rule?.needsPartner && !partnerCategoryId) {
+      errors.partner_category_id = "Budget Category ini mensyaratkan Partner Category.";
+    }
+    if (rule && partnerCategoryId && !rule.allowedIds.includes(partnerCategoryId)) {
+      errors.partner_category_id =
+        "Partner Category tersebut tidak berlaku untuk Budget Category ini.";
+    }
+  }
+
+  if (accountId && companyId && !existing.account_id) {
+    const account = await prisma.accAccount.findUnique({
+      where: { id: accountId },
+      select: { company_id: true, is_postable: true, is_active: true, ledger: true },
+    });
+    if (!account) errors.account_id = "Account tidak ditemukan.";
+    else if (account.company_id !== companyId) {
+      errors.account_id = "Account harus milik Company yang sama.";
+    } else if (account.ledger !== "category") {
+      errors.account_id = "Mapping hanya boleh menuju account berledger Kategori.";
+    } else if (!account.is_postable) {
+      errors.account_id = "Account header tidak dapat menjadi tujuan posting.";
+    } else if (!account.is_active) {
+      errors.account_id = "Account tersebut non-aktif dan tidak dapat dipilih.";
+    } else {
+      // A parent is a heading over where money lands, never a place it lands.
+      const notLeaf = await checkAccountIsLeaf(accountId);
+      if (notLeaf) errors.account_id = notLeaf;
+    }
+  }
+
+  if (companyId && budgetCategoryId && !errors.partner_category_id) {
+    const clash = await prisma.accBudgetCategoryAccount.findFirst({
+      where: {
+        company_id: companyId,
+        budget_category_id: budgetCategoryId,
+        partner_category_id: partnerCategoryId,
+        ...(currentId ? { id: { not: currentId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (clash) {
+      errors.account_id =
+        "Kombinasi Company, Budget Category, dan Partner Category ini sudah dipetakan.";
+    }
+  }
 
   return errors;
 }

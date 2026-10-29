@@ -10,6 +10,7 @@ import { CompanyFilter, NoCompanyAccess } from "./company-filter";
 import type { EntityAbilities } from "@/lib/siba/entity-access";
 import { TAG_CLASS, createLabel, type Entity } from "@/lib/siba/entities";
 import { moduleByKey } from "@/lib/siba/nav";
+import { LEDGER_TEXT } from "@/lib/siba/account-code";
 import type { Company } from "@/lib/siba/company-access";
 import type { TreeAccount, TreeCategory, TreeCompany } from "@/lib/siba/records";
 
@@ -163,14 +164,9 @@ export function AccountTree({
                 H
               </span>
             )}
-            {account.requirePartner && (
-              <span
-                className="pcflag"
-                title={`Subledger per Partner berkategori ${
-                  account.partnerCategoryLabel ?? "?"
-                }`}
-              >
-                {account.partnerCategoryLabel ?? "Partner"}
+            {account.ledger === "category" && (
+              <span className="pcflag" title="Dituju lewat Mapping Budget ke Account">
+                {LEDGER_TEXT.category}
               </span>
             )}
             {account.isControlAccount && (

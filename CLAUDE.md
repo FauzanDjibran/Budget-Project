@@ -973,10 +973,22 @@ Implemented and enforced:
 15. **An account requiring a Partner must name the category.** `require_partner` makes
    `partner_category_id` mandatory; clearing the flag clears the category, so a
    subledger never carries a stale one.
-16. **A mapping is one combination.** Company × Budget Category × Partner Category
-   resolves to exactly one postable, active account of that same company. The Partner
-   Category applies only where the Budget Category takes one, and must
-   be one it accepts.
+16. **A mapping is one combination, and many may share an account.** Mapping
+   Budget ke Account (`acc_budget_category_account`) sends Company × Budget
+   Category × Partner Category to exactly one postable, active, leaf account of
+   that Company whose ledger is **Kategori**. The Partner Category applies only
+   where the Budget Category takes one, and must be one it accepts. **Any number
+   of mappings may name one account** — Piutang (a book) and Piutang (n) (a
+   partner tag) both to Piutang Perusahaan, a Hutang beside a Piutang — so the
+   account's balance need not equal any one book's and may go negative; the
+   user's decision (29/10/2026), how to filter it is to be discussed, and
+   `db:reconcile` check 14 skips such an account meanwhile. **The account says
+   only its ledger** (Tanpa · Kategori · Kas & Bank): it holds no Partner
+   Category and no categories, and whether a line needs a Partner or an open
+   item is the Budget Category's. A Kategori account may carry a Partner and
+   need not; only a Partner on another ledger is flagged (`partnerMismatch`).
+   Supersedes Journal 2.0 D21/D24/D25 (the account holding its categories,
+   Mapping gone), restored in migration `20261029125955`.
 17. **A fiscal period is generated, never authored.** A Fiscal Year belongs to one
    Company and is created by choosing a year; its name, 01/01 start and 31/12 end
    all follow. Activating it generates exactly twelve periods, one per calendar
@@ -1030,8 +1042,8 @@ Implemented and enforced:
    Company × Category × the Partner's Partner Category, and Realisasi journals
    the counter line with the Partner and writes **no** `sub_ledger` entry and no
    open item — the user's rule (29/10/2026), so a Budget may carry a Partner on
-   the journal, like a manual journal does, without a book behind it. An account
-   holds partner tags or books, never both (`checkAccountLedger`). Klasifikasi
+   the journal, like a manual journal does, without a book behind it. A book and
+   a partner tag may map to the same account (rule 16). Klasifikasi
    states the consequence before it is confirmed: open, settle, add to a
    running total, or no open item. A book is named by the category's row id —
    `sub_ledger.budget_category_id`, a foreign key — and a label is never a way in. There
@@ -4932,9 +4944,10 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
   **not** compute a balance anywhere but `src/lib/siba/cash-bank.ts` (§9, §12).
 - Do **not** add an update or delete path to `cash_bank_ledger` or `sub_ledger`.
   A book is append-only; a correction is a further entry.
-- Do **not** infer a book from `require_partner` alone, let `keeps_book` change
-  once a Budget is classified into the category, or let one account hold a book
-  and a partner tag together (§10 rule 52, §12).
+- Do **not** infer a book from `require_partner` alone, or let `keeps_book`
+  change once a Budget is classified into the category (§10 rule 52, §12).
+- Do **not** put a Partner Category or a set of categories back on the account.
+  It says only its ledger; Mapping Budget ke Account names it (§10 rule 16).
 - Do **not** split the subject books into separate tables, give one its own bespoke
   report, or add a book for a Budget Category that names no Partner. A book **is** a
   Budget Category, derived by `subledger-catalogue.ts` from the row (§12).

@@ -38,7 +38,6 @@ import {
   makeAccount,
   makeMapping,
   mappingAccountId,
-  makePartner,
   parentCompanyId,
   prisma,
   systemUserId,
@@ -470,45 +469,6 @@ describe("a line states enough to be accounting", () => {
       refused.ok ? "" : refused.errors["lines.0.account_id"],
       /Company lain/
     );
-  });
-
-  test("an account that names a Partner Category demands a matching Partner", async () => {
-    const withPartner = await makeAccount({
-      companyId: company,
-      subcategoryLabel: "5.3.1",
-      partnerCategoryLabel: "Cabang",
-    });
-
-    const missing = await checkManualJournal(headerFor(), [
-      line(withPartner, 10_000, 0),
-      line(expense, 0, 10_000),
-    ]);
-    assert.equal(missing.ok, false);
-    assert.ok(missing.ok || missing.errors["lines.0.partner_id"]);
-
-    const wrongCategory = await makePartner({
-      companyId: company,
-      categoryLabel: "Karyawan",
-    });
-    const mismatched = await checkManualJournal(headerFor(), [
-      line(withPartner, 10_000, 0, { partner_id: wrongCategory }),
-      line(expense, 0, 10_000),
-    ]);
-    assert.equal(mismatched.ok, false);
-    assert.match(
-      mismatched.ok ? "" : mismatched.errors["lines.0.partner_id"],
-      /Partner Category/
-    );
-
-    const right = await makePartner({
-      companyId: company,
-      categoryLabel: "Cabang",
-    });
-    const accepted = await checkManualJournal(headerFor(), [
-      line(withPartner, 10_000, 0, { partner_id: right }),
-      line(expense, 0, 10_000),
-    ]);
-    assert.equal(accepted.ok, true);
   });
 
   test("a line fills exactly one side", async () => {

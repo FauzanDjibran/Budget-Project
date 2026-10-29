@@ -727,19 +727,13 @@ table acc_account {
 
   normal_balance              enum('Debit', 'Kredit') [not null]
 
-  // Set exactly when the ledger is 'category' and its categories take a
-  // Partner, and admitted by each of them.
-  partner_category_id         int [ref : >? sys_partner_category.id]
-
-  // Which ledger the account belongs to (Journal 2.0 D18, D25), and so what
-  // every line on it must name: 'none' nothing; 'category' one of the Budget
-  // Categories it holds (acc_account_book) — with a Partner and an open item
-  // where they take a Partner; 'cash_bank' a Cash & Bank, and the only ledger a
-  // resource may post to. Replaced require_partner (dropped in
-  // 20261028150000); 'subject_book' and ledger_book_id merged into 'partner' in
-  // 20261028230000, renamed 'category' in 20261029100000. is_control_account is
-  // any ledger but 'none', plus the System Account claims. Locked once the
-  // account has a journal line.
+  // Which ledger the account belongs to, and all it says about itself:
+  // 'none'; 'category', reached only through acc_budget_category_account,
+  // whose Budget Category decides what a line needs (a Partner, an open item);
+  // 'cash_bank', the only ledger a Cash & Bank resource may post to.
+  // partner_category_id and acc_account_book (Journal 2.0 D25) were dropped
+  // in 20261029125955. is_control_account is any ledger but 'none', plus the
+  // System Account claims. Locked once the account has a journal line.
   ledger                      enum('none', 'category', 'cash_bank') [not null, default: 'none']
 
   is_control_account          boolean [not null, default: false]
@@ -761,26 +755,23 @@ table acc_account {
   }
 }
 
-// The Budget Categories a 'category' account holds, chosen on the account's
-// form (Journal 2.0 D25) — where Realisasi and Jurnal Umum find the account.
-// All take a Partner or none do. One account may hold several: a Hutang
-// Piutang Karyawan account carries both books, each still reported on its
-// own; Biaya Listrik and Biaya Air may share one expense account. A Company
-// holds each (Budget Category, the account's Partner Category or none) on
-// one account — checked on the form, not by a constraint. Replaced
-// acc_budget_category_account (dropped in 20261029100000). A category
-// unticked is set Inactive, never deleted.
-table acc_account_book {
+// Mapping Budget ke Account: Company × Budget Category × Partner Category
+// (null for a category naming no Partner) to exactly one 'category' account of
+// that Company, postable, active and a leaf (validateMapping). Any number of
+// mappings may name one account — a book, a partner tag, a category without a
+// Partner, a Hutang beside a Piutang — so an account's balance need not equal
+// any one book's (the user's decision, 29/10/2026). Restored in
+// 20261029125955 from acc_account_book, which had replaced it in
+// 20261029100000. No status: a mapping exists or it does not.
+table acc_budget_category_account {
   id                          int [pk, increment, not null]
 
-  account_book_code           varchar(255) [not null, unique]
+  bca_code                    varchar(255) [not null, unique]
 
-  account_id                  int [not null, ref : > acc_account.id]
   budget_category_id          int [not null, ref : > sys_budget_category.id]
-
-  note                        text
-
-  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+  company_id                  int [not null, ref : > sys_company.id]
+  partner_category_id         int [ref : >? sys_partner_category.id]
+  account_id                  int [not null, ref : > acc_account.id]
 
   created_by                  int [not null]
   updated_by                  int
@@ -789,8 +780,9 @@ table acc_account_book {
   updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
 
   indexes {
-    (account_id, budget_category_id) [unique]
-    budget_category_id
+    // NULLS NOT DISTINCT: a category naming no Partner maps once per Company.
+    (company_id, budget_category_id, partner_category_id) [unique]
+    account_id
   }
 }
 

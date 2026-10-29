@@ -58,7 +58,7 @@ WITH dt AS (
 ),
 book_cat AS (
   SELECT id, category_code, category_label, raises,
-         (require_partner AND raises IS NOT NULL) AS keeps_book
+         (require_partner AND keeps_book AND raises IS NOT NULL) AS keeps_book
   FROM sys_budget_category
 )`;
 
@@ -327,19 +327,19 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
   },
   {
     no: 14,
-    name: "Buku Subjek = General Ledger, per account dan Partner (tanpa journal CLS-)",
+    name: "Buku Subjek = General Ledger, per account dan Partner (tanpa journal CLS-; account yang juga menerima kategori tanpa buku dilewati)",
     sql: `
 , mapping AS (
-  -- The account holds its categories itself (Journal 2.0 D25).
-  SELECT a.company_id, ab.budget_category_id, a.partner_category_id, ab.account_id
-  FROM acc_account_book ab
-  JOIN acc_account a ON a.id = ab.account_id
-  WHERE ab.status = 'Active' AND a.ledger = 'category'
+  SELECT company_id, budget_category_id, partner_category_id, account_id
+  FROM acc_budget_category_account
 ), acct AS (
-  SELECT DISTINCT m.account_id
+  -- An account any unbooked category also posts to carries lines no book
+  -- holds; accepted by the user (29/10/2026), so it is not compared yet.
+  SELECT m.account_id
   FROM mapping m
   JOIN book_cat c ON c.id = m.budget_category_id
-  WHERE c.keeps_book
+  GROUP BY m.account_id
+  HAVING bool_and(c.keeps_book)
 ), book AS (
   -- In the account's own terms, debit less kredit: each book turned by its own
   -- direction, so an account holding Hutang and Piutang sums both (D18).
@@ -351,6 +351,7 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
   JOIN mapping m
     ON m.company_id = p.company_id AND m.budget_category_id = c.id
    AND m.partner_category_id IS NOT DISTINCT FROM p.category_id
+  JOIN acct a ON a.account_id = m.account_id
   GROUP BY m.account_id, s.partner_id
 ), gl AS (
   -- Debit less kredit, the measure the book side was turned into.

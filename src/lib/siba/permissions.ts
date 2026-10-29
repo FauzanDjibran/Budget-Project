@@ -114,6 +114,9 @@ export const PERMISSIONS = [
   { code: "ACCOUNT_EDIT", name: "Ubah Account", module: "accounting" },
   { code: "ACCOUNT_ACTIVATE", name: "Aktifkan Account", module: "accounting" },
   { code: "ACCOUNT_DEACTIVATE", name: "Nonaktifkan Account", module: "accounting" },
+  { code: "MAPPING_VIEW", name: "Lihat Mapping Budget ke Account", module: "accounting" },
+  { code: "MAPPING_CREATE", name: "Tambah Mapping", module: "accounting" },
+  { code: "MAPPING_EDIT", name: "Ubah Mapping", module: "accounting" },
 
   {
     code: "SYSTEM_ACCOUNT_VIEW",

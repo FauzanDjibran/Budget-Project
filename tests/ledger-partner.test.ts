@@ -17,8 +17,9 @@ import {
 /**
  * A journal line's Partner, as the General Ledger and the Journal show it.
  *
- * Only an account that requires a Partner may carry one, and every line on it
- * must. The screens show what the line recorded and warn where it breaks the
+ * Only a Kategori account may carry a Partner; whether a line on it must is
+ * its Budget Category's question, since one account may receive categories
+ * with a Partner and without. The screens show what the line recorded and warn where it breaks the
  * rule — they never repair it. The two broken lines here are written through
  * `postJournal` directly, which does not ask the account's Partner rule (the
  * document and manual-journal paths above it do): that is exactly the kind of
@@ -26,10 +27,10 @@ import {
  */
 
 describe("the Partner rule", () => {
-  test("a Partner-bearing account needs one, any other account takes none", () => {
+  test("only a Kategori account may carry a Partner, and need not", () => {
     assert.equal(partnerMismatch(true, 5), null);
     assert.equal(partnerMismatch(false, null), null);
-    assert.equal(partnerMismatch(true, null), "missing");
+    assert.equal(partnerMismatch(true, null), null, "a Kategori line may name no Partner");
     assert.equal(partnerMismatch(false, 5), "unexpected");
   });
 });
@@ -119,7 +120,7 @@ describe("the General Ledger shows each line's own Partner", () => {
     const missing = byId.get(payable)!.entries.find((e) => e.debit === 150_000);
     assert.equal(unexpected?.partnerMismatch, "unexpected");
     assert.ok(unexpected?.partnerLabel, "the Partner it wrongly carries is still shown");
-    assert.equal(missing?.partnerMismatch, "missing");
+    assert.equal(missing?.partnerMismatch, null, "a Kategori line without a Partner is sound");
     assert.equal(missing?.partnerLabel, null);
   });
 });
@@ -130,6 +131,6 @@ describe("the Journal shows the same warning on the same line", () => {
     assert.ok(journal);
     const byAccount = new Map(journal.lines.map((l) => [l.accountId, l]));
     assert.equal(byAccount.get(cash)?.partnerMismatch, "unexpected");
-    assert.equal(byAccount.get(payable)?.partnerMismatch, "missing");
+    assert.equal(byAccount.get(payable)?.partnerMismatch, null);
   });
 });

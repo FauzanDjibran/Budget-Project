@@ -618,11 +618,11 @@ describe("refusals", () => {
       partnerId: unknown,
       lines: [{ book: hutang, partnerId: karyawan, sources: [[source, 1_000]] }],
     });
-    const hutangKaryawan = await prisma.accAccountBook.findFirst({
+    const hutangKaryawan = await prisma.accBudgetCategoryAccount.findFirst({
       where: {
-        status: "Active",
+        company_id: induk,
         budget_category_id: hutang.categoryId,
-        account: { company_id: induk, ledger: "category", partner_category: { category_label: "Karyawan" } },
+        partner_category: { category_label: "Karyawan" },
       },
     });
     const result = await applyReclass(id, actor);

@@ -1181,6 +1181,17 @@ describe("a draft moves nothing; posting moves everything at once", () => {
  * to `applyPosting`. That is what is called here — the assertions below are
  * about the real posting path, not a reimplementation of it.
  */
+/** Takes the induk's mapping for a category out, and returns how to put it back exactly. */
+async function borrowMapping(categoryLabel: string): Promise<() => Promise<void>> {
+  const row = await prisma.accBudgetCategoryAccount.findFirstOrThrow({
+    where: { company_id: induk, budget_category: { category_label: categoryLabel } },
+  });
+  await prisma.accBudgetCategoryAccount.delete({ where: { id: row.id } });
+  return async () => {
+    await prisma.accBudgetCategoryAccount.create({ data: row });
+  };
+}
+
 async function post(transactionId: number): Promise<void> {
   const result = await applyPosting(transactionId, actor);
   assert.ok(
@@ -1337,16 +1348,8 @@ describe("posting writes a balanced journal alongside the book", () => {
     // Approval tolerates a missing mapping (§10 rule 28) because that gap
     // belongs to Accounting. Posting cannot: there is no account to journal
     // against, and money must not move unaccounted for.
-    // Borrowed, never deleted: the row may be one a real user made, so it is
-    // set Inactive and put back exactly as it was (D25).
-    const held = await prisma.accAccountBook.findFirstOrThrow({
-      where: {
-        status: "Active",
-        budget_category: { category_label: "Asset" },
-        account: { company_id: induk, ledger: "category" },
-      },
-    });
-    await prisma.accAccountBook.update({ where: { id: held.id }, data: { status: "Inactive" } });
+    // Taken whole and put back whole: the row may be one a real user made.
+    const restore = await borrowMapping("Asset");
 
     try {
       const cashBank = await makeCashBank({ opening: 2_000_000 });
@@ -1376,7 +1379,7 @@ describe("posting writes a balanced journal alongside the book", () => {
         "and moves no money"
       );
     } finally {
-      await prisma.accAccountBook.update({ where: { id: held.id }, data: { status: "Active" } });
+      await restore();
     }
   });
 });
@@ -2104,16 +2107,8 @@ describe("one document realizes Budgets of several categories and partners", () 
   });
 
   test("a line whose classification has no mapping refuses the post, by Budget", async () => {
-    // Borrowed, never deleted: the row may be one a real user made, so it is
-    // set Inactive and put back exactly as it was (D25).
-    const held = await prisma.accAccountBook.findFirstOrThrow({
-      where: {
-        status: "Active",
-        budget_category: { category_label: "Asset" },
-        account: { company_id: induk, ledger: "category" },
-      },
-    });
-    await prisma.accAccountBook.update({ where: { id: held.id }, data: { status: "Inactive" } });
+    // Taken whole and put back whole: the row may be one a real user made.
+    const restore = await borrowMapping("Asset");
 
     try {
       const cashBank = await makeCashBank({ opening: 2_000_000 });
@@ -2144,7 +2139,7 @@ describe("one document realizes Budgets of several categories and partners", () 
         "and the mapped line did not move money on its own"
       );
     } finally {
-      await prisma.accAccountBook.update({ where: { id: held.id }, data: { status: "Active" } });
+      await restore();
     }
   });
 });

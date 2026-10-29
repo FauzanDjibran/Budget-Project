@@ -2304,29 +2304,30 @@ async function insertMappings(companyId: number, companyLabel: string, actor: nu
       );
     }
 
-    // The account holds the category itself (Journal 2.0 D25), as the user
-    // would tick it on the account form; any ledger but none is a control
-    // account.
-    const kept = await prisma.accAccountBook.count({
-      where: { account_id: account.id, budget_category_id: budgetCategoryId },
+    // Mapping Budget ke Account, as the user would enter it; its target is a
+    // Kategori account, and any ledger but none is a control account.
+    const kept = await prisma.accBudgetCategoryAccount.count({
+      where: { company_id: companyId, budget_category_id: budgetCategoryId, partner_category_id: partnerCategoryId },
     });
     if (kept) continue;
-    const bookCodes = await prisma.accAccountBook.findMany({ select: { account_book_code: true } });
+    const codes = await prisma.accBudgetCategoryAccount.findMany({ select: { bca_code: true } });
     await prisma.accAccount.update({
       where: { id: account.id },
       data: { ledger: "category", is_control_account: true },
     });
-    const row = await prisma.accAccountBook.create({
+    const row = await prisma.accBudgetCategoryAccount.create({
       data: {
-        account_book_code: await nextCode("acbk", bookCodes.map((c) => c.account_book_code)),
-        account_id: account.id,
+        bca_code: await nextCode("bcam", codes.map((c) => c.bca_code)),
+        company_id: companyId,
         budget_category_id: budgetCategoryId,
+        partner_category_id: partnerCategoryId,
+        account_id: account.id,
         created_by: actor,
       },
       select: { id: true },
     });
-    await audit("acc_account_book", row.id, actor);
-    tally(`account categories (${companyLabel})`);
+    await audit("acc_budget_category_account", row.id, actor);
+    tally(`mappings (${companyLabel})`);
   }
 }
 
@@ -2433,9 +2434,8 @@ async function insertNode(node: AccountNode, ctx: Context): Promise<number> {
       parent_account: ctx.parentId,
       is_postable: !node.header,
       normal_balance: node.balance ?? ctx.groupBalance,
-      // A Partner account; the categories it holds are added below (D25).
+      // A Partner account; Mapping Budget ke Account points at it below.
       ledger: partnerCategoryId ? "category" : "none",
-      partner_category_id: partnerCategoryId,
       // A subledger account is exactly the thing a control account reconciles:
       // its GL balance against the Hutang / Piutang / Titipan / Prive book.
       is_control_account: Boolean(partnerCategoryId),

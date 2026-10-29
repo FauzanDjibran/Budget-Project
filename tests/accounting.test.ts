@@ -2,6 +2,7 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { ENTITIES } from "../src/lib/siba/entities";
+import { categoryAccount } from "../src/lib/siba/category-accounts";
 import { entityPermissions } from "../src/lib/siba/entity-access";
 import { PERMISSION_CODES } from "../src/lib/siba/permissions";
 import {
@@ -282,7 +283,7 @@ describe("an account already in use cannot be given a sub-account", () => {
     // Read the account back rather than assuming the fixture's own:
     // `makeMapping` reuses a combination some account already holds, because
     // the key is unique per Company (D25).
-    assert.match((await accountUsage(await mappingAccountId(mappingId))).join(" "), /Kategori/);
+    assert.match((await accountUsage(await mappingAccountId(mappingId))).join(" "), /Mapping Budget ke Account/);
   });
 });
 
@@ -691,49 +692,29 @@ describe("Company access is a permission, not a preference", () => {
   });
 });
 
-describe("a Partner account and its books (Journal 2.0 D18)", () => {
-  test("may keep several books, each of which admits its Partner Category", async () => {
-    const [hutang, piutang, prive] = await Promise.all(
-      ["Hutang", "Piutang", "Prive"].map((l) => budgetCategoryId(l))
-    );
-    const karyawan = await partnerCategoryId("Karyawan");
-    assert.equal(await checkAccountLedger(null, "category", [hutang, piutang], karyawan, null), null);
-    // Prive admits Stakeholder only, so a Karyawan account cannot keep it.
-    assert.match(
-      (await checkAccountLedger(null, "category", [hutang, prive], karyawan, null)) ?? "",
-      /tidak menerima/
-    );
+describe("the account names its ledger; Mapping Budget ke Account names the account", () => {
+  test("a mapped account stays Kategori, and is a control account", async () => {
+    const company = await parentCompanyId();
+    assert.equal(await checkAccountLedger(null, "category"), null);
+    assert.equal(await checkAccountLedger(null, "partner"), "Pilih ledger.");
+
+    const owner = await makeAccount({ companyId: company, subcategoryLabel: "5.3.1", bookLabels: ["Biaya"] });
+    assert.match((await checkAccountLedger(owner, "none")) ?? "", /Mapping Budget ke Account/);
+    assert.equal(await checkAccountLedger(owner, "category"), null);
+    assert.ok((await controlAccountReasons(owner)).length > 0, "any ledger but Tanpa is a control account");
   });
 
-  test("a book and a Partner Category belong to one account of a Company (D21)", async () => {
-    const company = (await prisma.sysCompany.findFirstOrThrow({ where: { is_parent: true } })).id;
-    const owner = await makeAccount({
-      companyId: company,
-      subcategoryLabel: "2.1.5",
-      normalBalance: "Kredit",
-      partnerCategoryLabel: "Karyawan",
-      bookLabels: ["Hutang"],
-    });
-    const hutang = await budgetCategoryId("Hutang");
-    const karyawan = await partnerCategoryId("Karyawan");
-    const label = (await prisma.accAccount.findUniqueOrThrow({ where: { id: owner } })).account_label;
-
-    // The real chart may hold the pair too, so only "someone holds it" is certain.
-    const second = await checkAccountLedger(null, "category", [hutang], karyawan, company);
-    assert.match(second ?? "", /sudah dipegang Account/);
-    const itself = await checkAccountLedger(owner, "category", [hutang], karyawan, null);
-    assert.doesNotMatch(itself ?? "", new RegExp(`Account ${label.replaceAll(".", "\\.")} `),
-      "an account never collides with itself, its Company read off the account");
-  });
-
-  test("a partner tag is held by an account of its own, never beside a book", async () => {
+  test("a book and a partner tag may post to one account", async () => {
+    const company = await parentCompanyId();
     const actor = await systemUserId();
     const karyawan = await partnerCategoryId("Karyawan");
+    const tagLabel = `${FIXTURE_PREFIX} Piutang (n)`;
     const tag = await prisma.sysBudgetCategory.create({
       data: {
         category_code: `bcat.${FIXTURE_PREFIX}tag`,
-        category_label: `${FIXTURE_PREFIX} Uang Makan`,
-        category_name: `${FIXTURE_PREFIX} Uang Makan`,
+        category_label: tagLabel,
+        category_name: tagLabel,
+        allows_in: true,
         allows_out: true,
         require_partner: true,
         keeps_book: false,
@@ -745,36 +726,28 @@ describe("a Partner account and its books (Journal 2.0 D18)", () => {
       select: { id: true },
     });
     try {
-      const hutang = await budgetCategoryId("Hutang");
-      assert.equal(await checkAccountLedger(null, "category", [tag.id], karyawan, null), null);
-      assert.match(
-        (await checkAccountLedger(null, "category", [hutang, tag.id], karyawan, null)) ?? "",
-        /Buku Subjek dan tanpa Buku Subjek/
-      );
+      // The real chart may already map Piutang for Karyawan; then only the tag is new.
+      const piutang = await budgetCategoryId("Piutang");
+      const existing = await categoryAccount(company, piutang, karyawan);
+      const account = await makeAccount({
+        companyId: company,
+        subcategoryLabel: "1.1.4",
+        partnerCategoryLabel: "Karyawan",
+        bookLabels: existing ? [tagLabel] : ["Piutang", tagLabel],
+      });
+      const target = existing?.account.id ?? account;
+      if (existing) {
+        await prisma.accBudgetCategoryAccount.updateMany({
+          where: { budget_category_id: tag.id },
+          data: { account_id: target },
+        });
+      }
+      assert.equal((await categoryAccount(company, piutang, karyawan))?.account.id, target);
+      assert.equal((await categoryAccount(company, tag.id, karyawan))?.account.id, target);
     } finally {
+      await prisma.accBudgetCategoryAccount.deleteMany({ where: { budget_category_id: tag.id } });
       await prisma.sysBudgetPartnerCategoryMapping.deleteMany({ where: { budget_category_id: tag.id } });
       await prisma.sysBudgetCategory.delete({ where: { id: tag.id } });
     }
-  });
-
-  test("a Kategori without a Partner is held once per Company, and never beside one with (D25)", async () => {
-    const company = (await prisma.sysCompany.findFirstOrThrow({ where: { is_parent: true } })).id;
-    const [hutang, biaya] = await Promise.all(["Hutang", "Biaya"].map((l) => budgetCategoryId(l)));
-    const karyawan = await partnerCategoryId("Karyawan");
-    assert.match(
-      (await checkAccountLedger(null, "category", [hutang, biaya], karyawan, company)) ?? "",
-      /tidak dapat dipegang satu account/
-    );
-
-    const owner = await makeAccount({ companyId: company, subcategoryLabel: "5.3.1", bookLabels: ["Biaya"] });
-    assert.match(
-      (await checkAccountLedger(null, "category", [biaya], null, company)) ?? "",
-      /Kategori .* sudah dipegang Account/
-    );
-    assert.deepEqual(
-      (await controlAccountReasons(owner)).length > 0,
-      true,
-      "any ledger but Tanpa is a control account, so Biaya is reached through its Kategori"
-    );
   });
 });

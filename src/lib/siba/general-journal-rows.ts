@@ -7,6 +7,7 @@ import { layersByIds, openLayersFor, type LayerOption } from "./cash-bank-layers
 import { isBaseCurrency } from "./currency";
 import { openSubledgerItemsFor, subledgerItemsByIds, type SubledgerItem } from "./subledger";
 import { loadSubledgers } from "./subledger-data";
+import { categoryAccounts } from "./category-accounts";
 import type { GeneralJournalStatus } from "./general-journal-workflow";
 
 /**
@@ -198,16 +199,21 @@ export type GeneralJournalOptions = {
     label: string;
     name: string;
     ledger: string;
-    /** The Budget Categories a Kategori account holds (D25). */
-    bookIds: number[];
-    partnerCategoryId: number | null;
   }[];
+  /** Mapping Budget ke Account: Category × Partner Category (or none) → account. */
+  mappings: { categoryId: number; partnerCategoryId: number | null; accountId: number }[];
   partners: { id: number; label: string; name: string; categoryId: number }[];
   /**
-   * Every Budget Category an account may hold (D25): a book where it takes a
-   * Partner, named and run as the book; otherwise the category itself.
+   * Every active Budget Category: a book named and run as the book; a partner
+   * tag or a category naming no Partner by its own name.
    */
-  books: { id: number; name: string; raises: "In" | "Out" | null; takesPartner: boolean }[];
+  books: {
+    id: number;
+    name: string;
+    raises: "In" | "Out" | null;
+    takesPartner: boolean;
+    keepsBook: boolean;
+  }[];
   items: SubledgerItem[];
   cashBanks: {
     id: number;
@@ -227,7 +233,7 @@ export type GeneralJournalOptions = {
  * pickers offer. The Server Action re-checks every choice.
  */
 export async function generalJournalOptions(companyId: number): Promise<GeneralJournalOptions> {
-  const [accounts, partners, currencies, books, cashBanks, balances, categories] = await Promise.all([
+  const [accounts, partners, currencies, books, cashBanks, balances, categories, mappings] = await Promise.all([
     prisma.accAccount.findMany({
       where: { company_id: companyId, is_active: true, is_postable: true, children: { none: {} } },
       select: {
@@ -235,12 +241,6 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
         account_label: true,
         account_name: true,
         ledger: true,
-        partner_category_id: true,
-        books: {
-          where: { status: "Active" },
-          select: { budget_category_id: true },
-          orderBy: { budget_category_id: "asc" },
-        },
       },
     }),
     prisma.mPartner.findMany({
@@ -263,8 +263,9 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
     prisma.sysBudgetCategory.findMany({
       where: { status: "Active" },
       orderBy: { id: "asc" },
-      select: { id: true, category_name: true },
+      select: { id: true, category_name: true, require_partner: true },
     }),
+    categoryAccounts({ companyId }),
   ]);
   const [items, layers] = await Promise.all([
     openSubledgerItemsFor(
@@ -282,9 +283,12 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
         label: a.account_label,
         name: a.account_name,
         ledger: a.ledger,
-        bookIds: a.books.map((b) => b.budget_category_id),
-        partnerCategoryId: a.partner_category_id,
       })),
+    mappings: mappings.map((m) => ({
+      categoryId: m.budget_category_id,
+      partnerCategoryId: m.partner_category_id,
+      accountId: m.account.id,
+    })),
     partners: partners.map((p) => ({
       id: p.id,
       label: p.partner_label,
@@ -294,8 +298,8 @@ export async function generalJournalOptions(companyId: number): Promise<GeneralJ
     books: categories.map((c) => {
       const book = books.find((b) => b.categoryId === c.id);
       return book
-        ? { id: c.id, name: book.name, raises: book.raises, takesPartner: true }
-        : { id: c.id, name: c.category_name, raises: null, takesPartner: false };
+        ? { id: c.id, name: book.name, raises: book.raises, takesPartner: true, keepsBook: true }
+        : { id: c.id, name: c.category_name, raises: null, takesPartner: c.require_partner, keepsBook: false };
     }),
     items,
     cashBanks: cashBanks.map((c) => ({

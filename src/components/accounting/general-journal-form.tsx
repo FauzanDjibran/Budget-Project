@@ -114,6 +114,7 @@ const EMPTY: GeneralJournalOptions = {
   accounts: [],
   partners: [],
   books: [],
+  mappings: [],
   items: [],
   cashBanks: [],
   layers: {},
@@ -220,12 +221,13 @@ export function GeneralJournalForm({
     [options]
   );
 
-  /** The one account keeping a book for a Partner Category (D21). */
-  const bookAccount = (bookId: number | null, categoryId: number | null | undefined) =>
-    options.accounts.find(
-      (a) =>
-        a.ledger === "category" && bookId != null && a.bookIds.includes(bookId) && a.partnerCategoryId === categoryId
-    ) ?? null;
+  /** The account Mapping Budget ke Account names for a category and Partner Category. */
+  const bookAccount = (bookId: number | null, categoryId: number | null | undefined) => {
+    const m = options.mappings.find(
+      (x) => bookId != null && x.categoryId === bookId && x.partnerCategoryId === (categoryId ?? null)
+    );
+    return (m && by.account.get(m.accountId)) || null;
+  };
 
   /** What one draft line resolves to, as the adapters resolve it. */
   const resolve = (l: DraftLine) => {
@@ -332,7 +334,7 @@ export function GeneralJournalForm({
         partner_id: r.book?.takesPartner && l.partner_id ? String(l.partner_id) : "",
         subject_id: l.kind === "cash" || r.item ? l.subject : "",
         // Naming the book without an item is what makes a new item (D20).
-        budget_category_id: r.book && (r.item || r.isNew || !r.book.takesPartner) ? String(r.book.id) : "",
+        budget_category_id: r.book && (r.item || r.isNew || !r.book.keepsBook) ? String(r.book.id) : "",
         cash_bank_layer_id: l.layer_id === NEW_ITEM ? "" : l.layer_id,
         currency_id: r.currency ? String(r.currency.id) : "",
         exchange_rate: l.exchange_rate,
@@ -650,7 +652,7 @@ export function GeneralJournalForm({
                         const fixedRate = Boolean(r.item) || Boolean(r.layer);
                         // A kurs is typed only for something new; an entry brings its own.
                         const typedRate =
-                          l.kind === "gl" || r.isNew || l.layer_id === NEW_ITEM || r.book?.takesPartner === false;
+                          l.kind === "gl" || r.isNew || l.layer_id === NEW_ITEM || r.book?.keepsBook === false;
                         /** One side's amount: typed, or closed to this entry. */
                         const amountCell = (side: Side) => (
                           <td className="num">
@@ -695,7 +697,7 @@ export function GeneralJournalForm({
                                   placeholder="Pilih Kategori…"
                                   ariaLabel={`Buku subjek baris ${i + 1}`}
                                   options={options.books
-                                    .filter((b) => options.accounts.some((a) => a.ledger === "category" && a.bookIds.includes(b.id)))
+                                    .filter((b) => options.mappings.some((m) => m.categoryId === b.id))
                                     .map((b) => ({ value: String(b.id), label: b.name }))}
                                   onChange={(v) => restart({ book_id: v ? Number(v) : null })}
                                 />
@@ -748,7 +750,7 @@ export function GeneralJournalForm({
                               {err(i, "partner_id")}
                             </td>
                             <td>
-                              {r.book?.takesPartner ? (
+                              {r.book?.keepsBook ? (
                                 // Choosing an item and opening a new one are two controls (D20).
                                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                                   <label className={`chk sm${l.partner_id ? "" : " dis"}`} title="Buka item baru">

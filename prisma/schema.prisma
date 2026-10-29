@@ -21,8 +21,9 @@
 //   * SysCompany.is_parent         — marks the single induk of the fixed
 //                             two-company structure (one induk, one anak)
 //   * AccAccount.partner_category_id       — one account holds one partner category
-//   * AccAccountBook               — the Budget Categories an account holds; it
-//                             replaced acc_budget_category_account (D25)
+//   * AccBudgetCategoryAccount.partner_category_id — one Budget Category
+//                             resolves to a different account per Partner
+//                             Category
 //   * AuditLog                     — one trail spanning every table
 //   * SysRole / SysPermission / SysUserRole / SysRolePermission / SysSession
 //                                  — authentication and RBAC; the DBML has no
@@ -31,8 +32,6 @@
 // Dropped vs the DBML:
 //   * AccAccount.partner_type — flagged `// diganti nanti` in the source and
 //     superseded by partner_category_id.
-//   * acc_budget_category_account — the account holds its Budget Categories
-//     itself (acc_account_book, Journal 2.0 D25).
 //
 // Not yet modelled (present in the DBML and/or the concept doc):
 //   general_ledger and intercompany_event — both deliberately. The General
@@ -371,6 +370,7 @@ model SysCompany {
   partners         MPartner[]
   cash_banks       MCashBank[]
   accounts         AccAccount[]
+  account_mappings AccBudgetCategoryAccount[]
   budgets          BudBudget[]
   transactions     FinCashBankTransaction[]
   transfers        FinCashBankTransfer[]
@@ -510,7 +510,7 @@ model SysBudgetCategory {
   reclass_targets    FinItemReclassLine[]              @relation("ReclassTarget")
   sub_ledger_entries SubLedger[]
   sub_ledger_items   SubLedgerBalance[]
-  ledger_accounts    AccAccountBook[]
+  account_mappings   AccBudgetCategoryAccount[]
 
   @@map("sys_budget_category")
 }
@@ -529,7 +529,7 @@ model SysPartnerCategory {
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   partners          MPartner[]
-  accounts          AccAccount[]
+  account_mappings  AccBudgetCategoryAccount[]
   budget_categories SysBudgetPartnerCategoryMapping[]
 
   @@map("sys_partner_category")
@@ -1147,15 +1147,10 @@ model AccAccount {
   parent_account         Int?
   is_postable            Boolean       @default(true)
   normal_balance         NormalBalance
-  /// Not in the DBML. Locks a subledger account to a single partner category so
-  /// subject histories never mix. Replaces the DBML's `partner_type`. Set
-  /// exactly when the ledger is `partner`, and admitted by each of its books.
-  partner_category_id    Int?
-  /// Which ledger the account belongs to (Journal 2.0 D18): what a line on it
-  /// must name. `partner` takes a Partner and an open item on every line, in
-  /// one of the books it keeps (`acc_account_book`; it replaced
-  /// `require_partner`); `cash_bank` is what a Cash & Bank resource posts to.
-  /// Locked once the account has a journal line.
+  /// Which ledger the account belongs to, and nothing more: `category` is
+  /// reached only through Mapping Budget ke Account, whose Budget Category says
+  /// what a line needs (a Partner, an open item); `cash_bank` is what a Cash &
+  /// Bank resource posts to. Locked once the account has a journal line.
   ledger                 AccountLedger @default(none)
   is_control_account     Boolean       @default(false)
   note                   String?
@@ -1166,10 +1161,9 @@ model AccAccount {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  books               AccAccountBook[]
+  mappings            AccBudgetCategoryAccount[]
   account_subcategory AccAccountSubcategory @relation(fields: [account_subcategory_id], references: [id])
   company             SysCompany            @relation(fields: [company_id], references: [id])
-  partner_category    SysPartnerCategory?   @relation(fields: [partner_category_id], references: [id])
   parent              AccAccount?           @relation("AccountTree", fields: [parent_account], references: [id])
   children            AccAccount[]          @relation("AccountTree")
 
@@ -2255,30 +2249,33 @@ enum AccountLedger {
   cash_bank
 }
 
-/// The Budget Categories a `category` account holds (Journal 2.0 D18, D25),
-/// chosen on the account's form; a category with a Partner is a subject book.
-/// One account may hold several: a Hutang Piutang Karyawan account carries
-/// both books, each still reported on its own. A book unticked is set Inactive, never deleted
-/// (`reconcileMultiref`).
-model AccAccountBook {
-  id                 Int          @id @default(autoincrement())
-  account_book_code  String       @unique
-  account_id         Int
-  budget_category_id Int
-  note               String?
-  status             ActiveStatus @default(Active)
+/// Mapping Budget ke Account: Company × Budget Category × Partner Category (or
+/// none, for a category that names no Partner) to exactly one account. Any
+/// number of mappings may name one account, a book and a partner tag included,
+/// so its balance need not equal any one book's. The target is a postable
+/// `category` account of the same Company (`validateMapping`).
+model AccBudgetCategoryAccount {
+  id                  Int    @id @default(autoincrement())
+  bca_code            String @unique
+  budget_category_id  Int
+  company_id          Int
+  partner_category_id Int?
+  account_id          Int
 
   created_by Int
   updated_by Int?
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  account         AccAccount        @relation(fields: [account_id], references: [id])
-  budget_category SysBudgetCategory @relation(fields: [budget_category_id], references: [id])
+  budget_category  SysBudgetCategory   @relation(fields: [budget_category_id], references: [id])
+  company          SysCompany          @relation(fields: [company_id], references: [id])
+  partner_category SysPartnerCategory? @relation(fields: [partner_category_id], references: [id])
+  account          AccAccount          @relation(fields: [account_id], references: [id])
 
-  @@unique([account_id, budget_category_id])
-  @@index([budget_category_id])
-  @@map("acc_account_book")
+  /// NULLS NOT DISTINCT in the migration, so a category naming no Partner maps once.
+  @@unique([company_id, budget_category_id, partner_category_id])
+  @@index([account_id])
+  @@map("acc_budget_category_account")
 }
 
 /// The accounting journal. A `Posted` journal is append-only and immutable:

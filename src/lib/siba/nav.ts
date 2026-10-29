@@ -303,6 +303,15 @@ export const MODULES: NavModule[] = [
         name: "Mapping",
         entities: [
           {
+            key: "acc_budget_category_account",
+            slug: "budget-category-account",
+            name: "Mapping Budget ke Account",
+            single: "Mapping",
+            icon: "link",
+            desc: "Menghubungkan Budget Category, Company, dan Partner Category ke Account Kategori tujuan.",
+            permission: "MAPPING_VIEW",
+          },
+          {
             key: "acc_system_account",
             slug: "system-account",
             name: "Mapping Account System",

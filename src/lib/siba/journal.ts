@@ -740,18 +740,15 @@ export type PartnerMismatch = "missing" | "unexpected";
 /**
  * Whether a journal line's Partner agrees with its account.
  *
- * Only an account that requires a Partner may carry one, and every line on it
- * must: it keeps a subject history per Partner. `missing` is a line on such an
- * account without a Partner, `unexpected` a line naming a Partner on an account
- * that takes none. Either is a system fault, not a bookkeeping choice, so every
- * screen that shows a journal line — the Journal and the General Ledger — says
- * so on the line. Read off the line and the account as they are, never repaired.
+ * Only a Kategori account may carry a Partner; `unexpected` is a line naming
+ * one on any other account, a system fault shown on the line by the Journal
+ * and the General Ledger. A Kategori line without a Partner is sound — its
+ * Budget Category may name none — so `missing` is no longer produced.
  */
 export function partnerMismatch(
   requirePartner: boolean,
   partnerId: number | null
 ): PartnerMismatch | null {
-  if (requirePartner && partnerId == null) return "missing";
   if (!requirePartner && partnerId != null) return "unexpected";
   return null;
 }
@@ -901,7 +898,7 @@ export async function getJournal(
         orderBy: { sequence_no: "asc" },
         include: {
           account: {
-            select: { account_label: true, account_name: true, ledger: true, partner_category_id: true },
+            select: { account_label: true, account_name: true, ledger: true },
           },
           partner: { select: { partner_label: true, partner_name: true } },
           currency: { select: { currency_label: true } },

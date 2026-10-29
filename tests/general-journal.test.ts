@@ -22,6 +22,7 @@ import type { SubledgerDef } from "../src/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "../src/lib/siba/subledger-data";
 import { systemAccountIds } from "../src/lib/siba/system-account-data";
 import {
+  FIXTURE_PREFIX,
   budgetCategoryId,
   childCompanyId,
   cleanupFiscalYear,
@@ -216,21 +217,27 @@ describe("a rupiah Jurnal Umum", () => {
     assert.equal(journal.source_doc_id, draft.id);
   });
 
-  test("a Partner account demands its Partner, of the account's category", async () => {
-    const missing = await checkGeneralJournal(header(), [line(pemasaran, 1_000, 0), line(ymh, 0, 1_000)]);
+  test("a Kategori line names its category, and its Partner where the category takes one", async () => {
+    const budget_category_id = await budgetCategoryId("Piutang");
+    const unnamed = await checkGeneralJournal(header(), [line(pemasaran, 1_000, 0), line(ymh, 0, 1_000)]);
+    assert.ok(!unnamed.ok);
+    assert.match(unnamed.errors["lines.0.budget_category_id"], /Pilih Kategori/);
+
+    const missing = await checkGeneralJournal(header(), [
+      line(pemasaran, 1_000, 0, { budget_category_id }),
+      line(ymh, 0, 1_000),
+    ]);
     assert.ok(!missing.ok);
     assert.match(missing.errors["lines.0.partner_id"], /wajib menyebut Partner/);
 
+    // A Partner the mapping sends to another account (or nowhere) is refused.
     const stranger = await makePartner({ companyId: company, categoryLabel: "Stakeholder" });
-    const { budget_category_id } = await prisma.accAccountBook.findFirstOrThrow({
-      where: { account_id: pemasaran },
-    });
     const wrong = await checkGeneralJournal(header(), [
       line(pemasaran, 1_000, 0, { partner_id: stranger, budget_category_id }),
       line(ymh, 0, 1_000),
     ]);
     assert.ok(!wrong.ok);
-    assert.match(wrong.errors["lines.0.partner_id"], /Partner Category/);
+    assert.match(wrong.errors["lines.0.budget_category_id"], /Mapping Budget ke Account/);
   });
 
   test("an unbalanced draft saves, and Post refuses it", async () => {
@@ -405,7 +412,7 @@ describe("the subject_book ledger (Gate B)", () => {
 
     const unnamed = await checkGeneralJournal(header(), [line(listrik, 400, 0), line(ymh, 0, 400)]);
     assert.ok(!unnamed.ok);
-    assert.match(unnamed.errors["lines.0.account_id"], /Pilih Kategori/);
+    assert.match(unnamed.errors["lines.0.budget_category_id"], /Pilih Kategori/);
 
     const { id } = await draftAndPost([
       line(listrik, 400, 0, { budget_category_id: biaya, partner_id: partner }),
@@ -418,7 +425,7 @@ describe("the subject_book ledger (Gate B)", () => {
     assert.equal(await prisma.subLedger.count({ where: { source_doc_id: id } }), 0);
   });
 
-  test("an account keeping two books writes each line into the book its entry names", async () => {
+  test("an account two books map to writes each line into the book its entry names", async () => {
     const hutangPiutang = await makeAccount({
       companyId: company,
       subcategoryLabel: "2.1.5",
@@ -426,6 +433,13 @@ describe("the subject_book ledger (Gate B)", () => {
       partnerCategoryLabel: "Cabang",
       bookLabels: ["Hutang", "Piutang"],
     });
+    // The two mappings move here for this test, and go back to the suite's accounts after.
+    const remap = (label: string, accountId: number) =>
+      prisma.accBudgetCategoryAccount.updateMany({
+        where: { company_id: company, budget_category_id: book(label).categoryId, bca_code: { startsWith: FIXTURE_PREFIX } },
+        data: { account_id: accountId },
+      });
+    try {
     const piutang = await openItem("Piutang", 1_000, 1, baseCurrency);
 
     const unnamed = await checkGeneralJournal(header(), [
@@ -433,7 +447,7 @@ describe("the subject_book ledger (Gate B)", () => {
       line(beban, 100, 0),
     ]);
     assert.ok(!unnamed.ok);
-    assert.match(unnamed.errors["lines.0.subject_id"], /centang Baru/, "no line becomes a new item by omission");
+    assert.match(unnamed.errors["lines.0.budget_category_id"], /Pilih Kategori/, "no line becomes a new item by omission");
 
     const titipan = await openItem("Titipan", 1_000, 1, baseCurrency);
     const foreign = await checkGeneralJournal(header(), [
@@ -462,10 +476,14 @@ describe("the subject_book ledger (Gate B)", () => {
       where: { source_doc_id: id, budget_category_id: book("Hutang").categoryId },
     });
     assert.equal(opened.movement.toNumber(), 300, "the Hutang book holds its own entry");
+    } finally {
+      await remap("Hutang", accounts.Hutang);
+      await remap("Piutang", accounts.Piutang);
+    }
   });
 
-  test("a Partner must hold the account's Partner Category, not only one the book admits", async () => {
-    // Piutang admits Stakeholder too, but this account is Piutang's Cabang account.
+  test("a Partner must be one the mapping sends to this account, not only one the book admits", async () => {
+    // Piutang admits Stakeholder too, but the mapping sends Piutang × Cabang here.
     const stakeholder = await makePartner({ companyId: company, categoryLabel: "Stakeholder" });
     const refused = await checkGeneralJournal(header(), [
       line(accounts.Piutang, 100, 0, {
@@ -475,7 +493,7 @@ describe("the subject_book ledger (Gate B)", () => {
       line(beban, 0, 100),
     ]);
     assert.ok(!refused.ok);
-    assert.match(refused.errors["lines.0.partner_id"], /Partner Category/);
+    assert.match(refused.errors["lines.0.budget_category_id"], /Mapping Budget ke Account/);
   });
 
   test("a lowering names its item, and never takes it below nothing", async () => {
@@ -492,7 +510,7 @@ describe("the subject_book ledger (Gate B)", () => {
       line(ymh, 0, 500),
     ]);
     assert.ok(!omitted.ok, "a raising line with neither an item nor Baru");
-    assert.match(omitted.errors["lines.0.subject_id"], /centang Baru/);
+    assert.match(omitted.errors["lines.0.budget_category_id"], /Pilih Kategori/);
 
     const over = await checkGeneralJournal(header(), [
       on("Piutang", 0, 1_500, { subject_id: item }),

@@ -366,7 +366,6 @@ export async function generalLedgerReport(
       account_name: true,
       normal_balance: true,
       ledger: true,
-      partner_category_id: true,
       company_id: true,
       company: { select: { company_label: true } },
     },
@@ -496,26 +495,20 @@ const LINE_ORDER: Prisma.AccJournalLineOrderByWithRelationInput[] = [
  * breaking the account's Partner rule, and which currencies fed it.
  */
 async function ledgerRollup(
-  accounts: { id: number; ledger: string; partner_category_id: number | null }[],
+  accounts: { id: number; ledger: string }[],
   within: {
     journal: { status: "Posted"; accounting_date: { gte: Date; lte: Date } };
     partner_id?: { in: number[] };
   }
 ) {
-  const required = accounts.filter((a) => accountTakesPartner(a)).map((a) => a.id);
   const unrequired = accounts.filter((a) => !accountTakesPartner(a)).map((a) => a.id);
   const ids = accounts.map((a) => a.id);
 
-  const [sums, missing, unexpected, currencies] = await Promise.all([
+  const [sums, unexpected, currencies] = await Promise.all([
     prisma.accJournalLine.groupBy({
       by: ["account_id"],
       where: { account_id: { in: ids }, ...within },
       _sum: { debit_amount: true, kredit_amount: true },
-      _count: { _all: true },
-    }),
-    prisma.accJournalLine.groupBy({
-      by: ["account_id"],
-      where: { account_id: { in: required }, AND: [within, { partner_id: null }] },
       _count: { _all: true },
     }),
     prisma.accJournalLine.groupBy({
@@ -552,7 +545,7 @@ async function ledgerRollup(
       foreign: [],
     });
   }
-  for (const r of [...missing, ...unexpected]) out.get(r.account_id)!.mismatches += r._count._all;
+  for (const r of unexpected) out.get(r.account_id)!.mismatches += r._count._all;
   for (const r of currencies) {
     const label = labels.get(r.currency_id);
     if (label && !isBaseCurrency(label)) out.get(r.account_id)!.foreign.push(label);
@@ -587,7 +580,7 @@ export async function ledgerEntriesPage(
 ): Promise<LedgerEntryPage | null> {
   const account = await prisma.accAccount.findFirst({
     where: { id: accountId, company_id: { in: companyIds } },
-    select: { id: true, normal_balance: true, ledger: true, partner_category_id: true, company_id: true },
+    select: { id: true, normal_balance: true, ledger: true, company_id: true },
   });
   if (!account) return null;
 
