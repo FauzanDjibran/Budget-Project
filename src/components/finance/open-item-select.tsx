@@ -12,10 +12,10 @@ import type { OpenItemOption } from "@/lib/siba/finance-rows";
 export type ItemAllocation = { item_id: number; amount: number };
 
 /**
- * An item as the dialog lists it. `book` names its book where one line picks
- * across several; `currencyLabel` its own currency where the list mixes them.
+ * An item as the dialog lists it, with its own currency where the list mixes
+ * them (a Jurnal Umum line, whose currency follows the item).
  */
-type ListedItem = OpenItemOption & { book?: string; currencyLabel?: string };
+type ListedItem = OpenItemOption & { currencyLabel?: string };
 
 /**
  * Which open items a line settles, and **for how much each** — where the line
@@ -96,7 +96,6 @@ export function OpenItemSelect({
   const curOf = (i: ListedItem) => i.currencyLabel ?? currencyLabel;
   const foreign = items.some((i) => !isBaseCurrency(curOf(i)));
   const withFx = foreign && showFx && !single;
-  const withBook = items.some((i) => i.book);
 
   if (waitingFor) {
     return (
@@ -253,7 +252,6 @@ export function OpenItemSelect({
                   />}
                 </th>
                 <th style={{ width: 92 }}>Item</th>
-                {withBook && <th style={{ width: 130 }}>Buku</th>}
                 <th style={{ width: 96 }}>Tanggal</th>
                 {foreign && (
                   <th className="num" style={{ width: 110 }}>
@@ -298,7 +296,6 @@ export function OpenItemSelect({
                     <td>
                       <span className="lab">{i.itemNo}</span>
                     </td>
-                    {withBook && <td className="mut">{i.book}</td>}
                     <td className="mut">{formatDate(i.date)}</td>
                     {foreign && (
                       <td className="num">

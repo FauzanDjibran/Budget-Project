@@ -699,8 +699,32 @@ describe("a Partner account and its books (Journal 2.0 D18)", () => {
       ["Hutang", "Piutang", "Prive"].map((l) => budgetCategoryId(l))
     );
     const karyawan = await partnerCategoryId("Karyawan");
-    assert.equal(await checkAccountLedger(null, "partner", [hutang, piutang], karyawan), null);
+    assert.equal(await checkAccountLedger(null, "partner", [hutang, piutang], karyawan, null), null);
     // Prive admits Stakeholder only, so a Karyawan account cannot keep it.
-    assert.match((await checkAccountLedger(null, "partner", [hutang, prive], karyawan)) ?? "", /tidak menerima/);
+    assert.match(
+      (await checkAccountLedger(null, "partner", [hutang, prive], karyawan, null)) ?? "",
+      /tidak menerima/
+    );
+  });
+
+  test("a book and a Partner Category belong to one account of a Company (D21)", async () => {
+    const company = (await prisma.sysCompany.findFirstOrThrow({ where: { is_parent: true } })).id;
+    const owner = await makeAccount({
+      companyId: company,
+      subcategoryLabel: "2.1.5",
+      normalBalance: "Kredit",
+      partnerCategoryLabel: "Karyawan",
+      bookLabels: ["Hutang"],
+    });
+    const hutang = await budgetCategoryId("Hutang");
+    const karyawan = await partnerCategoryId("Karyawan");
+    const label = (await prisma.accAccount.findUniqueOrThrow({ where: { id: owner } })).account_label;
+
+    // The real chart may hold the pair too, so only "someone holds it" is certain.
+    const second = await checkAccountLedger(null, "partner", [hutang], karyawan, company);
+    assert.match(second ?? "", /sudah dipegang Account/);
+    const itself = await checkAccountLedger(owner, "partner", [hutang], karyawan, null);
+    assert.doesNotMatch(itself ?? "", new RegExp(`Account ${label.replaceAll(".", "\\.")} `),
+      "an account never collides with itself, its Company read off the account");
   });
 });

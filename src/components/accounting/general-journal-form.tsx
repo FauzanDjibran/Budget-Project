@@ -52,10 +52,26 @@ export type GeneralJournalFormMode = "new" | "view" | "edit";
 
 type Side = "debit" | "credit";
 
+/**
+ * What a line is written against, chosen first (D22), as Business Central's
+ * Account Type: a subject book, a Cash & Bank, or a plain account.
+ */
+type Kind = "book" | "cash" | "gl";
+const KIND_OPTIONS: { value: Kind; label: string }[] = [
+  { value: "book", label: "Buku Subjek" },
+  { value: "cash", label: "Kas & Bank" },
+  { value: "gl", label: "Account" },
+];
+const kindOfLedger = (ledger: string): Kind =>
+  ledger === "partner" ? "book" : ledger === "cash_bank" ? "cash" : "gl";
+
 /** One row of the editor, before it is a database row. */
 type DraftLine = {
   key: number;
+  kind: Kind | "";
+  /** Account only; a book's or a Cash & Bank's account is found, never chosen. */
   account_id: number | null;
+  book_id: number | null;
   partner_id: number | null;
   /** An open item (or "new"), or a Cash & Bank, as a picker value. */
   subject: string;
@@ -72,7 +88,9 @@ type DraftLine = {
 let nextKey = 1;
 const blankLine = (): DraftLine => ({
   key: nextKey++,
+  kind: "",
   account_id: null,
+  book_id: null,
   partner_id: null,
   subject: "",
   layer_id: "",
@@ -83,11 +101,8 @@ const blankLine = (): DraftLine => ({
   description: "",
 });
 
+/** A new open item (Baru), or a new layer, as a picker value. */
 const NEW_ITEM = "new";
-/** A new open item, in the book it opens in: `new:<book id>`. */
-const newItem = (bookId: number | null) => `${NEW_ITEM}:${bookId ?? ""}`;
-const newItemBook = (subject: string) =>
-  subject.startsWith(`${NEW_ITEM}:`) ? Number(subject.slice(NEW_ITEM.length + 1)) || null : null;
 const cents = (n: number) => Math.round(n * 100);
 const other = (s: Side): Side => (s === "debit" ? "credit" : "debit");
 /** The side that raises a book: money in raises a Hutang, credited. */
@@ -150,16 +165,11 @@ export function GeneralJournalForm({
           .filter((l) => !l.isGenerated)
           .map((l) => ({
             key: nextKey++,
+            kind: kindOfLedger(l.ledger),
             account_id: l.accountId,
+            book_id: l.bookId,
             partner_id: l.partnerId,
-            subject:
-              l.ledger === "partner"
-                ? l.subjectId
-                  ? String(l.subjectId)
-                  : newItem(l.bookId)
-                : l.subjectId
-                  ? String(l.subjectId)
-                  : "",
+            subject: l.subjectId ? String(l.subjectId) : l.ledger === "partner" ? NEW_ITEM : "",
             layer_id: l.layerId
               ? String(l.layerId)
               : l.ledger === "cash_bank" && l.foreign && l.debit > 0
@@ -200,6 +210,7 @@ export function GeneralJournalForm({
   const by = useMemo(
     () => ({
       account: new Map(options.accounts.map((a) => [a.id, a])),
+      partner: new Map(options.partners.map((p) => [p.id, p])),
       book: new Map(options.books.map((b) => [b.id, b])),
       item: new Map(options.items.map((i) => [String(i.id), i])),
       cash: new Map(options.cashBanks.map((c) => [String(c.id), c])),
@@ -208,21 +219,36 @@ export function GeneralJournalForm({
     [options]
   );
 
+  /** The one account keeping a book for a Partner Category (D21). */
+  const bookAccount = (bookId: number | null, categoryId: number | undefined) =>
+    options.accounts.find(
+      (a) => a.ledger === "partner" && bookId != null && a.bookIds.includes(bookId) && a.partnerCategoryId === categoryId
+    ) ?? null;
+
   /** What one draft line resolves to, as the adapters resolve it. */
   const resolve = (l: DraftLine) => {
-    const account = l.account_id ? by.account.get(l.account_id) ?? null : null;
-    const ledger = account?.ledger ?? "none";
-    const item = ledger === "partner" ? by.item.get(l.subject) ?? null : null;
-    const bookId = item?.bookId ?? newItemBook(l.subject);
-    const book = bookId ? by.book.get(bookId) ?? null : null;
-    const cash = ledger === "cash_bank" ? by.cash.get(l.subject) ?? null : null;
+    const ledger = l.kind === "book" ? "partner" : l.kind === "cash" ? "cash_bank" : "none";
+    const book = l.kind === "book" && l.book_id ? by.book.get(l.book_id) ?? null : null;
+    const cash = l.kind === "cash" ? by.cash.get(l.subject) ?? null : null;
+    // A book's account follows from the Partner's category, a Cash & Bank's
+    // from its master; only a plain account is chosen (D22).
+    const account =
+      l.kind === "gl"
+        ? (l.account_id && by.account.get(l.account_id)) || null
+        : l.kind === "cash"
+          ? (cash && by.account.get(cash.accountId)) || null
+          : book
+            ? bookAccount(book.id, by.partner.get(l.partner_id ?? 0)?.categoryId)
+            : null;
+    const item = l.kind === "book" ? by.item.get(l.subject) ?? null : null;
+    const isNew = l.kind === "book" && l.subject === NEW_ITEM;
     const currencyId = item?.currencyId ?? cash?.currencyId ?? l.currency_id;
     const currency = currencyId ? by.currency.get(currencyId) ?? null : null;
 
     const raise: Side = ledger === "cash_bank" ? "debit" : raiseOf(book);
     // An entry that can move only one way opens only that column.
     const only: Side | null =
-      ledger === "partner" && !item && book
+      isNew && book
         ? raise
         : ledger === "cash_bank" && l.layer_id
           ? l.layer_id === NEW_ITEM
@@ -256,7 +282,7 @@ export function GeneralJournalForm({
         cents(face) === cents(layer.foreignRemaining) ? layer.foreignRemaining : face
       ).base;
     }
-    return { account, ledger, book, item, cash, currency, layers, layer, side, face, rate, base, only };
+    return { account, ledger, book, item, isNew, cash, currency, layers, layer, side, face, rate, base, only };
   };
 
   const resolved = lines.map(resolve);
@@ -299,11 +325,12 @@ export function GeneralJournalForm({
     const payload: GeneralJournalFormLine[] = lines.map((l, i) => {
       const r = resolved[i];
       return {
-        account_id: l.account_id ? String(l.account_id) : "",
+        account_id: r.account ? String(r.account.id) : "",
         side: r.side,
-        partner_id: l.partner_id ? String(l.partner_id) : "",
-        subject_id: r.ledger === "partner" && !r.item ? "" : l.subject,
-        budget_category_id: r.book ? String(r.book.id) : "",
+        partner_id: l.kind === "book" && l.partner_id ? String(l.partner_id) : "",
+        subject_id: l.kind === "cash" || r.item ? l.subject : "",
+        // Naming the book without an item is what makes a new item (D20).
+        budget_category_id: r.book && (r.item || r.isNew) ? String(r.book.id) : "",
         cash_bank_layer_id: l.layer_id === NEW_ITEM ? "" : l.layer_id,
         currency_id: r.currency ? String(r.currency.id) : "",
         exchange_rate: l.exchange_rate,
@@ -570,14 +597,15 @@ export function GeneralJournalForm({
             </div>
 
             <div className="tw">
-              <table className="grid ltab" style={{ minWidth: editing ? 1330 : 1060 }}>
+              <table className="grid ltab" style={{ minWidth: editing ? 1430 : 1060 }}>
                 <thead>
                   {editing ? (
                     <tr>
                       <th style={{ width: 34 }}>No</th>
-                      <th style={{ width: 210 }}>Account</th>
-                      <th style={{ width: 170 }}>Subjek</th>
-                      <th style={{ width: 230 }}>Entri</th>
+                      <th style={{ width: 130 }}>Jenis</th>
+                      <th style={{ width: 210 }}>Akun</th>
+                      <th style={{ width: 170 }}>Partner</th>
+                      <th style={{ width: 200 }}>Entri</th>
                       <th style={{ width: 84 }}>Currency</th>
                       <th className="num" style={{ width: 120 }}>Kurs</th>
                       <th className="num" style={{ width: 150 }}>Debit</th>
@@ -603,21 +631,20 @@ export function GeneralJournalForm({
                         const r = resolved[i];
                         const ledger = r.ledger;
                         const foreignCash = ledger === "cash_bank" && r.currency && !r.currency.isBase;
-                        const waitAccount = l.account_id ? null : "Pilih Account dulu…";
-                        // The account names the one Partner Category its Partners hold.
-                        const partners = options.partners.filter(
-                          (p) => p.categoryId === r.account?.partnerCategoryId
-                        );
-                        const accountBooks = (r.account?.bookIds ?? [])
-                          .map((id) => by.book.get(id))
-                          .filter((b) => b !== undefined);
+                        // A book offers the Partners whose category has an account keeping it.
+                        const partners = options.partners.filter((p) => bookAccount(l.book_id, p.categoryId));
                         const effect = r.side ? lineEffectText(ledger, r.side, r.book?.raises ?? null) : null;
-                        const isNew = l.subject.startsWith(`${NEW_ITEM}:`);
-                        /** Baru, in a book: a new item only raises, so a lowering amount typed before it goes. */
-                        const openNew = (bookId: number | null) => {
-                          const book = bookId ? by.book.get(bookId) : undefined;
-                          setLine(l.key, { subject: newItem(bookId), ...(book && { [other(raiseOf(book))]: "" }) });
-                        };
+                        /** Baru: a new item only raises, so a lowering amount typed before it goes. */
+                        const toggleNew = () =>
+                          setLine(
+                            l.key,
+                            r.isNew
+                              ? { subject: "" }
+                              : { subject: NEW_ITEM, ...(r.book && { [other(raiseOf(r.book))]: "" }) }
+                          );
+                        /** A new Jenis or a new Akun starts the line again, keeping its keterangan. */
+                        const restart = (patch: Partial<DraftLine>) =>
+                          setLine(l.key, { ...blankLine(), key: l.key, kind: l.kind, description: l.description, ...patch });
                         const fixedRate = Boolean(r.item) || Boolean(r.layer);
                         /** One side's amount: typed, or closed to this entry. */
                         const amountCell = (side: Side) => (
@@ -646,100 +673,105 @@ export function GeneralJournalForm({
                           <tr key={l.key}>
                             <td className="no">{i + 1}</td>
                             <td>
-                              <Combobox
-                                value={l.account_id}
-                                placeholder="Pilih Account…"
+                              <Select
                                 size="sm"
-                                invalid={Boolean(errors[`lines.${i}.account_id`])}
-                                options={options.accounts.map((a) => ({ id: a.id, label: a.label, name: a.name, active: true }))}
-                                onChange={(v) =>
-                                  setLine(l.key, { ...blankLine(), key: l.key, account_id: v, description: l.description })
-                                }
+                                value={l.kind}
+                                placeholder="Pilih Jenis…"
+                                ariaLabel={`Jenis baris ${i + 1}`}
+                                options={KIND_OPTIONS}
+                                onChange={(v) => restart({ kind: v as Kind })}
                               />
-                              {r.account && r.ledger !== "none" && (
-                                <span className="rsub">{LEDGER_TEXT[r.ledger as keyof typeof LEDGER_TEXT]}</span>
-                              )}
-                              {err(i, "account_id")}
                             </td>
                             <td>
-                              {ledger === "none" ? (
-                                dash()
-                              ) : ledger === "cash_bank" ? (
+                              {l.kind === "book" ? (
+                                <Select
+                                  size="sm"
+                                  value={l.book_id ? String(l.book_id) : ""}
+                                  placeholder="Pilih Buku…"
+                                  ariaLabel={`Buku subjek baris ${i + 1}`}
+                                  options={options.books
+                                    .filter((b) => options.accounts.some((a) => a.ledger === "partner" && a.bookIds.includes(b.id)))
+                                    .map((b) => ({ value: String(b.id), label: b.name }))}
+                                  onChange={(v) => restart({ book_id: v ? Number(v) : null })}
+                                />
+                              ) : l.kind === "cash" ? (
                                 <Select
                                   size="sm"
                                   value={l.subject}
                                   placeholder="Pilih Cash & Bank…"
                                   ariaLabel={`Cash & Bank baris ${i + 1}`}
                                   invalid={Boolean(errors[`lines.${i}.subject_id`])}
-                                  options={options.cashBanks
-                                    .filter((c) => c.accountId === l.account_id)
-                                    .map((c) => ({ value: String(c.id), label: `${c.label} – ${c.name}` }))}
-                                  onChange={(v) => setLine(l.key, { subject: v, layer_id: "" })}
+                                  options={options.cashBanks.map((c) => ({ value: String(c.id), label: `${c.label} – ${c.name}` }))}
+                                  onChange={(v) => restart({ subject: v })}
                                 />
                               ) : (
+                                <Combobox
+                                  value={l.account_id}
+                                  placeholder="Pilih Account…"
+                                  size="sm"
+                                  waitingFor={l.kind ? null : "Pilih Jenis dulu…"}
+                                  invalid={Boolean(errors[`lines.${i}.account_id`])}
+                                  // A book's or a Cash & Bank's account is reached through its own Jenis.
+                                  options={options.accounts
+                                    .filter((a) => a.ledger === "none")
+                                    .map((a) => ({ id: a.id, label: a.label, name: a.name, active: true }))}
+                                  onChange={(v) => restart({ account_id: v })}
+                                />
+                              )}
+                              {l.kind !== "gl" && r.account && (
+                                <span className="rsub">
+                                  {r.account.label} {r.account.name}
+                                </span>
+                              )}
+                              {err(i, "account_id")}
+                              {l.kind === "cash" && err(i, "subject_id")}
+                            </td>
+                            <td>
+                              {l.kind === "book" ? (
                                 <Combobox
                                   value={l.partner_id}
                                   placeholder="Pilih Partner…"
                                   size="sm"
-                                  waitingFor={waitAccount}
+                                  waitingFor={l.book_id ? null : "Pilih Buku dulu…"}
                                   invalid={Boolean(errors[`lines.${i}.partner_id`])}
                                   options={partners.map((p) => ({ id: p.id, label: p.label, name: p.name, active: true }))}
                                   onChange={(v) => setLine(l.key, { partner_id: v, subject: "" })}
                                 />
+                              ) : (
+                                dash()
                               )}
                               {err(i, "partner_id")}
-                              {err(i, "subject_id")}
                             </td>
                             <td>
-                              {ledger === "partner" ? (
+                              {l.kind === "book" ? (
                                 // Choosing an item and opening a new one are two controls (D20).
-                                <div style={{ display: "flex", gap: 6 }}>
+                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                                   <label className={`chk sm${l.partner_id ? "" : " dis"}`} title="Buka item baru">
                                     <input
                                       type="checkbox"
                                       aria-label={`Item baru baris ${i + 1}`}
                                       disabled={!l.partner_id}
-                                      checked={isNew}
-                                      onChange={() =>
-                                        isNew
-                                          ? setLine(l.key, { subject: "" })
-                                          : openNew(accountBooks.length === 1 ? accountBooks[0].id : null)
-                                      }
+                                      checked={r.isNew}
+                                      onChange={toggleNew}
                                     />
                                     <span className="ct">Baru</span>
                                   </label>
                                   <div style={{ flex: 1, minWidth: 0 }}>
-                                    {!isNew ? (
+                                    {r.isNew ? (
+                                      dash("item baru")
+                                    ) : (
                                       <OpenItemSelect
                                         single
                                         value={r.item ? [{ item_id: r.item.id, amount: 0 }] : []}
                                         items={options.items
-                                          .filter(
-                                            (it) =>
-                                              r.account?.bookIds.includes(it.bookId) && it.partnerId === l.partner_id
-                                          )
-                                          .map((it) => ({
-                                            ...it,
-                                            currencyLabel: by.currency.get(it.currencyId)?.label,
-                                            book: accountBooks.length > 1 ? by.book.get(it.bookId)?.name : undefined,
-                                          }))}
+                                          .filter((it) => it.bookId === l.book_id && it.partnerId === l.partner_id)
+                                          .map((it) => ({ ...it, currencyLabel: by.currency.get(it.currencyId)?.label }))}
                                         currencyLabel={BASE_CURRENCY_LABEL}
                                         direction="In"
                                         cashRate={null}
                                         waitingFor={l.partner_id ? null : "Pilih Partner dulu…"}
                                         invalid={Boolean(errors[`lines.${i}.subject_id`])}
                                         onChange={(v) => setLine(l.key, { subject: v[0] ? String(v[0].item_id) : "" })}
-                                      />
-                                    ) : accountBooks.length === 1 ? (
-                                      <div className="ro">{accountBooks[0].name}</div>
-                                    ) : (
-                                      <Select
-                                        size="sm"
-                                        value={r.book ? String(r.book.id) : ""}
-                                        placeholder="Pilih Buku…"
-                                        ariaLabel={`Buku item baru baris ${i + 1}`}
-                                        options={accountBooks.map((b) => ({ value: String(b.id), label: b.name }))}
-                                        onChange={(v) => openNew(v ? Number(v) : null)}
                                       />
                                     )}
                                   </div>
@@ -768,6 +800,7 @@ export function GeneralJournalForm({
                                 dash()
                               )}
                               {effect && <span className="rsub">{effect}</span>}
+                              {l.kind === "book" && err(i, "subject_id")}
                               {err(i, "cash_bank_layer_id")}
                             </td>
                             <td>
@@ -883,7 +916,7 @@ export function GeneralJournalForm({
                 <tfoot>
                   {editing && valued.selisih !== 0 && (
                     <tr className="totrow">
-                      <td colSpan={6} style={{ textAlign: "right" }}>
+                      <td colSpan={7} style={{ textAlign: "right" }}>
                         Selisih Kurs
                       </td>
                       <td className="num">
@@ -904,7 +937,7 @@ export function GeneralJournalForm({
                       cannot be read as Selisih Kurs. */}
                   {editing ? (
                     <tr className="totrow">
-                      <td colSpan={6} style={{ textAlign: "right" }}>
+                      <td colSpan={7} style={{ textAlign: "right" }}>
                         Total
                         {difference !== 0 && (
                           <span className="overtag">

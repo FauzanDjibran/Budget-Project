@@ -609,17 +609,29 @@ export async function checkMappingLedger(
  * account exists the ledger may change, and a book be dropped, only while no
  * journal line depends on it; every Cash & Bank and mapping naming the account
  * must still fit.
+ *
+ * A book and a Partner Category belong to one account of a Company (D21), as a
+ * posting group names one account: Jurnal Umum finds the account from the book
+ * and the Partner's category, and a book split over two accounts for one
+ * category would reconcile against neither.
  */
 export async function checkAccountLedger(
   currentId: number | null,
   ledger: string,
   bookIds: number[],
-  partnerCategoryId: number | null
+  partnerCategoryId: number | null,
+  companyId: number | null
 ): Promise<string | null> {
   if (!["none", "partner", "cash_bank"].includes(ledger)) {
     return "Pilih ledger.";
   }
   if (ledger !== "partner") bookIds = [];
+  // Company is locked after creation, so an edit may not carry it.
+  if (!companyId && currentId && bookIds.length) {
+    companyId =
+      (await prisma.accAccount.findUnique({ where: { id: currentId }, select: { company_id: true } }))
+        ?.company_id ?? null;
+  }
   for (const id of bookIds) {
     const category = await categoryBook(id);
     if (!category?.book) return "Budget Category tersebut tidak memiliki buku subjek.";
@@ -630,6 +642,22 @@ export async function checkAccountLedger(
     if (!admitted) {
       return `${category.book} tidak menerima Partner Category account ini. ` +
         "Pilih buku yang menerimanya, atau ubah Partner Category.";
+    }
+    const taken = companyId
+      ? await prisma.accAccount.findFirst({
+          where: {
+            company_id: companyId,
+            ledger: "partner",
+            partner_category_id: partnerCategoryId,
+            books: { some: { budget_category_id: id, status: "Active" } },
+            ...(currentId && { id: { not: currentId } }),
+          },
+          select: { account_label: true, account_name: true },
+        })
+      : null;
+    if (taken) {
+      return `${category.book} untuk Partner Category ini sudah dipegang Account ` +
+        `${taken.account_label} ${taken.account_name}.`;
     }
   }
   if (!currentId) return null;

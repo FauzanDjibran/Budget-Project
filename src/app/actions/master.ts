@@ -492,7 +492,8 @@ async function validateAccount(
     currentId,
     String(values.ledger ?? ""),
     applies.has("book_ids") ? idList(values.book_ids) : [],
-    applies.has("partner_category_id") ? refValue(values, "partner_category_id") : null
+    applies.has("partner_category_id") ? refValue(values, "partner_category_id") : null,
+    companyId
   );
   if (ledgerError) errors.ledger = ledgerError;
 
