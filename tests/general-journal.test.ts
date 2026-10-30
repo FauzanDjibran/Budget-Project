@@ -164,25 +164,25 @@ describe("a rupiah Jurnal Umum", () => {
     assert.match(draft.journalNo, /^JUM-\d{4}$/);
 
     const preview = await postGeneralJournal(draft.id, actor, scope, true);
-    assert.ok(preview.ok && preview.postedJournalNo === null, "a dry run writes nothing");
+    assert.ok(preview.ok, "a dry run writes nothing");
     assert.equal(
-      (await prisma.accGeneralJournal.findUniqueOrThrow({ where: { id: draft.id } })).status,
+      (await prisma.accJournal.findUniqueOrThrow({ where: { id: draft.id } })).status,
       "Draft"
     );
 
     const posted = await postGeneralJournal(draft.id, actor, scope);
-    assert.ok(posted.ok && posted.postedJournalNo, JSON.stringify(posted));
+    assert.ok(posted.ok, JSON.stringify(posted));
 
     const manual = await createManualJournal(header(), lines, actor);
     assert.ok(manual.ok);
     assert.ok((await postManualJournal(manual.id, actor, scope)).ok);
 
-    const general = await prisma.accGeneralJournal.findUniqueOrThrow({
+    const general = await prisma.accJournal.findUniqueOrThrow({
       where: { id: draft.id },
       include: { lines: { orderBy: { sequence_no: "asc" } } },
     });
     assert.equal(general.status, "Posted");
-    assert.ok(general.posted_journal_id);
+    assert.ok(general.posted_at, "Post stamps the row itself");
 
     const shape = (l: {
       account_id: number;
@@ -206,16 +206,10 @@ describe("a rupiah Jurnal Umum", () => {
     const linesOf = async (id: number) =>
       (await prisma.accJournalLine.findMany({ where: { journal_id: id }, orderBy: { sequence_no: "asc" } })).map(shape);
 
-    const fromGeneral = await linesOf(general.posted_journal_id!);
-    assert.deepEqual(fromGeneral, await linesOf(manual.id), "identical to the manual journal");
-    assert.deepEqual(general.lines.map(shape), fromGeneral, "the draft's rows equal what Post wrote");
-
-    const journal = await prisma.accJournal.findUniqueOrThrow({
-      where: { id: general.posted_journal_id! },
-      include: { source_doc_type: { select: { doc_table: true } } },
-    });
-    assert.equal(journal.source_doc_type?.doc_table, "acc_general_journal");
-    assert.equal(journal.source_doc_id, draft.id);
+    assert.deepEqual(await linesOf(draft.id), await linesOf(manual.id), "identical to the manual journal");
+    // One table: the typed journal is the ledger row, and Post wrote no other.
+    assert.equal(general.source_doc_type_id, null);
+    assert.equal(await prisma.accJournal.count({ where: { source_doc_id: draft.id, is_manual: false } }), 0);
   });
 
   test("a Kategori line names its category, and its Partner where the category takes one", async () => {
@@ -333,10 +327,9 @@ describe("the subject_book ledger (Gate B)", () => {
     const preview = await postGeneralJournal(draft.id, actor, scope, true);
     assert.ok(preview.ok, JSON.stringify(preview));
     const posted = await postGeneralJournal(draft.id, actor, scope);
-    assert.ok(posted.ok && posted.postedJournalNo, JSON.stringify(posted));
-    const journal = await prisma.accGeneralJournal.findUniqueOrThrow({ where: { id: draft.id } });
+    assert.ok(posted.ok, JSON.stringify(posted));
     const written = await prisma.accJournalLine.findMany({
-      where: { journal_id: journal.posted_journal_id! },
+      where: { journal_id: draft.id },
       orderBy: { sequence_no: "asc" },
     });
     assert.deepEqual(
@@ -353,7 +346,7 @@ describe("the subject_book ledger (Gate B)", () => {
       on("Piutang", 0, 2_000_000, { subject_id: item }),
       line(beban, 2_000_000, 0),
     ]);
-    const stored = await prisma.accGeneralJournalLine.findFirstOrThrow({
+    const stored = await prisma.accJournalLine.findFirstOrThrow({
       where: { journal_id: id, sequence_no: 1 },
     });
     assert.equal(stored.budget_category_id, book("Piutang").categoryId, "the line names its item's book");
@@ -364,7 +357,7 @@ describe("the subject_book ledger (Gate B)", () => {
       where: { balance_id: item, entry_type: "Adjustment" },
       include: { source_doc_type: { select: { doc_table: true } } },
     });
-    assert.equal(entry.source_doc_type?.doc_table, "acc_general_journal");
+    assert.equal(entry.source_doc_type?.doc_table, "acc_journal");
     assert.equal(entry.source_doc_id, id);
   });
 
@@ -425,7 +418,7 @@ describe("the subject_book ledger (Gate B)", () => {
       line(listrik, 400, 0, { budget_category_id: biaya, partner_id: partner }),
       line(ymh, 0, 400),
     ]);
-    const stored = await prisma.accGeneralJournalLine.findFirstOrThrow({
+    const stored = await prisma.accJournalLine.findFirstOrThrow({
       where: { journal_id: id, sequence_no: 1 },
     });
     assert.deepEqual([stored.budget_category_id, stored.partner_id], [biaya, null], "a Partner sent is dropped");
@@ -470,7 +463,7 @@ describe("the subject_book ledger (Gate B)", () => {
       line(hutangPiutang, 0, 200, { partner_id: partner, subject_id: piutang }),
       line(beban, 500, 0),
     ]);
-    const stored = await prisma.accGeneralJournalLine.findMany({
+    const stored = await prisma.accJournalLine.findMany({
       where: { journal_id: id, sequence_no: { in: [1, 2] } },
       orderBy: { sequence_no: "asc" },
     });

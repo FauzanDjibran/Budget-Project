@@ -19,7 +19,6 @@
  *   fin_cash_bank_transfer(_line)                  Cash Bank Transfer
  *   fin_item_conversion(_line, _line_item)         Pencairan Open Item
  *   fin_cash_bank_revaluation(_layer)              Revaluasi Kurs
- *   acc_general_journal(_line)                     Jurnal Umum
  *   bud_budget                                     the plans
  *   sub_ledger, sub_ledger_balance                 the subject books
  *   cash_bank_ledger, cash_bank_layer              the Cash Bank Book
@@ -79,7 +78,6 @@ const DOCUMENT_ENTITY_KEYS = [
   "fin_cash_bank_transfer",
   "fin_item_conversion",
   "fin_cash_bank_revaluation",
-  "acc_general_journal",
   "acc_journal",
   "acc_fiscal_closing",
 ];
@@ -98,8 +96,6 @@ async function main() {
   ).map((o) => o.id);
 
   const counts = {
-    acc_general_journal_line: await prisma.accGeneralJournalLine.count(),
-    acc_general_journal: await prisma.accGeneralJournal.count(),
     acc_journal_line: await prisma.accJournalLine.count(),
     acc_journal: await prisma.accJournal.count(),
     fin_cash_bank_transaction_line: await prisma.finCashBankTransactionLine.count(),
@@ -164,8 +160,6 @@ async function main() {
   await prisma.$transaction(async (tx) => {
     // Order follows the foreign keys: lines before their documents, documents
     // before the layer a payment drew on, everything before the books.
-    await tx.accGeneralJournalLine.deleteMany();
-    await tx.accGeneralJournal.deleteMany();
     await tx.accJournalLine.deleteMany();
     await tx.accJournal.deleteMany();
 

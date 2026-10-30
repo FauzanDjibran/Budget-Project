@@ -17,7 +17,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   return (
     <>
       <GeneralJournalForm mode="view" journal={journal} can={generalJournalAbilities(actor.permissions)} />
-      <RecordHistoryCard entityKey="acc_general_journal" rowId={journal.id} />
+      <RecordHistoryCard entityKey="acc_journal" rowId={journal.id} />
     </>
   );
 }

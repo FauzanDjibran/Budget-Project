@@ -12,7 +12,6 @@ import { conversionNumbersByIds } from "./item-conversion-rows";
 import { fundingRequestNumbersByIds } from "./funding";
 import { fiscalClosingLabels, fiscalPeriodLabels } from "./fiscal";
 import { journalNumbersByIds } from "./journal";
-import { generalJournalNumbersByIds } from "./general-journal";
 import { openingBalanceNumbersByIds } from "./opening-balance";
 import { userLabels, roleLabels } from "./users";
 
@@ -99,7 +98,6 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
     resolve: fundingRequestNumbersByIds,
   },
   acc_journal: { label: "Journal", resolve: journalNumbersByIds },
-  acc_general_journal: { label: "Jurnal Umum", resolve: generalJournalNumbersByIds },
   acc_opening_balance: {
     label: "Opening Balance",
     resolve: openingBalanceNumbersByIds,

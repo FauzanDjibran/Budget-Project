@@ -71,8 +71,6 @@ const TABLE_OWNERS: Record<string, string[]> = {
   // A module is its data module *and* its Server Action — two layers of one
   // building block, not two modules.
   budBudget: ["src/lib/siba/budget.ts", "src/app/actions/budget.ts"],
-  accGeneralJournal: ["src/lib/siba/general-journal.ts", "src/lib/siba/general-journal-rows.ts"],
-  accGeneralJournalLine: ["src/lib/siba/general-journal.ts", "src/lib/siba/general-journal-rows.ts"],
   finCashBankTransaction: [
     "src/lib/siba/finance.ts",
     "src/lib/siba/finance-funded.ts",
@@ -136,8 +134,10 @@ const TABLE_OWNERS: Record<string, string[]> = {
   subLedgerBalance: ["src/lib/siba/subledger.ts", "src/lib/siba/subledger-reports.ts"],
   // The General Ledger is the one thing that may derive from journal lines
   // (CLAUDE.md §10 rule 22) — it reads them and never writes one.
-  accJournal: ["src/lib/siba/journal.ts", "src/lib/siba/ledger.ts"],
-  accJournalLine: ["src/lib/siba/journal.ts", "src/lib/siba/ledger.ts"],
+  // One table for every journal: the typed one is written and read by
+  // Jurnal Umum's own files beside the engine (Journal Replacement).
+  accJournal: ["src/lib/siba/journal.ts", "src/lib/siba/ledger.ts", "src/lib/siba/general-journal.ts", "src/lib/siba/general-journal-rows.ts"],
+  accJournalLine: ["src/lib/siba/journal.ts", "src/lib/siba/ledger.ts", "src/lib/siba/general-journal.ts", "src/lib/siba/general-journal-rows.ts"],
   // The Opening Balance snapshot. Written by a close and read by the register;
   // the figures it is written *from* come from `ledger.ts`, which is the
   // sanctioned reader of journal lines, so this module never names another

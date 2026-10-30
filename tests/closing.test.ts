@@ -141,8 +141,10 @@ async function postFixtureJournal(
   const row = await prisma.accJournal.create({
     data: {
       journal_no: `ZZC-${Date.now() % 100000}-${Math.floor(Math.random() * 1000)}`,
-      accounting_date: status === "Posted" ? date : null,
-      created_at: date,
+      // A draft carries the date it is meant for, as every typed journal does.
+      accounting_date: date,
+      // A document's journal is written Posted and automatic; a draft is typed.
+      posted_at: status === "Posted" ? date : null,
       company_id: companyId,
       description: "Fixture",
       status,
@@ -505,8 +507,8 @@ describe("every blocking condition refuses by name", () => {
   });
 
   test("a draft from another year does not block", async () => {
-    // The range is read against `created_at`, which is the only thing a draft
-    // carries — a draft typed in 1985 was never meant for 1990.
+    // The range is read against the date the draft is meant for — a draft
+    // dated 1985 was never meant for 1990.
     const draft = await postFixtureJournal(
       induk,
       new Date(Date.UTC(FY - 5, 7, 1)),

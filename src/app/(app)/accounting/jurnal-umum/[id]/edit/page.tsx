@@ -21,7 +21,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   return (
     <>
       <GeneralJournalForm mode="edit" journal={journal} companies={companies} options={options} />
-      <RecordHistoryCard entityKey="acc_general_journal" rowId={journal.id} />
+      <RecordHistoryCard entityKey="acc_journal" rowId={journal.id} />
     </>
   );
 }

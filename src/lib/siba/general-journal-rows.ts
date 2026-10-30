@@ -32,8 +32,8 @@ const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
 /** Every Jurnal Umum of these Companies, newest first. */
 export async function listGeneralJournals(companyIds: number[]): Promise<GeneralJournalRow[]> {
-  const rows = await prisma.accGeneralJournal.findMany({
-    where: { company_id: { in: companyIds } },
+  const rows = await prisma.accJournal.findMany({
+    where: { company_id: { in: companyIds }, journal_no: { startsWith: "JUM-" } },
     orderBy: { id: "desc" },
     include: {
       company: { select: { company_label: true } },
@@ -91,8 +91,6 @@ export type GeneralJournalDetail = {
   accountingDate: string | null;
   description: string;
   status: GeneralJournalStatus;
-  postedJournalId: number | null;
-  postedJournalNo: string | null;
   lines: GeneralJournalLineRow[];
   debit: number;
   credit: number;
@@ -103,11 +101,10 @@ export async function getGeneralJournal(
   id: number,
   companyIds: number[]
 ): Promise<GeneralJournalDetail | null> {
-  const j = await prisma.accGeneralJournal.findFirst({
-    where: { id, company_id: { in: companyIds } },
+  const j = await prisma.accJournal.findFirst({
+    where: { id, company_id: { in: companyIds }, is_manual: true },
     include: {
       company: { select: { company_label: true, company_name: true } },
-      posted_journal: { select: { journal_no: true } },
       lines: {
         orderBy: { sequence_no: "asc" },
         include: {
@@ -185,8 +182,6 @@ export async function getGeneralJournal(
     accountingDate: day(j.accounting_date),
     description: j.description,
     status: j.status as GeneralJournalStatus,
-    postedJournalId: j.posted_journal_id,
-    postedJournalNo: j.posted_journal?.journal_no ?? null,
     lines,
     debit: total("debit"),
     credit: total("credit"),

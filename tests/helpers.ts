@@ -453,31 +453,6 @@ export async function makePartner(options: {
  * -referencing account tree never blocks a delete.
  */
 export async function cleanupFixtures(): Promise<void> {
-  // A Jurnal Umum names an account and a Partner on each line, and goes first:
-  // a posted one points at the acc_journal removed below.
-  const generalIds = [
-    ...new Set(
-      (
-        await prisma.accGeneralJournalLine.findMany({
-          where: {
-            OR: [
-              { account: { account_code: { startsWith: FIXTURE_PREFIX } } },
-              { partner: { partner_label: { startsWith: FIXTURE_PREFIX } } },
-            ],
-          },
-          select: { journal_id: true },
-        })
-      ).map((l) => l.journal_id)
-    ),
-  ];
-  if (generalIds.length) {
-    await prisma.accGeneralJournalLine.deleteMany({ where: { journal_id: { in: generalIds } } });
-    await prisma.auditLog.deleteMany({
-      where: { entity_key: "acc_general_journal", row_id: { in: generalIds } },
-    });
-    await prisma.accGeneralJournal.deleteMany({ where: { id: { in: generalIds } } });
-  }
-
   // The application never deletes a journal — it is append-only and immutable
   // (CLAUDE.md §12). A test tearing down its own fixtures is the same
   // exception already made for fixture accounts: these journals were written

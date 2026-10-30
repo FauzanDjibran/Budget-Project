@@ -5,7 +5,7 @@ import { documentNumbers as funding } from "./funding";
 import { documentNumbers as transfer } from "./transfer";
 import { documentNumbers as conversion } from "./item-conversion";
 import { documentNumbers as revaluation } from "./cash-bank-revaluation";
-import { generalJournalNumbersByIds } from "./general-journal";
+import { journalNumbersByIds } from "./journal";
 
 /**
  * The number of the document a book entry came from. A book holds only the weak
@@ -18,7 +18,7 @@ const OWNERS: Record<string, (ids: number[]) => Promise<Map<number, string>>> = 
   fin_cash_bank_transfer: transfer,
   fin_item_conversion: conversion,
   fin_cash_bank_revaluation: revaluation,
-  acc_general_journal: generalJournalNumbersByIds,
+  acc_journal: journalNumbersByIds,
 };
 
 type Sourced = { sourceDocTable: string | null; sourceDocId: number | null; sourceDocNo: string | null };

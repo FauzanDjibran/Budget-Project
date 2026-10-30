@@ -330,6 +330,16 @@ function assertNotAhead(date: Date): void {
  * once it does — a USD line and an IDR line have no common measure until both
  * are valued.
  */
+/**
+ * Refuses, by throwing, a journal whose lines are unsound or whose two sides
+ * differ in base — the same rule `postJournal` applies, for a typed journal
+ * that is posted in place rather than written anew.
+ */
+export function assertBalanced(lines: JournalLineInput[]): void {
+  const { debit, credit } = resolveJournalLines(lines);
+  if (cents(debit) !== cents(credit)) throw new JournalImbalance(debit, credit);
+}
+
 export async function postJournal(
   tx: Client,
   input: JournalInput
@@ -350,7 +360,9 @@ export async function postJournal(
       source_doc_id: input.sourceDocId ?? null,
       company_id: input.companyId,
       description: input.description,
+      // The table defaults to a typed draft; a document's journal is neither.
       status: "Posted",
+      is_manual: false,
       created_by: input.actorId,
     },
     select: { id: true, journal_no: true },
@@ -987,9 +999,7 @@ export async function unbalancedJournals(
  * could then only ever be cancelled. The refusal names them so whoever is
  * closing can go and finish or cancel each one.
  *
- * A draft carries the date it was written for, so that is what is read. A
- * draft saved before drafts carried one has none, and falls back to when it
- * was typed — the only thing that says which year it was meant for.
+ * A draft carries the date it was written for, so that is what is read.
  */
 export async function draftJournalsDatedBetween(
   companyId: number,
@@ -1000,15 +1010,7 @@ export async function draftJournalsDatedBetween(
     where: {
       company_id: companyId,
       status: "Draft",
-      OR: [
-        { accounting_date: { gte: from, lte: to } },
-        {
-          accounting_date: null,
-          // Inclusive of the year's last day: `to` is a date at UTC midnight
-          // and `created_at` is a timestamp.
-          created_at: { gte: from, lt: new Date(to.getTime() + 86_400_000) },
-        },
-      ],
+      accounting_date: { gte: from, lte: to },
     },
     orderBy: { id: "asc" },
     select: { id: true, journal_no: true },

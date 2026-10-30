@@ -547,17 +547,6 @@ export function GeneralJournalForm({
                     )}
                   </Field>
                 </FormRow>
-                {mode === "view" && journal?.postedJournalNo && (
-                  <FormRow>
-                    <Field label="Journal" span={4}>
-                      <div className="ro">
-                        <Link className="lab" href={`/accounting/journal/${journal.postedJournalId}`}>
-                          {journal.postedJournalNo}
-                        </Link>
-                      </div>
-                    </Field>
-                  </FormRow>
-                )}
               </FormSection>
             </FormBody>
 

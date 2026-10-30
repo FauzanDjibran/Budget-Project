@@ -23,8 +23,8 @@ import { SubledgerItemUnavailable } from "./subledger";
 import { isBalanced, valueGeneralJournal } from "./general-journal-valuation";
 import {
   JournalImbalance,
+  assertBalanced,
   describeJournalLines,
-  postJournal,
   type JournalLineInput,
   type JournalPreviewLine,
 } from "./journal";
@@ -40,9 +40,10 @@ import { systemAccountId } from "./system-account-data";
  * accepts a control account, because the account's ledger then demands its
  * subject (D16).
  *
- * Post writes an ordinary posted `acc_journal` whose lines equal the draft's,
- * the one netted Selisih Kurs line included (D3, D7), and links it in
- * `posted_journal_id`.
+ * It lives in `acc_journal` beside every journal a document wrote (Journal
+ * Replacement): Post checks the balance by the same rule `postJournal`
+ * applies and turns the draft's own row Posted, the one netted Selisih Kurs
+ * line included (D7), so the typed journal *is* the ledger row.
  */
 
 type Client = typeof prisma | Prisma.TransactionClient;
@@ -345,7 +346,7 @@ function lineRows(lines: ResolvedLine[], actorId: number) {
 
 async function nextNumber(tx: Client): Promise<string> {
   return nextDocumentNumber("JUM", async () => {
-    const row = await tx.accGeneralJournal.findFirst({
+    const row = await tx.accJournal.findFirst({
       where: { journal_no: { startsWith: "JUM-" } },
       orderBy: { id: "desc" },
       select: { journal_no: true },
@@ -356,7 +357,7 @@ async function nextNumber(tx: Client): Promise<string> {
 
 async function audit(tx: Client, rowId: number, action: "TAMBAH" | "UPDATE", event: string, by: number) {
   await tx.auditLog.create({
-    data: { entity_key: "acc_general_journal", row_id: rowId, action, event, by },
+    data: { entity_key: "acc_journal", row_id: rowId, action, event, by },
   });
 }
 
@@ -375,7 +376,7 @@ export async function createGeneralJournal(
   const c = result.checked;
 
   return prisma.$transaction(async (tx) => {
-    const journal = await tx.accGeneralJournal.create({
+    const journal = await tx.accJournal.create({
       data: {
         journal_no: await nextNumber(tx),
         accounting_date: docDate(c.date),
@@ -408,8 +409,8 @@ export async function updateGeneralJournal(
   const c = result.checked;
 
   await prisma.$transaction(async (tx) => {
-    await tx.accGeneralJournalLine.deleteMany({ where: { journal_id: id } });
-    await tx.accGeneralJournal.update({
+    await tx.accJournalLine.deleteMany({ where: { journal_id: id } });
+    await tx.accJournal.update({
       where: { id },
       data: {
         company_id: c.companyId,
@@ -428,8 +429,8 @@ class DryRun extends Error {}
 
 /**
  * Post, in one transaction (§3.5): the period held, every ledger's locks taken
- * in rank and key order, each adapter's book written, then the `acc_journal`
- * whose lines equal the draft's. Everything is re-checked first, never
+ * in rank and key order, each adapter's book written, then the draft's own
+ * row balanced and turned Posted. Everything is re-checked first, never
  * trusted from the draft. A dry run does the same and rolls back, which is
  * what the Post confirmation's `JournalPreview` shows.
  */
@@ -439,7 +440,7 @@ export async function postGeneralJournal(
   companyIds: number[],
   dryRun = false
 ): Promise<
-  | { ok: true; journalNo: string; postedJournalNo: string | null; preview: JournalPreviewLine[] }
+  | { ok: true; journalNo: string; preview: JournalPreviewLine[] }
   | { ok: false; errors: Record<string, string> }
 > {
   const existing = await draftOrRefusal(id, companyIds);
@@ -459,7 +460,7 @@ export async function postGeneralJournal(
 
   const preview = await describeJournalLines(c.lines);
   try {
-    const postedJournalNo = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       await holdPostingPeriod(tx, [c.companyId], c.date);
 
       const keys = c.ledgerLines.flatMap(({ adapter, line, account }) =>
@@ -469,7 +470,7 @@ export async function postGeneralJournal(
       for (const k of keys) await k.adapter.lock?.(tx, k.key);
 
       const docType = await tx.sysDocType.findFirstOrThrow({
-        where: { doc_table: "acc_general_journal" },
+        where: { doc_table: "acc_journal" },
         select: { id: true },
       });
       const ctx = {
@@ -483,24 +484,15 @@ export async function postGeneralJournal(
         await adapter.write?.(tx, line, account, ctx);
       }
 
-      const posted = await postJournal(tx, {
-        companyId: c.companyId,
-        description: c.description,
-        sourceDocTypeId: docType.id,
-        sourceDocId: id,
-        lines: c.lines,
-        actorId,
-        accountingDate: docDate(c.date),
-      });
+      assertBalanced(c.lines);
 
-      await tx.accGeneralJournalLine.deleteMany({ where: { journal_id: id } });
-      await tx.accGeneralJournal.update({
+      await tx.accJournalLine.deleteMany({ where: { journal_id: id } });
+      await tx.accJournal.update({
         where: { id },
         data: {
           status: "Posted",
           accounting_date: docDate(c.date),
           posted_at: new Date(),
-          posted_journal_id: posted.id,
           updated_by: actorId,
           lines: { create: lineRows(c.lines, actorId) },
         },
@@ -508,12 +500,11 @@ export async function postGeneralJournal(
       await audit(tx, id, "UPDATE", "post", actorId);
 
       if (dryRun) throw new DryRun();
-      return posted.journalNo;
     });
-    return { ok: true, journalNo: existing.journalNo, postedJournalNo, preview };
+    return { ok: true, journalNo: existing.journalNo, preview };
   } catch (error) {
     if (error instanceof DryRun) {
-      return { ok: true, journalNo: existing.journalNo, postedJournalNo: null, preview };
+      return { ok: true, journalNo: existing.journalNo, preview };
     }
     if (
       error instanceof PeriodShut ||
@@ -536,7 +527,7 @@ export async function cancelGeneralJournal(
   const existing = await draftOrRefusal(id, companyIds);
   if ("errors" in existing) return { ok: false, errors: existing.errors };
   await prisma.$transaction(async (tx) => {
-    await tx.accGeneralJournal.update({
+    await tx.accJournal.update({
       where: { id },
       data: { status: "Cancelled", updated_by: actorId },
     });
@@ -563,8 +554,8 @@ async function draftOrRefusal(
     }
   | { errors: Record<string, string> }
 > {
-  const journal = await prisma.accGeneralJournal.findFirst({
-    where: { id, company_id: { in: companyIds } },
+  const journal = await prisma.accJournal.findFirst({
+    where: { id, company_id: { in: companyIds }, is_manual: true },
     include: {
       lines: {
         where: { is_generated: false },
@@ -603,14 +594,4 @@ async function draftOrRefusal(
       };
     }),
   };
-}
-
-/** Numbers for a set of ids — how another module names a Jurnal Umum. */
-export async function generalJournalNumbersByIds(ids: number[]): Promise<Map<number, string>> {
-  if (!ids.length) return new Map();
-  const rows = await prisma.accGeneralJournal.findMany({
-    where: { id: { in: ids } },
-    select: { id: true, journal_no: true },
-  });
-  return new Map(rows.map((r) => [r.id, r.journal_no]));
 }

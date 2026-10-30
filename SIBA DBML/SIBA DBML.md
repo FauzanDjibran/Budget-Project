@@ -1014,18 +1014,24 @@ table acc_opening_balance_line {
   }
 }
 
+// The one journal table (Journal Replacement, migration
+// 20261030100000_one_journal_table, which dropped the old acc_journal and
+// renamed the Jurnal Umum table into its place). Every journal lives here: a
+// typed one (JUM-), one a document's posting wrote (JRN-) and a fiscal year's
+// closing entry (CLS-).
 table acc_journal {
   id                          int [pk, increment, not null]
 
   journal_no                  varchar(255) [not null, unique]
   // The day the journal belongs to in the books — its document's date, which
-  // may be earlier than today (a backdated document) and never later. A manual
+  // may be earlier than today (a backdated document) and never later. A typed
   // draft carries the date it is meant for; every reader filters Posted, so a
-  // draft's date reaches no report. When it was written is created_at.
+  // draft's date reaches no report.
   accounting_date             date
-  // When Post ran; null while a manual journal is a draft.
+  // When Post ran; null while a typed journal is a draft.
   posted_at                   timestamptz [default: `transaction_timestamp()`]
 
+  // What produced the journal. Null on a typed journal.
   source_doc_type_id          int [ref : >? sys_doc_type.id]
   source_doc_id               int
 
@@ -1033,8 +1039,10 @@ table acc_journal {
 
   description                 text [not null]
 
-  status                      enum('Draft', 'Posted', 'Cancelled') [not null, default: 'Posted']
-  is_manual                   boolean [not null, default: false]
+  // Draft by default, because only a typed journal is ever written before it
+  // is posted; a document's journal is written Posted and is_manual false.
+  status                      enum('Draft', 'Posted', 'Cancelled') [not null, default: 'Draft']
+  is_manual                   boolean [not null, default: true]
 
   created_by                  int [not null]
   updated_by                  int
@@ -1054,12 +1062,16 @@ table acc_journal_line {
   journal_id                  int [not null, ref : > acc_journal.id]
   sequence_no                 int [not null]
 
+  // It brings its ledger (acc_account.ledger).
   account_id                  int [not null, ref : > acc_account.id]
   partner_id                  int [ref : >? m_partner.id]
 
   currency_id                 int [not null, ref : > ref_currency.id]
+  // 1 for the base currency. On a typed line, the subject's own kurs where it
+  // holds one; typed only for something new. Nothing records which.
   exchange_rate               decimal(18,6) [not null, default: 1]
 
+  // Base currency — what the journal balances in.
   debit_amount                decimal(18,2) [not null, default: 0]
   kredit_amount               decimal(18,2) [not null, default: 0]
 
@@ -1067,88 +1079,20 @@ table acc_journal_line {
 
   description                 text [not null]
 
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    journal_id
-    account_id
-  }
-}
-
-// Jurnal Umum (JUM-, Journal 2.0): a journal that may write any money ledger.
-// Every column of acc_journal under the same name and type, so it can later
-// replace that table without being reshaped. Post writes an ordinary posted
-// acc_journal, linked by posted_journal_id.
-table acc_general_journal {
-  id                          int [pk, increment, not null]
-
-  journal_no                  varchar(255) [not null, unique]  // JUM-0001
-  accounting_date             date
-  // Null while a draft, as on a manual journal; Post sets it.
-  posted_at                   timestamptz [default: `transaction_timestamp()`]
-  // Null on a Jurnal Umum. Kept so that, once this table replaces
-  // acc_journal, every posting document writes its journal here.
-  source_doc_type_id          int [ref : >? sys_doc_type.id]
-  source_doc_id               int
-  company_id                  int [not null, ref : > sys_company.id]
-  description                 text [not null]
-  status                      enum('Draft', 'Posted', 'Cancelled') [not null, default: 'Draft']
-  is_manual                   boolean [not null, default: true]
-
-  // The journal Post wrote, while acc_journal is still the ledger.
-  posted_journal_id           int [unique, ref : - acc_journal.id]
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    (company_id, accounting_date)
-    (source_doc_type_id, source_doc_id)
-  }
-}
-
-// A Jurnal Umum line: every column of acc_journal_line, plus the subject its
-// account's ledger demands. After Post its rows equal the posted
-// acc_journal_line rows one for one, the netted Selisih Kurs included.
-table acc_general_journal_line {
-  id                          int [pk, increment, not null]
-
-  journal_id                  int [not null, ref : > acc_general_journal.id]
-  sequence_no                 int [not null]
-  // Chosen first; it brings its ledger (acc_account.ledger).
-  account_id                  int [not null, ref : > acc_account.id]
-  partner_id                  int [ref : >? m_partner.id]
-  currency_id                 int [not null, ref : > ref_currency.id]
-  // 1 for the base currency; the subject's own kurs where it holds one; typed
-  // only for something new. Nothing records which.
-  exchange_rate               decimal(18,6) [not null, default: 1]
-  // Base currency, exactly as Post writes them to acc_journal_line.
-  debit_amount                decimal(18,2) [not null, default: 0]
-  kredit_amount               decimal(18,2) [not null, default: 0]
-  trx_amount                  decimal(18,2) [not null]
-  description                 text [not null]
-
-  // A weak reference read by the account's ledger adapter, no foreign key:
+  // The rest is stated by a typed line. A weak reference read by the
+  // account's ledger adapter, no foreign key:
   //   category  → sub_ledger_balance.id, the open item (null: a new item)
   //   cash_bank → m_cash_bank.id
   subject_id                  int
-  // The Budget Category a 'category' line posts by: one its account holds —
-  // the named item's own book, the one a new item opens in, or a category
-  // taking no Partner (D25). A plain id.
+  // The Budget Category a Kategori line was written against, whose mapping
+  // sends it to this account. A plain id.
   budget_category_id          int
   // The rate layer a foreign Cash & Bank line draws on.
   cash_bank_layer_id          int [ref : >? cash_bank_layer.id]
   // What the named open item held on the journal's date when the draft was
   // saved; Post refuses if it no longer does.
   balance_before              decimal(18,2)
-  // The one netted Selisih Kurs line, written by the system on save.
+  // The one netted Selisih Kurs line of a typed journal, written on save.
   is_generated                boolean [not null, default: false]
 
   created_by                  int [not null]
