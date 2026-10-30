@@ -23,11 +23,9 @@ export type SystemAccountKey =
   | "fx"
   | "fx_revaluation"
   | "accumulated_pl"
-  | "current_pl"
-  | "adjustment_income"
-  | "adjustment_expense";
+  | "current_pl";
 
-export type SystemAccountGroupKey = "bridge" | "fx" | "equity_pl" | "adjustment";
+export type SystemAccountGroupKey = "bridge" | "fx" | "equity_pl";
 
 export type CompanySide = "induk" | "anak";
 
@@ -66,15 +64,6 @@ export const SYSTEM_ACCOUNT_GROUPS = [
       "Tahun Berjalan adalah baris Neraca yang nilainya dihitung, tidak pernah " +
       "diposting.",
     icon: "calc",
-  },
-  {
-    key: "adjustment",
-    name: "Penyesuaian Open Item",
-    desc:
-      "Lawan posting Penyesuaian Open Item. Pendapatan dikredit saat posisi " +
-      "Partner didebit, Beban didebit saat posisi Partner dikredit, apa pun buku " +
-      "subjek yang disesuaikan.",
-    icon: "pen",
   },
 ] as const satisfies readonly SystemAccountGroup[];
 
@@ -146,26 +135,6 @@ export const SYSTEM_ACCOUNTS = [
     },
     help: "baris penyajian Neraca, tidak pernah diposting",
   },
-  {
-    key: "adjustment_income",
-    group: "adjustment",
-    icon: "pen",
-    name: {
-      induk: "Account Pendapatan Penyesuaian — Induk",
-      anak: "Account Pendapatan Penyesuaian — Anak",
-    },
-    help: "dikredit saat penyesuaian mendebit Partner",
-  },
-  {
-    key: "adjustment_expense",
-    group: "adjustment",
-    icon: "pen",
-    name: {
-      induk: "Account Beban Penyesuaian — Induk",
-      anak: "Account Beban Penyesuaian — Anak",
-    },
-    help: "didebit saat penyesuaian mengkredit Partner",
-  },
 ] as const satisfies readonly SystemAccountDef[];
 
 /** What each key names for one Company; unset reads as null. */
@@ -178,8 +147,6 @@ export const EMPTY_SYSTEM_ACCOUNTS: SystemAccountValues = {
   fx_revaluation: null,
   accumulated_pl: null,
   current_pl: null,
-  adjustment_income: null,
-  adjustment_expense: null,
 };
 
 export function isSystemAccountKey(key: string): key is SystemAccountKey {

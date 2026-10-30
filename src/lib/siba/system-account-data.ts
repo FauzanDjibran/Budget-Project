@@ -7,7 +7,6 @@ import {
   SYSTEM_ACCOUNTS,
   isSystemAccountKey,
   sideOf,
-  systemAccountDef,
   systemAccountName,
   type CompanySide,
   type SystemAccountKey,
@@ -115,18 +114,14 @@ export async function checkSystemAccountValue(
   }
   if (!account.is_postable) return "Account tersebut bukan account postable.";
   if (!account.is_active) return "Account tersebut non-aktif.";
-  // An adjustment's counter account must not be one a book already
-  // reconciles against: posted against a Piutang account it would move the
-  // General Ledger with no subject-book entry beside it — exactly the
-  // discrepancy the adjustment exists to avoid.
-  // The same holds for a revaluation's gain or loss: posted against a cash
-  // or Partner account it would restate one book through another.
-  if (systemAccountDef(key).group === "adjustment" || key === "fx_revaluation") {
+  // A revaluation's gain or loss posted against a cash or Partner account
+  // would restate one book through another.
+  if (key === "fx_revaluation") {
     const reasons = await controlAccountReasons(accountId);
     if (reasons.length) {
       return (
         `Account tersebut direkonsiliasi dengan ${reasons.join(", ")} dan tidak ` +
-        `dapat menjadi lawan posting ${key === "fx_revaluation" ? "Revaluasi Kurs" : "Penyesuaian Open Item"}.`
+        `dapat menjadi lawan posting Revaluasi Kurs.`
       );
     }
   }
@@ -180,16 +175,7 @@ export async function systemAccountIds(): Promise<Set<number>> {
     select: { account_key: true, account_id: true },
   });
   return new Set(
-    rows
-      // The adjustment pair is ordinary Profit & Loss: no book reconciles
-      // against it, and a manual journal moves its balance on to the real
-      // expense or income, which a control account would refuse.
-      .filter(
-        (r) =>
-          isSystemAccountKey(r.account_key) &&
-          systemAccountDef(r.account_key).group !== "adjustment"
-      )
-      .map((r) => r.account_id!)
+    rows.filter((r) => isSystemAccountKey(r.account_key)).map((r) => r.account_id!)
   );
 }
 

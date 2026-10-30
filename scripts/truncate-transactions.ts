@@ -17,10 +17,7 @@
  *   fin_cash_bank_transaction(_line)               Realisasi Budget
  *   fin_funding_request                            the intercompany bridge
  *   fin_cash_bank_transfer(_line)                  Cash Bank Transfer
- *   fin_item_adjustment(_line)                     Penyesuaian Open Item
  *   fin_item_conversion(_line, _line_item)         Pencairan Open Item
- *   fin_item_reclass(_line, _line_source,
- *                    _line_target)                 Reklasifikasi Open Item
  *   fin_cash_bank_revaluation(_layer)              Revaluasi Kurs
  *   acc_general_journal(_line)                     Jurnal Umum
  *   bud_budget                                     the plans
@@ -80,9 +77,7 @@ const DOCUMENT_ENTITY_KEYS = [
   "fin_cash_bank_transaction",
   "fin_funding_request",
   "fin_cash_bank_transfer",
-  "fin_item_adjustment",
   "fin_item_conversion",
-  "fin_item_reclass",
   "fin_cash_bank_revaluation",
   "acc_general_journal",
   "acc_journal",
@@ -112,15 +107,9 @@ async function main() {
     fin_cash_bank_transaction: await prisma.finCashBankTransaction.count(),
     fin_cash_bank_transfer_line: await prisma.finCashBankTransferLine.count(),
     fin_cash_bank_transfer: await prisma.finCashBankTransfer.count(),
-    fin_item_adjustment_line: await prisma.finItemAdjustmentLine.count(),
-    fin_item_adjustment: await prisma.finItemAdjustment.count(),
     fin_item_conversion_line_item: await prisma.finItemConversionLineItem.count(),
     fin_item_conversion_line: await prisma.finItemConversionLine.count(),
     fin_item_conversion: await prisma.finItemConversion.count(),
-    fin_item_reclass_line_source: await prisma.finItemReclassLineSource.count(),
-    fin_item_reclass_line_target: await prisma.finItemReclassLineTarget.count(),
-    fin_item_reclass_line: await prisma.finItemReclassLine.count(),
-    fin_item_reclass: await prisma.finItemReclass.count(),
     fin_cash_bank_revaluation_layer: await prisma.finCashBankRevaluationLayer.count(),
     fin_cash_bank_revaluation: await prisma.finCashBankRevaluation.count(),
     bud_budget: await prisma.budBudget.count(),
@@ -187,17 +176,9 @@ async function main() {
     await tx.finCashBankTransferLine.deleteMany();
     await tx.finCashBankTransfer.deleteMany();
 
-    await tx.finItemAdjustmentLine.deleteMany();
-    await tx.finItemAdjustment.deleteMany();
-
     await tx.finItemConversionLineItem.deleteMany();
     await tx.finItemConversionLine.deleteMany();
     await tx.finItemConversion.deleteMany();
-
-    await tx.finItemReclassLineSource.deleteMany();
-    await tx.finItemReclassLineTarget.deleteMany();
-    await tx.finItemReclassLine.deleteMany();
-    await tx.finItemReclass.deleteMany();
 
     await tx.finCashBankRevaluationLayer.deleteMany();
     await tx.finCashBankRevaluation.deleteMany();

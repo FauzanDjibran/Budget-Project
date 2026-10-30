@@ -352,10 +352,8 @@ describe("Arah is one field over two columns", () => {
 
     assert.equal(applies("keeps_book", { require_partner: true }), true);
     assert.equal(applies("keeps_book", { require_partner: false }), false);
-    for (const name of ["book_closing_label", "allows_item_adjustment"]) {
-      assert.equal(applies(name, { require_partner: true, keeps_book: true }), true, name);
-      assert.equal(applies(name, { require_partner: true, keeps_book: false }), false, name);
-    }
+    assert.equal(applies("book_closing_label", { require_partner: true, keeps_book: true }), true);
+    assert.equal(applies("book_closing_label", { require_partner: true, keeps_book: false }), false);
   });
 
   test("every seeded category round-trips through the one field", async () => {
@@ -405,13 +403,6 @@ describe("a book is a category's own statement", () => {
           require_partner: true, keeps_book: false, raises: "Out" },
       }),
       "a partner tag runs no way"
-    );
-    await assert.rejects(
-      prisma.sysBudgetCategory.create({
-        data: { ...base, category_code: `bcat.${FIXTURE_PREFIX}c3`, category_label: `${FIXTURE_PREFIX} C3`,
-          require_partner: true, keeps_book: false, allows_item_adjustment: true },
-      }),
-      "only a book may be adjusted"
     );
     const tag = await prisma.sysBudgetCategory.create({
       data: { ...base, category_code: `bcat.${FIXTURE_PREFIX}c4`, category_label: `${FIXTURE_PREFIX} C4`,

@@ -265,39 +265,6 @@ export const PERMISSIONS = [
   },
   { code: "ITEM_CONVERSION_CANCEL", name: "Batalkan Pencairan Open Item", module: "finance" },
 
-  // Reklasifikasi Open Item: moving value from one subject-book position to
-  // another with no cash — clearing a holding book once the money's place is
-  // known. Its own capabilities, because deciding where held money belongs is a
-  // review step, not something a cash clerk does by default.
-  { code: "ITEM_RECLASS_VIEW", name: "Lihat Reklasifikasi Open Item", module: "finance" },
-  { code: "ITEM_RECLASS_CREATE", name: "Tambah Reklasifikasi Open Item", module: "finance" },
-  { code: "ITEM_RECLASS_EDIT", name: "Ubah Reklasifikasi Open Item", module: "finance" },
-  {
-    code: "ITEM_RECLASS_POST",
-    name: "Post Reklasifikasi Open Item",
-    module: "finance",
-    description:
-      "Memindahkan nilai open item dari satu buku subjek ke buku atau Partner " +
-      "lain, dan mencatat Journal-nya. Tidak ada uang yang berpindah.",
-  },
-  { code: "ITEM_RECLASS_CANCEL", name: "Batalkan Reklasifikasi Open Item", module: "finance" },
-
-  // Penyesuaian Open Item: adjusting a Partner's standing position without
-  // cash. Its own capabilities, because writing a receivable down is an
-  // authority of its own — the one a cash clerk should not hold by default.
-  { code: "ITEM_ADJUSTMENT_VIEW", name: "Lihat Penyesuaian Open Item", module: "finance" },
-  { code: "ITEM_ADJUSTMENT_CREATE", name: "Tambah Penyesuaian Open Item", module: "finance" },
-  { code: "ITEM_ADJUSTMENT_EDIT", name: "Ubah Penyesuaian Open Item", module: "finance" },
-  {
-    code: "ITEM_ADJUSTMENT_POST",
-    name: "Post Penyesuaian Open Item",
-    module: "finance",
-    description:
-      "Menyesuaikan posisi Partner pada buku subjek dan mencatat Journal-nya. " +
-      "Tidak ada uang yang berpindah.",
-  },
-  { code: "ITEM_ADJUSTMENT_CANCEL", name: "Batalkan Penyesuaian Open Item", module: "finance" },
-
   // Revaluasi Kurs: restating a foreign Cash & Bank at a kurs somebody states.
   // Its own capabilities, because it collapses every rate layer of the
   // resource and books a gain or loss — a treasury decision, not a cash

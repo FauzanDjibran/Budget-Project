@@ -19,7 +19,7 @@
  * from (`injectClosedYear`).
  *
  * Posting itself: `applyPosting`,
- * `applyTransfer`, `confirmFundingRequest` and `applyItemAdjustment` write the Cash Bank Book, the
+ * `applyTransfer` and `confirmFundingRequest` write the Cash Bank Book, the
  * subject books, the journal and the rate layers together, inside one
  * transaction each. Inserting those rows directly would be faster and would
  * produce reports whose figures do not reconcile — which is worse than empty,
@@ -53,14 +53,8 @@ import { applyTransfer } from "@/lib/siba/transfer";
 import { nextTransferNo } from "@/lib/siba/transfer-rows";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
 import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
-import { adjustmentLineData, applyItemAdjustment, valueItemAdjustmentDraft } from "@/lib/siba/item-adjustment";
-import { checkItemAdjustmentHeader, checkItemAdjustmentLines } from "@/lib/siba/item-adjustment-check";
-import { nextItemAdjustmentNo } from "@/lib/siba/item-adjustment-rows";
-import { openSubledgerItems } from "@/lib/siba/subledger";
 import { applyConversion } from "@/lib/siba/item-conversion";
 import { nextConversionNo } from "@/lib/siba/item-conversion-rows";
-import { checkReclassHeader, checkReclassLines, nextReclassNo } from "@/lib/siba/item-reclass";
-import { applyReclass } from "@/lib/siba/item-reclass-post";
 import {
   applyRevaluation,
   checkRevaluationHeader,
@@ -287,7 +281,6 @@ const CHART: Group[] = [
       { name: "Hasil Investasi dari Cabang", partnerCategory: "Cabang" },
       { name: "Pendapatan Bunga Bank" },
       { name: "Pendapatan Lain-lain" },
-      // Where an adjustment's counter side lands when it is credited.
       { name: "Pendapatan Penyesuaian" },
     ],
   },
@@ -332,7 +325,6 @@ const CHART: Group[] = [
       // Where a Revaluasi Kurs states its gain or loss — kept apart from the
       // Selisih Kurs a settlement realises.
       { name: "Laba/Rugi Revaluasi Kurs" },
-      // Where an adjustment's counter side lands when it is debited.
       { name: "Beban Penyesuaian" },
     ],
   },
@@ -565,8 +557,7 @@ async function ensureForeignCurrency(actor: number): Promise<number> {
 
 /**
  * The settings that **decide** rather than prefill: where a funded
- * confirmation journals, where an FX difference lands, and where a
- * Penyesuaian Open Item's counter side posts.
+ * confirmation journals and where an FX difference lands.
  *
  * Without all four bridge accounts a Funding Request refuses by name, and
  * without the FX account a Pencairan does — so a showcase that skipped these
@@ -610,8 +601,6 @@ async function setDefaults(actor: number) {
         fx_revaluation: await accountId(company.id, "Laba/Rugi Revaluasi Kurs"),
         accumulated_pl: await accountId(company.id, "Laba Ditahan"),
         current_pl: await accountId(company.id, "Laba Rugi Tahun Berjalan"),
-        adjustment_income: await accountId(company.id, "Pendapatan Penyesuaian"),
-        adjustment_expense: await accountId(company.id, "Beban Penyesuaian"),
       },
       actor
     );
@@ -914,7 +903,6 @@ type BudgetSpec = {
   status: "Submitted" | "Approved" | "Open" | "Closed" | "Rejected" | "Cancelled";
 };
 
-
 async function insertBudgets(
   specs: BudgetSpec[],
   actor: number
@@ -1205,7 +1193,6 @@ async function post(docId: number | null, actor: number, what: string) {
   }
 }
 
-
 // ------------------------------------------------------------- the transfers
 //
 // The Company's own money moving between its own resources. A transfer settles
@@ -1423,116 +1410,6 @@ async function postConversion(spec: ConversionSpec, actor: number) {
   tally("pencairan open item");
 }
 
-
-// ------------------------------------------------------- the reclassifications
-//
-// Money realized into a Belum Teridentifikasi holding book, moved on once its
-// place is known. Checked by the module's own rules and posted through
-// `applyReclass`, so the showcase is a standing check on that path too.
-
-type ReclassSpec = {
-  date: string;
-  /** The source book and Partner, by label and name. */
-  book: string;
-  partner: string;
-  currency: "IDR" | "USD";
-  note: string;
-  lines: {
-    book: string;
-    partner: string;
-    description: string;
-    /** The Budget whose realization opened the source item. */
-    from: string;
-    amount: number;
-    /** Where the target settles: the Budget whose realization opened that item. */
-    settle?: string;
-  }[];
-};
-
-/** The item a Budget's realization opened — what a clerk would pick by name. */
-async function itemOpenedBy(budgetId: number): Promise<number> {
-  const line = await prisma.finCashBankTransactionLine.findFirst({
-    where: { source_doc_id: budgetId, opened_item_id: { not: null }, transaction: { status: "Posted" } },
-    select: { opened_item_id: true },
-  });
-  if (!line?.opened_item_id) throw new Error(`No open item was opened by Budget ${budgetId}.`);
-  return line.opened_item_id;
-}
-
-/** Drafts and posts one Reklasifikasi Open Item through `applyReclass`, refusing loudly. */
-async function postReclass(spec: ReclassSpec, budgets: Map<string, number>, actor: number) {
-  const already = await prisma.finItemReclass.findFirst({ where: { note: spec.note }, select: { id: true } });
-  if (already) return;
-
-  const categoryId = async (label: string) =>
-    (await prisma.sysBudgetCategory.findFirstOrThrow({ where: { category_label: label }, select: { id: true } })).id;
-  const partnerId = async (name: string) =>
-    (await prisma.mPartner.findFirstOrThrow({ where: { partner_name: name, company: { is_parent: true } }, select: { id: true } })).id;
-  const budget = (key: string) => {
-    const id = budgets.get(key);
-    if (!id) throw new Error(`No Budget "${key}" for "${spec.note}".`);
-    return id;
-  };
-  const currency = await prisma.refCurrency.findFirstOrThrow({
-    where: { currency_label: spec.currency },
-    select: { id: true },
-  });
-  const companyIds = (await prisma.sysCompany.findMany({ select: { id: true } })).map((c) => c.id);
-
-  const header = await checkReclassHeader(
-    { budget_category_id: await categoryId(spec.book), partner_id: await partnerId(spec.partner), currency_id: currency.id },
-    companyIds
-  );
-  if (!header.ok) throw new Error(`Reklasifikasi "${spec.note}" refused: ${Object.values(header.errors).join(" ")}`);
-
-  const input = [];
-  for (const l of spec.lines) {
-    input.push({
-      target_budget_category_id: await categoryId(l.book),
-      target_partner_id: await partnerId(l.partner),
-      description: l.description,
-      sources: [{ item_id: await itemOpenedBy(budget(l.from)), amount: l.amount }],
-      targets: l.settle ? [{ item_id: await itemOpenedBy(budget(l.settle)), amount: l.amount }] : [],
-    });
-  }
-  const checked = await checkReclassLines(header, input);
-  if (!checked.ok) throw new Error(`Reklasifikasi "${spec.note}" refused: ${checked.errors._lines}`);
-
-  const row = await prisma.finItemReclass.create({
-    data: {
-      reclass_no: await nextReclassNo(),
-      accounting_date: new Date(`${spec.date}T00:00:00Z`),
-      company_id: header.companyId,
-      budget_category_id: header.book.categoryId,
-      partner_id: header.partnerId,
-      currency_id: header.currencyId,
-      reclass_amount: checked.total,
-      note: spec.note,
-      status: "Draft",
-      created_by: actor,
-      lines: {
-        create: checked.lines.map((l, i) => ({
-          sequence_no: i + 1,
-          target_budget_category_id: l.targetBook.categoryId,
-          target_partner_id: l.targetPartnerId,
-          description: l.description,
-          amount: l.amount,
-          created_by: actor,
-          sources: { create: l.sources.map((s, k) => ({ sequence_no: k + 1, sub_ledger_balance_id: s.itemId, amount: s.amount, created_by: actor })) },
-          targets: { create: l.targets.map((t, k) => ({ sequence_no: k + 1, sub_ledger_balance_id: t.itemId, amount: t.amount, created_by: actor })) },
-        })),
-      },
-    },
-    select: { id: true },
-  });
-  await audit("fin_item_reclass", row.id, actor);
-  const result = await applyReclass(row.id, actor);
-  if (!result.ok) {
-    throw new Error(`Reklasifikasi "${spec.note}" refused: ${Object.values(result.errors).join(" ")}`);
-  }
-  tally("reklasifikasi open item");
-}
-
 // ------------------------------------------------------- the funding requests
 //
 // The anak holds no Cash & Bank at all (§10 rule 38), so its documents name a
@@ -1589,7 +1466,6 @@ async function fund(spec: FundingSpec, actor: number) {
   }
 }
 
-
 // -------------------------------------------------------- the manual journals
 //
 // Real accounting that is not a cash movement anybody could raise a Budget for
@@ -1605,7 +1481,6 @@ type ManualSpec = {
   post: boolean;
   lines: { account: string; debit?: number; credit?: number; description: string }[];
 };
-
 
 /** Writes one manual journal through the real engine, posting it when asked. */
 async function writeManualJournal(spec: ManualSpec, actor: number) {
@@ -1663,126 +1538,6 @@ async function writeManualJournal(spec: ManualSpec, actor: number) {
     }
   }
 }
-
-
-// ------------------------------------------------ penyesuaian open item
-//
-// An adjustment moves a Partner's standing position without cash (§10 rules
-// 97–102), so each one here lands on a position a document above already
-// opened: Fauzan's advance in Piutang, MR.X's setoran in
-// Hutang, PT. Delta Atsiri Prima's titipan. Each one names the oldest open
-// item that can take it — the script standing in for the user who would pick
-// it — and types its new value; the difference is a Penambahan or a
-// Pengurangan, like a Debit and a Credit Note. Posted ones go through
-// `applyItemAdjustment`, which writes the subject-book entries and the journal
-// together; a Draft and a Cancelled put the other two statuses on the register.
-
-type AdjustmentSpec = {
-  /** Which way the item should move, and by how much — the new value follows. */
-  effect: "Increase" | "Decrease";
-  book: "Piutang" | "Hutang" | "Titipan";
-  partner: string;
-  amount: number;
-  reference?: string;
-  /** This script's marker, as a document's note is elsewhere. */
-  note: string;
-  /** The Tanggal Akuntansi, `YYYY-MM-DD`. */
-  date: string;
-  status: "Posted" | "Draft" | "Cancelled";
-};
-
-
-/** One Penyesuaian Open Item, written as the form saves it and posted when its status says so. */
-async function writeAdjustment(spec: AdjustmentSpec, actor: number) {
-  const already = await prisma.finItemAdjustment.findFirst({
-    where: { note: spec.note },
-    select: { id: true },
-  });
-  if (already) return;
-
-  const idr = await prisma.refCurrency.findFirstOrThrow({
-    where: { currency_label: "IDR" },
-    select: { id: true },
-  });
-  const category = await prisma.sysBudgetCategory.findFirstOrThrow({
-    where: { category_label: spec.book },
-    select: { id: true },
-  });
-  const partner = await prisma.mPartner.findFirstOrThrow({
-    where: { partner_name: spec.partner, company: { is_parent: true } },
-    select: { id: true, company_id: true },
-  });
-
-  const header = await checkItemAdjustmentHeader(
-    {
-      budget_category_id: category.id,
-      partner_id: partner.id,
-      currency_id: idr.id,
-      exchange_rate: null,
-    },
-    [partner.company_id]
-  );
-  if (!header.ok) {
-    throw new Error(`Adjustment ${spec.note} refused: ${Object.values(header.errors).join(" ")}`);
-  }
-
-  // The oldest open item that can take the change, and the value it should
-  // hold after it.
-  const open = await openSubledgerItems([
-    { bookId: category.id, partnerId: partner.id, currencyId: idr.id },
-  ]);
-  const item = open.find((i) => spec.effect === "Increase" || i.remaining >= spec.amount);
-  if (!item) {
-    console.log(`  skipped adjustment "${spec.note}": ${spec.partner} has no open item in ${spec.book} that can take it`);
-    return;
-  }
-  const newAmount =
-    spec.effect === "Increase" ? item.remaining + spec.amount : item.remaining - spec.amount;
-  const checked = await checkItemAdjustmentLines(header, [
-    { item_id: item.id, new_amount: newAmount },
-  ]);
-  if (!checked.ok) {
-    throw new Error(`Adjustment ${spec.note} refused: ${Object.values(checked.errors).join(" ")}`);
-  }
-
-  const row = await prisma.$transaction(async (tx) => {
-    const created = await tx.finItemAdjustment.create({
-      data: {
-        adjustment_no: await nextItemAdjustmentNo(tx),
-        accounting_date: new Date(`${spec.date}T00:00:00Z`),
-        company_id: partner.company_id,
-        budget_category_id: category.id,
-        partner_id: partner.id,
-        currency_id: idr.id,
-        exchange_rate: null,
-        adjustment_amount: checked.total,
-        reference: spec.reference ?? null,
-        note: spec.note,
-        status: "Draft",
-        created_by: actor,
-        lines: { create: adjustmentLineData(checked.lines, actor) },
-      },
-      select: { id: true, adjustment_no: true },
-    });
-    await valueItemAdjustmentDraft(tx, created.id, header, checked.lines, actor);
-    return created;
-  });
-  await audit("fin_item_adjustment", row.id, actor);
-  tally("penyesuaian open item");
-
-  if (spec.status === "Posted") {
-    const posted = await applyItemAdjustment(row.id, actor);
-    if (!posted.ok) {
-      throw new Error(`Posting ${row.adjustment_no} refused: ${Object.values(posted.errors).join(" ")}`);
-    }
-  } else if (spec.status === "Cancelled") {
-    await prisma.finItemAdjustment.update({
-      where: { id: row.id },
-      data: { status: "Cancelled", updated_by: actor },
-    });
-  }
-}
-
 
 // ---------------------------------------------------------- revaluasi kurs
 //
@@ -1850,7 +1605,6 @@ async function writeRevaluation(spec: RevaluationSpec, actor: number) {
   }
 }
 
-
 // ------------------------------------------------------------- the year
 //
 // The year is a plan: the Budgets it held, and the events that happened to
@@ -1893,17 +1647,13 @@ type Event =
       confirmFrom?: string;
     }
   | { kind: "journal"; date: string; spec: ManualSpec }
-  | { kind: "adjustment"; date: string; spec: AdjustmentSpec }
   | { kind: "conversion"; date: string; spec: ConversionSpec }
-  | { kind: "reclass"; date: string; spec: ReclassSpec }
   | { kind: "revaluation"; date: string; spec: RevaluationSpec };
 
 type YearPlan = { year: number; budgets: BudgetSpec[]; events: Event[] };
 
 const transfer = (spec: TransferSpec, draft = false): Event => ({ kind: "transfer", date: spec.date, spec, draft });
 const journal = (spec: ManualSpec): Event => ({ kind: "journal", date: spec.date, spec });
-const adjustment = (spec: AdjustmentSpec): Event => ({ kind: "adjustment", date: spec.date, spec });
-const reclass = (spec: ReclassSpec): Event => ({ kind: "reclass", date: spec.date, spec });
 const revaluation = (spec: RevaluationSpec): Event => ({ kind: "revaluation", date: spec.date, spec });
 
 /**
@@ -1948,10 +1698,8 @@ function currentYear(): YearPlan {
       transfer({ purpose: "Transfer", from: "BCA-IDR", currency: "IDR", rate: 1, date: day(1, 12), note: `Pengisian kas dan rekening payroll semester I ${YEAR}`, lines: [{ to: "KAS", amount: 50_000_000 }, { to: "MDR-IDR", amount: 200_000_000 }] }),
       { kind: "cbt", date: day(1, 20), purpose: "BYA_OUT", cashBank: "BCA-IDR", note: "Termin II sesuai berita acara serah terima", lines: [{ budget: "gudang", amount: 185_000_000 }] },
       { kind: "cbt", date: day(1, 22), purpose: "PTG_KRY_OUT", cashBank: "MDR-IDR", partner: "Fauzan", note: "Advance perjalanan dinas, dipertanggungjawabkan setelah kembali", lines: [{ budget: "advance", amount: 10_000_000 }] },
-      adjustment({ effect: "Increase", book: "Piutang", partner: "Fauzan", amount: 1_250_000, reference: "SPD-SBY-0142", note: "Kelebihan klaim uang harian perjalanan dinas Surabaya, dibebankan kembali", date: day(2, 3), status: "Posted" }),
       // Taken back, so Cancelled is on the screen too.
       { kind: "cbt", date: day(2, 10), purpose: "AST_OUT", cashBank: "BCA-IDR", note: "Dibatalkan — unit tidak tersedia, pengadaan diulang", lines: [{ budget: "forklift", amount: 340_000_000 }], status: "Cancelled" },
-      adjustment({ effect: "Decrease", book: "Hutang", partner: "MR.X", amount: 2_000_000, note: "Dibatalkan — selisih sudah diselesaikan lewat transfer", date: day(2, 20), status: "Cancelled" }),
       // Still waiting, so the induk's queue is not empty.
       { kind: "funding", date: day(2, 27), purpose: "BYA_OUT", note: "Operasional gudang Februari, menunggu konfirmasi induk", budget: "operasional", amount: 65_000_000 },
       // Confirmed. The anak's Purpose keeps a subject book, so its own Piutang
@@ -1959,10 +1707,8 @@ function currentYear(): YearPlan {
       // Companies goes to the bridge accounts (§10 rule 61).
       { kind: "funding", date: day(3, 2), purpose: "PTG_KRY_OUT", partner: "Karyawan A", note: "Advance operasional cabang, dipertanggungjawabkan akhir bulan", budget: "advanceanak", amount: 15_000_000, confirmFrom: "BCA-IDR" },
       { kind: "cbt", date: day(3, 3), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: "Pembayaran pemasok Singapura, invoice SG-2291", lines: [{ budget: "sparepart", amount: 5_000 }] },
-      adjustment({ effect: "Decrease", book: "Piutang", partner: "Fauzan", amount: 350_000, note: "Biaya tol dan parkir disetujui, mengurangi advance", date: day(3, 10), status: "Draft" }),
       // A Draft, left as one: it has moved nothing, which is what Draft means.
       { kind: "cbt", date: day(3, 20), purpose: "PRV_SH_OUT", cashBank: "KAS", partner: "MR.X", note: "Menunggu konfirmasi jadwal pencairan", lines: [{ budget: "prive", amount: 30_000_000 }], status: "Draft" },
-      adjustment({ effect: "Increase", book: "Hutang", partner: "MR.X", amount: 7_500_000, reference: `SK-MRX-03/${YEAR}`, note: "Kompensasi atas setoran modal kerja kuartal I", date: day(3, 31), status: "Posted" }),
       // Left as a Draft, because Draft is the one status only a manual journal
       // ever has — and the reports must be seen leaving it out.
       journal({
@@ -1985,28 +1731,14 @@ function currentYear(): YearPlan {
       // layer bought before its Titipan arrived, and both legs go at 16.250 —
       // one Selisih Kurs line for the gap between the two carrying rates.
       { kind: "conversion", date: day(9, 10), spec: { date: day(9, 10), from: "BCA-USD", layerBy: day(9, 2), book: "Titipan", partner: "MR.X", rate: 16_250, note: "Pencairan sebagian titipan MR.X ke rupiah", lines: [{ to: "BCA-IDR", amount: 10_000 }] } },
-      // Held money, and where it turned out to belong. Rp 50 juta arrived
-      // with no berita; two weeks later it is identified as Rp 30 juta of
-      // MR.X's working capital and a Rp 15 juta deposit from
-      // PT. Delta Atsiri Prima — the last Rp 5 juta is still held.
+      // Held money: Rp 50 juta arrived with no berita and waits in the
+      // holding book until a Journal moves it to where it belongs.
       { kind: "cbt", date: day(6, 5), purpose: "PBT_IN", cashBank: "BCA-IDR", partner: "Lainnya", note: "Transfer masuk tanpa berita, ditampung sampai pengirim teridentifikasi", lines: [{ budget: "terimabt", amount: 50_000_000 }] },
-      reclass({ date: day(6, 19), book: "Penerimaan Belum Teridentifikasi", partner: "Lainnya", currency: "IDR", note: "Identifikasi transfer masuk 5 Juni berdasarkan konfirmasi pengirim", lines: [
-        { book: "Hutang", partner: "MR.X", description: "Tambahan setoran modal kerja MR.X", from: "terimabt", amount: 30_000_000 },
-        { book: "Titipan", partner: "PT. Delta Atsiri Prima", description: "Titipan dana pembelian armada PT. Delta Atsiri Prima", from: "terimabt", amount: 15_000_000 },
-      ] }),
-      // A dollar loan to MR.X, and an unexplained dollar receipt that turns
-      // out to be its repayment: the held receipt settles the Piutang, and the
-      // gap between the two kurs is a realized difference of its own.
+      // A dollar loan to MR.X, and an unexplained dollar receipt held beside it.
       { kind: "cbt", date: day(5, 20), purpose: "PTG_SH_OUT", cashBank: "BCA-USD", currency: "USD", partner: "MR.X", note: "Pinjaman dolar MR.X untuk uang muka impor", lines: [{ budget: "pinjamanadib", amount: 2_000 }] },
       { kind: "cbt", date: day(6, 16), purpose: "PBT_IN", cashBank: "BCA-USD", currency: "USD", rate: 16_300, partner: "Lainnya", note: "Transfer masuk USD dari bank koresponden tanpa keterangan", lines: [{ budget: "terimabtusd", amount: 2_000 }] },
-      reclass({ date: day(6, 30), book: "Penerimaan Belum Teridentifikasi", partner: "Lainnya", currency: "USD", note: "Transfer USD 16 Juni teridentifikasi sebagai pelunasan pinjaman MR.X", lines: [
-        { book: "Piutang", partner: "MR.X", description: "Pelunasan pinjaman dolar MR.X", from: "terimabtusd", amount: 2_000, settle: "pinjamanadib" },
-      ] }),
-      // A bank debit with no document, later owned up to as a staff advance.
+      // A bank debit with no document, held until it is explained.
       { kind: "cbt", date: day(7, 2), purpose: "PeBT_OUT", cashBank: "BCA-IDR", partner: "Lainnya", note: "Debet rekening BCA tanpa dokumen pendukung, ditampung", lines: [{ budget: "bayarbt", amount: 12_500_000 }] },
-      reclass({ date: day(7, 21), book: "Pengeluaran Belum Teridentifikasi", partner: "Lainnya", currency: "IDR", note: "Debet BCA 2 Juli teridentifikasi sebagai kasbon Fauzan", lines: [
-        { book: "Piutang", partner: "Fauzan", description: "Kasbon Fauzan, dipotong dari gaji", from: "bayarbt", amount: 12_500_000 },
-      ] }),
       // Quarter end: BCA USD's layers, bought between 15.750 and 16.300, are
       // restated at the bank's closing kurs and become one layer. Mandiri USD
       // waits for treasury to confirm its kurs.
@@ -2106,14 +1838,8 @@ async function runPlan(plan: YearPlan, actor: number) {
       case "journal":
         await writeManualJournal(e.spec, actor);
         break;
-      case "adjustment":
-        await writeAdjustment(e.spec, actor);
-        break;
       case "conversion":
         await postConversion(e.spec, actor);
-        break;
-      case "reclass":
-        await postReclass(e.spec, budgets, actor);
         break;
       case "revaluation":
         await writeRevaluation(e.spec, actor);
@@ -2222,8 +1948,8 @@ async function nextCode(prefix: string, existing: string[]): Promise<string> {
  * The categories this year uses beyond the six the system seed carries
  * (Piutang, Hutang, their (N) partner tags, Biaya, Asset), created as a user
  * would on Pengaturan › Klasifikasi: label, note, directions, Partner
- * Categories admitted, the direction that raises the book, and whether a
- * Penyesuaian Open Item may adjust it. Reused where it already exists.
+ * Categories admitted, and the direction that raises the book. Reused where
+ * it already exists.
  */
 const SHOWCASE_CATEGORIES: [
   label: string,
@@ -2231,16 +1957,15 @@ const SHOWCASE_CATEGORIES: [
   directions: ("In" | "Out")[],
   partnerCategories: string[],
   raises: "In" | "Out",
-  allowsItemAdjustment: boolean,
 ][] = [
-  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali.", ["In", "Out"], ["Cabang", "Stakeholder"], "In", true],
-  ["Prive", "Pengambilan oleh pemilik.", ["In", "Out"], ["Stakeholder"], "Out", false],
-  ["Investasi", "Penyertaan dana ke entitas lain, hanya arah Pengeluaran.", ["Out"], ["Cabang"], "Out", false],
-  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi, hanya arah Penerimaan.", ["In"], ["Cabang"], "In", false],
+  ["Titipan", "Dana yang dititipkan pihak lain untuk ditarik kembali.", ["In", "Out"], ["Cabang", "Stakeholder"], "In"],
+  ["Prive", "Pengambilan oleh pemilik.", ["In", "Out"], ["Stakeholder"], "Out"],
+  ["Investasi", "Penyertaan dana ke entitas lain, hanya arah Pengeluaran.", ["Out"], ["Cabang"], "Out"],
+  ["Hasil Investasi", "Pendapatan dari entitas yang diinvestasi, hanya arah Penerimaan.", ["In"], ["Cabang"], "In"],
   // The two holding books: money whose place is not known yet waits here until
-  // a Reklasifikasi Open Item moves it to the book it belongs in.
-  ["Penerimaan Belum Teridentifikasi", "Penerimaan yang belum diketahui peruntukannya, ditampung sampai direklasifikasi.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "In", false],
-  ["Pengeluaran Belum Teridentifikasi", "Pengeluaran yang belum diketahui peruntukannya, ditampung sampai direklasifikasi.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "Out", false],
+  // a Journal moves it to the book it belongs in.
+  ["Penerimaan Belum Teridentifikasi", "Penerimaan yang belum diketahui peruntukannya, ditampung sampai direklasifikasi.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "In"],
+  ["Pengeluaran Belum Teridentifikasi", "Pengeluaran yang belum diketahui peruntukannya, ditampung sampai direklasifikasi.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "Out"],
 ];
 
 async function insertBudgetCategories(actor: number) {
@@ -2250,7 +1975,7 @@ async function insertBudgetCategories(actor: number) {
       c.id,
     ])
   );
-  for (const [label, note, directions, partners, raises, allowsItemAdjustment] of SHOWCASE_CATEGORIES) {
+  for (const [label, note, directions, partners, raises] of SHOWCASE_CATEGORIES) {
     if (await prisma.sysBudgetCategory.findFirst({ where: { category_label: label }, select: { id: true } })) continue;
     const codes = await prisma.sysBudgetCategory.findMany({ select: { category_code: true } });
     const row = await prisma.sysBudgetCategory.create({
@@ -2263,7 +1988,6 @@ async function insertBudgetCategories(actor: number) {
         require_partner: true,
         keeps_book: true,
         raises,
-        allows_item_adjustment: allowsItemAdjustment,
         note,
         created_by: actor,
       },

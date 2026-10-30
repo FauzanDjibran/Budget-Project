@@ -165,15 +165,9 @@ const DOC_TYPES: [label: string, table: string][] = [
   // the `CLS-` entry names the year it closed as its source, which is what
   // lets a reader get from a journal line back to the close that wrote it.
   ["Fiscal Year", "acc_fiscal_year"],
-  // A Penyesuaian Open Item writes subject-book entries and a journal, and
-  // each names the document as its source.
-  ["Penyesuaian Open Item", "fin_item_adjustment"],
   // A Pencairan Open Item writes both books, the subject book and a journal,
   // and every one of them names the document as its source.
   ["Pencairan Open Item", "fin_item_conversion"],
-  // A Reklasifikasi Open Item writes two subject-book positions and a journal,
-  // and each names the document as its source.
-  ["Reklasifikasi Open Item", "fin_item_reclass"],
   // A Revaluasi Kurs writes a Cash Bank Book entry, opens a layer and writes a
   // journal, and each names the document as its source.
   ["Revaluasi Kurs", "fin_cash_bank_revaluation"],
@@ -218,24 +212,17 @@ const BUDGET_CATEGORIES: [
    * a category with Partner Categories and no `raises` is a partner tag.
    */
   raises: "In" | "Out" | null,
-  /**
-   * Whether a Penyesuaian Open Item may adjust this category's book: on for the
-   * payable and the receivable, which one Profit & Loss counter account fixes
-   * correctly. Written on create only: afterwards the flag is the category's
-   * own, set on its form.
-   */
-  allowsItemAdjustment: boolean,
 ][] = [
   // Seeded in this order (the user's, 29/10/2026): the two books, the same
   // two as partner tags — a Partner on the journal, no open item — then the
   // two categories that name no Partner. Anything else (Titipan, Prive,
   // Investasi, a holding book) is the user's to create through the GUI.
-  ["Piutang", "Hak tagih kepada pihak lain, dicatat per open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "Out", true],
-  ["Hutang", "Kewajiban kepada pihak lain, dicatat per open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "In", true],
-  ["Piutang (N)", "Piutang tanpa Buku Subjek: journal menyebut Partner, tanpa open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], null, false],
-  ["Hutang (N)", "Hutang tanpa Buku Subjek: journal menyebut Partner, tanpa open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], null, false],
-  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null, false],
-  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null, false],
+  ["Piutang", "Hak tagih kepada pihak lain, dicatat per open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "Out"],
+  ["Hutang", "Kewajiban kepada pihak lain, dicatat per open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], "In"],
+  ["Piutang (N)", "Piutang tanpa Buku Subjek: journal menyebut Partner, tanpa open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], null],
+  ["Hutang (N)", "Hutang tanpa Buku Subjek: journal menyebut Partner, tanpa open item. Wajib Partner: Cabang, Karyawan, atau Stakeholder.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder"], null],
+  ["Biaya", "Beban umum. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null],
+  ["Asset", "Pembelian aset tetap. Tanpa Partner, hanya arah Pengeluaran.", ["Out"], [], null],
 ];
 
 const PARTNER_CATEGORIES: [label: string, name: string, note: string][] = [
@@ -706,7 +693,7 @@ async function ensureReferenceData(
     tally("document types", made);
   }
 
-  for (const [label, note, directions, _partners, raises, allowsItemAdjustment] of BUDGET_CATEGORIES) {
+  for (const [label, note, directions, _partners, raises] of BUDGET_CATEGORIES) {
     const made = await create(
       () => prisma.sysBudgetCategory.findFirst({ where: { category_label: label } }),
       async () =>
@@ -724,7 +711,6 @@ async function ensureReferenceData(
             require_partner: _partners.length > 0,
             keeps_book: raises != null,
             raises,
-            allows_item_adjustment: allowsItemAdjustment,
             note,
             ...audit,
           },

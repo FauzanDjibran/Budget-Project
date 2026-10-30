@@ -204,7 +204,6 @@ export async function makeBudgetCategory(options: {
   partnerCategoryLabels?: string[];
   /** Set for a book; null or absent for a partner tag or a category naming no Partner. */
   raises?: "In" | "Out" | null;
-  allowsItemAdjustment?: boolean;
 }): Promise<number> {
   const actor = await systemUserId();
   const partners = options.partnerCategoryLabels ?? [];
@@ -219,7 +218,6 @@ export async function makeBudgetCategory(options: {
       require_partner: partners.length > 0,
       keeps_book: options.raises != null,
       raises: options.raises ?? null,
-      allows_item_adjustment: options.allowsItemAdjustment ?? false,
       created_by: actor,
     },
     select: { id: true },
@@ -630,38 +628,8 @@ export async function cleanupFixtures(): Promise<void> {
   const fixturePartners = {
     partner: { partner_label: { startsWith: FIXTURE_PREFIX } },
   };
-  // A Penyesuaian Open Item names its Partner, so one a suite left behind
-  // would block the Partner's removal below.
-  const adjustments = (
-    await prisma.finItemAdjustment.findMany({ where: fixturePartners, select: { id: true } })
-  ).map((n) => n.id);
-  if (adjustments.length) {
-    await prisma.finItemAdjustmentLine.deleteMany({ where: { adjustment_id: { in: adjustments } } });
-    await prisma.auditLog.deleteMany({
-      where: { entity_key: "fin_item_adjustment", row_id: { in: adjustments } },
-    });
-    await prisma.finItemAdjustment.deleteMany({ where: { id: { in: adjustments } } });
-  }
   // A Pencairan Open Item names its Partner as well.
   await prisma.finItemConversion.deleteMany({ where: fixturePartners });
-  // A Reklasifikasi Open Item names one on its header and one on each line.
-  const reclasses = (
-    await prisma.finItemReclass.findMany({
-      where: {
-        OR: [
-          fixturePartners,
-          { lines: { some: { target_partner: { partner_label: { startsWith: FIXTURE_PREFIX } } } } },
-        ],
-      },
-      select: { id: true },
-    })
-  ).map((r) => r.id);
-  if (reclasses.length) {
-    await prisma.auditLog.deleteMany({
-      where: { entity_key: "fin_item_reclass", row_id: { in: reclasses } },
-    });
-    await prisma.finItemReclass.deleteMany({ where: { id: { in: reclasses } } });
-  }
   // Entries first: each names the open item it moved.
   await prisma.subLedger.deleteMany({ where: fixturePartners });
   await prisma.subLedgerBalance.deleteMany({ where: fixturePartners });

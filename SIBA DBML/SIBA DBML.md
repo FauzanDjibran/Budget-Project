@@ -245,15 +245,6 @@ table sys_budget_category {
   book_icon                   varchar(255)
   book_closing_label          varchar(255)
 
-  // Whether a Penyesuaian Open Item may adjust this category's subject book.
-  // Stored rather than inferred: the counter side is one Profit & Loss account
-  // per journal side, which fixes a deposit, a payable or a receivable
-  // correctly and would book income or expense against owner drawings or an
-  // investment's own return. Seeded on for Titipan, Hutang and Piutang.
-  // CHECK sys_budget_category_item_adjustment_needs_book: only a category that
-  // keeps a book (keeps_book) may carry it.
-  allows_item_adjustment      boolean [not null, default: false]
-
   note                        text
 
   status                      enum('Active', 'Inactive') [not null, default: 'Active']
@@ -560,8 +551,8 @@ table sub_ledger {
   posted_at                   timestamptz [not null, default: `transaction_timestamp()`]
   // Conversion: a Pencairan Open Item — a foreign item released at its own
   // kurs, and the base-currency item it became, opened in the same book.
-  // Reclass: a Reklasifikasi Open Item — an item released out of one position,
-  // and the item it became or settled in another book or for another Partner.
+  // Reclass: written by the retired Reklasifikasi Open Item; nothing writes
+  // it now, and the value stays for the enum's sake.
   entry_type                  enum('Opening', 'Transaction', 'Adjustment', 'Conversion', 'Reclass') [not null]
 
   // Signed in the book's own direction: positive raises the position. The cash
@@ -788,8 +779,8 @@ table acc_budget_category_account {
 
 // Mapping Account System: per Company, the account a posting engine posts a
 // role to — bridge_ar / bridge_ap (Funding Request), fx (Selisih Kurs),
-// accumulated_pl / current_pl (closing and the Neraca), adjustment_income /
-// adjustment_expense (the Penyesuaian Open Item counter side). Keys are declared in `system-accounts.ts`;
+// accumulated_pl / current_pl (closing and the Neraca), fx_revaluation
+// (Revaluasi Kurs). Keys are declared in `system-accounts.ts`;
 // a row with an unknown key is ignored. Moved out of sys_setting, where each
 // was a text key naming its Company, so the account is now a real foreign key.
 table acc_system_account {
@@ -1292,8 +1283,8 @@ table fin_cash_bank_transaction_line {
   fx_difference               decimal(18,2) [not null, default: 0]
 
   // The open item the line opened where it raised a subject-book position
-  // (sub_ledger_balance.id, plain id) — how a Budget follows its money on, e.g.
-  // into a Reklasifikasi Open Item. Null where the line lowered a position,
+  // (sub_ledger_balance.id, plain id) — how a Budget follows its money on.
+  // Null where the line lowered a position,
   // kept no book, or was posted before the column existed (not backfilled).
   opened_item_id              int
 
@@ -1540,156 +1531,6 @@ table fin_item_conversion_line_item {
   }
 }
 
-// RECLASSIFICATION — REKLASIFIKASI OPEN ITEM: value moved out of one
-// subject-book position (book x Partner x currency) into another — another
-// book, another Partner, or both — with NO cash moving. Built to clear the two
-// Belum Teridentifikasi holding books once the money's place is known, and
-// open to any book to any book: a category that names a Partner is all a book
-// is. Each line names a target; the target is posted as if the original
-// movement had been classified into it. A target running the same way OPENS one
-// item per source item at that item's own kurs and base (no difference can
-// arise); one running the other way has items SETTLED, chosen by the user, and
-// each settled item states its own FX difference on its own journal line. It
-// reclassifies items in the books, never a Budget (rule 26).
-table fin_item_reclass {
-  id                          int [pk, increment, not null]
-
-  // RKL-0001.
-  reclass_no                  varchar(255) [not null, unique]
-  // Chosen on the draft, any day up to today; Post dates everything by it.
-  accounting_date             date
-  posted_at                   timestamptz
-
-  // The source Partner's Company, derived rather than picked.
-  company_id                  int [not null, ref : > sys_company.id]
-  // The source position: one book (a Budget Category), one Partner, one
-  // currency. Every target is in the same currency.
-  budget_category_id          int [not null, ref : > sys_budget_category.id]
-  partner_id                  int [not null, ref : > m_partner.id]
-  currency_id                 int [not null, ref : > ref_currency.id]
-
-  // Sum of the lines.
-  reclass_amount              decimal(18,2) [not null]
-  // What the source items released, in base. Written at Post.
-  reclass_base_amount         decimal(18,2) [not null, default: 0]
-  // Sum of every settled target item's difference, signed as a gain.
-  // Informational — each is journalled on its own line. Written at Post.
-  fx_difference               decimal(18,2) [not null, default: 0]
-
-  note                        text
-
-  status                      enum('Draft', 'Pending', 'Posted', 'Cancelled') [not null, default: 'Draft']
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    company_id
-    partner_id
-    status
-  }
-}
-
-// One target, and the source items it takes. A source can be split across
-// lines — part Hutang, part Titipan.
-table fin_item_reclass_line {
-  id                          int [pk, increment, not null]
-
-  reclass_id                  int [not null, ref : > fin_item_reclass.id]
-  sequence_no                 int [not null]
-
-  // A category that keeps a book, and a Partner it admits. Never the source
-  // position itself.
-  target_budget_category_id   int [not null, ref : > sys_budget_category.id]
-  target_partner_id           int [not null, ref : > m_partner.id]
-
-  // Why the value moved; the note on what the line writes.
-  description                 text
-
-  // > 0 (CHECK); the sum of the line's source items.
-  amount                      decimal(18,2) [not null]
-  // Written at Post: what the source items released, and the sum of the
-  // settled target items' differences (zero where the target opens items).
-  released_base_amount        decimal(18,2) [not null, default: 0]
-  fx_difference               decimal(18,2) [not null, default: 0]
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    (reclass_id, sequence_no) [unique]
-    target_partner_id
-  }
-}
-
-// One source item a line moves, chosen and stated by the user.
-table fin_item_reclass_line_source {
-  id                          int [pk, increment, not null]
-
-  line_id                     int [not null, ref : > fin_item_reclass_line.id]
-  sequence_no                 int [not null]
-  // sub_ledger_balance.id — a plain id: the item is the subject book's.
-  sub_ledger_balance_id       int [not null]
-
-  // > 0 (CHECK), never more than the item holds across the document.
-  amount                      decimal(18,2) [not null]
-  // Written at Post: what the item released at its own kurs, and the target
-  // item it became where the target opens items — the clearing link from the
-  // held item to where it went (sub_ledger_balance.id, plain id).
-  released_base_amount        decimal(18,2) [not null, default: 0]
-  opened_item_id              int
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    (line_id, sub_ledger_balance_id) [unique]
-    (line_id, sequence_no) [unique]
-    sub_ledger_balance_id
-    opened_item_id
-  }
-}
-
-// One target item a line settles, where the target book runs the other way.
-// A line's target amounts add up to its source amount exactly.
-table fin_item_reclass_line_target {
-  id                          int [pk, increment, not null]
-
-  line_id                     int [not null, ref : > fin_item_reclass_line.id]
-  sequence_no                 int [not null]
-  // sub_ledger_balance.id — a plain id.
-  sub_ledger_balance_id       int [not null]
-
-  // > 0 (CHECK), never more than the item holds across the document.
-  amount                      decimal(18,2) [not null]
-  // Written at Post: this item's share of what the line's source items
-  // released (a line's shares add up to its released_base_amount), what the
-  // item released at its own kurs, and the gap, signed as a gain.
-  allocated_base_amount       decimal(18,2) [not null, default: 0]
-  settlement_base_amount      decimal(18,2) [not null, default: 0]
-  fx_difference               decimal(18,2) [not null, default: 0]
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    (line_id, sub_ledger_balance_id) [unique]
-    (line_id, sequence_no) [unique]
-    sub_ledger_balance_id
-  }
-}
 
 table fin_funding_request {
   id                          int [pk, increment, not null]
@@ -1726,125 +1567,6 @@ table fin_funding_request {
   indexes {
     status
     transaction_id
-  }
-}
-
-//----------------------------------
-// Penyesuaian Open Item Table
-//----------------------------------
-
-// The adjustment document for a Partner's standing position in a subject book.
-// It replaced Debit / Credit Note (migration 20261015090000_item_adjustment
-// renamed fin_dncn in place); notes posted before keep their DN- / CN-
-// numbers. No cash moves: Post writes Adjustment entries in sub_ledger and one
-// balanced journal, in one transaction, and touches no Cash Bank Book, no rate
-// layer and no Budget.
-//
-// It changes existing open items of one position (book x Partner x currency)
-// and never opens one — what mainstream ERP calls a Debit Note (Penambahan,
-// Increase) and a Credit Note (Pengurangan, Decrease) against an invoice; SIBA
-// keeps no invoice, so the item is what it references. Every line names its
-// items, each for the amount the user stated, and each moves at its own kurs as
-// a new ledger line on the same item, so no FX difference arises and no kurs
-// is typed. Only an Open item may be adjusted. Which side of the journal that is follows from the
-// book's own `raises`. The counter side is the Company's Pendapatan
-// Penyesuaian account when credited, Beban Penyesuaian when debited.
-//
-// Valued when the draft is saved and again at Post, under a transaction-scoped
-// advisory lock on the position.
-
-table fin_item_adjustment {
-  id                          int [pk, increment, not null]
-
-  // PYO-0001; DN- / CN- for documents posted as Debit / Credit Notes.
-  adjustment_no               varchar(255) [not null, unique]
-
-  // accounting_date is chosen on the draft, up to today, and dates what Post
-  // writes; posted_at stays null until Post runs.
-  accounting_date             date
-  posted_at                   timestamptz
-
-  // The Partner's Company, derived rather than picked.
-  company_id                  int [not null, ref : > sys_company.id]
-
-  // The book: a Budget Category carrying allows_item_adjustment.
-  budget_category_id          int [not null, ref : > sys_budget_category.id]
-
-  partner_id                  int [not null, ref : > m_partner.id]
-
-  // The position's currency.
-  currency_id                 int [not null, ref : > ref_currency.id]
-
-  // Null: every item moves at its own kurs. Documents posted while a raise
-  // opened a new item at a typed kurs keep the 1 they carried.
-  exchange_rate               decimal(18,6)
-
-  // The net change: what the lines raise less what they lower, so negative
-  // when the document lowers the position on balance. The same in base,
-  // valued when the draft is saved and again at Post.
-  adjustment_amount           decimal(18,2) [not null]
-  adjustment_base_amount      decimal(18,2) [not null, default: 0]
-
-  // The counterparty's own document number, where there is one.
-  reference                   varchar(255)
-
-  note                        text
-
-  status                      enum('Draft', 'Pending', 'Posted', 'Cancelled') [not null, default: 'Draft']
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    company_id
-    partner_id
-    status
-  }
-}
-
-// One reason, and the open items it adjusts. The journal writes a Partner line
-// and a counter line per document line, so the General Ledger reads back to the
-// reason. The amount is the sum of the line's items.
-table fin_item_adjustment_line {
-  id                          int [pk, increment, not null]
-
-  adjustment_id               int [not null, ref : > fin_item_adjustment.id]
-
-  sequence_no                 int [not null]
-
-  // Written by the system — "Penambahan USD 200,00 atas SBI-0012".
-  description                 varchar(255) [not null]
-
-  // The item adjusted. A plain id: the item belongs to the subject-book
-  // module. Null only on documents posted while a raise opened a new item.
-  sub_ledger_balance_id       int
-
-  // The sign of the difference, never chosen.
-  effect                      enum('Increase', 'Decrease') [not null]
-
-  // What the item held when the draft was saved, and the value typed for it.
-  // Post refuses an item that no longer holds balance_before. Null on
-  // documents posted before a line was stated as a new value.
-  balance_before              decimal(18,2)
-  new_amount                  decimal(18,2)
-
-  // The difference, unsigned; effect says which way.
-  amount                      decimal(18,2) [not null]
-  // At the item's own kurs.
-  base_amount                 decimal(18,2) [not null, default: 0]
-
-  created_by                  int [not null]
-  updated_by                  int
-
-  created_at                  timestamptz [not null, default: `transaction_timestamp()`]
-  updated_at                  timestamptz [not null, default: `transaction_timestamp()`]
-
-  indexes {
-    (adjustment_id, sequence_no) [unique]
-    sub_ledger_balance_id
   }
 }
 

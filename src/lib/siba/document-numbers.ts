@@ -3,9 +3,7 @@ import "server-only";
 import { documentNumbers as transaction } from "./finance";
 import { documentNumbers as funding } from "./funding";
 import { documentNumbers as transfer } from "./transfer";
-import { documentNumbers as adjustment } from "./item-adjustment";
 import { documentNumbers as conversion } from "./item-conversion";
-import { documentNumbers as reclass } from "./item-reclass";
 import { documentNumbers as revaluation } from "./cash-bank-revaluation";
 import { generalJournalNumbersByIds } from "./general-journal";
 
@@ -18,9 +16,7 @@ const OWNERS: Record<string, (ids: number[]) => Promise<Map<number, string>>> = 
   fin_cash_bank_transaction: transaction,
   fin_funding_request: funding,
   fin_cash_bank_transfer: transfer,
-  fin_item_adjustment: adjustment,
   fin_item_conversion: conversion,
-  fin_item_reclass: reclass,
   fin_cash_bank_revaluation: revaluation,
   acc_general_journal: generalJournalNumbersByIds,
 };

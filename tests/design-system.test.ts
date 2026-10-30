@@ -519,7 +519,6 @@ describe("a header's buttons sit where the user last left them", () => {
     for (const rel of [
       "src/components/budget/budget-form.tsx",
       "src/components/finance/transaction-form.tsx",
-      "src/components/finance/item-adjustment-form.tsx",
       "src/components/finance/revaluation-form.tsx",
     ]) {
       const text = code(files.find((f) => f.rel === rel)!.text);
@@ -738,7 +737,6 @@ describe("a form is laid out by one component", () => {
     for (const rel of [
       "src/components/budget/budget-form.tsx",
       "src/components/finance/transaction-form.tsx",
-      "src/components/finance/item-adjustment-form.tsx",
       "src/components/finance/revaluation-form.tsx",
       "src/components/finance/funding-detail.tsx",
       "src/components/accounting/journal-form.tsx",
@@ -1361,18 +1359,6 @@ const DOCUMENT_SCREENS: {
     routes: "src/app/(app)/finance/pencairan-open-item",
   },
   {
-    name: "Reklasifikasi Open Item",
-    form: "src/components/finance/item-reclass-form.tsx",
-    list: "src/components/finance/item-reclass-list.tsx",
-    routes: "src/app/(app)/finance/reklasifikasi-open-item",
-  },
-  {
-    name: "Penyesuaian Open Item",
-    form: "src/components/finance/item-adjustment-form.tsx",
-    list: "src/components/finance/item-adjustment-list.tsx",
-    routes: "src/app/(app)/finance/penyesuaian-open-item",
-  },
-  {
     name: "Revaluasi Kurs",
     form: "src/components/finance/revaluation-form.tsx",
     list: "src/components/finance/revaluation-list.tsx",
@@ -1577,8 +1563,6 @@ describe("a Post confirmation shows the journal it will write", () => {
     "src/components/finance/transaction-form.tsx",
     "src/components/finance/transfer-form.tsx",
     "src/components/finance/item-conversion-form.tsx",
-    "src/components/finance/item-reclass-form.tsx",
-    "src/components/finance/item-adjustment-form.tsx",
     "src/components/finance/revaluation-form.tsx",
     "src/components/accounting/general-journal-form.tsx",
   ];

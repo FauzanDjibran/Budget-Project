@@ -198,22 +198,6 @@ export const MODULES: NavModule[] = [
         name: "Penyesuaian",
         entities: [
           {
-            key: "fin_item_adjustment",
-            slug: "penyesuaian-open-item",
-            name: "Penyesuaian Open Item",
-            icon: "pen",
-            desc: "Penyesuaian nilai posisi Partner pada buku subjek tanpa perpindahan uang. Penambahan dan Pengurangan mengubah nilai open item yang dipilih, seperti Debit Note dan Credit Note.",
-            permission: "ITEM_ADJUSTMENT_VIEW",
-          },
-          {
-            key: "fin_item_reclass",
-            slug: "reklasifikasi-open-item",
-            name: "Reklasifikasi Open Item",
-            icon: "tags",
-            desc: "Pemindahan nilai open item dari satu buku subjek ke buku atau Partner lain tanpa perpindahan uang — termasuk menuntaskan dana Belum Teridentifikasi.",
-            permission: "ITEM_RECLASS_VIEW",
-          },
-          {
             key: "fin_cash_bank_revaluation",
             slug: "revaluasi-kurs",
             name: "Revaluasi Kurs",

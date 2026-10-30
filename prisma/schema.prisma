@@ -374,10 +374,8 @@ model SysCompany {
   budgets          BudBudget[]
   transactions     FinCashBankTransaction[]
   transfers        FinCashBankTransfer[]
-  item_adjustments FinItemAdjustment[]
   conversions      FinItemConversion[]
   revaluations     FinCashBankRevaluation[]
-  reclasses        FinItemReclass[]
 
   journals AccJournal[]
 
@@ -486,13 +484,6 @@ model SysBudgetCategory {
   /// better-worded one with them.
   book_icon              String?
   book_closing_label     String?
-  /// Whether this category's subject book may be adjusted by a Penyesuaian
-  /// Open Item. Stored rather than inferred: the counter account is one Profit
-  /// & Loss account per side, which fixes a Titipan, a Hutang or a Piutang
-  /// correctly and would book income or expense against owner drawings or an
-  /// investment's own return. Only a category that keeps a book may carry it —
-  /// `sys_budget_category_item_adjustment_needs_book` is the backstop.
-  allows_item_adjustment Boolean @default(false)
 
   note   String?
   status ActiveStatus @default(Active)
@@ -504,10 +495,7 @@ model SysBudgetCategory {
 
   budgets            BudBudget[]
   partner_categories SysBudgetPartnerCategoryMapping[]
-  item_adjustments   FinItemAdjustment[]
   conversions        FinItemConversion[]
-  reclasses          FinItemReclass[]                  @relation("ReclassSource")
-  reclass_targets    FinItemReclassLine[]              @relation("ReclassTarget")
   sub_ledger_entries SubLedger[]
   sub_ledger_items   SubLedgerBalance[]
   account_mappings   AccBudgetCategoryAccount[]
@@ -588,10 +576,8 @@ model RefCurrency {
   subledger_entries     SubLedger[]
   subledger_balances    SubLedgerBalance[]
   funding_requests      FinFundingRequest[]
-  item_adjustments      FinItemAdjustment[]
   conversions           FinItemConversion[]
   revaluations          FinCashBankRevaluation[]
-  reclasses             FinItemReclass[]
   general_journal_lines AccGeneralJournalLine[]
 
   @@map("ref_currency")
@@ -621,10 +607,7 @@ model MPartner {
   journal_lines      AccJournalLine[]
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
-  item_adjustments   FinItemAdjustment[]
   conversions        FinItemConversion[]
-  reclasses          FinItemReclass[]     @relation("ReclassSource")
-  reclass_targets    FinItemReclassLine[] @relation("ReclassTarget")
 
   opening_balance_lines AccOpeningBalanceLine[]
   general_journal_lines AccGeneralJournalLine[]
@@ -916,9 +899,7 @@ enum SubLedgerEntryType {
   /// A Pencairan Open Item: a foreign item released at its own kurs, and the
   /// base-currency item it became, opened beside it in the same book.
   Conversion
-  /// A Reklasifikasi Open Item: an item released out of one book, and the item
-  /// it became — or the item it settled — in another book or for another
-  /// Partner. No cash moves.
+  /// Written by the retired Reklasifikasi Open Item; nothing writes it now.
   Reclass
 }
 
@@ -1504,8 +1485,7 @@ model FinCashBankTransactionLine {
 
   /// The open item this line opened, where it raised a subject-book position
   /// (`sub_ledger_balance.id`, a plain id). What lets a Budget follow the
-  /// money past its own realization — a held receipt reclassified to the book
-  /// it belongs in is found from here. Null where the line lowered a position,
+  /// money past its own realization. Null where the line lowered a position,
   /// kept no book, or was posted before the column existed.
   opened_item_id Int?
 
@@ -1922,305 +1902,6 @@ model FinItemConversionLineItem {
   @@map("fin_item_conversion_line_item")
 }
 
-// ---------------------------------------------------------------- reklasifikasi open item
-
-/// Reklasifikasi Open Item: value moved out of one subject-book position and
-/// into another — a different book, a different Partner, or both — with no
-/// cash moving. The case it exists for is clearing a *Belum Teridentifikasi*
-/// holding book once the money's real place is known; the mechanism is any
-/// book to any book, because a category that names a Partner is all a book is.
-///
-/// The header names the **source** position: one book, one Partner, one
-/// currency. Each line names a **target** — a category that keeps a book and a
-/// Partner it admits — and the source items it moves. The target is posted as
-/// if the original movement had been classified into it: a book running the
-/// same way **opens** one item per source item, at that item's own kurs and
-/// base, so no difference can arise; a book running the other way has items
-/// **settled**, chosen and stated by the user, and each settled item states its
-/// own FX difference on its own journal line.
-///
-/// It reclassifies **items in the books**, never a Budget: a Budget's
-/// classification is final (CLAUDE.md §10 rule 26), and this is what lets the
-/// money move on while the plan keeps saying what it said.
-model FinItemReclass {
-  id              Int       @id @default(autoincrement())
-  /// `RKL-0001`.
-  reclass_no      String    @unique
-  /// Chosen on the draft, any day up to today; Post dates everything by it.
-  accounting_date DateTime? @db.Date
-  posted_at       DateTime? @db.Timestamptz(6)
-
-  /// The source Partner's Company, derived rather than picked.
-  company_id         Int
-  /// The source book (a subject book is a Budget Category) and its Partner.
-  budget_category_id Int
-  partner_id         Int
-  /// The source position's currency, and every target's. A reclassification
-  /// never changes currency — that is a Pencairan Open Item.
-  currency_id        Int
-
-  /// Sum of the lines, in the document currency.
-  reclass_amount      Decimal @db.Decimal(18, 2)
-  /// What the source items released, in base. Written at Post.
-  reclass_base_amount Decimal @default(0) @db.Decimal(18, 2)
-  /// The sum of every settled target item's difference, signed as a gain.
-  /// Informational: the journal carries each on its own line. Written at Post.
-  fx_difference       Decimal @default(0) @db.Decimal(18, 2)
-
-  note   String?
-  status TransactionStatus @default(Draft)
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  company         SysCompany        @relation(fields: [company_id], references: [id])
-  budget_category SysBudgetCategory @relation("ReclassSource", fields: [budget_category_id], references: [id])
-  partner         MPartner          @relation("ReclassSource", fields: [partner_id], references: [id])
-  currency        RefCurrency       @relation(fields: [currency_id], references: [id])
-
-  lines FinItemReclassLine[]
-
-  @@index([company_id])
-  @@index([partner_id])
-  @@index([status])
-  @@map("fin_item_reclass")
-}
-
-/// One target: where a part of the source goes, and which source items it
-/// takes. A receipt can be split across lines — part Hutang, part Titipan.
-model FinItemReclassLine {
-  id          Int @id @default(autoincrement())
-  reclass_id  Int
-  sequence_no Int
-
-  /// The target book and the Partner whose position it moves. Never the
-  /// source position itself.
-  target_budget_category_id Int
-  target_partner_id         Int
-
-  /// Why the value moved, in the user's words. Becomes the note on what the
-  /// line writes; falls back to the source item's own note where empty.
-  description String?
-
-  /// The sum of the source items — the line has no amount of its own.
-  amount               Decimal @db.Decimal(18, 2)
-  /// What the source items released, in base. Written at Post.
-  released_base_amount Decimal @default(0) @db.Decimal(18, 2)
-  /// The sum of the line's settled target items' differences, signed as a
-  /// gain. Zero where the target opens items. Written at Post.
-  fx_difference        Decimal @default(0) @db.Decimal(18, 2)
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  reclass         FinItemReclass             @relation(fields: [reclass_id], references: [id], onDelete: Cascade)
-  target_category SysBudgetCategory          @relation("ReclassTarget", fields: [target_budget_category_id], references: [id])
-  target_partner  MPartner                   @relation("ReclassTarget", fields: [target_partner_id], references: [id])
-  sources         FinItemReclassLineSource[]
-  targets         FinItemReclassLineTarget[]
-
-  @@unique([reclass_id, sequence_no])
-  @@index([target_partner_id])
-  @@map("fin_item_reclass_line")
-}
-
-/// One source item a line moves, and for how much — chosen and stated by the
-/// user, never distributed.
-model FinItemReclassLineSource {
-  id                    Int @id @default(autoincrement())
-  line_id               Int
-  sequence_no           Int
-  /// The source item (`sub_ledger_balance.id`). A plain id: the item belongs to
-  /// the subject-book module.
-  sub_ledger_balance_id Int
-
-  /// In the document currency; more than nil, never more than the item holds.
-  amount               Decimal @db.Decimal(18, 2)
-  /// What the item released at its own kurs. Written at Post.
-  released_base_amount Decimal @default(0) @db.Decimal(18, 2)
-  /// The target item this one became, where the target book opens items — the
-  /// clearing link a reader follows from the held item to where it went. Null
-  /// where the target's items are settled instead, and until Post.
-  opened_item_id       Int?
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  line FinItemReclassLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
-
-  @@unique([line_id, sub_ledger_balance_id])
-  @@unique([line_id, sequence_no])
-  @@index([sub_ledger_balance_id])
-  @@index([opened_item_id])
-  @@map("fin_item_reclass_line_source")
-}
-
-/// One target item a line settles, where the target book runs the other way
-/// from the source — chosen and stated by the user. A line's target amounts add
-/// up to its source amount exactly.
-model FinItemReclassLineTarget {
-  id                    Int @id @default(autoincrement())
-  line_id               Int
-  sequence_no           Int
-  /// The target item settled (`sub_ledger_balance.id`).
-  sub_ledger_balance_id Int
-
-  /// In the document currency; more than nil, never more than the item holds.
-  amount                 Decimal @db.Decimal(18, 2)
-  /// This item's share of what the line's source items released. A line's
-  /// shares add up to its `released_base_amount` exactly. Written at Post.
-  allocated_base_amount  Decimal @default(0) @db.Decimal(18, 2)
-  /// What the item released at its own kurs. Written at Post.
-  settlement_base_amount Decimal @default(0) @db.Decimal(18, 2)
-  /// Signed as a gain; journalled on a line of its own. Written at Post.
-  fx_difference          Decimal @default(0) @db.Decimal(18, 2)
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  line FinItemReclassLine @relation(fields: [line_id], references: [id], onDelete: Cascade)
-
-  @@unique([line_id, sub_ledger_balance_id])
-  @@unique([line_id, sequence_no])
-  @@index([sub_ledger_balance_id])
-  @@map("fin_item_reclass_line_target")
-}
-
-// ------------------------------------------------- penyesuaian open item
-
-/// Which way one line moves its open item: Penambahan raises it, Pengurangan
-/// lowers it — the way a Debit Note and a Credit Note move the invoice they
-/// reference in mainstream ERP.
-///
-/// Never chosen: it is the sign of the line's difference, the new value the
-/// user typed against what the item held when the draft was saved. Stated as
-/// the effect rather than as a side of the Partner's account, so a line reads
-/// the same in every book; which side of the journal that is follows from the
-/// book's own `raises`, exactly as for a cash posting.
-enum ItemAdjustmentEffect {
-  Increase
-  Decrease
-}
-
-/// Penyesuaian Open Item: the adjustment document for a Partner's position in
-/// a subject book. No cash moves, so it writes no Cash Bank Book entry and
-/// realizes no Budget. At Post it writes the subject-book entries and one
-/// balanced journal in one transaction.
-///
-/// It changes **existing open items** of one position (book x Partner x
-/// currency) and never opens one: SIBA keeps no invoice, so the item is what
-/// the document references. Every line names one item and the value it should
-/// now hold; the difference is posted as a new ledger line on that item, at
-/// its own kurs, so no FX difference can arise and no kurs is typed. One
-/// document may raise some items and lower others. `reference` carries the
-/// counterparty's own document number where there is one.
-///
-/// The counter account is one of two Mapping Account System entries per
-/// Company: Pendapatan Penyesuaian when it is credited, Beban Penyesuaian when
-/// it is debited — which one is decided, line by line, by the side the Partner
-/// line takes.
-model FinItemAdjustment {
-  id            Int    @id @default(autoincrement())
-  /// `PYO-0001`. Documents posted as Debit / Credit Notes keep their `DN-` /
-  /// `CN-` numbers.
-  adjustment_no String @unique
-
-  /// The day it belongs to in the books, chosen on the draft.
-  accounting_date DateTime? @db.Date
-  posted_at       DateTime? @db.Timestamptz(6)
-
-  /// The Partner's Company, derived rather than picked.
-  company_id         Int
-  /// The book. A subject book is a Budget Category (CLAUDE.md §12), and only
-  /// one carrying `allows_item_adjustment` may be adjusted.
-  budget_category_id Int
-  partner_id         Int
-  currency_id        Int
-
-  /// Null: every item moves at its own kurs. Documents posted while a raise
-  /// opened a new item at a typed kurs keep the `1` they carried.
-  exchange_rate Decimal? @db.Decimal(18, 6)
-
-  /// The net change to the position, in its currency: what the lines raise
-  /// less what they lower, so negative when the document lowers it on balance.
-  adjustment_amount      Decimal @db.Decimal(18, 2)
-  /// The same net change in base. Valued when the draft is saved and again at
-  /// Post.
-  adjustment_base_amount Decimal @default(0) @db.Decimal(18, 2)
-
-  /// The counterparty's own document number, where there is one.
-  reference String?
-  note      String?
-  status    TransactionStatus @default(Draft)
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  company         SysCompany        @relation(fields: [company_id], references: [id])
-  budget_category SysBudgetCategory @relation(fields: [budget_category_id], references: [id])
-  partner         MPartner          @relation(fields: [partner_id], references: [id])
-  currency        RefCurrency       @relation(fields: [currency_id], references: [id])
-
-  lines FinItemAdjustmentLine[]
-
-  @@index([company_id])
-  @@index([partner_id])
-  @@index([status])
-  @@map("fin_item_adjustment")
-}
-
-/// One open item and the value it should now hold. The user types the new
-/// value; the difference, its direction and its base are worked out when the
-/// draft is saved and again at Post. Post refuses when the item no longer
-/// holds `balance_before`, because a new value typed against another balance
-/// would move it by a difference nobody saw.
-model FinItemAdjustmentLine {
-  id            Int    @id @default(autoincrement())
-  adjustment_id Int
-  sequence_no   Int
-  /// Written by the system — "Penambahan USD 200,00 atas SBI-0012" — and read
-  /// by the subject-book entry and the journal lines.
-  description   String
-
-  /// The item adjusted (`sub_ledger_balance.id`). A plain id rather than a
-  /// relation: the item belongs to the subject-book module. Null only on
-  /// documents posted while a raise opened a new item.
-  sub_ledger_balance_id Int?
-  /// Derived from the sign of the difference, never chosen.
-  effect                ItemAdjustmentEffect
-  /// What the item held when the draft was saved, and the value typed for it.
-  /// Null on documents posted before a line was stated as a new value.
-  balance_before        Decimal?             @db.Decimal(18, 2)
-  new_amount            Decimal?             @db.Decimal(18, 2)
-
-  /// The difference, unsigned — `effect` says which way — in the position's
-  /// currency.
-  amount      Decimal @db.Decimal(18, 2)
-  /// What the difference is worth in base, at the item's own kurs.
-  base_amount Decimal @default(0) @db.Decimal(18, 2)
-
-  created_by Int
-  updated_by Int?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-
-  adjustment FinItemAdjustment @relation(fields: [adjustment_id], references: [id], onDelete: Cascade)
-
-  @@unique([adjustment_id, sequence_no])
-  @@index([sub_ledger_balance_id])
-  @@map("fin_item_adjustment_line")
-}
-
 // ---------------------------------------------------------------- audit
 
 /// One trail for every table. Referenced loosely by entity key and row id
@@ -2330,12 +2011,14 @@ model AccJournal {
 
 /// One accounting entry. Exactly one of `debit_amount` / `kredit_amount`
 /// carries the value and the other is zero; the two sides of a journal must
-/// sum equal, which `postJournal` refuses to write without.
+/// sum equal, which Post refuses to write without. A typed line also states
+/// the subject its account's ledger demands.
 model AccJournalLine {
   id          Int @id @default(autoincrement())
   journal_id  Int
   sequence_no Int
 
+  /// It brings its ledger (`acc_account.ledger`).
   account_id Int
   partner_id Int?
 
@@ -2344,7 +2027,9 @@ model AccJournalLine {
   /// base-currency resource produces one journal holding both.
   currency_id   Int
   /// What `trx_amount` was worth: this line's currency to the base currency.
-  /// `1` means the money is already base currency, and nothing else.
+  /// `1` means the money is already base currency, and nothing else. On a
+  /// typed line it is the subject's own kurs where it holds one, typed only for
+  /// something new (D6, D19); nothing records which.
   exchange_rate Decimal @default(1) @db.Decimal(18, 6)
 
   /// **Base currency.** This is what the journal balances in, what the General
@@ -2448,7 +2133,8 @@ model AccGeneralJournalLine {
   /// What the named open item held on the journal's date when the draft was
   /// saved; Post refuses if it no longer does.
   balance_before     Decimal? @db.Decimal(18, 2)
-  /// The one netted Selisih Kurs line (D7), written by the system on save.
+  /// The one netted Selisih Kurs line of a typed journal (D7), written by the
+  /// system on save.
   is_generated       Boolean  @default(false)
 
   created_by Int

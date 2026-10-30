@@ -653,7 +653,7 @@ export const ENTITIES: Entity[] = [
         label: "Memakai Partner",
         type: "bool",
         span: 4,
-        resets: ["keeps_book", "raises", "book_closing_label", "allows_item_adjustment", "partner_category_ids"],
+        resets: ["keeps_book", "raises", "book_closing_label", "partner_category_ids"],
         help: "matikan bila kategori ini tidak punya subjek",
       },
       // Chosen here rather than on a menu of its own. A category that names a
@@ -684,7 +684,7 @@ export const ENTITIES: Entity[] = [
         type: "bool",
         visibleWhen: "accountRequiresPartner",
         span: 4,
-        resets: ["raises", "book_closing_label", "allows_item_adjustment"],
+        resets: ["raises", "book_closing_label"],
         help: "realisasi membuka dan menyelesaikan open item",
       },
       // A book needs these two. `raises` is the only fact nothing else predicts:
@@ -715,19 +715,6 @@ export const ENTITIES: Entity[] = [
         span: 8,
         placeholder: "Sisa hutang",
         help: "opsional, dipakai pada laporan Buku Subjek",
-      },
-      // Whether a Penyesuaian Open Item may adjust this book. Its counter
-      // account is one Profit & Loss account per side, which fixes a deposit, a
-      // payable or a receivable correctly and would book income or expense
-      // against owner drawings or an investment's own return — so it is the
-      // category's decision, stored here, never read off the account it maps to.
-      {
-        name: "allows_item_adjustment",
-        label: "Boleh Penyesuaian Open Item",
-        type: "bool",
-        visibleWhen: "categoryKeepsBook",
-        span: 4,
-        help: "posisi dapat disesuaikan tanpa uang",
       },
       STATUS_FIELD,
       NOTE_FIELD,

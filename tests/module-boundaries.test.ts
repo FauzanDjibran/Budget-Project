@@ -121,19 +121,6 @@ const TABLE_OWNERS: Record<string, string[]> = {
     "src/lib/siba/item-conversion-check.ts",
     "src/app/actions/item-conversion.ts",
   ],
-  finItemReclass: ["src/lib/siba/item-reclass.ts", "src/lib/siba/item-reclass-post.ts", "src/app/actions/item-reclass.ts"],
-  finItemReclassLine: ["src/lib/siba/item-reclass.ts", "src/lib/siba/item-reclass-post.ts", "src/app/actions/item-reclass.ts"],
-  finItemReclassLineSource: ["src/lib/siba/item-reclass.ts", "src/lib/siba/item-reclass-post.ts", "src/app/actions/item-reclass.ts"],
-  finItemReclassLineTarget: ["src/lib/siba/item-reclass.ts", "src/lib/siba/item-reclass-post.ts", "src/app/actions/item-reclass.ts"],
-  finItemAdjustment: ["src/lib/siba/item-adjustment.ts", "src/lib/siba/item-adjustment-rows.ts", "src/lib/siba/item-adjustment-check.ts", "src/app/actions/item-adjustment.ts"],
-  finItemAdjustmentLine: [
-    "src/lib/siba/item-adjustment.ts", "src/lib/siba/item-adjustment-rows.ts", "src/lib/siba/item-adjustment-check.ts",
-    "src/app/actions/item-adjustment.ts",
-  ],
-  finItemAdjustmentLineItem: [
-    "src/lib/siba/item-adjustment.ts", "src/lib/siba/item-adjustment-rows.ts", "src/lib/siba/item-adjustment-check.ts",
-    "src/app/actions/item-adjustment.ts",
-  ],
   finFundingRequest: ["src/lib/siba/funding.ts", "src/app/actions/funding.ts"],
   finCashBankRevaluation: [
     "src/lib/siba/cash-bank-revaluation.ts",

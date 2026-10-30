@@ -49,7 +49,7 @@ export default async function SystemAccountPage({
       const chosen = values[def.key];
       options[def.key] = rows
         .filter((a) => a.is_active || a.id === chosen)
-        .filter((a) => def.group !== "adjustment" || a.id === chosen || !bookAccounts.has(a.id))
+        .filter((a) => def.key !== "fx_revaluation" || a.id === chosen || !bookAccounts.has(a.id))
         .map((a) => ({
           id: a.id,
           label: a.account_label,

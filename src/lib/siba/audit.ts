@@ -7,10 +7,8 @@ import { recordTitle } from "./record-title";
 import { budgetsByIds } from "./budget";
 import { transactionNumbersByIds } from "./finance";
 import { transferNumbersByIds } from "./transfer-rows";
-import { itemAdjustmentNumbersByIds } from "./item-adjustment-rows";
 import { revaluationNumbersByIds } from "./cash-bank-revaluation";
 import { conversionNumbersByIds } from "./item-conversion-rows";
-import { reclassNumbersByIds } from "./item-reclass";
 import { fundingRequestNumbersByIds } from "./funding";
 import { fiscalClosingLabels, fiscalPeriodLabels } from "./fiscal";
 import { journalNumbersByIds } from "./journal";
@@ -88,10 +86,6 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
     label: "Cash Bank Transfer",
     resolve: transferNumbersByIds,
   },
-  fin_item_adjustment: {
-    label: "Penyesuaian Open Item",
-    resolve: itemAdjustmentNumbersByIds,
-  },
   fin_cash_bank_revaluation: {
     label: "Revaluasi Kurs",
     resolve: revaluationNumbersByIds,
@@ -99,10 +93,6 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
   fin_item_conversion: {
     label: "Pencairan Open Item",
     resolve: conversionNumbersByIds,
-  },
-  fin_item_reclass: {
-    label: "Reklasifikasi Open Item",
-    resolve: reclassNumbersByIds,
   },
   fin_funding_request: {
     label: "Funding Request",
