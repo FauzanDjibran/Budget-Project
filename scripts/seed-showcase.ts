@@ -52,7 +52,7 @@ import { nextDocumentNumber } from "@/lib/siba/document-number";
 import { applyTransfer } from "@/lib/siba/transfer";
 import { nextTransferNo } from "@/lib/siba/transfer-rows";
 import { confirmFundingRequest, raiseFundingRequest } from "@/lib/siba/funding";
-import { createManualJournal, postManualJournal } from "@/lib/siba/manual-journal";
+import { createGeneralJournal, postGeneralJournal } from "@/lib/siba/general-journal";
 import { applyConversion } from "@/lib/siba/item-conversion";
 import { nextConversionNo } from "@/lib/siba/item-conversion-rows";
 import {
@@ -1482,7 +1482,7 @@ type ManualSpec = {
   lines: { account: string; debit?: number; credit?: number; description: string }[];
 };
 
-/** Writes one manual journal through the real engine, posting it when asked. */
+/** Writes one typed journal through Jurnal Umum, posting it when asked. */
 async function writeManualJournal(spec: ManualSpec, actor: number) {
   const induk = await prisma.sysCompany.findFirstOrThrow({
     where: { is_parent: true },
@@ -1517,20 +1517,20 @@ async function writeManualJournal(spec: ManualSpec, actor: number) {
     });
   }
 
-  const created = await createManualJournal(
+  const created = await createGeneralJournal(
     { company_id: induk.id, description: spec.description, journal_date: spec.date },
     lines,
     actor
   );
   if (!created.ok) {
     throw new Error(
-      `Manual journal "${spec.description}" refused: ${Object.values(created.errors).join(" ")}`
+      `Jurnal Umum "${spec.description}" refused: ${Object.values(created.errors).join(" ")}`
     );
   }
   tally("manual journals");
 
   if (spec.post) {
-    const posted = await postManualJournal(created.id, actor, [induk.id]);
+    const posted = await postGeneralJournal(created.id, actor, [induk.id]);
     if (!posted.ok) {
       throw new Error(
         `Posting "${spec.description}" refused: ${Object.values(posted.errors).join(" ")}`
@@ -1709,7 +1709,7 @@ function currentYear(): YearPlan {
       { kind: "cbt", date: day(3, 3), purpose: "BYA_OUT", cashBank: "BCA-USD", currency: "USD", note: "Pembayaran pemasok Singapura, invoice SG-2291", lines: [{ budget: "sparepart", amount: 5_000 }] },
       // A Draft, left as one: it has moved nothing, which is what Draft means.
       { kind: "cbt", date: day(3, 20), purpose: "PRV_SH_OUT", cashBank: "KAS", partner: "MR.X", note: "Menunggu konfirmasi jadwal pencairan", lines: [{ budget: "prive", amount: 30_000_000 }], status: "Draft" },
-      // Left as a Draft, because Draft is the one status only a manual journal
+      // Left as a Draft, because Draft is the one status only a typed journal
       // ever has — and the reports must be seen leaving it out.
       journal({
         description: "Akrual listrik dan telepon Maret",

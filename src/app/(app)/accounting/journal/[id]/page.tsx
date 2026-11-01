@@ -1,10 +1,9 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { JournalForm } from "@/components/accounting/journal-form";
 import { RecordHistoryCard } from "@/components/ui/record-history-card";
 import { requirePermission } from "@/lib/siba/auth";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
 import { getJournal } from "@/lib/siba/journal";
-import { journalAbilities } from "@/lib/siba/journal-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -23,14 +22,12 @@ export default async function Page({
     await accessibleCompanyIds(actor.permissions)
   );
   if (!journal) notFound();
+  // A typed journal is drafted, edited and posted in Jurnal Umum.
+  if (journal.isManual) redirect(`/accounting/jurnal-umum/${journal.id}`);
 
   return (
     <>
-      <JournalForm
-        mode="view"
-        journal={journal}
-        can={journalAbilities(actor.permissions)}
-      />
+      <JournalForm journal={journal} />
       <RecordHistoryCard entityKey="acc_journal" rowId={journal.id} />
     </>
   );

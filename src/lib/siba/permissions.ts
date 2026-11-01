@@ -179,16 +179,10 @@ export const PERMISSIONS = [
       "Mengubah tahun buku Draft menjadi Open dan membuat 12 Fiscal Period. Tidak dapat dikembalikan.",
   },
 
-  // A journal produced by a posting is immutable, so none of the four write
-  // permissions below can reach one: they govern the **manual** journal, which
-  // is typed by a person, saved as a Draft, and posted through the same engine.
-  // There is deliberately no JOURNAL_DELETE and no reversal — a posted journal
-  // is final and a correction is a new one.
+  // A journal produced by a posting is immutable; a typed one is written
+  // through Jurnal Umum below. There is deliberately no JOURNAL_DELETE and no
+  // reversal — a posted journal is final and a correction is a new one.
   { code: "JOURNAL_VIEW", name: "Lihat Journal", module: "accounting", description: "Journal otomatis maupun manual, termasuk yang masih Draft." },
-  { code: "JOURNAL_CREATE", name: "Tambah Journal Manual", module: "accounting", description: "Journal yang diketik sendiri — penyusutan, akrual, reklasifikasi. Control account tidak dapat dipilih." },
-  { code: "JOURNAL_EDIT", name: "Ubah Journal Manual", module: "accounting", description: "Hanya selama berstatus Draft." },
-  { code: "JOURNAL_POST", name: "Post Journal Manual", module: "accounting", description: "Memasukkan journal ke buku besar. Tidak dapat dibatalkan." },
-  { code: "JOURNAL_CANCEL", name: "Batalkan Journal Manual", module: "accounting", description: "Hanya draft yang belum diposting." },
   // Jurnal Umum may write every money ledger, control accounts included, so it
   // is one high-clearance set with no split by ledger; Draft → Post is the
   // review step (Journal 2.0 D12).

@@ -2,25 +2,22 @@ import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  cancelGeneralJournal,
   checkGeneralJournal,
   createGeneralJournal,
   postGeneralJournal,
+  updateGeneralJournal,
   type GeneralJournalLineValues,
 } from "../src/lib/siba/general-journal";
+import { postJournal } from "../src/lib/siba/journal";
+import { generalLedgerReport, trialBalanceReport } from "../src/lib/siba/ledger";
 import { isBalanced, valueGeneralJournal } from "../src/lib/siba/general-journal-valuation";
-import {
-  checkManualJournal,
-  createManualJournal,
-  postManualJournal,
-} from "../src/lib/siba/manual-journal";
 import { openCashBankBook } from "../src/lib/siba/cash-bank";
 import { openLayersOf } from "../src/lib/siba/cash-bank-layers";
 import { todayDay } from "../src/lib/siba/fiscal";
-import { syncControlAccounts } from "../src/lib/siba/records";
 import { recordSubledgerEntry, subledgerItem } from "../src/lib/siba/subledger";
 import type { SubledgerDef } from "../src/lib/siba/subledger-catalogue";
 import { loadSubledgers } from "../src/lib/siba/subledger-data";
-import { systemAccountIds } from "../src/lib/siba/system-account-data";
 import {
   FIXTURE_PREFIX,
   budgetCategoryId,
@@ -40,10 +37,8 @@ import {
 
 /**
  * Jurnal Umum, Gate A (Journal 2.0 step 2): the engine with the `none` and
- * `partner` ledgers. A rupiah Jurnal Umum posts the journal the same manual
- * journal would; the netted Selisih Kurs follows §4; and the manual journal
- * still refuses a control account, which Jurnal Umum will reach once its
- * ledger's adapter exists.
+ * `partner` ledgers. A rupiah Jurnal Umum posts the journal it was typed as,
+ * in place, and the netted Selisih Kurs follows §4.
  */
 
 let company = 0;
@@ -156,7 +151,7 @@ describe("valuation and the netted Selisih Kurs (§4, D7)", () => {
 });
 
 describe("a rupiah Jurnal Umum", () => {
-  test("Case 9 posts the journal the same manual journal posts", async () => {
+  test("Case 9 posts the journal it was typed as, in place", async () => {
     const lines = [line(beban, 5_000_000, 0), line(ymh, 0, 5_000_000)];
 
     const draft = await createGeneralJournal(header(), lines, actor);
@@ -172,10 +167,6 @@ describe("a rupiah Jurnal Umum", () => {
 
     const posted = await postGeneralJournal(draft.id, actor, scope);
     assert.ok(posted.ok, JSON.stringify(posted));
-
-    const manual = await createManualJournal(header(), lines, actor);
-    assert.ok(manual.ok);
-    assert.ok((await postManualJournal(manual.id, actor, scope)).ok);
 
     const general = await prisma.accJournal.findUniqueOrThrow({
       where: { id: draft.id },
@@ -206,7 +197,14 @@ describe("a rupiah Jurnal Umum", () => {
     const linesOf = async (id: number) =>
       (await prisma.accJournalLine.findMany({ where: { journal_id: id }, orderBy: { sequence_no: "asc" } })).map(shape);
 
-    assert.deepEqual(await linesOf(draft.id), await linesOf(manual.id), "identical to the manual journal");
+    assert.deepEqual(
+      await linesOf(draft.id),
+      [
+        { account: beban, partner: null, currency: baseCurrency, rate: 1, debit: 5_000_000, kredit: 0, face: 5_000_000, description: "Fixture Jurnal Umum" },
+        { account: ymh, partner: null, currency: baseCurrency, rate: 1, debit: 0, kredit: 5_000_000, face: 5_000_000, description: "Fixture Jurnal Umum" },
+      ],
+      "the rows are what was typed, valued in base"
+    );
     // One table: the typed journal is the ledger row, and Post wrote no other.
     assert.equal(general.source_doc_type_id, null);
     assert.equal(await prisma.accJournal.count({ where: { source_doc_id: draft.id, is_manual: false } }), 0);
@@ -701,21 +699,59 @@ describe("the cash_bank ledger (Gate C)", () => {
   });
 });
 
-describe("the manual journal", () => {
-  test("JUR- still refuses a control account (Gate A)", async () => {
-    const hutang = await makeAccount({
+describe("a posted journal is final, and a document's journal is not typed", () => {
+  const twoLines = (amount: number) => [line(beban, amount, 0), line(ymh, 0, amount)];
+
+  test("a draft is invisible to both ledger reports", async () => {
+    const draft = await createGeneralJournal(header(), twoLines(250_000), actor);
+    assert.ok(draft.ok);
+    const range = { from: "2000-01-01", to: "2100-12-31" };
+    const ledger = await generalLedgerReport([beban], range, [company]);
+    assert.equal(
+      ledger.accounts[0]?.entries.some((e) => e.journalId === draft.id) ?? false,
+      false,
+      "the General Ledger reads posted journals only"
+    );
+    const trial = await trialBalanceReport(range, [company]);
+    assert.equal(trial.unbalanced.some((j) => j.id === draft.id), false);
+  });
+
+  test("a posted journal cannot be edited, posted again or cancelled", async () => {
+    const draft = await createGeneralJournal(header(), twoLines(70_000), actor);
+    assert.ok(draft.ok);
+    assert.ok((await postGeneralJournal(draft.id, actor, scope)).ok);
+
+    const edited = await updateGeneralJournal(draft.id, header(), twoLines(1), actor, scope);
+    assert.equal(edited.ok, false);
+    assert.match(edited.ok ? "" : edited.errors._form, /Draft/);
+    assert.equal((await postGeneralJournal(draft.id, actor, scope)).ok, false);
+    assert.equal((await cancelGeneralJournal(draft.id, actor, scope)).ok, false);
+  });
+
+  test("a cancelled draft is retired rather than deleted", async () => {
+    const draft = await createGeneralJournal(header(), twoLines(15_000), actor);
+    assert.ok(draft.ok);
+    assert.ok((await cancelGeneralJournal(draft.id, actor, scope)).ok);
+    const row = await prisma.accJournal.findUniqueOrThrow({ where: { id: draft.id } });
+    assert.equal(row.status, "Cancelled");
+    assert.equal((await postGeneralJournal(draft.id, actor, scope)).ok, false);
+  });
+
+  test("a journal a document wrote is not reachable from the typed path", async () => {
+    const automatic = await postJournal(prisma, {
       companyId: company,
-      subcategoryLabel: "2.1.1",
-      normalBalance: "Kredit",
-      partnerCategoryLabel: "Cabang",
-      bookLabels: ["Hutang"],
+      description: "Fixture posting",
+      lines: [
+        { accountId: beban, currencyId: baseCurrency, rate: 1, debit: 5_000, credit: 0, description: "d" },
+        { accountId: ymh, currencyId: baseCurrency, rate: 1, debit: 0, credit: 5_000, description: "c" },
+      ],
+      actorId: actor,
     });
-    await syncControlAccounts([hutang], await systemAccountIds(), actor);
-    const manual = await checkManualJournal(header(), [
-      { ...line(beban, 1_000, 0) },
-      { ...line(hutang, 0, 1_000), partner_id: partner },
-    ]);
-    assert.ok(!manual.ok);
-    assert.match(manual.errors["lines.1.account_id"], /control account/);
+    assert.match(automatic.journalNo, /^JRN-/);
+    const row = await prisma.accJournal.findUniqueOrThrow({ where: { id: automatic.id } });
+    assert.deepEqual([row.status, row.is_manual], ["Posted", false]);
+    const refused = await updateGeneralJournal(automatic.id, header(), twoLines(1), actor, scope);
+    assert.equal(refused.ok, false, "a journal a document produced is final from the moment it exists");
+    assert.equal((await cancelGeneralJournal(automatic.id, actor, scope)).ok, false);
   });
 });

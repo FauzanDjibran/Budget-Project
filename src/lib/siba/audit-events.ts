@@ -10,7 +10,7 @@
  *
  * **The label is not stored.** Each lifecycle event resolves through the
  * workflow table that already owns it — `BUDGET_TRANSITIONS`,
- * `TRANSACTION_TRANSITIONS`, `JOURNAL_TRANSITIONS`,
+ * `TRANSACTION_TRANSITIONS`, `GENERAL_JOURNAL_TRANSITIONS`,
  * `FISCAL_YEAR_TRANSITIONS` — so the word a button
  * says and the word its history entry says are the same string, and adding a
  * transition is a row in one table rather than a row in one table plus a label
@@ -26,7 +26,7 @@ import { REVALUATION_TRANSITIONS } from "./cash-bank-revaluation-workflow";
 import { FISCAL_PERIOD_TRANSITIONS, FISCAL_YEAR_TRANSITIONS } from "./fiscal-workflow";
 import type { ActionTone } from "./header-actions";
 import { CONVERSION_TRANSITIONS } from "./item-conversion-workflow";
-import { JOURNAL_TRANSITIONS } from "./journal-workflow";
+import { GENERAL_JOURNAL_TRANSITIONS } from "./general-journal-workflow";
 import { TRANSACTION_TRANSITIONS } from "./transaction-workflow";
 import { TRANSFER_TRANSITIONS } from "./transfer-workflow";
 
@@ -155,8 +155,8 @@ const FUNDING_EVENTS: Record<string, AuditEventLabel> = {
 const JOURNAL_EVENTS: Record<string, AuditEventLabel> = {
   ...COMMON,
   create: { label: "Journal dibuat", icon: "book", tone: "neutral" },
-  post: fromTransition(JOURNAL_TRANSITIONS.post, "Diposting"),
-  cancel: fromTransition(JOURNAL_TRANSITIONS.cancel, "Dibatalkan"),
+  post: fromTransition(GENERAL_JOURNAL_TRANSITIONS.post, "Diposting"),
+  cancel: fromTransition(GENERAL_JOURNAL_TRANSITIONS.cancel, "Dibatalkan"),
 };
 
 /** Fiscal Year: Draft → Open → Closed. A year is one Company's, so is its close. */

@@ -16,25 +16,21 @@ import { windowOf, type Paged, type RegisterQuery } from "./register-query";
  * deletes or reverses one, and a correction is a new journal exactly as a
  * corrected document is a new document (concept doc §15).
  *
- * ## Automatic and manual journals
+ * ## Document journals and typed ones
  *
  * Almost every journal here is written *by* a business document being posted —
  * a Cash Bank Transaction, a confirmed Funding Request — and is `Posted` the
  * moment it exists, because it records something that has already happened.
  *
- * A **manual** journal is typed by a person: a depreciation entry, an accrual,
- * a reclassification. It is saved `Draft` first, edited freely while it is one,
- * and reaches `Posted` through `postDraftJournal`, which runs **the same
- * validation** `postJournal` does. A draft is not accounting — it has no
- * accounting date, and no report can see it — so the frozen guarantee is unchanged
- * in substance: nothing is in the books until a posting put it there, and once
- * it is there it never moves.
+ * A **typed** journal (`JUM-`) lives in the same table. It is saved `Draft`
+ * first and posted in place by Jurnal Umum (`general-journal.ts`), which asks
+ * `assertBalanced` — the same rule `postJournal` applies. A draft is not
+ * accounting and no report can see it: nothing is in the books until a
+ * posting put it there, and once it is there it never moves.
  *
- * Which accounts a manual journal may touch is deliberately **not** decided
- * here. That question needs the Cash Bank Book, the subject books and the
- * System Defaults, and this module imports none of them — it is a book and
- * books depend on nothing (CLAUDE.md §3). `lib/siba/manual-journal.ts` owns
- * those rules and hands this module lines it has already checked.
+ * What a typed line may touch is decided by its account's ledger, in
+ * Jurnal Umum's adapters, never here: this module is a book and books depend
+ * on nothing (CLAUDE.md §3).
  *
  * **The journal is measured in base currency.** `debit_amount` and
  * `kredit_amount` are rupiah; `trx_amount`, `currency_id` and `exchange_rate`
@@ -229,8 +225,8 @@ type ResolvedLine = JournalLineInput & { baseDebit: number; baseCredit: number }
  * negative amount, a rate of zero or less, and a line worth nothing once
  * valued.
  *
- * It does **not** check the balance — `postJournal` and `postDraftJournal` do
- * that, and a manual journal being typed is allowed not to balance yet.
+ * It does **not** check the balance — `postJournal` and `assertBalanced` do
+ * that, and a journal being typed is allowed not to balance yet.
  *
  * Refusals throw rather than returning a result: every caller is either inside
  * `prisma.$transaction`, where a bad journal must take the whole posting down,
@@ -379,298 +375,6 @@ export async function postJournal(
   return { id: journal.id, journalNo: journal.journal_no };
 }
 
-// ------------------------------------------------------- the manual journal
-
-/**
- * A manual journal while it is still being written.
- *
- * It carries the date the person chose for it — stored in `accounting_date` while
- * it is a Draft, which is safe because every reader of journal lines filters
- * `status: "Posted"` — and no source document: nothing produced it but the
- * person typing. Its lines are validated
- * individually but are **not** required to balance — a journal halfway through
- * being entered does not, and refusing to save it would mean the balance rule
- * was enforced at the wrong moment.
- */
-export type DraftJournalInput = {
-  companyId: number;
-  /** `YYYY-MM-DD`, already checked by the caller (`checkTransactionDate`). */
-  date: string;
-  description: string;
-  lines: JournalLineInput[];
-  actorId: number;
-};
-
-/** `JUR-0001` — its own series, so a manual journal is one on sight. */
-export async function createDraftJournal(
-  input: DraftJournalInput
-): Promise<{ id: number; journalNo: string }> {
-  const { resolved } = resolveJournalLines(input.lines);
-
-  return prisma.$transaction(async (tx) => {
-    const journal = await tx.accJournal.create({
-      data: {
-        journal_no: await nextJournalNo(tx, "JUR"),
-        accounting_date: new Date(`${input.date}T00:00:00Z`),
-        // A draft is not posted; the column's default is for journals Post writes.
-        posted_at: null,
-        company_id: input.companyId,
-        description: input.description,
-        status: "Draft",
-        is_manual: true,
-        created_by: input.actorId,
-      },
-      select: { id: true, journal_no: true },
-    });
-
-    for (const [i, line] of resolved.entries()) {
-      await tx.accJournalLine.create({
-        data: { journal_id: journal.id, ...lineData(line, i + 1, input.actorId) },
-      });
-    }
-
-    await writeJournalAudit(tx, journal.id, "TAMBAH", "create", input.actorId);
-    return { id: journal.id, journalNo: journal.journal_no };
-  });
-}
-
-/**
- * Replaces a draft's content.
- *
- * A draft's lines are the document's own content rather than history: nothing
- * has been posted from them and no book refers to them, so replacing them
- * wholesale is what "edit" means here. The no-delete rule protects master data
- * and posted records, and a draft journal line is neither — exactly the
- * reasoning `updateTransaction` already uses for a Draft document's lines.
- */
-export async function updateDraftJournal(
-  id: number,
-  input: DraftJournalInput
-): Promise<void> {
-  const { resolved } = resolveJournalLines(input.lines);
-
-  await prisma.$transaction(async (tx) => {
-    await tx.accJournalLine.deleteMany({ where: { journal_id: id } });
-    await tx.accJournal.update({
-      where: { id },
-      data: {
-        company_id: input.companyId,
-        accounting_date: new Date(`${input.date}T00:00:00Z`),
-        description: input.description,
-        updated_by: input.actorId,
-        lines: {
-          create: resolved.map((line, i) =>
-            lineData(line, i + 1, input.actorId)
-          ),
-        },
-      },
-    });
-    await writeJournalAudit(tx, id, "UPDATE", "update", input.actorId);
-  });
-}
-
-/**
- * Post: the moment a manual journal becomes accounting.
- *
- * It runs the same `resolveJournalLines` an automatic posting does and refuses
- * the same imbalance, then stamps the accounting date and flips the status — in
- * one transaction, so a journal is never half-posted. Nothing about the lines
- * changes except their resolved base values being rewritten, which is what
- * makes the posted figures the engine's rather than the form's.
- *
- * Returns a refusal rather than throwing, unlike `postJournal`: this one is
- * called by a Server Action on its own, not from inside somebody else's
- * posting, so an unbalanced journal is a user mistake to report and not a
- * system fault to roll back.
- */
-export async function postDraftJournal(
-  id: number,
-  actorId: number,
-  /**
-   * Run first inside the posting transaction — the caller's hold on the
-   * period (`holdPostingPeriod`). Passed in rather than imported because this
-   * module is a book and depends on nothing; a throw from it rolls back.
-   */
-  hold?: (tx: Prisma.TransactionClient, date: string) => Promise<void>
-): Promise<
-  { ok: true; journalNo: string } | { ok: false; error: string }
-> {
-  const journal = await prisma.accJournal.findUnique({
-    where: { id },
-    include: { lines: { orderBy: { sequence_no: "asc" } } },
-  });
-  if (!journal) return { ok: false, error: "Journal tidak ditemukan." };
-  if (journal.status !== "Draft") {
-    return {
-      ok: false,
-      error: "Hanya journal berstatus Draft yang dapat diposting.",
-    };
-  }
-  if (!journal.lines.length) {
-    return {
-      ok: false,
-      error: "Journal tanpa baris tidak dapat diposting.",
-    };
-  }
-
-  const { resolved, debit, credit } = resolveJournalLines(
-    journal.lines.map((l) => ({
-      accountId: l.account_id,
-      partnerId: l.partner_id,
-      currencyId: l.currency_id,
-      rate: l.exchange_rate.toNumber(),
-      debit: l.debit_amount.toNumber() > 0 ? l.trx_amount.toNumber() : 0,
-      credit: l.kredit_amount.toNumber() > 0 ? l.trx_amount.toNumber() : 0,
-      description: l.description,
-    }))
-  );
-
-  if (cents(debit) !== cents(credit)) {
-    return { ok: false, error: new JournalImbalance(debit, credit).message };
-  }
-
-  // The date the draft was written for. A draft saved before drafts carried
-  // one has none, and posts as today — which is what it would have done.
-  const accountingDate = journal.accounting_date ?? accountingDateToday();
-  if (accountingDate.getTime() > accountingDateToday().getTime()) {
-    return { ok: false, error: "Journal tidak boleh bertanggal di masa depan." };
-  }
-
-  await prisma.$transaction(async (tx) => {
-    if (hold) await hold(tx, accountingDate.toISOString().slice(0, 10));
-    for (const [i, line] of resolved.entries()) {
-      await tx.accJournalLine.update({
-        where: { id: journal.lines[i].id },
-        data: {
-          debit_amount: line.baseDebit,
-          kredit_amount: line.baseCredit,
-          updated_by: actorId,
-        },
-      });
-    }
-    await tx.accJournal.update({
-      where: { id },
-      data: {
-        status: "Posted",
-        accounting_date: accountingDate,
-        posted_at: new Date(),
-        updated_by: actorId,
-      },
-    });
-    await writeJournalAudit(tx, id, "UPDATE", "post", actorId);
-  });
-
-  return { ok: true, journalNo: journal.journal_no };
-}
-
-/**
- * Retires a draft that should not exist.
- *
- * Cancelled rather than deleted, like every other document in the application:
- * the number and the reason stay behind. A posted journal is never reachable
- * from here — it is final, and a correction is a new journal.
- */
-export async function cancelDraftJournal(
-  id: number,
-  actorId: number
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const journal = await prisma.accJournal.findUnique({
-    where: { id },
-    select: { status: true },
-  });
-  if (!journal) return { ok: false, error: "Journal tidak ditemukan." };
-  if (journal.status !== "Draft") {
-    return {
-      ok: false,
-      error: "Hanya journal berstatus Draft yang dapat dibatalkan.",
-    };
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.accJournal.update({
-      where: { id },
-      data: { status: "Cancelled", updated_by: actorId },
-    });
-    await writeJournalAudit(tx, id, "UPDATE", "cancel", actorId);
-  });
-
-  return { ok: true };
-}
-
-/** One line of a journal, as the module that edits it needs to read it back. */
-export type DraftJournalLine = {
-  accountId: number;
-  partnerId: number | null;
-  currencyId: number;
-  currencyLabel: string;
-  rate: number;
-  /** In the line's own currency, on whichever side carried it. */
-  debit: number;
-  credit: number;
-  description: string;
-};
-
-export type DraftJournal = {
-  id: number;
-  journalNo: string;
-  companyId: number;
-  /** `YYYY-MM-DD`, or null for a draft saved before drafts carried a date. */
-  date: string | null;
-  description: string;
-  status: string;
-  isManual: boolean;
-  lines: DraftJournalLine[];
-};
-
-/**
- * A journal read back as editable content rather than as a report.
- *
- * `getJournal` answers "what does this journal say" for a reader; this answers
- * "what is in this journal" for the module that may still change it. It lives
- * here because `acc_journal` is this module's table, and a boundary crossed in
- * one direction becomes a boundary crossed in both.
- *
- * Scoped to the Companies the caller may see, so a journal outside that scope
- * reads as **not found** — the same answer one that does not exist gives.
- */
-export async function readDraftJournal(
-  id: number,
-  companyIds: number[]
-): Promise<DraftJournal | null> {
-  const journal = await prisma.accJournal.findFirst({
-    where: { id, company_id: { in: companyIds } },
-    include: {
-      lines: {
-        orderBy: { sequence_no: "asc" },
-        include: { currency: { select: { currency_label: true } } },
-      },
-    },
-  });
-  if (!journal) return null;
-
-  return {
-    id: journal.id,
-    journalNo: journal.journal_no,
-    companyId: journal.company_id,
-    date: journal.accounting_date ? journal.accounting_date.toISOString().slice(0, 10) : null,
-    description: journal.description,
-    status: journal.status,
-    isManual: journal.is_manual,
-    lines: journal.lines.map((l) => ({
-      accountId: l.account_id,
-      partnerId: l.partner_id,
-      currencyId: l.currency_id,
-      currencyLabel: l.currency.currency_label,
-      rate: l.exchange_rate.toNumber(),
-      // The stored amounts are base; `trx_amount` is the line's own currency,
-      // which is what an editor puts back in the field.
-      debit: l.debit_amount.toNumber() > 0 ? l.trx_amount.toNumber() : 0,
-      credit: l.kredit_amount.toNumber() > 0 ? l.trx_amount.toNumber() : 0,
-      description: l.description,
-    })),
-  };
-}
-
 /** Every write on a journal leaves the step it was, never a bare "Diubah". */
 async function writeJournalAudit(
   tx: Client,
@@ -723,17 +427,17 @@ export async function journalNumbersByIds(
 }
 
 /**
- * `JRN-0001` for a journal a posting produced, `JUR-0001` for one a person
- * typed, `CLS-0001` for a fiscal year's closing entry — independent series in
- * one table, so which kind of journal a number names is readable without
+ * `JRN-0001` for a journal a posting produced and `CLS-0001` for a fiscal
+ * year's closing entry (a typed one is `JUM-`, numbered by Jurnal Umum) —
+ * independent series in one table, so which kind of journal a number names is readable without
  * opening it.
  *
  * The highest number is looked up **within the series**: ordering by id alone
- * would hand a `JUR` number back when the newest row happened to be a `JRN`.
+ * would hand a `CLS` number back when the newest row happened to be a `JRN`.
  */
 async function nextJournalNo(
   tx: Client,
-  prefix: JournalSeries | "JUR"
+  prefix: JournalSeries
 ): Promise<string> {
   return nextDocumentNumber(prefix, async () => {
     const row = await tx.accJournal.findFirst({

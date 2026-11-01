@@ -3,16 +3,15 @@ import { requirePermission } from "@/lib/siba/auth";
 import { companyScope } from "@/lib/siba/company-access";
 import { listJournals } from "@/lib/siba/journal";
 import { parseRegisterQuery } from "@/lib/siba/register-query";
-import { journalAbilities } from "@/lib/siba/journal-workflow";
+import { generalJournalAbilities } from "@/lib/siba/general-journal-workflow";
 
 export const dynamic = "force-dynamic";
 
 /**
  * The Journal register.
  *
- * Both kinds live here: journals a posting produced, which are final from the
- * moment they exist, and manual journals, which are drafted below this page at
- * `/new` and `/[id]/edit` and become the same thing once posted.
+ * Every journal lives here: those a posting produced, final from the moment
+ * they exist, and typed ones, which Jurnal Umum drafts, edits and posts.
  *
  * One Company at a time, chosen from the Companies this reader's permissions
  * open. Each Company keeps its own books and its own chart of accounts, so a
@@ -41,7 +40,7 @@ export default async function Page({
       journals={journals}
       companies={scope.options}
       companyId={scope.selected?.id ?? null}
-      can={journalAbilities(actor.permissions)}
+      can={generalJournalAbilities(actor.permissions)}
     />
   );
 }

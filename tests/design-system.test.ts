@@ -1319,6 +1319,8 @@ const DOCUMENT_SCREENS: {
     form: "src/components/accounting/journal-form.tsx",
     list: "src/components/accounting/journal-list.tsx",
     routes: "src/app/(app)/accounting/journal",
+    // A document's journal is never edited; a typed one is Jurnal Umum's.
+    editable: false,
   },
   {
     name: "Jurnal Umum",

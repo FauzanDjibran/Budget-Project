@@ -1,44 +1,39 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Amount } from "@/components/ui/amount";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DocumentHeader } from "@/components/ui/document-header";
 import { Pager } from "@/components/ui/pager";
 import { useRegisterParams } from "@/components/ui/use-register-params";
 import { SearchField } from "@/components/ui/search-field";
 import { Select } from "@/components/ui/select";
-import { useToast } from "@/components/ui/toast";
 import { CompanyFilter, NoCompanyAccess } from "@/components/master/company-filter";
-import { transitionJournal } from "@/app/actions/journal";
 import { formatDate } from "@/lib/format";
 import type { Company } from "@/lib/siba/company-access";
 import { STATUS_CLASS, STATUS_TEXT } from "@/lib/siba/entities";
-import { menuButtonClass } from "@/lib/siba/header-actions";
 import type { JournalRow } from "@/lib/siba/journal";
 import type { Paged } from "@/lib/siba/register-query";
 import {
-  JOURNAL_TRANSITIONS,
-  availableJournalActions,
-  journalIsEditable,
-  type JournalAbilities,
-  type JournalAction,
-  type JournalStatus,
-} from "@/lib/siba/journal-workflow";
+  generalJournalIsEditable,
+  type GeneralJournalAbilities,
+  type GeneralJournalStatus,
+} from "@/lib/siba/general-journal-workflow";
 
-const STATUSES: JournalStatus[] = ["Draft", "Posted", "Cancelled"];
+const STATUSES: GeneralJournalStatus[] = ["Draft", "Posted", "Cancelled"];
+
+/** A typed journal is read, edited and posted in Jurnal Umum. */
+const TYPED = "/accounting/jurnal-umum";
 
 /**
  * The Journal register — every journal, however it came to exist.
  *
  * Most are written by a document being posted and are `Posted` the moment they
- * exist; they are never edited, deleted or reversed. A **manual** journal is
- * the other kind: typed here, saved as a Draft, and posted through the same
- * engine. Drafts sort to the top, because they are the only rows anybody still
- * has something to do about.
+ * exist; they are never edited, deleted or reversed. A **typed** journal is
+ * the other kind: written in Jurnal Umum, saved as a Draft, and posted there
+ * behind its journal preview, so no row here posts one. Drafts sort to the
+ * top, because they are the only rows anybody still has something to do about.
  *
  * Laid out like every other document register: a `No` column, the `Status:`
  * and `Sumber:` facets in the toolbar, the count on the right, and the row's
@@ -63,19 +58,11 @@ export function JournalList({
   companies: Company[];
   /** The one being shown, or null when the reader may see none. */
   companyId: number | null;
-  can: JournalAbilities;
+  can: GeneralJournalAbilities;
 }) {
   const router = useRouter();
-  const toast = useToast();
   const reg = useRegisterParams();
   const origin = reg.param("origin");
-  const [menuFor, setMenuFor] = useState<{ row: JournalRow; x: number; y: number } | null>(
-    null
-  );
-  const [confirm, setConfirm] = useState<{ row: JournalRow; action: JournalAction } | null>(
-    null
-  );
-  const [busy, setBusy] = useState(false);
 
   const rows = journals?.rows ?? [];
   const activeFilters = [reg.status, origin, reg.q].filter(Boolean).length;
@@ -83,29 +70,17 @@ export function JournalList({
 
   const cents = (n: number) => Math.round(n * 100);
 
-  const run = async (row: JournalRow, action: JournalAction) => {
-    setBusy(true);
-    const result = await transitionJournal(row.id, action);
-    setBusy(false);
-    setConfirm(null);
-    if (!result.ok) {
-      toast("Tidak dapat diproses", result.errors._form, "err");
-      return;
-    }
-    toast(result.message, row.journalNo, "ok");
-  };
-
   return (
     <>
       <DocumentHeader
         module="Accounting"
         icon="book"
         title="Journal"
-        sub="Journal dari posting dokumen bersifat final; journal manual disimpan sebagai Draft dan masuk buku besar saat diposting."
+        sub="Journal dari posting dokumen bersifat final; Jurnal Umum disimpan sebagai Draft dan masuk buku besar saat diposting."
       >
         {can.create && (
-          <Link className="btn primary" href="/accounting/journal/new">
-            <Icon name="plus" size={15} /> Journal Manual
+          <Link className="btn primary" href={`${TYPED}/new`}>
+            <Icon name="plus" size={15} /> Jurnal Umum
           </Link>
         )}
       </DocumentHeader>
@@ -186,12 +161,9 @@ export function JournalList({
                   </thead>
                   <tbody>
                     {rows.map((j, i) => {
-                      const href = `/accounting/journal/${j.id}`;
-                      const actions = j.isManual
-                        ? availableJournalActions(j.status as JournalStatus, can)
-                        : [];
+                      const href = j.isManual ? `${TYPED}/${j.id}` : `/accounting/journal/${j.id}`;
                       const editable =
-                        j.isManual && can.edit && journalIsEditable(j.status as JournalStatus);
+                        j.isManual && can.edit && generalJournalIsEditable(j.status as GeneralJournalStatus);
                       const broken = cents(j.debit) !== cents(j.credit) && j.status === "Posted";
                       return (
                         <tr key={j.id} onClick={() => router.push(href)}>
@@ -250,23 +222,7 @@ export function JournalList({
                               ) : (
                                 <span className="sp" />
                               )}
-                              {actions.length > 0 ? (
-                                <button
-                                  className="iact kb"
-                                  title="Aksi lain"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const r = (
-                                      e.currentTarget as HTMLElement
-                                    ).getBoundingClientRect();
-                                    setMenuFor({ row: j, x: r.right - 200, y: r.bottom + 5 });
-                                  }}
-                                >
-                                  <Icon name="more" size={15} />
-                                </button>
-                              ) : (
-                                <span className="sp" />
-                              )}
+                              <span className="sp" />
                             </span>
                           </td>
                         </tr>
@@ -293,7 +249,7 @@ export function JournalList({
               <p>
                 {journals?.all
                   ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
-                  : "Journal terbentuk otomatis saat dokumen Finance diposting, atau dibuat sendiri sebagai Journal Manual."}
+                  : "Journal terbentuk otomatis saat dokumen Finance diposting, atau ditulis sendiri lewat Jurnal Umum."}
               </p>
               <div className="cta">
                 {journals?.all ? (
@@ -302,8 +258,8 @@ export function JournalList({
                   </button>
                 ) : (
                   can.create && (
-                    <Link className="btn primary" href="/accounting/journal/new">
-                      <Icon name="plus" size={15} /> Journal Manual
+                    <Link className="btn primary" href={`${TYPED}/new`}>
+                      <Icon name="plus" size={15} /> Jurnal Umum
                     </Link>
                   )
                 )}
@@ -313,89 +269,6 @@ export function JournalList({
         </div>
       )}
 
-      {menuFor && (
-        <RowMenu
-          row={menuFor.row}
-          x={menuFor.x}
-          y={menuFor.y}
-          can={can}
-          onPick={(action) => {
-            setMenuFor(null);
-            setConfirm({ row: menuFor.row, action });
-          }}
-          onClose={() => setMenuFor(null)}
-        />
-      )}
-
-      {confirm && (
-        <ConfirmDialog
-          open
-          icon={JOURNAL_TRANSITIONS[confirm.action].icon}
-          tone={JOURNAL_TRANSITIONS[confirm.action].tone === "danger" ? "danger" : "ok"}
-          title={JOURNAL_TRANSITIONS[confirm.action].title}
-          subject={confirm.row.journalNo}
-          body={JOURNAL_TRANSITIONS[confirm.action].body}
-          confirmLabel={JOURNAL_TRANSITIONS[confirm.action].confirmLabel}
-          confirmTone={
-            JOURNAL_TRANSITIONS[confirm.action].tone === "danger" ? "solid-danger" : "primary"
-          }
-          busy={busy}
-          onConfirm={() => run(confirm.row, confirm.action)}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
     </>
-  );
-}
-
-/** The row action menu — a fixed popup anchored to the trigger. */
-function RowMenu({
-  row,
-  x,
-  y,
-  can,
-  onPick,
-  onClose,
-}: {
-  row: JournalRow;
-  x: number;
-  y: number;
-  can: JournalAbilities;
-  onPick: (action: JournalAction) => void;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("mousedown", onDown, true);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown, true);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
-
-  return (
-    <div className="menu" ref={ref} style={{ left: Math.max(8, x), top: y }}>
-      <div className="hd">
-        <b>{row.journalNo}</b>
-        <span>{STATUS_TEXT[row.status] ?? row.status}</span>
-      </div>
-      <div className="dv" />
-      {availableJournalActions(row.status as JournalStatus, can).map((a) => {
-        const t = JOURNAL_TRANSITIONS[a];
-        return (
-          <button key={a} className={menuButtonClass(t.tone)} onClick={() => onPick(a)}>
-            <Icon name={t.icon} size={14} /> {t.label}
-          </button>
-        );
-      })}
-    </div>
   );
 }
