@@ -100,7 +100,9 @@ Each step ends green on `npm run build`, `npm run lint`, `npm test`.
 | 2–3 Schema, one writer | Done, 2e621fc | Migration `20261030100000`. A typed journal posts in place (`assertBalanced`); its book entries name the Journal doc type |
 | 4 Retire the manual journal | Done, a665140 | `JOURNAL_CREATE / _EDIT / _POST / _CANCEL` removed. Until step 6, `/accounting/journal` keeps every journal: a read-only `JournalForm` for a document's or a close's, a typed one sent to Jurnal Umum, and the register posts nothing from a row |
 | 5 Drop the control account | Done | Migration `20261030110000`. `fx_revaluation` must be a Tanpa account; Mapping Account System accounts stay typeable (R6 declined) |
-| 6–8 | Not started | The showcase's typed journal (Biaya Listrik → Hutang Listrik) is unverified until step 8 runs `db:seed-showcase` |
+| 6 One menu, named Journal | Done, ca74d50 | Migration `20261101090000` renames the permissions with their grants. The one form reads a document's journal too |
+| 7 Documentation | Done | CLAUDE.md §1, §3, §5, §6, §10 rules 79–83, 97–102, 104, 113–117, §12, §14, §17; KNOWLEDGE.md rows 52–53 (D) |
+| 8 Verify | Local done | `db:seed-showcase` posted its typed journal as a Draft; `db:reconcile` 18/18; the register, a document's journal, a typed draft and its Post preview and the new form checked in the browser beside Revaluasi Kurs |
 
 ---
 

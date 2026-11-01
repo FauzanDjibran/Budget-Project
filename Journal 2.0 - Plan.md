@@ -465,6 +465,8 @@ Each step ends green on `npm run build`, `npm run lint` and `npm test`.
 
 ## 8. Later: replacing the manual journal
 
+> **Done** as option (b), replacing the store — see `Journal Replacement - Plan.md`.
+
 D15 says that, if Jurnal Umum is satisfactory, it replaces the manual journal
 and becomes the source of everything the old journal is the source of. That
 can mean two things, to be decided then:
@@ -511,6 +513,6 @@ All three proposals accepted as written.
 | 5d Layer Baru (D23) | Done 29/10/2026 | `KursSelect` gains `size="sm"` (a compact trigger, *tidak ada layer* when empty). The foreign Kas & Bank Entri cell is a Baru checkbox beside it; the column rule follows the checkbox, not the choice. An item's or a layer's kurs shows as soon as it is chosen, no longer only once an amount is typed, and the Kurs field shows a dash until something supplies or needs it. `design-system` holds that the form draws layers with `KursSelect` and offers no *Layer baru* option. Exercised in the browser on the dev server (Kas & Bank → BCA-USD, Baru on and off, a layer picked at 16.450); nothing saved |
 | 5e Mapping cut (D24) | Done 29/10/2026 | `checkAccountLedger` no longer reads `acc_account.mappings`; the journal-line and Cash & Bank holds stay. `checkMappingLedger` on the mapping form is unchanged. Locally, ABHC and SBTC each hold Hutang × Cabang on 2.1.5.2 and Piutang × Cabang on 1.1.4.2, neither with a journal line, so 1.1.4.2 can take both books once 2.1.5.2 drops Hutang |
 | 5f Kategori replaces the mapping (D25) | Done 29/10/2026 | Local data checked first: every mapping with a Partner matched its account's books, the 4 without one sat on Tanpa accounts with no Partner Category, no duplicates; Neon not checked (the migration refuses by name if it disagrees). After the migration: 30 Kategori accounts (26 + 4), all control. `accountTakesPartner(account)` replaces `ledgerTakesPartner(ledger)` and reads the Partner Category; the account form's Kategori offers every category without a Partner and those keeping a book, and shows Partner Category only when the chosen ones take one. `reconcile-books` check 14 reads account categories; `seed-showcase` writes them. Tests: no mixing, one account per category without a Partner, a Biaya account is a control account the manual journal refuses, a Jurnal Umum Biaya line posts with its category and writes no book. **Closed after:** check 14 now compares debit less kredit, each book entry turned by its own book's `raises`, so an account holding Hutang and Piutang sums both books against its General Ledger. The control-account rule is a local exception in KNOWLEDGE.md (chart-of-accounts §3). `ui-audit` (by hand in the browser pane, the local database being empty of business data): Jurnal Umum new against Penyesuaian new, Account new against Partner new, the same shape; the line table still runs wider than its card at 1600px, ~100px more with Jenis — accepted in step 5 |
-| 6 Retire and rewire | Not started | |
-| 7 Documentation | Not started | |
-| 8 Trial in use | Not started | |
+| 6 Retire and rewire | Done 30/10/2026 | As step 1 of `Journal Replacement - Plan.md` (f325cae) |
+| 7 Documentation | Done 01/11/2026 | With the Journal Replacement documentation |
+| 8 Trial in use | Not started | The replacement ran before it, on the user's decision (Journal Replacement R8) |
