@@ -90,6 +90,18 @@ Each step ends green on `npm run build`, `npm run lint`, `npm test`.
 | **7 Documentation** *(rev)* | CLAUDE.md carries Journal 2.0's step 7 debt too (it still lists Penyesuaian and Reklas as built and has no Jurnal Umum module): §1, §3 (module table, contract), §5, §9, §10 rules 47–49 (one table), 70, 79–83 (no control account; Journal is the hand-written journal; R6), 97–102 and 113–117 (if R7), §12 *A posted journal balances…*, *A manual journal is drafted…*, *An account with children…* (Postable half stays), §14, §17. KNOWLEDGE.md rows 52 and 53 per the deviation answer. `Journal 2.0 - Plan.md` §8 / §10 | |
 | **8 Verify** | `npm run db:seed`, `npm run db:seed-showcase`, `npm run db:reconcile`; browser: new → save → Post, a Realisasi's journal, a close's journal, GL drill; `ui-audit` the register and form; apply on Neon and reseed | All agree |
 
+
+### Progress (30/10–01/11/2026)
+
+| Step | State | Notes |
+|---|---|---|
+| 0 Prep | Done | Local held no transaction; local and Neon at the same migration. Neon is emptied when it is migrated (step 8) |
+| 1 Retire Penyesuaian / Reklas | Done, f325cae | Migration `20261030090000` |
+| 2–3 Schema, one writer | Done, 2e621fc | Migration `20261030100000`. A typed journal posts in place (`assertBalanced`); its book entries name the Journal doc type |
+| 4 Retire the manual journal | Done, a665140 | `JOURNAL_CREATE / _EDIT / _POST / _CANCEL` removed. Until step 6, `/accounting/journal` keeps every journal: a read-only `JournalForm` for a document's or a close's, a typed one sent to Jurnal Umum, and the register posts nothing from a row |
+| 5 Drop the control account | Done | Migration `20261030110000`. `fx_revaluation` must be a Tanpa account; Mapping Account System accounts stay typeable (R6 declined) |
+| 6–8 | Not started | The showcase's typed journal (Biaya Listrik → Hutang Listrik) is unverified until step 8 runs `db:seed-showcase` |
+
 ---
 
 ## 3. Risks

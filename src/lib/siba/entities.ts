@@ -864,7 +864,7 @@ export const ENTITIES: Entity[] = [
         // Which ledger the account belongs to, and all it says about itself.
         // Kategori is reached only through Mapping Budget ke Account, whose
         // Budget Category says what a line needs; Kas & Bank is a Cash & Bank
-        // resource's. Anything but Tanpa is a control account. Locked once the
+        // resource's; each writes its book beside the journal. Locked once the
         // account has a journal line (`validateAccount`).
         name: "ledger",
         label: "Ledger",
@@ -874,23 +874,6 @@ export const ENTITIES: Entity[] = [
         required: true,
         defaultValue: "none",
         help: "Kategori dicapai lewat Mapping Budget ke Account",
-      },
-      {
-        // Whether a book outside the General Ledger reconciles against this
-        // account: a Cash & Bank resource registered on it, a subject-book
-        // mapping pointing at it, a bridge or FX System Default naming it.
-        // The structure answers that question, so the flag is recomputed from
-        // it on every event that can change the answer and is never typed —
-        // `syncControlAccounts` in `records.ts`. Still shown, because a manual
-        // journal is refused by it and that refusal has to be readable before
-        // somebody starts writing one.
-        name: "is_control_account",
-        label: "Control Account",
-        type: "bool",
-        derived: true,
-        locked: true,
-        defaultValue: false,
-        caption: "Direkonsiliasi dengan book",
       },
       {
         name: "is_active",

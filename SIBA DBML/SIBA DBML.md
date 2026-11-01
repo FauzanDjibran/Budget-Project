@@ -723,11 +723,11 @@ table acc_account {
   // whose Budget Category decides what a line needs (a Partner, an open item);
   // 'cash_bank', the only ledger a Cash & Bank resource may post to.
   // partner_category_id and acc_account_book (Journal 2.0 D25) were dropped
-  // in 20261029125955. is_control_account is any ledger but 'none', plus the
-  // System Account claims. Locked once the account has a journal line.
+  // in 20261029125955; is_control_account in 20261030110000 (Journal
+  // Replacement R2: a typed line on a ledger writes its book beside the
+  // journal). Locked once the account has a journal line.
   ledger                      enum('none', 'category', 'cash_bank') [not null, default: 'none']
 
-  is_control_account          boolean [not null, default: false]
 
   note                        text
 

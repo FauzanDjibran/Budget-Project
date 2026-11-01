@@ -193,8 +193,8 @@ export function SystemAccountForm({
 
       <p className="foot-note">
         Account di sini tidak mengisi form: ia menentukan ke mana posting otomatis
-        ditulis, menjadi control account, dan proses yang membutuhkannya ditolak
-        dengan menyebut nama selama belum diatur.
+        ditulis, dan proses yang membutuhkannya ditolak dengan menyebut nama
+        selama belum diatur.
       </p>
     </>
   );

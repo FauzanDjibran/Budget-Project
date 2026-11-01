@@ -5,11 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { authorizeAction } from "@/lib/siba/auth";
 import { isAccessDenied } from "@/lib/siba/auth-errors";
 import { accessibleCompanyIds } from "@/lib/siba/company-access";
-import { syncControlAccounts } from "@/lib/siba/records";
 import { isSystemAccountKey, type SystemAccountKey } from "@/lib/siba/system-accounts";
 import {
   checkSystemAccountValue,
-  systemAccountIds,
   writeSystemAccounts,
 } from "@/lib/siba/system-account-data";
 
@@ -46,7 +44,6 @@ export async function saveSystemAccounts(
 
   const clean: Partial<Record<SystemAccountKey, number | null>> = {};
   const errors: Record<string, string> = {};
-  const named: number[] = [];
 
   for (const [key, raw] of Object.entries(values)) {
     if (!isSystemAccountKey(key)) continue;
@@ -66,24 +63,11 @@ export async function saveSystemAccounts(
       continue;
     }
     clean[key] = n;
-    named.push(n);
   }
 
   if (Object.keys(errors).length) return { ok: false, errors };
 
-  // The accounts named a moment ago: a key repointed at another account has
-  // to release the one it left behind, and once the write has run nothing
-  // remembers it.
-  const before = await systemAccountIds();
   const changed = await writeSystemAccounts(companyId, clean, actorId);
-
-  // An account a posting engine owns is a control account for as long as an
-  // entry names it, and stops being one when none does (CLAUDE.md §10 rule 79).
-  if (changed.length) {
-    const after = await systemAccountIds();
-    const touched = new Set([...before, ...after, ...named]);
-    await syncControlAccounts(touched, after, actorId);
-  }
 
   for (const { rowId } of changed) {
     await prisma.auditLog.create({

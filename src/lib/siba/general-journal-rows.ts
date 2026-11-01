@@ -224,7 +224,7 @@ export type GeneralJournalOptions = {
 
 /**
  * What a line may be built from, for one Company: every postable leaf account
- * (Jurnal Umum takes control accounts too, D16), and for each ledger what its
+ * of any ledger, and for each ledger what its
  * pickers offer. The Server Action re-checks every choice.
  */
 export async function generalJournalOptions(companyId: number): Promise<GeneralJournalOptions> {

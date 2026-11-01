@@ -14,7 +14,6 @@ import {
   SYSTEM_ACCOUNTS,
   isSystemAccountKey,
 } from "../src/lib/siba/system-accounts";
-import { syncControlAccounts } from "../src/lib/siba/records";
 import {
   checkSystemDefaultValue,
   defaultCompanyId,
@@ -27,7 +26,6 @@ import {
   checkSystemAccountValue,
   missingClosingAccounts,
   missingNeracaAccounts,
-  systemAccountIds,
   systemAccountsUsingAccount,
   writeSystemAccounts,
 } from "../src/lib/siba/system-account-data";
@@ -89,9 +87,6 @@ before(async () => {
 after(async () => {
   await writeSystemDefaults(previous, actor);
   await systemAccounts.restore();
-  // Release every fixture account these settings claimed, before the accounts
-  // themselves go: an account left flagged would outlive the row explaining it.
-  await syncControlAccounts(claimed, await systemAccountIds(), actor);
   await cleanupFixtures();
   await prisma.refCurrency.deleteMany({
     where: { currency_label: { startsWith: FIXTURE_PREFIX } },
@@ -101,9 +96,6 @@ after(async () => {
 });
 
 // -------------------------------------------------------------- the catalogue
-
-/** Every account this suite pointed a setting at, for the teardown to release. */
-const claimed = new Set<number>();
 
 describe("the System Default catalogue lives in code", () => {
   test("every declared key has a home in the empty value set", () => {
@@ -327,27 +319,9 @@ describe("the defaults a new Budget and a new Realisasi start from", () => {
  *
  * They behave like the intercompany bridge rather than like a prefill: the
  * accumulated one is where a year's result is posted, so it is checked when it
- * is stored and refused by name when it is missing. Both are closed to hand
- * entry by the ordinary mechanism — an account a posting engine owns is not one
- * a person types into — and the property that matters is that the claim is
- * released again when the setting is repointed.
- *
- * The sync is invoked here the way `saveSystemAccounts` invokes it: a test
- * process has no session, so it calls what the Server Action delegates to.
+ * is stored and refused by name when it is missing.
  */
 describe("the equity accounts closing posts into", () => {
-  const sync = async (touched: number[]) => {
-    for (const id of touched) claimed.add(id);
-    await syncControlAccounts(touched, await systemAccountIds(), actor);
-  };
-  const isControl = async (id: number) =>
-    (
-      await prisma.accAccount.findUniqueOrThrow({
-        where: { id },
-        select: { is_control_account: true },
-      })
-    ).is_control_account;
-
   test("an account of the wrong Company is refused before it is stored", async () => {
     const anakAccount = await makeAccount({
       companyId: await childCompanyId(),
@@ -382,45 +356,24 @@ describe("the equity accounts closing posts into", () => {
     );
   });
 
-  test("setting one closes it to manual entry, and repointing re-opens it", async () => {
+  test("a setting names its account by name, and follows it when repointed", async () => {
     const company = await parentCompanyId();
-    const first = await makeAccount({
-      companyId: company,
-      subcategoryLabel: "3.3.1",
-      normalBalance: "Kredit",
-    });
-    const current = await makeAccount({
-      companyId: company,
-      subcategoryLabel: "3.4.1",
-      normalBalance: "Kredit",
-    });
+    const first = await makeAccount({ companyId: company, subcategoryLabel: "3.3.1", normalBalance: "Kredit" });
     await systemAccounts.set("induk", "accumulated_pl", first);
-    await systemAccounts.set("induk", "current_pl", current);
-    await sync([first, current]);
+    assert.deepEqual(await systemAccountsUsingAccount(first), ["Account Laba/Rugi Tahun Sebelumnya — Induk"]);
 
-    assert.equal(await isControl(first), true, "closing posts here");
-    assert.equal(
-      await isControl(current),
-      true,
-      "and nothing posts here at all, which is a stronger reason still"
-    );
-    assert.deepEqual(await systemAccountsUsingAccount(first), [
-      "Account Laba/Rugi Tahun Sebelumnya — Induk",
-    ]);
-
-    // The half that used to be missing everywhere: a setting moved on has to
-    // let go of what it left behind, or the old account stays shut for good.
-    const second = await makeAccount({
-      companyId: company,
-      subcategoryLabel: "3.3.1",
-      normalBalance: "Kredit",
-    });
+    const second = await makeAccount({ companyId: company, subcategoryLabel: "3.3.1", normalBalance: "Kredit" });
     await systemAccounts.set("induk", "accumulated_pl", second);
-    await sync([first, second]);
+    assert.deepEqual(await systemAccountsUsingAccount(first), [], "nothing names it any more");
+  });
 
-    assert.equal(await isControl(first), false, "nothing names it any more");
-    assert.equal(await isControl(second), true, "the setting's new target is claimed");
-    assert.equal(await isControl(current), true, "the untouched setting still holds its own");
+  test("a revaluation's account keeps no ledger (R2)", async () => {
+    const company = await parentCompanyId();
+    const kategori = await makeAccount({ companyId: company, subcategoryLabel: "3.3.1", normalBalance: "Kredit" });
+    await prisma.accAccount.update({ where: { id: kategori }, data: { ledger: "category" } });
+    assert.match((await checkSystemAccountValue(company, "fx_revaluation", kategori)) ?? "", /Tanpa/);
+    const tanpa = await makeAccount({ companyId: company, subcategoryLabel: "3.3.1", normalBalance: "Kredit" });
+    assert.equal(await checkSystemAccountValue(company, "fx_revaluation", tanpa), null);
   });
 
   test("an unset accumulated account is reported by name, and the current one is not", async () => {
@@ -446,7 +399,6 @@ describe("the equity accounts closing posts into", () => {
       normalBalance: "Kredit",
     });
     await systemAccounts.set("induk", "accumulated_pl", account);
-    await sync([account]);
     assert.deepEqual(await missingClosingAccounts(), [
       "Account Laba/Rugi Tahun Sebelumnya — Anak",
     ]);
@@ -502,7 +454,6 @@ describe("the equity accounts closing posts into", () => {
     });
     await systemAccounts.set("induk", "current_pl", current);
     await systemAccounts.set("induk", "accumulated_pl", accumulated);
-    await sync([current, accumulated]);
 
     assert.deepEqual(await missingNeracaAccounts({ induk: true, anak: false }), [
       "Account Laba/Rugi Tahun Berjalan — Anak",

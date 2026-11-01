@@ -9,8 +9,8 @@
  * holds one row per Company and key, and the screen shows one Company at a
  * time, like the Chart of Accounts it picks from.
  *
- * Every account named here becomes a control account (CLAUDE.md §10 rule 79),
- * so nothing but its posting engine writes into it.
+ * A posting engine writes into each of these. Jurnal Umum may write them too:
+ * closing them to hand entry was declined for now (Journal Replacement R6).
  *
  * Client-safe on purpose — no `server-only`, no database import: the form
  * reads the same catalogue the Server Action writes against.

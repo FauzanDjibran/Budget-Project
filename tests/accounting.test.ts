@@ -31,7 +31,6 @@ import {
   checkAccountNumber,
   listRows,
   checkCashBankAccount,
-  controlAccountReasons,
   partnerCategoriesForBudgetCategory,
 } from "../src/lib/siba/records";
 import {
@@ -697,7 +696,7 @@ describe("Company access is a permission, not a preference", () => {
 });
 
 describe("the account names its ledger; Mapping Budget ke Account names the account", () => {
-  test("a mapped account stays Kategori, and is a control account", async () => {
+  test("a mapped account stays Kategori", async () => {
     const company = await parentCompanyId();
     assert.equal(await checkAccountLedger(null, "category"), null);
     assert.equal(await checkAccountLedger(null, "partner"), "Pilih ledger.");
@@ -705,7 +704,6 @@ describe("the account names its ledger; Mapping Budget ke Account names the acco
     const owner = await makeAccount({ companyId: company, subcategoryLabel: "5.3.1", bookLabels: ["Biaya"] });
     assert.match((await checkAccountLedger(owner, "none")) ?? "", /Mapping Budget ke Account/);
     assert.equal(await checkAccountLedger(owner, "category"), null);
-    assert.ok((await controlAccountReasons(owner)).length > 0, "any ledger but Tanpa is a control account");
   });
 
   test("a book and a partner tag may post to one account", async () => {

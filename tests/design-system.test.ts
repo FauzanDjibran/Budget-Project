@@ -851,12 +851,10 @@ describe("a form is filled in in the order its rules require", () => {
 /**
  * Whether an account may receive a posting is decided by the backend.
  *
- * Both flags used to be checkboxes, and both are structural: `is_postable` is
- * whether the account is a leaf (§10 rule 77), and `is_control_account` is
- * whether anything outside the General Ledger reconciles against it (rule 79).
- * A checkbox over either of those is an invitation to contradict the structure
- * — and the application would not error, it would simply stop being able to
- * prove its own figures.
+ * `is_postable` used to be a checkbox and is structural: whether the account
+ * is a leaf (§10 rule 77). A checkbox over it is an invitation to contradict
+ * the structure. The control-account flag is gone: the ledger decides what a
+ * line on the account demands (Journal Replacement R2).
  */
 describe("an account's postability is not something a user types", () => {
   const account = ENTITIES.find((e) => e.key === "acc_account")!;
@@ -869,30 +867,10 @@ describe("an account's postability is not something a user types", () => {
     );
   });
 
-  test("Control Account is shown, and never written by a form", () => {
-    const field = account.fields.find((f) => f.name === "is_control_account");
-    assert.ok(field, "the flag is still shown — a manual journal is refused by it");
-    assert.equal(field!.derived, true, "it is recomputed from the structure");
-    assert.equal(field!.locked, true, "so an update must drop whatever was submitted");
-  });
-
-  test("the flag is recomputed in both directions", () => {
-    // Claiming used to be automatic and releasing was not, which left an
-    // account flagged by a mapping since repointed elsewhere closed to manual
-    // entry for good. With the checkbox gone there would be no way back.
-    const f = files.find((x) => x.rel === "src/lib/siba/records.ts");
-    assert.ok(f);
-    assert.match(
-      code(f!.text),
-      /export async function syncControlAccounts/,
-      "records.ts owns the recompute."
-    );
-    const bad = files.filter((x) => /markControlAccount/.test(code(x.text)));
-    assert.deepEqual(
-      bad.map((x) => x.rel),
-      [],
-      "`markControlAccount` only ever set the flag — use `syncControlAccounts`."
-    );
+  test("no control-account flag is offered or kept", () => {
+    assert.equal(account.fields.find((f) => f.name === "is_control_account"), undefined);
+    const bad = files.filter((x) => /is_control_account|syncControlAccounts/.test(code(x.text)));
+    assert.deepEqual(bad.map((x) => x.rel), [], "the ledger decides; there is no flag to recompute");
   });
 });
 

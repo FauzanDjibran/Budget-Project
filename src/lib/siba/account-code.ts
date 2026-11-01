@@ -124,11 +124,3 @@ export function accountTakesPartner(account: { ledger: string }): boolean {
   return account.ledger === "category";
 }
 
-/**
- * Whether the account is closed to hand entry (D25): any ledger but `none`.
- * A `category` account is reached through its Budget Category, so one door
- * serves every Biaya kind as it serves every book.
- */
-export function ledgerIsControl(ledger: string): boolean {
-  return ledger !== "none";
-}

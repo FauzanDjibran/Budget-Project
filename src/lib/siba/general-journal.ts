@@ -36,9 +36,8 @@ import { systemAccountId } from "./system-account-data";
  * A line names an account, and the account names its ledger
  * (`acc_account.ledger`, D18). The ledger's adapter checks what the line must
  * name and, at Post, writes its own book beside the journal, so the General
- * Ledger and the book can never drift apart. Unlike the manual journal it
- * accepts a control account, because the account's ledger then demands its
- * subject (D16).
+ * Ledger and the book can never drift apart; the ledger, not a flag, is what
+ * decides what a line demands (Journal Replacement R2).
  *
  * It lives in `acc_journal` beside every journal a document wrote (Journal
  * Replacement): Post checks the balance by the same rule `postJournal`

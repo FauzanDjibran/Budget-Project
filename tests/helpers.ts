@@ -280,8 +280,6 @@ export async function makeAccount(options: {
   active?: boolean;
   parentId?: number | null;
   normalBalance?: "Debit" | "Kredit";
-  /** Reconciled against a book outside the General Ledger — see §10 rule 79. */
-  controlAccount?: boolean;
   /** The Partner Category `bookLabels` are mapped for, where they take one. */
   partnerCategoryLabel?: string | null;
   /**
@@ -317,7 +315,6 @@ export async function makeAccount(options: {
       is_postable: options.postable ?? true,
       is_active: options.active ?? true,
       normal_balance: options.normalBalance ?? "Debit",
-      is_control_account: options.controlAccount ?? false,
       ledger: options.bookLabels?.length
         ? "category"
         : options.ledger ?? (options.partnerCategoryLabel ? "category" : "none"),
@@ -396,7 +393,7 @@ export async function makeMapping(options: {
 
   await prisma.accAccount.update({
     where: { id: options.accountId },
-    data: { ledger: "category", is_control_account: true },
+    data: { ledger: "category" },
   });
   const row = await prisma.accBudgetCategoryAccount.create({
     data: {

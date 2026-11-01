@@ -1129,7 +1129,6 @@ model AccAccount {
   /// what a line needs (a Partner, an open item); `cash_bank` is what a Cash &
   /// Bank resource posts to. Locked once the account has a journal line.
   ledger                 AccountLedger @default(none)
-  is_control_account     Boolean       @default(false)
   note                   String?
   is_active              Boolean       @default(true)
 
@@ -1916,9 +1915,10 @@ enum JournalStatus {
 }
 
 /// Which ledger an account belongs to (Journal 2.0 D18, D25). `none` touches
-/// no ledger; `category` holds Budget Categories (`acc_account_book`), with a
-/// Partner and an open item where they take one; `cash_bank` a Cash & Bank.
-/// Anything but `none` is a control account.
+/// no ledger; `category` is reached through Mapping Budget ke Account, with a
+/// Partner and an open item where its category takes one; `cash_bank` a Cash
+/// & Bank. A typed journal line on either writes its book beside the journal,
+/// which replaced the control-account flag (Journal Replacement R2).
 enum AccountLedger {
   none
   category

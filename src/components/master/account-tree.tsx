@@ -169,11 +169,6 @@ export function AccountTree({
                 {LEDGER_TEXT.category}
               </span>
             )}
-            {account.isControlAccount && (
-              <span className="flag f-c" title="Control account">
-                C
-              </span>
-            )}
             {!account.isActive && <span className="bdg s-bad">Non Aktif</span>}
             <span className="tacts">
               <button

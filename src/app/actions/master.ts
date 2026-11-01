@@ -37,12 +37,8 @@ import {
   reconcileMultiref,
   requireEntity,
   strandedCategories,
-  syncControlAccounts,
 } from "@/lib/siba/records";
-import {
-  systemAccountIds,
-  systemAccountsUsingAccount,
-} from "@/lib/siba/system-account-data";
+import { systemAccountsUsingAccount } from "@/lib/siba/system-account-data";
 
 /**
  * Every action here is permission-gated before it touches anything, and every
@@ -675,26 +671,6 @@ function buildData(entity: Entity, values: FormValues, applies: Set<string>) {
   return data;
 }
 
-/**
- * A book's counterpart account declares itself — and stops declaring itself.
- *
- * A Cash & Bank resource registered on an account makes that account the Cash
- * Bank Book's counterpart; a mapping from a Budget Category that keeps a
- * subject book makes its target that book's. Either way the account's balance
- * is reconciled against something outside the General Ledger, and writing to
- * it by hand would put the two out of agreement — so the structure decides
- * `is_control_account` rather than leaving it to somebody remembering to tick
- * a box. The same shape as a parent account giving up `is_postable`.
- *
- * `previousAccountId` is what makes it work in both directions. Repointing a
- * Cash & Bank or a mapping releases the account it used to name, provided
- * nothing else still claims it — `syncControlAccounts` re-asks rather than
- * assuming, because two mappings can share one target.
- *
- * A mapping whose category keeps no book — Asset, Biaya — claims nothing. Its
- * target reconciles against the General Ledger alone, which is exactly the
- * kind of account a manual journal exists to reach.
- */
 /** Ids submitted for a multiref, however the form serialised them. */
 function idList(value: unknown): number[] {
   const raw = Array.isArray(value)
@@ -725,49 +701,6 @@ function wantedSets(
     out[field.name] = applies.has(field.name) ? idList(values[field.name]) : [];
   }
   return out;
-}
-
-async function syncControlAccountsFor(
-  entityKey: string,
-  values: FormValues,
-  actorId: number,
-  previousAccountId?: number | null
-): Promise<void> {
-  if (entityKey === "acc_account") {
-    // The ledger decides it, so an account claims or releases itself; the id
-    // arrives as `previousAccountId`.
-    if (previousAccountId) {
-      await syncControlAccounts([previousAccountId], await systemAccountIds(), actorId);
-    }
-    return;
-  }
-  if (entityKey !== "m_cash_bank") {
-    return;
-  }
-
-  const touched = new Set<number>();
-  const accountId = refValue(values, "account_id");
-  if (accountId) touched.add(accountId);
-  if (previousAccountId) touched.add(previousAccountId);
-  if (!touched.size) return;
-
-  await syncControlAccounts(touched, await systemAccountIds(), actorId);
-}
-
-/** The account a Cash & Bank names today, before it is rewritten. */
-async function currentAccountId(
-  entityKey: string,
-  id: number
-): Promise<number | null> {
-  if (entityKey === "acc_account") return id;
-  if (entityKey !== "m_cash_bank") {
-    return null;
-  }
-  const row = await delegate(entityKey).findUnique({
-    where: { id },
-    select: { account_id: true },
-  });
-  return row ? Number(row.account_id) : null;
 }
 
 export async function createRecord(
@@ -853,12 +786,6 @@ export async function createRecord(
     return row;
   });
 
-  await syncControlAccountsFor(
-    entity.key,
-    values,
-    actor.user.id,
-    entity.key === "acc_account" ? created.id : undefined
-  );
 
   await prisma.auditLog.create({
     data: {
@@ -936,11 +863,6 @@ export async function updateRecord(
     }
   }
 
-  // Read before the write: repointing a Cash & Bank or a mapping has to
-  // release the account it used to name, and once the row is updated there is
-  // nothing left that remembers which account that was.
-  const previousAccountId = await currentAccountId(entity.key, id);
-
   await prisma.$transaction(async (tx) => {
     await delegate(entity.key, tx).update({
       where: { id },
@@ -948,8 +870,6 @@ export async function updateRecord(
     });
     await reconcileMultiref(tx, entity, id, wantedSets(entity, values, applies), actor.user.id);
   });
-
-  await syncControlAccountsFor(entity.key, values, actor.user.id, previousAccountId);
 
   await prisma.auditLog.create({
     data: {

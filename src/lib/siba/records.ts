@@ -3,11 +3,9 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatMoney } from "@/lib/format";
-import { compareCodes, ledgerIsControl } from "./account-code";
+import { compareCodes } from "./account-code";
 import { cashBankBalanceMap } from "./cash-bank";
 import { journalLineCountForAccount } from "./journal";
-import { subledgerForCategory } from "./subledger-catalogue";
-import { loadSubledgers } from "./subledger-data";
 import { loadClassification } from "./classification-data";
 import { budgetCountByCategory } from "./budget";
 import { type Entity, type Field, entityBySlug } from "./entities";
@@ -441,105 +439,6 @@ export async function accountUsage(accountId: number): Promise<string[]> {
   }
   if (mappings) used.push(`${mappings} Mapping Budget ke Account`);
   return used;
-}
-
-// ------------------------------------------------------- control accounts
-
-/**
- * Why an account is a **control account** — an account whose balance is
- * reconciled against a book that lives outside the General Ledger.
- *
- * The account says so itself: any ledger but `none`. `cash_bank` must agree
- * with the Cash Bank Book and, for a foreign resource, with its rate layers;
- * `category` is reached only through Mapping Budget ke Account, whose
- * categories may keep books, so it is closed to hand entry.
- *
- * Writing to such an account by any route other than the posting that also
- * writes the book would put the two out of agreement silently — nothing would
- * error, the General Ledger would simply stop matching the Buku Hutang. That
- * is what the manual journal is refused for.
- *
- * Returns one phrase naming the book, in the reader's own words, or an empty
- * list. The **System Account** half is resolved by the caller, which is the
- * only layer that may read both this and `acc_system_account` — the same
- * split `accountUsage` already uses.
- */
-export async function controlAccountReasons(
-  accountId: number
-): Promise<string[]> {
-  const account = await prisma.accAccount.findUnique({
-    where: { id: accountId },
-    select: {
-      ledger: true,
-      cash_banks: { select: { cash_bank_label: true } },
-    },
-  });
-  if (!account || !ledgerIsControl(account.ledger)) return [];
-
-  if (account.ledger === "cash_bank") {
-    const labels = account.cash_banks.map((c) => c.cash_bank_label).join(", ");
-    return [labels ? `Buku Kas & Bank ${labels}` : "Buku Kas & Bank"];
-  }
-  const books = await loadSubledgers();
-  const categories = await prisma.sysBudgetCategory.findMany({
-    where: { account_mappings: { some: { account_id: accountId } } },
-    select: { id: true, category_name: true },
-    orderBy: { id: "asc" },
-  });
-  const names = categories.map(
-    (c) => subledgerForCategory(books, c.id)?.name ?? `Kategori ${c.category_name}`
-  );
-  return names.length ? names : ["Kategori"];
-}
-
-/**
- * Every account its ledger makes a control account. Used by the backfill
- * script, which has a whole chart to consider.
- */
-export async function structuralControlAccountIds(): Promise<Set<number>> {
-  const rows = await prisma.accAccount.findMany({
-    where: { ledger: { not: "none" } },
-    select: { id: true },
-  });
-  return new Set(rows.map((r) => r.id));
-}
-
-/**
- * Re-decides whether each of these accounts is a control account.
- *
- * Being one is not a property somebody sets: it is the answer to "does
- * anything outside the General Ledger reconcile against this account?" — its
- * ledger is anything but `none` (D25), or a bridge or FX System
- * Account names it. So the flag is *recomputed*
- * from the structure on every event that can change that answer, in both
- * directions, the same way a parent account's posting privilege follows the
- * shape of the tree rather than a checkbox.
- *
- * Claiming used to be automatic and releasing was not, which left an account
- * flagged by a mapping that had since been repointed elsewhere — closed to
- * manual entry for good, with a checkbox as the only way back. Recomputing is
- * what removes both the stale flag and the checkbox.
- *
- * The System Default half arrives as an argument. `sys_setting` belongs to a
- * layer above this one, and the caller is the only place allowed to read both
- * — the same split `accountUsage` and `controlAccountReasons` already use.
- *
- * `where` carries the opposite flag, so a row is written only when the answer
- * has actually changed and an unrelated save leaves `updated_by` alone.
- */
-export async function syncControlAccounts(
-  accountIds: Iterable<number>,
-  namedByDefaults: ReadonlySet<number>,
-  actorId: number
-): Promise<void> {
-  for (const id of new Set(accountIds)) {
-    const claimed =
-      namedByDefaults.has(id) || (await controlAccountReasons(id)).length > 0;
-    await prisma.accAccount.updateMany({
-      where: { id, is_control_account: !claimed },
-      data: { is_control_account: claimed, updated_by: actorId },
-    });
-  }
 }
 
 // ------------------------------------------------------- the account's ledger
@@ -1038,7 +937,6 @@ export type TreeAccount = {
   isActive: boolean;
   /** Its ledger: `none`, `category` or `cash_bank`. */
   ledger: string;
-  isControlAccount: boolean;
 };
 
 export type TreeCompany = { id: number; label: string; name: string };
@@ -1118,7 +1016,6 @@ export async function accountTree(companyId: number): Promise<{
         isPostable: a.is_postable,
         isActive: a.is_active,
         ledger: a.ledger,
-        isControlAccount: a.is_control_account,
       })),
   };
 }

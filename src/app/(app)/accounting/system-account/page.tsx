@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { actorCan } from "@/lib/siba/access";
 import { requirePermission } from "@/lib/siba/auth";
 import { companyScope } from "@/lib/siba/company-access";
-import { structuralControlAccountIds, type RefOption } from "@/lib/siba/records";
+import type { RefOption } from "@/lib/siba/records";
 import {
   EMPTY_SYSTEM_ACCOUNTS,
   SYSTEM_ACCOUNTS,
@@ -36,20 +36,17 @@ export default async function SystemAccountPage({
   if (selected) {
     // Postable accounts of this Company; an inactive one only when it is the
     // one already stored, so a page opening on a stale value still says what
-    // it is. An adjustment's counter account may not be one a book reconciles
-    // against — the Server Action refuses it, so the picker does not offer it.
-    const [rows, bookAccounts] = await Promise.all([
-      prisma.accAccount.findMany({
-        where: { company_id: selected.id, is_postable: true },
-        orderBy: { account_label: "asc" },
-      }),
-      structuralControlAccountIds(),
-    ]);
+    // it is. A revaluation's account must keep no ledger — the Server Action
+    // refuses one that does, so the picker does not offer it.
+    const rows = await prisma.accAccount.findMany({
+      where: { company_id: selected.id, is_postable: true },
+      orderBy: { account_label: "asc" },
+    });
     for (const def of SYSTEM_ACCOUNTS) {
       const chosen = values[def.key];
       options[def.key] = rows
         .filter((a) => a.is_active || a.id === chosen)
-        .filter((a) => def.key !== "fx_revaluation" || a.id === chosen || !bookAccounts.has(a.id))
+        .filter((a) => def.key !== "fx_revaluation" || a.id === chosen || a.ledger === "none")
         .map((a) => ({
           id: a.id,
           label: a.account_label,

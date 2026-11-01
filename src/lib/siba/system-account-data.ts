@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { checkAccountIsLeaf, controlAccountReasons } from "./records";
+import { checkAccountIsLeaf } from "./records";
 import {
   EMPTY_SYSTEM_ACCOUNTS,
   SYSTEM_ACCOUNTS,
@@ -106,7 +106,7 @@ export async function checkSystemAccountValue(
 
   const account = await prisma.accAccount.findUnique({
     where: { id: accountId },
-    select: { company_id: true, is_postable: true, is_active: true },
+    select: { company_id: true, is_postable: true, is_active: true, ledger: true },
   });
   if (!account) return "Account tidak ditemukan.";
   if (account.company_id !== companyId) {
@@ -114,16 +114,10 @@ export async function checkSystemAccountValue(
   }
   if (!account.is_postable) return "Account tersebut bukan account postable.";
   if (!account.is_active) return "Account tersebut non-aktif.";
-  // A revaluation's gain or loss posted against a cash or Partner account
-  // would restate one book through another.
-  if (key === "fx_revaluation") {
-    const reasons = await controlAccountReasons(accountId);
-    if (reasons.length) {
-      return (
-        `Account tersebut direkonsiliasi dengan ${reasons.join(", ")} dan tidak ` +
-        `dapat menjadi lawan posting Revaluasi Kurs.`
-      );
-    }
+  // A revaluation's gain or loss posted against an account with a ledger
+  // would restate one book through another (Journal Replacement R2).
+  if (key === "fx_revaluation" && account.ledger !== "none") {
+    return "Account Laba/Rugi Revaluasi Kurs harus ber-ledger Tanpa, bukan Kategori atau Kas & Bank.";
   }
   // A parent account is a heading, not a destination.
   return checkAccountIsLeaf(accountId);
@@ -163,21 +157,6 @@ export async function systemAccountsUsingAccount(accountId: number): Promise<str
     );
 }
 
-/**
- * Every account Mapping Account System currently names — the third
- * structural source of a control account. `syncControlAccounts` cannot ask
- * this for itself (`records.ts` may not read this table), so the caller
- * resolves it and passes it down.
- */
-export async function systemAccountIds(): Promise<Set<number>> {
-  const rows = await prisma.accSystemAccount.findMany({
-    where: { account_id: { not: null } },
-    select: { account_key: true, account_id: true },
-  });
-  return new Set(
-    rows.filter((r) => isSystemAccountKey(r.account_key)).map((r) => r.account_id!)
-  );
-}
 
 // ---------------------------------------------------------------- closing
 

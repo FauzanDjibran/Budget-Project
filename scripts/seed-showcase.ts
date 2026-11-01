@@ -42,9 +42,8 @@ import { openCashBankBook, recordCashBankEntry } from "@/lib/siba/cash-bank";
 import { openLayer } from "@/lib/siba/cash-bank-layers";
 import { ensureFiscalPeriods, fiscalYearShape, recordFiscalClosing } from "@/lib/siba/fiscal";
 import { writeOpeningBalance } from "@/lib/siba/opening-balance";
-import { syncControlAccounts } from "@/lib/siba/records";
 import { writeSystemDefaults } from "@/lib/siba/system-settings";
-import { systemAccountIds, writeSystemAccounts } from "@/lib/siba/system-account-data";
+import { writeSystemAccounts } from "@/lib/siba/system-account-data";
 import { nextBudgetNo } from "@/lib/siba/budget";
 import { applyPosting } from "@/lib/siba/finance";
 import { realizationOf } from "@/lib/siba/realization";
@@ -607,11 +606,6 @@ async function setDefaults(actor: number) {
     mapped += written.length;
   }
   tally("system accounts", mapped);
-
-  // What the Server Action does after every mapping write: an account a
-  // posting engine or a statement owns is closed to hand entry.
-  const named = await systemAccountIds();
-  await syncControlAccounts([...named], named, actor);
 }
 
 /**
@@ -720,16 +714,6 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
     await audit("m_cash_bank", row.id, actor);
     tally("cash & bank");
   }
-
-  // What the Server Action does after registering a resource: the account it
-  // posts to is reconciled against the Cash Bank Book, so it is a control
-  // account and closed to manual journals (§10 rule 79).
-  const accounts = await prisma.mCashBank.findMany({ select: { account_id: true } });
-  await syncControlAccounts(
-    accounts.map((a) => a.account_id),
-    await systemAccountIds(),
-    actor
-  );
 
   // The resource a new Realisasi starts on: the operating current account,
   // which is in the base currency a new Realisasi starts in.
@@ -2111,7 +2095,7 @@ async function insertMappings(companyId: number, companyLabel: string, actor: nu
     }
 
     // Mapping Budget ke Account, as the user would enter it; its target is a
-    // Kategori account, and any ledger but none is a control account.
+    // Kategori account.
     const kept = await prisma.accBudgetCategoryAccount.count({
       where: { company_id: companyId, budget_category_id: budgetCategoryId, partner_category_id: partnerCategoryId },
     });
@@ -2119,7 +2103,7 @@ async function insertMappings(companyId: number, companyLabel: string, actor: nu
     const codes = await prisma.accBudgetCategoryAccount.findMany({ select: { bca_code: true } });
     await prisma.accAccount.update({
       where: { id: account.id },
-      data: { ledger: "category", is_control_account: true },
+      data: { ledger: "category" },
     });
     const row = await prisma.accBudgetCategoryAccount.create({
       data: {
@@ -2242,9 +2226,6 @@ async function insertNode(node: AccountNode, ctx: Context): Promise<number> {
       normal_balance: node.balance ?? ctx.groupBalance,
       // A Partner account; Mapping Budget ke Account points at it below.
       ledger: partnerCategoryId ? "category" : "none",
-      // A subledger account is exactly the thing a control account reconciles:
-      // its GL balance against the Hutang / Piutang / Titipan / Prive book.
-      is_control_account: Boolean(partnerCategoryId),
       created_by: ctx.actor,
     },
     select: { id: true },
