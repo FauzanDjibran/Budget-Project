@@ -32,7 +32,7 @@ const KIND: Record<string, [string, string]> = {
   fin_funding_request: ["Dana Anak Masuk", "Dana Anak Keluar"],
   fin_cash_bank_transfer: ["Transfer Masuk", "Transfer Keluar"],
   fin_item_conversion: ["Pencairan Open Item", "Pencairan Open Item"],
-  acc_journal: ["Jurnal Umum", "Jurnal Umum"],
+  acc_journal: ["Journal", "Journal"],
 };
 const TYPE_KIND: Record<string, string> = {
   Opening: "Saldo Awal",

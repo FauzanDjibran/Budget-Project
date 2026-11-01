@@ -739,7 +739,7 @@ describe("a form is laid out by one component", () => {
       "src/components/finance/transaction-form.tsx",
       "src/components/finance/revaluation-form.tsx",
       "src/components/finance/funding-detail.tsx",
-      "src/components/accounting/journal-form.tsx",
+      "src/components/accounting/general-journal-form.tsx",
       "src/components/accounting/opening-balance-detail.tsx",
     ]) {
       const f = files.find((x) => x.rel === rel);
@@ -1294,17 +1294,9 @@ const DOCUMENT_SCREENS: {
 }[] = [
   {
     name: "Journal",
-    form: "src/components/accounting/journal-form.tsx",
+    form: "src/components/accounting/general-journal-form.tsx",
     list: "src/components/accounting/journal-list.tsx",
     routes: "src/app/(app)/accounting/journal",
-    // A document's journal is never edited; a typed one is Jurnal Umum's.
-    editable: false,
-  },
-  {
-    name: "Jurnal Umum",
-    form: "src/components/accounting/general-journal-form.tsx",
-    list: "src/components/accounting/general-journal-list.tsx",
-    routes: "src/app/(app)/accounting/jurnal-umum",
   },
   {
     name: "Budget",
@@ -1376,7 +1368,7 @@ test("a journal line's Partner is drawn by one cell, on the Journal and the Gene
   assert.match(gl, /<th[^>]*>Partner<\/th>/, "the General Ledger has no Partner column");
   for (const rel of [
     "src/components/report/general-ledger-report.tsx",
-    "src/components/accounting/journal-form.tsx",
+    "src/components/accounting/general-journal-form.tsx",
   ]) {
     assert.match(fileText(rel), /<PartnerCell\b/, `${rel} draws a Partner without PartnerCell`);
   }
@@ -1394,7 +1386,7 @@ describe("a Journal and General Ledger figure reads the accountant's way", () =>
   // amount, a negative in parentheses, an empty side as an em dash.
   const LEDGER_SCREENS = [
     "src/components/report/general-ledger-report.tsx",
-    "src/components/accounting/journal-form.tsx",
+    "src/components/accounting/general-journal-form.tsx",
     "src/components/accounting/journal-list.tsx",
   ];
 

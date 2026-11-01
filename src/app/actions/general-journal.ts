@@ -107,7 +107,7 @@ async function refuseCompany(actor: Actor, companyId: number | null) {
 export async function listGeneralJournalOptions(
   companyId: number
 ): Promise<{ ok: true; options: GeneralJournalOptions } | { ok: false; errors: Record<string, string> }> {
-  const g = await authorize("JOURNAL_GENERAL_CREATE");
+  const g = await authorize("JOURNAL_CREATE");
   if (!g.ok) return g.denial;
   const refused = await refuseCompany(g.actor, companyId);
   if (refused) return refused;
@@ -118,7 +118,7 @@ export async function createGeneralJournalAction(
   header: GeneralJournalHeaderValues,
   lines: GeneralJournalFormLine[]
 ): Promise<GeneralJournalActionResult> {
-  const g = await authorize("JOURNAL_GENERAL_CREATE");
+  const g = await authorize("JOURNAL_CREATE");
   if (!g.ok) return g.denial;
   const companyId = id(header.company_id);
   const refused = await refuseCompany(g.actor, companyId);
@@ -138,7 +138,7 @@ export async function updateGeneralJournalAction(
   header: GeneralJournalHeaderValues,
   lines: GeneralJournalFormLine[]
 ): Promise<GeneralJournalActionResult> {
-  const g = await authorize("JOURNAL_GENERAL_EDIT");
+  const g = await authorize("JOURNAL_EDIT");
   if (!g.ok) return g.denial;
   const companyId = id(header.company_id);
   const refused = await refuseCompany(g.actor, companyId);
@@ -191,8 +191,7 @@ export async function previewGeneralJournalPost(
 }
 
 function revalidate(journalId: number) {
-  revalidatePath("/accounting/jurnal-umum");
-  revalidatePath(`/accounting/jurnal-umum/${journalId}`);
+  revalidatePath(`/accounting/journal/${journalId}`);
   // A posted one is in the General Ledger and in whichever books its lines touch.
   revalidatePath("/accounting/journal");
   revalidatePath("/accounting/report/general-ledger");

@@ -20,6 +20,7 @@ import { PartnerCell } from "@/components/ui/partner-cell";
 import { RateInput } from "@/components/ui/rate-input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
+import { Drill } from "@/components/report/drill";
 import {
   createGeneralJournalAction,
   listGeneralJournalOptions,
@@ -32,6 +33,7 @@ import { formatDate, formatForeignFace, formatMoney, formatRate, todayIso } from
 import { LEDGER_TEXT } from "@/lib/siba/account-code";
 import type { Company } from "@/lib/siba/company-access";
 import { BASE_CURRENCY_LABEL } from "@/lib/siba/currency";
+import { documentHref } from "@/lib/siba/document-links";
 import { drawLayer, relieve, roundBase } from "@/lib/siba/fx";
 import type {
   GeneralJournalDetail,
@@ -48,6 +50,7 @@ import {
   type GeneralJournalAction,
 } from "@/lib/siba/general-journal-workflow";
 import { headerButtonClass, orderForHeader, type ActionTone } from "@/lib/siba/header-actions";
+import { reportHref } from "@/lib/siba/reports";
 
 export type GeneralJournalFormMode = "new" | "view" | "edit";
 
@@ -122,7 +125,9 @@ const EMPTY: GeneralJournalOptions = {
 };
 
 /**
- * Jurnal Umum — read, created and edited on the same two cards (Journal 2.0).
+ * Journal — every journal read, and a typed one created and edited, on the
+ * same two cards (Journal 2.0, Journal Replacement). One a document's posting
+ * or a close wrote is read only: it names its Sumber and offers no button.
  *
  * A line is filled Jenis → Akun → Partner → Entri → Currency → Kurs → Debit
  * or Kredit (D22): what the line is written against comes first and its
@@ -349,12 +354,12 @@ export function GeneralJournalForm({
     setSaving(false);
     if (!result.ok) {
       setErrors(result.errors);
-      toast("Jurnal Umum belum tersimpan", result.errors._form ?? "Periksa kembali isian pada baris jurnal.", "err");
+      toast("Journal belum tersimpan", result.errors._form ?? "Periksa kembali isian pada baris jurnal.", "err");
       return;
     }
     setDirty(false);
-    toast("Jurnal Umum disimpan", `${result.journalNo} · Draft`, "ok");
-    router.push(`/accounting/jurnal-umum/${result.id}`);
+    toast("Journal disimpan", `${result.journalNo} · Draft`, "ok");
+    router.push(`/accounting/journal/${result.id}`);
   }
 
   const run = async (action: GeneralJournalAction) => {
@@ -368,10 +373,13 @@ export function GeneralJournalForm({
     else toast("Tidak dapat diproses", result.errors._form ?? Object.values(result.errors)[0], "err");
   };
 
-  const listHref = "/accounting/jurnal-umum";
+  const listHref = "/accounting/journal";
+  // A journal a document or a close wrote is final from the moment it exists.
+  const typed = journal?.isManual ?? true;
+  const source = journal && !typed ? documentHref(journal.sourceDocTable, journal.sourceDocId) : null;
   const backHref = journal ? `${listHref}/${journal.id}` : listHref;
-  const actions = journal && can ? availableGeneralJournalActions(status, can) : [];
-  const viewActions: { key: string; tone: ActionTone; node: React.ReactNode }[] = journal
+  const actions = journal && can && typed ? availableGeneralJournalActions(status, can) : [];
+  const viewActions: { key: string; tone: ActionTone; node: React.ReactNode }[] = journal && typed
     ? orderForHeader(
         [
           ...(can?.edit && generalJournalIsEditable(status)
@@ -417,10 +425,10 @@ export function GeneralJournalForm({
     <>
       <DocumentHeader
         module="Accounting"
-        trail={[{ label: "Jurnal Umum", href: listHref }]}
+        trail={[{ label: "Journal", href: listHref }]}
         icon="book"
         number={journal?.journalNo ?? null}
-        placeholder="Jurnal Umum Baru"
+        placeholder="Journal Baru"
         status={journal?.status ?? null}
         editing={mode === "edit"}
         dirty={editing && dirty}
@@ -428,10 +436,16 @@ export function GeneralJournalForm({
         {mode === "view" && journal ? (
           <>
             {viewActions.map((i) => i.node)}
-            {!actions.length && !(can?.edit && generalJournalIsEditable(status)) && (
+            {!viewActions.length && (
               <span className="lockchip">
                 <Icon name="lock" size={13} />{" "}
-                {status === "Posted" ? "Terkunci setelah Post" : status === "Cancelled" ? "Jurnal dibatalkan" : "Tidak ada aksi untuk Anda"}
+                {!typed
+                  ? "Journal otomatis tidak dapat diubah"
+                  : status === "Posted"
+                    ? "Terkunci setelah Post"
+                    : status === "Cancelled"
+                      ? "Journal dibatalkan"
+                      : "Tidak ada aksi untuk Anda"}
               </span>
             )}
           </>
@@ -464,8 +478,12 @@ export function GeneralJournalForm({
                 <Icon name="book" size={15} />
               </span>
               <div className="ct">
-                <h3>Jurnal Umum</h3>
-                <p>Satu jurnal untuk setiap buku bernilai uang: buku besar, Buku Subjek, dan Kas &amp; Bank.</p>
+                <h3>Journal</h3>
+                <p>
+                  {typed
+                    ? "Satu journal untuk setiap buku bernilai uang: buku besar, Buku Subjek, dan Kas & Bank."
+                    : "Dibuat otomatis saat dokumen sumbernya diposting."}
+                </p>
               </div>
             </div>
             <FormBody>
@@ -521,12 +539,26 @@ export function GeneralJournalForm({
                     )}
                   </Field>
 
+                  {!typed && (
+                    <Field label="Sumber" span={5}>
+                      <div className="ro">
+                        {source ? (
+                          <Drill href={source} title="Buka dokumen sumber journal ini">
+                            {journal!.sourceDocLabel}
+                          </Drill>
+                        ) : (
+                          journal!.sourceDocLabel ?? dash()
+                        )}
+                      </div>
+                    </Field>
+                  )}
+
                   <Field
                     htmlFor="general-journal-description"
                     label="Keterangan"
-                    span={5}
+                    span={typed ? 5 : 12}
                     required={editing}
-                    help={editing ? "alasan jurnal ini dibuat" : undefined}
+                    help={editing ? "alasan journal ini dibuat" : undefined}
                     error={errors.description}
                   >
                     {editing ? (
@@ -551,11 +583,13 @@ export function GeneralJournalForm({
             </FormBody>
 
             <p className="fnote">
-              {editing || status === "Draft"
-                ? "Draft belum menyentuh buku mana pun. Post menulis setiap Buku Subjek dan Kas & Bank yang disentuh barisnya bersama buku besar, sekaligus."
-                : status === "Cancelled"
-                  ? "Jurnal dibatalkan sebelum diposting, sehingga tidak pernah menyentuh buku mana pun."
-                  : "Jurnal sudah diposting ke setiap buku dan buku besar, dan bersifat final: koreksi dilakukan dengan Jurnal Umum baru."}
+              {!typed
+                ? "Journal ini bersifat final: koreksi dilakukan dengan dokumen baru, yang membentuk journal-nya sendiri."
+                : editing || status === "Draft"
+                  ? "Draft belum menyentuh buku mana pun. Post menulis setiap Buku Subjek dan Kas & Bank yang disentuh barisnya bersama buku besar, sekaligus."
+                  : status === "Cancelled"
+                    ? "Journal dibatalkan sebelum diposting, sehingga tidak pernah menyentuh buku mana pun."
+                    : "Journal sudah diposting ke setiap buku dan buku besar, dan bersifat final: koreksi dilakukan dengan journal baru."}
             </p>
           </div>
 
@@ -565,7 +599,7 @@ export function GeneralJournalForm({
                 <Icon name="layers" size={15} />
               </span>
               <div className="ct">
-                <h3>Baris Jurnal</h3>
+                <h3>Baris Journal</h3>
                 <p>
                   {editing
                     ? `Debit dan kredit diisi dalam mata uang barisnya; total dan Selisih Kurs dalam ${BASE_CURRENCY_LABEL}.`
@@ -867,7 +901,7 @@ export function GeneralJournalForm({
                                 className="iact del"
                                 aria-label="Hapus baris"
                                 disabled={lines.length <= 2}
-                                title={lines.length <= 2 ? "Jurnal memerlukan minimal dua baris" : "Hapus baris"}
+                                title={lines.length <= 2 ? "Journal memerlukan minimal dua baris" : "Hapus baris"}
                                 onClick={() => {
                                   setLines((rows) => rows.filter((x) => x.key !== l.key));
                                   setDirty(true);
@@ -884,17 +918,30 @@ export function GeneralJournalForm({
                           <td className="no">{i + 1}</td>
                           <td className="pri">
                             <span className="idc">
-                              <span className="lab">{l.accountLabel}</span>
+                              {/* The account's own General Ledger, for the day
+                                  this journal belongs to. */}
+                              <Link
+                                className="lab"
+                                href={reportHref("general-ledger", {
+                                  company: journal!.companyId,
+                                  accounts: l.accountId,
+                                  from: journal!.accountingDate,
+                                  to: journal!.accountingDate,
+                                })}
+                                title="Buka General Ledger account ini"
+                              >
+                                {l.accountLabel}
+                              </Link>
                               <span className="nm">{l.accountName}</span>
                             </span>
                           </td>
                           <td>
-                            {l.ledger === "cash_bank" ? (
+                            {typed && l.ledger === "cash_bank" ? (
                               <span className="lab">{l.subjectLabel}</span>
                             ) : (
-                              <PartnerCell label={l.partnerLabel} name={l.partnerName} mismatch={null} />
+                              <PartnerCell label={l.partnerLabel} name={l.partnerName} mismatch={l.partnerMismatch} />
                             )}
-                            {l.ledger === "category" && (
+                            {typed && l.ledger === "category" && (
                               <span className="rsub">
                                 {l.partnerId ? l.subjectLabel ?? "Item baru" : null}
                                 {l.partnerId && l.bookName ? " · " : null}
@@ -916,7 +963,7 @@ export function GeneralJournalForm({
                             <Amount value={l.credit} nil="dash" ledger />
                           </td>
                           <td className="acts">
-                            {l.ledger !== "none" && !l.isGenerated ? (
+                            {typed && l.ledger !== "none" && !l.isGenerated ? (
                               <button className="iact" title="Rincian" onClick={() => setDetail(l)}>
                                 <Icon name="eye" size={14} />
                               </button>
@@ -935,12 +982,12 @@ export function GeneralJournalForm({
                       </td>
                       <td className="num">
                         {valued.selisih > 0 && (
-                          <Amount value={valued.selisih} currency={BASE_CURRENCY_LABEL} />
+                          <Amount value={valued.selisih} ledger />
                         )}
                       </td>
                       <td className="num">
                         {valued.selisih < 0 && (
-                          <Amount value={-valued.selisih} currency={BASE_CURRENCY_LABEL} />
+                          <Amount value={-valued.selisih} ledger />
                         )}
                       </td>
                       <td colSpan={2} />
@@ -962,10 +1009,10 @@ export function GeneralJournalForm({
                         )}
                       </td>
                       <td className="num">
-                        <Amount value={totalDebit} currency={BASE_CURRENCY_LABEL} big />
+                        <Amount value={totalDebit} big ledger />
                       </td>
                       <td className="num">
-                        <Amount value={totalCredit} currency={BASE_CURRENCY_LABEL} big />
+                        <Amount value={totalCredit} big ledger />
                       </td>
                       <td colSpan={2} />
                     </tr>

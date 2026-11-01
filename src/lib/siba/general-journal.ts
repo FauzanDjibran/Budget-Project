@@ -176,7 +176,7 @@ export async function checkGeneralJournal(
     if (adapter === undefined) {
       errors[lineKey(i, "account_id")] =
         `Account ${account.account_label} memakai ledger ${LEDGER_TEXT[account.ledger]}, ` +
-        "yang belum dapat ditulis lewat Jurnal Umum.";
+        "yang belum dapat ditulis lewat Journal.";
       continue;
     }
 
@@ -563,11 +563,11 @@ async function draftOrRefusal(
       },
     },
   });
-  if (!journal) return { errors: { _form: "Jurnal Umum tidak ditemukan." } };
+  if (!journal) return { errors: { _form: "Journal tidak ditemukan." } };
   if (journal.status !== "Draft") {
     return {
       errors: {
-        _form: "Jurnal Umum hanya dapat diubah selama berstatus Draft. Yang sudah diposting bersifat final.",
+        _form: "Journal hanya dapat diubah selama berstatus Draft. Yang sudah diposting bersifat final.",
       },
     };
   }

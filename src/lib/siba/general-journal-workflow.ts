@@ -1,5 +1,5 @@
 /**
- * The Jurnal Umum lifecycle, written once and read by both sides.
+ * The Journal lifecycle, written once and read by both sides.
  *
  *   Draft ──post──> Posted     (final — every ledger and the General Ledger written)
  *     │
@@ -8,7 +8,7 @@
  * The row, the detail header and the Server Action all read this table, so a
  * hidden button and a refused action can never disagree. Client-safe: no
  * `server-only`, no database import. There is no Delete and no reversal: a
- * posted Jurnal Umum is corrected by another one.
+ * posted Journal is corrected by another one.
  */
 import type { IconName } from "@/components/icon";
 import type { ActionTone } from "./header-actions";
@@ -35,32 +35,32 @@ export type GeneralJournalTransition = {
 export const GENERAL_JOURNAL_TRANSITIONS: Record<GeneralJournalAction, GeneralJournalTransition> = {
   post: {
     label: "Post",
-    permission: "JOURNAL_GENERAL_POST",
+    permission: "JOURNAL_POST",
     from: ["Draft"],
     to: "Posted",
     icon: "check",
     tone: "primary",
-    title: "Post Jurnal Umum",
+    title: "Post Journal",
     body:
       "Post menulis setiap buku yang disentuh barisnya — Buku Subjek dan Kas & Bank — " +
       "bersama buku besar, sekaligus. Setelah diposting jurnal tidak dapat diubah maupun " +
-      "dibatalkan; koreksi dilakukan dengan Jurnal Umum baru.",
+      "dibatalkan; koreksi dilakukan dengan Journal baru.",
     confirmLabel: "Ya, Post",
-    done: "Jurnal Umum diposting",
+    done: "Journal diposting",
   },
   cancel: {
     label: "Batalkan",
-    permission: "JOURNAL_GENERAL_CANCEL",
+    permission: "JOURNAL_CANCEL",
     from: ["Draft"],
     to: "Cancelled",
     icon: "block",
     tone: "danger",
-    title: "Batalkan Jurnal Umum?",
+    title: "Batalkan Journal?",
     body:
       "Jurnal ditandai Dibatalkan dan tidak dapat diposting lagi. Tidak ada buku yang " +
       "terpengaruh karena jurnal belum pernah diposting. Status Dibatalkan bersifat final.",
     confirmLabel: "Ya, Batalkan",
-    done: "Jurnal Umum dibatalkan",
+    done: "Journal dibatalkan",
   },
 };
 
@@ -75,7 +75,7 @@ export function generalJournalIsEditable(status: GeneralJournalStatus): boolean 
   return status === "Draft";
 }
 
-/** What the signed-in user may do with Jurnal Umum — presentation only. */
+/** What the signed-in user may do with Journal — presentation only. */
 export type GeneralJournalAbilities = {
   create: boolean;
   edit: boolean;
@@ -86,10 +86,10 @@ export type GeneralJournalAbilities = {
 export function generalJournalAbilities(permissions: Iterable<string>): GeneralJournalAbilities {
   const held = permissions instanceof Set ? permissions : new Set(permissions);
   return {
-    create: held.has("JOURNAL_GENERAL_CREATE"),
-    edit: held.has("JOURNAL_GENERAL_EDIT"),
-    post: held.has("JOURNAL_GENERAL_POST"),
-    cancel: held.has("JOURNAL_GENERAL_CANCEL"),
+    create: held.has("JOURNAL_CREATE"),
+    edit: held.has("JOURNAL_EDIT"),
+    post: held.has("JOURNAL_POST"),
+    cancel: held.has("JOURNAL_CANCEL"),
   };
 }
 

@@ -1,7 +1,8 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { compareCodes } from "./account-code";
+import { accountTakesPartner, compareCodes } from "./account-code";
+import { partnerMismatch, type PartnerMismatch } from "./journal";
 import { cashBankBalanceMap } from "./cash-bank";
 import { layersByIds, openLayersFor, type LayerOption } from "./cash-bank-layers";
 import { isBaseCurrency } from "./currency";
@@ -11,46 +12,12 @@ import { categoryAccounts } from "./category-accounts";
 import type { GeneralJournalStatus } from "./general-journal-workflow";
 
 /**
- * What the Jurnal Umum screens read: the register, one journal with its lines
- * named, and what a line may be built from. Split from `general-journal.ts` by
+ * What the Journal screens read: one journal with its lines named — typed or
+ * written by a document — and what a typed line may be built from. Split from `general-journal.ts` by
  * concern, like every posting document's `-rows`; one module for the contract.
  */
 
-export type GeneralJournalRow = {
-  id: number;
-  journalNo: string;
-  accountingDate: string | null;
-  companyLabel: string;
-  description: string;
-  status: GeneralJournalStatus;
-  /** Base total of the debit side, the generated Selisih line included. */
-  amount: number;
-  lineCount: number;
-};
-
 const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
-
-/** Every Jurnal Umum of these Companies, newest first. */
-export async function listGeneralJournals(companyIds: number[]): Promise<GeneralJournalRow[]> {
-  const rows = await prisma.accJournal.findMany({
-    where: { company_id: { in: companyIds }, journal_no: { startsWith: "JUM-" } },
-    orderBy: { id: "desc" },
-    include: {
-      company: { select: { company_label: true } },
-      lines: { select: { debit_amount: true, is_generated: true } },
-    },
-  });
-  return rows.map((r) => ({
-    id: r.id,
-    journalNo: r.journal_no,
-    accountingDate: day(r.accounting_date),
-    companyLabel: r.company.company_label,
-    description: r.description,
-    status: r.status as GeneralJournalStatus,
-    amount: Math.round(r.lines.reduce((t, l) => t + l.debit_amount.toNumber(), 0) * 100) / 100,
-    lineCount: r.lines.filter((l) => !l.is_generated).length,
-  }));
-}
 
 export type GeneralJournalLineRow = {
   id: number;
@@ -65,6 +32,8 @@ export type GeneralJournalLineRow = {
   partnerId: number | null;
   partnerLabel: string | null;
   partnerName: string | null;
+  /** Where the line breaks its account's Partner rule. */
+  partnerMismatch: PartnerMismatch | null;
   currencyId: number;
   currencyLabel: string;
   foreign: boolean;
@@ -91,20 +60,26 @@ export type GeneralJournalDetail = {
   accountingDate: string | null;
   description: string;
   status: GeneralJournalStatus;
+  /** Typed in Journal, rather than written by a document's or a close's posting. */
+  isManual: boolean;
+  sourceDocLabel: string | null;
+  sourceDocTable: string | null;
+  sourceDocId: number | null;
   lines: GeneralJournalLineRow[];
   debit: number;
   credit: number;
 };
 
-/** One Jurnal Umum, or null where it does not exist for this reader. */
+/** One journal, or null where it does not exist for this reader. */
 export async function getGeneralJournal(
   id: number,
   companyIds: number[]
 ): Promise<GeneralJournalDetail | null> {
   const j = await prisma.accJournal.findFirst({
-    where: { id, company_id: { in: companyIds }, is_manual: true },
+    where: { id, company_id: { in: companyIds } },
     include: {
       company: { select: { company_label: true, company_name: true } },
+      source_doc_type: { select: { doc_label: true, doc_table: true } },
       lines: {
         orderBy: { sequence_no: "asc" },
         include: {
@@ -152,6 +127,7 @@ export async function getGeneralJournal(
       partnerId: l.partner_id,
       partnerLabel: l.partner?.partner_label ?? null,
       partnerName: l.partner?.partner_name ?? null,
+      partnerMismatch: partnerMismatch(accountTakesPartner(l.account), l.partner_id),
       currencyId: l.currency_id,
       currencyLabel: l.currency.currency_label,
       foreign: !isBaseCurrency(l.currency.currency_label),
@@ -182,6 +158,10 @@ export async function getGeneralJournal(
     accountingDate: day(j.accounting_date),
     description: j.description,
     status: j.status as GeneralJournalStatus,
+    isManual: j.is_manual,
+    sourceDocLabel: j.source_doc_type?.doc_label ?? null,
+    sourceDocTable: j.source_doc_type?.doc_table ?? null,
+    sourceDocId: j.source_doc_id,
     lines,
     debit: total("debit"),
     credit: total("credit"),

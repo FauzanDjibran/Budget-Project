@@ -123,7 +123,7 @@ export const PERMISSIONS = [
     name: "Lihat Mapping Account System",
     module: "accounting",
     description:
-      "Account tujuan posting otomatis per Company: bridge intercompany, selisih kurs, laba/rugi ekuitas, Penyesuaian Open Item.",
+      "Account tujuan posting otomatis per Company: bridge intercompany, selisih kurs, revaluasi kurs, laba/rugi ekuitas.",
   },
   {
     code: "SYSTEM_ACCOUNT_EDIT",
@@ -179,18 +179,16 @@ export const PERMISSIONS = [
       "Mengubah tahun buku Draft menjadi Open dan membuat 12 Fiscal Period. Tidak dapat dikembalikan.",
   },
 
-  // A journal produced by a posting is immutable; a typed one is written
-  // through Jurnal Umum below. There is deliberately no JOURNAL_DELETE and no
-  // reversal — a posted journal is final and a correction is a new one.
-  { code: "JOURNAL_VIEW", name: "Lihat Journal", module: "accounting", description: "Journal otomatis maupun manual, termasuk yang masih Draft." },
-  // Jurnal Umum may write every money ledger and every account, so it
-  // is one high-clearance set with no split by ledger; Draft → Post is the
-  // review step (Journal 2.0 D12).
-  { code: "JOURNAL_GENERAL_VIEW", name: "Lihat Jurnal Umum", module: "accounting" },
-  { code: "JOURNAL_GENERAL_CREATE", name: "Tambah Jurnal Umum", module: "accounting", description: "Dapat menulis Buku Subjek, Kas & Bank, dan setiap account." },
-  { code: "JOURNAL_GENERAL_EDIT", name: "Ubah Jurnal Umum", module: "accounting", description: "Hanya selama berstatus Draft." },
-  { code: "JOURNAL_GENERAL_POST", name: "Post Jurnal Umum", module: "accounting", description: "Menulis setiap buku dan buku besar sekaligus. Tidak dapat dibatalkan." },
-  { code: "JOURNAL_GENERAL_CANCEL", name: "Batalkan Jurnal Umum", module: "accounting", description: "Hanya draft yang belum diposting." },
+  // A journal produced by a posting is immutable. A typed one may write every
+  // money ledger and every account, so the set is high-clearance with no split
+  // by ledger; Draft → Post is the review step (Journal 2.0 D12). There is
+  // deliberately no JOURNAL_DELETE and no reversal — a posted journal is final
+  // and a correction is a new one.
+  { code: "JOURNAL_VIEW", name: "Lihat Journal", module: "accounting", description: "Journal otomatis maupun yang diketik, termasuk yang masih Draft." },
+  { code: "JOURNAL_CREATE", name: "Tambah Journal", module: "accounting", description: "Dapat menulis Buku Subjek, Kas & Bank, dan setiap account." },
+  { code: "JOURNAL_EDIT", name: "Ubah Journal", module: "accounting", description: "Hanya selama berstatus Draft." },
+  { code: "JOURNAL_POST", name: "Post Journal", module: "accounting", description: "Menulis setiap buku dan buku besar sekaligus. Tidak dapat dibatalkan." },
+  { code: "JOURNAL_CANCEL", name: "Batalkan Journal", module: "accounting", description: "Hanya draft yang belum diposting." },
   { code: "REPORT_GENERAL_LEDGER_VIEW", name: "Lihat General Ledger", module: "accounting" },
   { code: "REPORT_TRIAL_BALANCE_VIEW", name: "Lihat Trial Balance", module: "accounting" },
   { code: "REPORT_PROFIT_LOSS_VIEW", name: "Lihat Laba Rugi", module: "accounting" },

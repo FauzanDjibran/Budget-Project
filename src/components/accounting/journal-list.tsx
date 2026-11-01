@@ -23,16 +23,14 @@ import {
 
 const STATUSES: GeneralJournalStatus[] = ["Draft", "Posted", "Cancelled"];
 
-/** A typed journal is read, edited and posted in Jurnal Umum. */
-const TYPED = "/accounting/jurnal-umum";
 
 /**
  * The Journal register — every journal, however it came to exist.
  *
  * Most are written by a document being posted and are `Posted` the moment they
  * exist; they are never edited, deleted or reversed. A **typed** journal is
- * the other kind: written in Jurnal Umum, saved as a Draft, and posted there
- * behind its journal preview, so no row here posts one. Drafts sort to the
+ * the other kind: saved as a Draft and posted from its own page, behind its
+ * journal preview, so no row here posts one. Drafts sort to the
  * top, because they are the only rows anybody still has something to do about.
  *
  * Laid out like every other document register: a `No` column, the `Status:`
@@ -76,11 +74,11 @@ export function JournalList({
         module="Accounting"
         icon="book"
         title="Journal"
-        sub="Journal dari posting dokumen bersifat final; Jurnal Umum disimpan sebagai Draft dan masuk buku besar saat diposting."
+        sub="Journal dari posting dokumen bersifat final; journal yang diketik disimpan sebagai Draft dan masuk buku besar saat diposting."
       >
         {can.create && (
-          <Link className="btn primary" href={`${TYPED}/new`}>
-            <Icon name="plus" size={15} /> Jurnal Umum
+          <Link className="btn primary" href="/accounting/journal/new">
+            <Icon name="plus" size={15} /> Journal
           </Link>
         )}
       </DocumentHeader>
@@ -161,7 +159,7 @@ export function JournalList({
                   </thead>
                   <tbody>
                     {rows.map((j, i) => {
-                      const href = j.isManual ? `${TYPED}/${j.id}` : `/accounting/journal/${j.id}`;
+                      const href = `/accounting/journal/${j.id}`;
                       const editable =
                         j.isManual && can.edit && generalJournalIsEditable(j.status as GeneralJournalStatus);
                       const broken = cents(j.debit) !== cents(j.credit) && j.status === "Posted";
@@ -249,7 +247,7 @@ export function JournalList({
               <p>
                 {journals?.all
                   ? "Ubah kata kunci atau bersihkan filter yang sedang aktif."
-                  : "Journal terbentuk otomatis saat dokumen Finance diposting, atau ditulis sendiri lewat Jurnal Umum."}
+                  : "Journal terbentuk otomatis saat dokumen Finance diposting, atau diketik sendiri."}
               </p>
               <div className="cta">
                 {journals?.all ? (
@@ -258,8 +256,8 @@ export function JournalList({
                   </button>
                 ) : (
                   can.create && (
-                    <Link className="btn primary" href={`${TYPED}/new`}>
-                      <Icon name="plus" size={15} /> Jurnal Umum
+                    <Link className="btn primary" href="/accounting/journal/new">
+                      <Icon name="plus" size={15} /> Journal
                     </Link>
                   )
                 )}

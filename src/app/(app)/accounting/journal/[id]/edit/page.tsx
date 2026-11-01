@@ -8,10 +8,10 @@ import { generalJournalIsEditable } from "@/lib/siba/general-journal-workflow";
 
 export const dynamic = "force-dynamic";
 
-/** Only a Draft is reachable: a posted or cancelled Jurnal Umum is final. */
+/** Only a Draft is reachable: a posted or cancelled Journal is final. */
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const actor = await requirePermission("JOURNAL_GENERAL_EDIT", `/accounting/jurnal-umum/${id}/edit`);
+  const actor = await requirePermission("JOURNAL_EDIT", `/accounting/journal/${id}/edit`);
   const journal = await getGeneralJournal(Number(id), await accessibleCompanyIds(actor.permissions));
   if (!journal || !generalJournalIsEditable(journal.status)) notFound();
   const [companies, options] = await Promise.all([

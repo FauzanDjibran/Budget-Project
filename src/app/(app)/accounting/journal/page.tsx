@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * The Journal register.
  *
  * Every journal lives here: those a posting produced, final from the moment
- * they exist, and typed ones, which Jurnal Umum drafts, edits and posts.
+ * they exist, and typed ones, drafted, edited and posted from their own page.
  *
  * One Company at a time, chosen from the Companies this reader's permissions
  * open. Each Company keeps its own books and its own chart of accounts, so a

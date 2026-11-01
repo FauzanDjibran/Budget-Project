@@ -315,22 +315,15 @@ describe("the trial balance balances", () => {
 });
 
 describe("the Journal's capabilities", () => {
-  test("the Journal grants viewing alone; writing one by hand is Jurnal Umum's", () => {
+  test("one set of five covers every journal, and no delete either", () => {
     assert.deepEqual(
-      PERMISSION_CODES.filter((c) => c.startsWith("JOURNAL_") && !c.startsWith("JOURNAL_GENERAL_")),
-      ["JOURNAL_VIEW"]
-    );
-  });
-
-  test("Jurnal Umum has the same five, and no delete either", () => {
-    assert.deepEqual(
-      PERMISSION_CODES.filter((c) => c.startsWith("JOURNAL_GENERAL_")),
+      PERMISSION_CODES.filter((c) => c.startsWith("JOURNAL_")),
       [
-        "JOURNAL_GENERAL_VIEW",
-        "JOURNAL_GENERAL_CREATE",
-        "JOURNAL_GENERAL_EDIT",
-        "JOURNAL_GENERAL_POST",
-        "JOURNAL_GENERAL_CANCEL",
+        "JOURNAL_VIEW",
+        "JOURNAL_CREATE",
+        "JOURNAL_EDIT",
+        "JOURNAL_POST",
+        "JOURNAL_CANCEL",
       ]
     );
   });

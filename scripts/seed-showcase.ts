@@ -1511,7 +1511,7 @@ async function writeManualJournal(spec: ManualSpec, actor: number) {
       `Jurnal Umum "${spec.description}" refused: ${Object.values(created.errors).join(" ")}`
     );
   }
-  tally("manual journals");
+  tally("typed journals");
 
   if (spec.post) {
     const posted = await postGeneralJournal(created.id, actor, [induk.id]);
