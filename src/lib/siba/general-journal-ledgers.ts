@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { formatDate, formatNumber } from "@/lib/format";
 import { cashBankShortfall, lockCashBanks, recordCashBankEntry } from "./cash-bank";
+import { groupForEntryType } from "./cashflow-mapping";
 import { LayerNotAvailable, drawFromLayer, openLayer, openLayersOf } from "./cash-bank-layers";
 import { isBaseCurrency } from "./currency";
 import { drawLayer, relieve, roundBase } from "./fx";
@@ -376,6 +377,7 @@ const cashBankAdapter: LedgerAdapter = {
       cashBankId,
       date: ctx.date,
       type: "Journal",
+      cashflowGroupId: await groupForEntryType("Journal", tx),
       direction: into ? "In" : "Out",
       amount: line.face,
       rate: line.rate,

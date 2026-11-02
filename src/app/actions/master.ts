@@ -39,6 +39,7 @@ import {
   strandedCategories,
 } from "@/lib/siba/records";
 import { systemAccountsUsingAccount } from "@/lib/siba/system-account-data";
+import { subjectsMappedTo } from "@/lib/siba/cashflow-mapping";
 
 /**
  * Every action here is permission-gated before it touches anything, and every
@@ -942,6 +943,19 @@ export async function toggleStatus(
         message:
           `Ini satu-satunya Partner Category untuk ${stranded.join(", ")}. ` +
           "Nonaktifkan Budget Category tersebut lebih dulu, atau tambahkan Partner Category lain.",
+      };
+    }
+  }
+
+  // A group a mapping still sends postings to cannot retire: re-point first.
+  if (entity.key === "sys_cashflow_group" && !nextActive) {
+    const mapped = await subjectsMappedTo(id);
+    if (mapped.length) {
+      return {
+        ok: false,
+        message:
+          `Kelompok ini masih dipakai Mapping Cash Flow (${mapped.join(", ")}). ` +
+          "Pindahkan mapping-nya ke kelompok lain lebih dulu.",
       };
     }
   }

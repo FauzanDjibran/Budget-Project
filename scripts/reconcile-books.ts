@@ -459,6 +459,15 @@ WHERE p.cash_bank_id IS NULL OR w.cash_bank_id IS NULL
    OR p.base_total_out <> w.base_out OR p.base_closing <> w.base_closing
 ORDER BY 1, 2`,
   },
+  {
+    no: 20,
+    name: "Setiap entri arus kas di Cash Bank Book punya kelompok arus kas, dan selainnya tidak",
+    sql: `
+SELECT entry_no, entry_type::text, cashflow_group_id
+FROM cash_bank_ledger
+WHERE (entry_type IN ('Transfer', 'Register', 'Revaluation')) = (cashflow_group_id IS NOT NULL)
+ORDER BY 1`,
+  },
 ];
 
 /** Decimals and bigints printed as plain figures, for `console.table`. */

@@ -29,7 +29,13 @@ import {
   prisma,
   systemAccountFixture,
   systemUserId,
+  anyCashflowGroupId,
 } from "./helpers";
+
+let cashflowGroup = 0;
+before(async () => {
+  cashflowGroup = await anyCashflowGroupId();
+});
 
 /**
  * Revaluasi Kurs.
@@ -117,7 +123,7 @@ async function receive(cashBankId: number, foreign: number, rate: number, date =
     await recordCashBankEntry(tx, {
       cashBankId,
       date,
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: "In",
       amount: foreign,
       rate,

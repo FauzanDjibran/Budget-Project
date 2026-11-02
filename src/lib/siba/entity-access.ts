@@ -51,6 +51,13 @@ const ENTITY_PERMISSIONS: Record<string, EntityPermissions> = {
     activate: "BUDGET_CATEGORY_ACTIVATE",
     deactivate: "BUDGET_CATEGORY_DEACTIVATE",
   },
+  sys_cashflow_group: {
+    view: "CASHFLOW_GROUP_VIEW",
+    create: "CASHFLOW_GROUP_CREATE",
+    edit: "CASHFLOW_GROUP_EDIT",
+    activate: "CASHFLOW_GROUP_ACTIVATE",
+    deactivate: "CASHFLOW_GROUP_DEACTIVATE",
+  },
   sys_partner_category: {
     view: "PARTNER_CATEGORY_VIEW",
     create: "PARTNER_CATEGORY_CREATE",

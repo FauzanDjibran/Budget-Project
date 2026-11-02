@@ -11,6 +11,12 @@ import { type SubledgerDef, subledgerForCategory, subledgerMovement } from "./su
 import { loadSubledgers } from "./subledger-data";
 import { itemLowestFrom, subledgerItem, type SubledgerItem } from "./subledger";
 import { systemAccountId } from "./system-account-data";
+import {
+  CashflowUnmapped,
+  categoryGroups,
+  groupForEntryType,
+  unmappedCategoryLabels,
+} from "./cashflow-mapping";
 
 const day = (d: Date): string => d.toISOString().slice(0, 10);
 
@@ -296,6 +302,13 @@ export type PostingLine = {
   /** The Budget's own description — what every book entry of this line reads. */
   description: string;
   partnerId: number | null;
+  budgetCategoryId: number | null;
+  /**
+   * The cash-flow group the line's Cash Bank Book entry carries: its category's,
+   * or the Funding mapping's on the funded route. Null only on a draft, which
+   * writes no entry.
+   */
+  cashflowGroupId: number | null;
   /** In the document's currency. */
   amount: number;
   /** What moved through the resource, in the resource's own currency. */
@@ -400,6 +413,8 @@ export async function planPosting(
      * counter account is left unresolved because no journal is written.
      */
     draft?: boolean;
+    /** The induk's cash settling the anak's document: every line takes the Funding group. */
+    funded?: boolean;
   }
 ): Promise<
   { ok: true; plan: PostingPlan } | { ok: false; errors: Record<string, string> }
@@ -417,6 +432,25 @@ export async function planPosting(
   const mapped = await lineAccountIds(doc.company_id, lineBudgets);
   if (!mapped.ok && !options.draft) return mapped;
   const accounts = mapped.ok ? mapped.accounts : new Map<number, number>();
+
+  // The cash-flow group each line's book entry carries, refused by name like a
+  // missing account — and, like it, tolerated on a draft.
+  const categoryIds = [
+    ...new Set(lineBudgets.map((b) => b.category_id).filter((c): c is number => c != null)),
+  ];
+  let fundingGroup: number | null = null;
+  let groups = new Map<number, number>();
+  try {
+    if (options.funded) fundingGroup = await groupForEntryType("Funding");
+    else {
+      groups = await categoryGroups(categoryIds);
+      const missing = await unmappedCategoryLabels(categoryIds);
+      if (missing.length) throw new CashflowUnmapped(`Budget Category ${missing.join(", ")}`);
+    }
+  } catch (error) {
+    if (!(error instanceof CashflowUnmapped)) throw error;
+    if (!options.draft) return { ok: false, errors: { _form: error.message } };
+  }
 
   const direction = doc.transaction_type as "In" | "Out";
   const books = await loadSubledgers();
@@ -549,6 +583,12 @@ export async function planPosting(
       budgetNo: budget.budget_no,
       description: budget.description,
       partnerId: budget.partner_id,
+      budgetCategoryId: budget.category_id,
+      cashflowGroupId: options.funded
+        ? fundingGroup
+        : budget.category_id != null
+          ? (groups.get(budget.category_id) ?? null)
+          : null,
       amount,
       accountAmount: cash.accountAmount,
       transactionBase: cash.base,

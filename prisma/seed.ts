@@ -386,6 +386,81 @@ const skeletonLevel = (depth: number) =>
 
 // --------------------------------------------------------------------- run
 
+/**
+ * The cash-flow groups to start from, and the group of each seeded category
+ * and of each entry type that carries no category (Funding, Pencairan, BuyFx,
+ * Journal). Created only when missing: the groups are the user's to rename,
+ * reorder and add to, and the mapping theirs to change, so a reseed never
+ * overwrites either. A category the user created is theirs to map.
+ */
+const CASHFLOW_GROUPS: [label: string, sortOrder: number][] = [
+  ["Operasional", 1],
+  ["Investasi", 2],
+  ["Lain-lain", 3],
+];
+const CATEGORY_CASHFLOW: Record<string, string> = {
+  Piutang: "Investasi",
+  Hutang: "Lain-lain",
+  "Piutang (N)": "Operasional",
+  "Hutang (N)": "Operasional",
+  Biaya: "Operasional",
+  Asset: "Investasi",
+};
+const ENTRY_TYPE_CASHFLOW = ["Funding", "Pencairan", "BuyFx", "Journal"] as const;
+
+async function ensureCashflowMapping(audit: { created_by: number; updated_by: null }): Promise<void> {
+  for (const [label, sortOrder] of CASHFLOW_GROUPS) {
+    const n = await create(
+      () => prisma.sysCashflowGroup.findFirst({ where: { group_label: label } }),
+      async () =>
+        prisma.sysCashflowGroup.create({
+          data: {
+            group_code: code("cfg", (await prisma.sysCashflowGroup.count()) + 1),
+            group_label: label,
+            group_name: label,
+            sort_order: sortOrder,
+            ...audit,
+          },
+        })
+    );
+    if (n) tally("cash-flow groups");
+  }
+
+  const groupId = async (label: string) =>
+    (await prisma.sysCashflowGroup.findFirst({ where: { group_label: label }, select: { id: true } }))?.id;
+  const nextCode = async () => code("cfm", (await prisma.accCashflowMapping.count()) + 1);
+
+  for (const [categoryLabel, groupLabel] of Object.entries(CATEGORY_CASHFLOW)) {
+    const category = await prisma.sysBudgetCategory.findFirst({
+      where: { category_label: categoryLabel },
+      select: { id: true },
+    });
+    const group = await groupId(groupLabel);
+    if (!category || !group) continue;
+    const n = await create(
+      () => prisma.accCashflowMapping.findUnique({ where: { budget_category_id: category.id } }),
+      async () =>
+        prisma.accCashflowMapping.create({
+          data: { mapping_code: await nextCode(), budget_category_id: category.id, cashflow_group_id: group, ...audit },
+        })
+    );
+    if (n) tally("cash-flow mappings");
+  }
+
+  const other = await groupId("Lain-lain");
+  for (const type of ENTRY_TYPE_CASHFLOW) {
+    if (!other) break;
+    const n = await create(
+      () => prisma.accCashflowMapping.findUnique({ where: { entry_type: type } }),
+      async () =>
+        prisma.accCashflowMapping.create({
+          data: { mapping_code: await nextCode(), entry_type: type, cashflow_group_id: other, ...audit },
+        })
+    );
+    if (n) tally("cash-flow mappings");
+  }
+}
+
 async function main() {
   const system = await systemUser();
   const audit = { created_by: system, updated_by: null };
@@ -395,6 +470,7 @@ async function main() {
   await syncRoles(system);
   await ensureCompanies(audit);
   await ensureReferenceData(audit);
+  await ensureCashflowMapping(audit);
 
   report();
 }

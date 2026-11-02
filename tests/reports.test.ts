@@ -21,7 +21,13 @@ import {
   parentCompanyId,
   prisma,
   systemUserId,
+  anyCashflowGroupId,
 } from "./helpers";
+
+let cashflowGroup = 0;
+before(async () => {
+  cashflowGroup = await anyCashflowGroupId();
+});
 
 /**
  * The two Cash Bank Report Views.
@@ -102,7 +108,7 @@ const move = (
   recordCashBankEntry(prisma, {
     cashBankId,
     date,
-    type: "Realization",
+    type: "Realization", cashflowGroupId: cashflowGroup,
     direction,
     amount,
     rate: 1,
@@ -398,7 +404,7 @@ describe("the ledger report reconciles", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: cb,
       date: "2026-05-12",
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: "Out",
       amount: 75_000,
       rate: 1,

@@ -25,6 +25,11 @@ import { isBaseCurrency } from "@/lib/siba/currency";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 import { Icon } from "@/components/icon";
+import { CashFlowParams } from "@/components/report/cash-flow-params";
+import { CashFlowReport } from "@/components/report/cash-flow-report";
+import { cashFlowReport } from "@/lib/siba/cash-bank";
+import { resolveCashFlowRun } from "@/lib/siba/cash-flow-run";
+import type { ReportDef } from "@/lib/siba/reports";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +63,8 @@ export default async function Page({
     partners?: string;
     from?: string;
     to?: string;
+    currency?: string;
+    year?: string;
   }>;
 }) {
   const { report: slug } = await params;
@@ -81,6 +88,10 @@ export default async function Page({
   }
 
   const companyIds = [company.id];
+
+  if (report.key === "cash_flow") {
+    return cashFlowPage({ report, slug, query, company, options: scope.options, runAt });
+  }
 
   // ------------------------------------------------------------ subledgers
 
@@ -402,6 +413,72 @@ async function subledgerPage({
  * all. An empty table would read as "nothing has been posted", which is a
  * different and misleading thing.
  */
+/**
+ * The Laporan Arus Kas run: one currency, one fiscal year, a run of its
+ * periods. Defaults to the base currency, the newest year, and its periods
+ * from the first to the one holding today.
+ */
+async function cashFlowPage({
+  report,
+  slug,
+  query,
+  company,
+  options,
+  runAt,
+}: {
+  report: ReportDef;
+  slug: string;
+  query: { currency?: string; year?: string; from?: string; to?: string };
+  company: { id: number };
+  options: { id: number; label: string; name: string }[];
+  runAt: string;
+}) {
+  const run = await resolveCashFlowRun(company.id, query);
+  const lead = <ReportCompany options={options} selectedId={company.id} />;
+  const filter = (
+    <CashFlowParams
+      slug={slug}
+      companyId={company.id}
+      lead={lead}
+      currencies={run.currencies}
+      years={run.years}
+      currencyId={run.currencyId}
+      yearId={run.year?.id ?? null}
+      fromId={run.fromId}
+      toId={run.toId}
+    />
+  );
+  if (!run.year || !run.currencyId || !run.columns.length) {
+    return (
+      <ReportView report={report} filter={filter} runAt={runAt}>
+        <ReportNeedsSubject
+          icon="cal"
+          title="Belum ada tahun buku aktif"
+          body="Laporan Arus Kas dibaca per periode tahun buku. Aktifkan Fiscal Year terlebih dahulu."
+        />
+      </ReportView>
+    );
+  }
+  const data = await cashFlowReport([company.id], run.currencyId, run.columns);
+  return (
+    <ReportView
+      report={report}
+      filter={filter}
+      runAt={runAt}
+      exportHref={`/finance/report/${slug}/export?${new URLSearchParams({
+        company: String(company.id),
+        currency: String(run.currencyId),
+        year: String(run.year.id),
+        from: String(run.fromId),
+        to: String(run.toId),
+      })}`}
+      footnote="Transfer antar Cash & Bank sendiri dan revaluasi kurs bukan arus kas; pengeluaran ditulis dalam kurung."
+    >
+      <CashFlowReport report={data} />
+    </ReportView>
+  );
+}
+
 function NoBooks() {
   return (
     <div className="empty">

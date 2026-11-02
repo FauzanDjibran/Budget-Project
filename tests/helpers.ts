@@ -223,6 +223,15 @@ export async function makeBudgetCategory(options: {
     select: { id: true },
   });
   madeCategories.push(row.id);
+  // Every posting needs its category's cash-flow group (Mapping Cash Flow).
+  await prisma.accCashflowMapping.create({
+    data: {
+      mapping_code: `cfm.${nextFixture()}`,
+      budget_category_id: row.id,
+      cashflow_group_id: await anyCashflowGroupId(),
+      created_by: actor,
+    },
+  });
   for (const p of partners) {
     await prisma.sysBudgetPartnerCategoryMapping.create({
       data: {
@@ -233,6 +242,16 @@ export async function makeBudgetCategory(options: {
       },
     });
   }
+  return row.id;
+}
+
+/** A seeded cash-flow group, for an entry a suite writes straight into the book. */
+export async function anyCashflowGroupId(): Promise<number> {
+  const row = await prisma.sysCashflowGroup.findFirstOrThrow({
+    where: { status: "Active", NOT: { group_code: { startsWith: "test." } } },
+    orderBy: { sort_order: "asc" },
+    select: { id: true },
+  });
   return row.id;
 }
 
@@ -611,6 +630,7 @@ export async function cleanupFixtures(): Promise<void> {
   });
 
   // This suite's fixture categories last: everything above may name one.
+  await prisma.accCashflowMapping.deleteMany({ where: { budget_category_id: { in: madeCategories } } });
   await prisma.sysBudgetPartnerCategoryMapping.deleteMany({
     where: { budget_category_id: { in: madeCategories } },
   });

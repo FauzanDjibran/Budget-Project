@@ -17,10 +17,18 @@ import {
   cleanupFixtures,
   disconnect,
   makeAccount,
+  makeBudgetCategory,
+  makePartner,
   parentCompanyId,
   prisma,
   systemUserId,
+  anyCashflowGroupId,
 } from "./helpers";
+
+let cashflowGroup = 0;
+before(async () => {
+  cashflowGroup = await anyCashflowGroupId();
+});
 
 /**
  * The Cash Bank Book.
@@ -81,6 +89,7 @@ after(async () => {
     await prisma.mCashBank.deleteMany({ where: { id: { in: made } } });
   }
   await cleanupFixtures();
+  await prisma.sysCashflowGroup.deleteMany({ where: { group_code: { startsWith: `test.${FIXTURE_PREFIX}` } } });
   await disconnect();
 });
 
@@ -129,6 +138,77 @@ describe("a resource always has a book", () => {
   });
 });
 
+describe("an entry carries its own classification", () => {
+  const makeGroup = async () =>
+    (
+      await prisma.sysCashflowGroup.create({
+        data: {
+          group_code: `test.${FIXTURE_PREFIX}${Date.now() % 100000}${made.length}`,
+          group_label: `${FIXTURE_PREFIX} Arus`,
+          group_name: `${FIXTURE_PREFIX} Arus`,
+          created_by: actor,
+        },
+        select: { id: true },
+      })
+    ).id;
+
+  test("Partner, Budget Category and cash-flow group are stored as the caller gives them", async () => {
+    const id = await makeCashBank(1_000_000);
+    const group = await makeGroup();
+    const partner = await makePartner({ companyId: company, categoryLabel: "Lainnya" });
+    const category = await makeBudgetCategory({ label: "Arus Kas", directions: ["Out"] });
+
+    await recordCashBankEntry(prisma, {
+      cashBankId: id,
+      date: today,
+      type: "Realization",
+      direction: "Out",
+      amount: 100_000,
+      rate: 1,
+      partnerId: partner,
+      budgetCategoryId: category,
+      cashflowGroupId: group,
+      actorId: actor,
+    });
+
+    const entry = await prisma.cashBankLedger.findFirstOrThrow({
+      where: { cash_bank_id: id, entry_type: "Realization" },
+    });
+    assert.equal(entry.partner_id, partner);
+    assert.equal(entry.budget_category_id, category);
+    assert.equal(entry.cashflow_group_id, group);
+  });
+
+  test("an entry that is not a cash flow is refused a group, and writes nothing", async () => {
+    const id = await makeCashBank(1_000_000);
+    const group = await makeGroup();
+
+    for (const type of ["Transfer", "Register"] as const) {
+      await assert.rejects(
+        recordCashBankEntry(prisma, {
+          cashBankId: id,
+          date: today,
+          type,
+          direction: "In",
+          amount: 1,
+          rate: 1,
+          cashflowGroupId: group,
+          actorId: actor,
+        }),
+        /bukan arus kas/
+      );
+    }
+    assert.equal(await prisma.cashBankLedger.count({ where: { cash_bank_id: id } }), 1, "only the opening");
+  });
+
+  test("the opening a registration writes is not a cash flow", async () => {
+    const id = await makeCashBank(500_000);
+    const opening = await prisma.cashBankLedger.findFirstOrThrow({ where: { cash_bank_id: id } });
+    assert.equal(opening.entry_type, "Register");
+    assert.equal(opening.cashflow_group_id, null);
+  });
+});
+
 describe("the balance never disagrees with the ledger", () => {
   test("each entry moves the balance by exactly its own movement", async () => {
     const id = await makeCashBank(1_000_000);
@@ -136,7 +216,7 @@ describe("the balance never disagrees with the ledger", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: "Out",
       amount: 250_000,
       rate: 1,
@@ -145,7 +225,7 @@ describe("the balance never disagrees with the ledger", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: "In",
       amount: 80_000,
       rate: 1,
@@ -174,7 +254,7 @@ describe("the balance never disagrees with the ledger", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Journal",
+      type: "Journal", cashflowGroupId: cashflowGroup,
       direction: "Out",
       amount: 400_000,
       rate: 1,
@@ -206,7 +286,7 @@ describe("the balance never disagrees with the ledger", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: "Out",
       amount: 125_000,
       rate: 1,
@@ -281,7 +361,7 @@ describe("every entry carries what it was worth in base currency", () => {
           recordCashBankEntry(prisma, {
             cashBankId: id,
             date: today,
-            type: "Realization",
+            type: "Realization", cashflowGroupId: cashflowGroup,
             direction: "In",
             amount: 1_000,
             rate,
@@ -298,7 +378,7 @@ describe("every entry carries what it was worth in base currency", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: "In",
       amount: 300,
       rate: 15_500,
@@ -327,7 +407,7 @@ describe("every entry carries what it was worth in base currency", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: "In",
       amount: 3,
       rate: 3_333.333333,
@@ -351,7 +431,7 @@ describe("every entry carries what it was worth in base currency", () => {
       await recordCashBankEntry(prisma, {
         cashBankId: id,
         date: today,
-        type: "Realization",
+        type: "Realization", cashflowGroupId: cashflowGroup,
         direction: "In",
         amount,
         rate,
@@ -392,7 +472,7 @@ describe("a resource can never hold less than nothing", () => {
         recordCashBankEntry(prisma, {
           cashBankId: id,
           date: today,
-          type: "Realization",
+          type: "Realization", cashflowGroupId: cashflowGroup,
           direction: "Out",
           amount: 500_001,
           rate: 1,
@@ -409,7 +489,7 @@ describe("a resource can never hold less than nothing", () => {
       recordCashBankEntry(prisma, {
         cashBankId: id,
         date: today,
-        type: "Realization",
+        type: "Realization", cashflowGroupId: cashflowGroup,
         direction: "Out",
         amount: 900_000,
         rate: 1,
@@ -434,7 +514,7 @@ describe("a resource can never hold less than nothing", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: "Out",
       amount: 500_000,
       rate: 1,
@@ -507,7 +587,7 @@ describe("a backdated movement is checked on every day from its date on", () => 
     recordCashBankEntry(prisma, {
       cashBankId: id,
       date,
-      type: "Realization",
+      type: "Realization", cashflowGroupId: cashflowGroup,
       direction: signed > 0 ? "In" : "Out",
       amount: Math.abs(signed),
       rate: 1,
@@ -658,7 +738,7 @@ describe("a foreign resource: the month chain checks the account, the layer only
     prisma.$transaction(async (tx) => {
       const layer = await openLayer(tx, { cashBankId: id, date, rate, foreign, actorId: actor });
       await recordCashBankEntry(tx, {
-        cashBankId: id, date, type: "Realization", direction: "In", amount: foreign, rate,
+        cashBankId: id, date, type: "Realization", cashflowGroupId: cashflowGroup, direction: "In", amount: foreign, rate,
         baseAmount: layer.base_original.toNumber(), actorId: actor,
       });
       return layer.id;
@@ -668,7 +748,7 @@ describe("a foreign resource: the month chain checks the account, the layer only
     prisma.$transaction(async (tx) => {
       const drawn = await drawFromLayer(tx, { layerId, cashBankId: id, foreign, date, actorId: actor });
       await recordCashBankEntry(tx, {
-        cashBankId: id, date, type: "Realization", direction: "Out", amount: foreign, rate: drawn.rate,
+        cashBankId: id, date, type: "Realization", cashflowGroupId: cashflowGroup, direction: "Out", amount: foreign, rate: drawn.rate,
         baseAmount: drawn.base, actorId: actor,
       });
     });

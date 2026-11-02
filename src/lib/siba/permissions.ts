@@ -105,6 +105,12 @@ export const PERMISSIONS = [
   { code: "PARTNER_CATEGORY_ACTIVATE", name: "Aktifkan Partner Category", module: "settings" },
   { code: "PARTNER_CATEGORY_DEACTIVATE", name: "Nonaktifkan Partner Category", module: "settings" },
 
+  { code: "CASHFLOW_GROUP_VIEW", name: "Lihat Cash Flow Group", module: "settings" },
+  { code: "CASHFLOW_GROUP_CREATE", name: "Tambah Cash Flow Group", module: "settings" },
+  { code: "CASHFLOW_GROUP_EDIT", name: "Ubah Cash Flow Group", module: "settings" },
+  { code: "CASHFLOW_GROUP_ACTIVATE", name: "Aktifkan Cash Flow Group", module: "settings" },
+  { code: "CASHFLOW_GROUP_DEACTIVATE", name: "Nonaktifkan Cash Flow Group", module: "settings" },
+
 
   // ---------------------------------------------------------------- accounting
   { code: "MENU_ACCOUNTING_ACCESS", name: "Akses menu Accounting", module: "accounting" },
@@ -130,6 +136,13 @@ export const PERMISSIONS = [
     name: "Ubah Mapping Account System",
     module: "accounting",
     description: "Menentukan ke account mana posting otomatis ditulis.",
+  },
+  { code: "CASHFLOW_MAPPING_VIEW", name: "Lihat Mapping Cash Flow", module: "accounting" },
+  {
+    code: "CASHFLOW_MAPPING_EDIT",
+    name: "Ubah Mapping Cash Flow",
+    module: "accounting",
+    description: "Menentukan kelompok Laporan Arus Kas setiap Budget Category dan jenis entri tanpa kategori.",
   },
 
   // A Fiscal Period has no menu and no form: periods are generated when a
@@ -315,6 +328,12 @@ export const PERMISSIONS = [
     description:
       "Layer kurs tiap resource mata uang asing — berapa yang tersisa pada " +
       "masing-masing kurs perolehan.",
+  },
+  {
+    code: "REPORT_CASH_FLOW_VIEW",
+    name: "Lihat Laporan Arus Kas",
+    module: "finance",
+    description: "Penerimaan dan pengeluaran Cash & Bank per Cash Flow Group dan Partner, per periode.",
   },
 
   // **One permission for every subject book**, which is a reversal of the

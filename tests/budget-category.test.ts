@@ -27,6 +27,9 @@ before(async () => {
 });
 
 after(async () => {
+  await prisma.accCashflowMapping.deleteMany({
+    where: { budget_category: { category_label: { startsWith: FIXTURE_PREFIX } } },
+  });
   await prisma.sysBudgetPartnerCategoryMapping.deleteMany({
     where: { budget_category: { category_label: { startsWith: FIXTURE_PREFIX } } },
   });

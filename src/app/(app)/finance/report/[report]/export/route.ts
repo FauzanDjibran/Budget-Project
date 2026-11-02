@@ -1,6 +1,8 @@
 import { currentActor } from "@/lib/siba/auth";
 import { actorCan } from "@/lib/siba/access";
-import { cashBankBalanceReport, cashBankLedgerReport } from "@/lib/siba/cash-bank";
+import { cashBankBalanceReport, cashBankLedgerReport, cashFlowReport } from "@/lib/siba/cash-bank";
+import { cashFlowWorkbook } from "@/lib/siba/cash-flow-export";
+import { resolveCashFlowRun } from "@/lib/siba/cash-flow-run";
 import { cashBankBalanceWorkbook } from "@/lib/siba/cash-bank-balance-export";
 import { cashBankLayerWorkbook } from "@/lib/siba/cash-bank-layer-export";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
@@ -34,7 +36,7 @@ export async function GET(
   if (
     !report ||
     report.module !== "finance" ||
-    !["cash_bank_ledger", "cash_bank_balance", "cash_bank_layer", "subledger", "subledger_balance"].includes(report.key)
+    !["cash_bank_ledger", "cash_bank_balance", "cash_bank_layer", "subledger", "subledger_balance", "cash_flow"].includes(report.key)
   ) {
     return new Response("Tidak ditemukan", { status: 404 });
   }
@@ -48,6 +50,21 @@ export async function GET(
   if (!company) return new Response("Akses ditolak", { status: 403 });
   const range = resolveRange(query.from, query.to);
   const printed = { printedBy: actor.user.name, printedAt: formatTimestamp(new Date()) };
+
+  if (report.key === "cash_flow") {
+    const run = await resolveCashFlowRun(company.id, query);
+    if (!run.year || !run.currencyId || !run.columns.length) return new Response("Tidak ditemukan", { status: 404 });
+    const data = await cashFlowReport([company.id], run.currencyId, run.columns);
+    const first = run.columns[0];
+    const lastColumn = run.columns[run.columns.length - 1];
+    const file = await cashFlowWorkbook({
+      companyName: company.name,
+      period: `${run.year.name} · Periode ${first.label}${run.columns.length > 1 ? ` s.d. ${lastColumn.label}` : ""}`,
+      report: data,
+      ...printed,
+    });
+    return xlsxResponse(file, `${report.name} ${company.label} ${data.currencyLabel} ${first.from.slice(0, 7)} - ${lastColumn.to.slice(0, 7)}.xlsx`);
+  }
 
   if (report.key === "subledger_balance") {
     const books = await loadSubledgers();

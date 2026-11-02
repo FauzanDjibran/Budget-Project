@@ -1952,6 +1952,15 @@ const SHOWCASE_CATEGORIES: [
   ["Pengeluaran Belum Teridentifikasi", "Pengeluaran yang belum diketahui peruntukannya, ditampung sampai direklasifikasi.", ["In", "Out"], ["Cabang", "Karyawan", "Stakeholder", "Lainnya"], "Out"],
 ];
 
+const SHOWCASE_CASHFLOW: Record<string, string> = {
+  Titipan: "Lain-lain",
+  Prive: "Lain-lain",
+  Investasi: "Investasi",
+  "Hasil Investasi": "Investasi",
+  "Penerimaan Belum Teridentifikasi": "Operasional",
+  "Pengeluaran Belum Teridentifikasi": "Operasional",
+};
+
 async function insertBudgetCategories(actor: number) {
   const partnerCategory = new Map(
     (await prisma.sysPartnerCategory.findMany({ select: { id: true, category_label: true } })).map((c) => [
@@ -1992,6 +2001,27 @@ async function insertBudgetCategories(actor: number) {
       });
     }
     tally("budget categories");
+  }
+
+  // Each one in its cash-flow group (Mapping Cash Flow), so its Realisasi posts.
+  for (const [label] of SHOWCASE_CATEGORIES) {
+    const category = await prisma.sysBudgetCategory.findFirst({ where: { category_label: label }, select: { id: true } });
+    if (!category || (await prisma.accCashflowMapping.findUnique({ where: { budget_category_id: category.id } }))) continue;
+    const group = await prisma.sysCashflowGroup.findFirst({
+      where: { group_label: SHOWCASE_CASHFLOW[label] },
+      select: { id: true },
+    });
+    if (!group) throw new Error(`Cash-flow group "${SHOWCASE_CASHFLOW[label]}" is not seeded.`);
+    const mappingCodes = await prisma.accCashflowMapping.findMany({ select: { mapping_code: true } });
+    await prisma.accCashflowMapping.create({
+      data: {
+        mapping_code: await nextCode("cfm", mappingCodes.map((m) => m.mapping_code)),
+        budget_category_id: category.id,
+        cashflow_group_id: group.id,
+        created_by: actor,
+      },
+    });
+    tally("cash-flow mappings");
   }
 }
 

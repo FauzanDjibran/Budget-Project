@@ -70,3 +70,18 @@ Each ends green on `npm run build`, `npm run lint`, `npm test`.
 | **8 Drill** | Buku Kas & Bank takes `?partner=&group=&dir=`; every Partner figure of the report is a `Drill` to it for that column's range. `entryKindText` reads `entry_type` | Seen in the browser |
 | **9 Docs + KB** | `tests/module-boundaries.test.ts` and CLAUDE.md §3: a block *Cash Flow Mapping* owning `acc_cashflow_mapping` (`cashflow-mapping.ts` + its action); the book reads the group as a value and never imports it. CLAUDE.md: §1 scope and status table, §5 tree, §10 rules (entry type per source; the cash book carries its counterparty classification; the cash-flow layout), §12 frozen decision, §14, §17. `KNOWLEDGE.md` per O3. `reconcile-books.ts`: no flow entry without a group. `truncate-transactions.ts` unaffected (no new document table) | `kb-check` ok |
 | **10 Verify** | `db:seed`, `db:seed-showcase`, `db:backfill-cashflow`, `db:reconcile`; browser: Cash Flow Group master, Mapping Cash Flow, the unmapped refusal, each posting path, the report in IDR and USD, the export against the examples; `ui-audit` against the Laba Rugi | All agree |
+
+## 5. Progress (02/11/2026)
+
+| Step | State |
+|---|---|
+| 1 Schema | Done, committed `7ec6fa3` |
+| 2 Book writer | Done — `recordCashBankEntry` stores `partnerId` / `budgetCategoryId` / `cashflowGroupId`, refuses a flow type without a group and a non-flow type with one (`isCashFlow`) |
+| 3 Callers | Done — `planPosting` resolves each line's group (Funding via `funded: true`), tolerated on a draft; Transfer / Pencairan Open Item / Journal resolve inside their transaction and treat `CashflowUnmapped` as a refusal. `cashflow-mapping.ts`, `cashflow-catalogue.ts` |
+| 4 Group master + Mapping Cash Flow | Done — registry entity `sys_cashflow_group` (Pengaturan › Klasifikasi), `/accounting/cashflow-mapping`, permissions, seed (3 groups, 10 mappings), showcase maps its six categories, fixtures map theirs |
+| 5 Backfill | Done — `npm run db:backfill-cashflow`; local: 20 placed, 0 left |
+| 6 Report | Done — `cash-flow` in `reports.ts` (`currency-fiscal-range`), Finance › Laporan › Laporan Arus Kas, `REPORT_CASH_FLOW_VIEW`, `cashFlowReport` in `cash-bank.ts`, `CashFlowParams`, `CashFlowReport` on the statements table; `tests/cash-flow.test.ts` |
+| 7 Export | Done — `cash-flow-export.ts`, the finance export route |
+| 8 Drill | Not done — deferred, needs Partner / group / direction filters on Buku Kas & Bank |
+| 9 Docs | Done — CLAUDE.md rules 123–125, module boundary, reconcile check 20, KNOWLEDGE.md queue (B or D pending) |
+| 10 Verify | Done — build, lint, `db:reconcile` (19 checks); full suite 967 pass, the only failures the general-journal / accounting fixture guard against the showcase mappings on the local database; browser: IDR and USD runs reconcile in every column, fold, export 200, Mapping Cash Flow, Cash Flow Group |

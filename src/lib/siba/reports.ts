@@ -44,7 +44,13 @@ export type ReportParams =
    * against — the financial statements. Always a period viewpoint: a Laba Rugi
    * or a Neraca is read for a month of a year, never for two arbitrary dates.
    */
-  | "fiscal-period";
+  | "fiscal-period"
+  /**
+   * A currency, a fiscal year and a run of its periods — the Laporan Arus Kas,
+   * one column per period, one currency per run because money in two
+   * currencies is never added together.
+   */
+  | "currency-fiscal-range";
 
 export type ReportDef = {
   key: string;
@@ -114,6 +120,19 @@ const FIXED_REPORTS = [
     // the figure a payment is made against. "What did it hold in March" is a
     // different question and the Cash Bank Book answers it.
     params: "cash-bank",
+    subjectRequired: false,
+  },
+  {
+    key: "cash_flow",
+    slug: "cash-flow",
+    module: "finance",
+    name: "Laporan Arus Kas",
+    desc:
+      "Penerimaan dan pengeluaran Cash & Bank satu mata uang per periode, dikelompokkan " +
+      "menurut Cash Flow Group dan Partner, dengan saldo awal dan saldo akhir.",
+    icon: "trend",
+    permission: "REPORT_CASH_FLOW_VIEW",
+    params: "currency-fiscal-range",
     subjectRequired: false,
   },
   {

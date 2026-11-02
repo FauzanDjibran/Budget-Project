@@ -235,6 +235,14 @@ export const MODULES: NavModule[] = [
             desc: "Layer kurs setiap resource mata uang asing dan sisa pada masing-masing kurs.",
             permission: "REPORT_CASH_BANK_LAYER_VIEW",
           },
+          {
+            key: "report_cash_flow",
+            slug: "report/cash-flow",
+            name: "Laporan Arus Kas",
+            icon: "trend",
+            desc: "Penerimaan dan pengeluaran per Cash Flow Group dan Partner, satu mata uang, per periode.",
+            permission: "REPORT_CASH_FLOW_VIEW",
+          },
           // One entry for every subject book, with the book as a toggle on the
           // report itself. It was six entries generated from a six-entry
           // catalogue; a book is now a Budget Category that names a Partner, so
@@ -303,6 +311,15 @@ export const MODULES: NavModule[] = [
             icon: "link",
             desc: "Account tujuan posting otomatis per Company — bridge intercompany, selisih kurs, revaluasi kurs, dan laba/rugi pada ekuitas.",
             permission: "SYSTEM_ACCOUNT_VIEW",
+          },
+          {
+            key: "acc_cashflow_mapping",
+            slug: "cashflow-mapping",
+            name: "Mapping Cash Flow",
+            single: "Mapping Cash Flow",
+            icon: "link",
+            desc: "Kelompok Laporan Arus Kas untuk setiap Budget Category, dan untuk jenis entri tanpa Budget Category.",
+            permission: "CASHFLOW_MAPPING_VIEW",
           },
         ],
       },
@@ -439,6 +456,14 @@ export const MODULES: NavModule[] = [
             icon: "users",
             desc: "Jenis Partner. Menentukan Partner mana yang boleh dipilih untuk sebuah Budget Category.",
             permission: "PARTNER_CATEGORY_VIEW",
+          },
+          {
+            key: "sys_cashflow_group",
+            slug: "cashflow-group",
+            name: "Cash Flow Group",
+            icon: "layers",
+            desc: "Kelompok pada Laporan Arus Kas, dengan urutannya.",
+            permission: "CASHFLOW_GROUP_VIEW",
           },
         ],
       },

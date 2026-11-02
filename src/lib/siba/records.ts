@@ -31,6 +31,7 @@ const DELEGATES = {
   ref_currency: (db: Client) => db.refCurrency,
   sys_partner_category: (db: Client) => db.sysPartnerCategory,
   sys_budget_category: (db: Client) => db.sysBudgetCategory,
+  sys_cashflow_group: (db: Client) => db.sysCashflowGroup,
   sys_budget_partner_category_mapping: (db: Client) =>
     db.sysBudgetPartnerCategoryMapping,
   acc_account: (db: Client) => db.accAccount,
@@ -320,6 +321,7 @@ const LABEL_COLUMN: Record<string, string> = {
   sys_company: "company_label",
   sys_partner_category: "category_label",
   sys_budget_category: "category_label",
+  sys_cashflow_group: "group_label",
   ref_currency: "currency_label",
   acc_account_subcategory: "subcategory_label",
   acc_account: "account_label",

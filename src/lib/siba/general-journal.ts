@@ -19,6 +19,7 @@ import {
 } from "./general-journal-ledgers";
 import { InsufficientFunds } from "./cash-bank";
 import { LayerNotAvailable } from "./cash-bank-layers";
+import { CashflowUnmapped } from "./cashflow-mapping";
 import { SubledgerItemUnavailable } from "./subledger";
 import { isBalanced, valueGeneralJournal } from "./general-journal-valuation";
 import {
@@ -509,7 +510,8 @@ export async function postGeneralJournal(
       error instanceof PeriodShut ||
       error instanceof SubledgerItemUnavailable ||
       error instanceof InsufficientFunds ||
-      error instanceof LayerNotAvailable
+      error instanceof LayerNotAvailable ||
+      error instanceof CashflowUnmapped
     ) {
       return { ok: false, errors: { _form: error.message } };
     }
