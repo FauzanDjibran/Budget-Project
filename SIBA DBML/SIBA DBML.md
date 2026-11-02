@@ -413,9 +413,12 @@ table cash_bank_ledger {
   // When the document that wrote it was posted: the Post transaction's own
   // time (transaction_timestamp()). Backdated when later than accounting_date.
   posted_at                   timestamptz [not null, default: `transaction_timestamp()`]
-  // Revaluation: a Revaluasi Kurs — movement nil, base_movement the restated
-  // difference.
-  entry_type                  enum('Opening', 'Transaction', 'Adjustment', 'Revaluation') [not null]
+  // Which source wrote the entry, one value per source and never a direction
+  // (20261102090000_cash_flow_classification, which mapped the old Opening /
+  // Transaction / Adjustment from each entry's source). Transfer, Register and
+  // Revaluation are not cash flows. Revaluation: a Revaluasi Kurs — movement
+  // nil (CHECK), base_movement the restated difference.
+  entry_type                  enum('Realization', 'Funding', 'Transfer', 'Pencairan', 'BuyFx', 'Conversion', 'Journal', 'Register', 'Revaluation') [not null]
 
   // Signed: positive money in, negative money out. The sign is the direction —
   // direction, amount and base_amount were dropped in
@@ -430,6 +433,15 @@ table cash_bank_ledger {
   source_doc_type_id          int [ref : >? sys_doc_type.id]
   source_doc_id               int
 
+  // The entry's own classification, written at Post so the cash-flow report
+  // never reads the source document: the counterparty, the Budget Category it
+  // settled, and the cash-flow group mapped at that moment. The group is null
+  // exactly for an entry that is not a cash flow, and on rows written before
+  // the column existed until the backfill places them.
+  partner_id                  int [ref : >? m_partner.id]
+  budget_category_id          int [ref : >? sys_budget_category.id]
+  cashflow_group_id           int [ref : >? sys_cashflow_group.id]
+
   note                        text
 
   created_by                  int [not null]
@@ -439,6 +451,51 @@ table cash_bank_ledger {
   indexes {
     (cash_bank_id, accounting_date)
     (source_doc_type_id, source_doc_id)
+    (cash_bank_id, accounting_date, cashflow_group_id)
+  }
+}
+
+// A heading of the cash-flow report (Operasional, Investasi, Lain-lain to
+// start with), edited by the user under Pengaturan › Klasifikasi.
+// Deactivated, never deleted.
+table sys_cashflow_group {
+  id                          int [pk, increment, not null]
+
+  group_code                  varchar(255) [not null, unique]
+  group_label                 varchar(255) [not null]
+  group_name                  varchar(255) [not null]
+  // The order the report prints its groups in.
+  sort_order                  int [not null, default: 0]
+
+  note                        text
+  status                      enum('Active', 'Inactive') [not null, default: 'Active']
+
+  created_by                  int [not null]
+  updated_by                  int
+  created_at                  timestamptz [not null, default: `now()`]
+  updated_at                  timestamptz [not null, default: `now()`]
+}
+
+// Mapping Cash Flow: which group a Budget Category falls in, and which group
+// the entry types carrying no category of their own fall in. Exactly one of
+// budget_category_id / entry_type per row (CHECK), entry_type only Funding,
+// Pencairan, BuyFx or Journal (CHECK). Copied onto the ledger at Post, so a
+// change applies to later postings only.
+table acc_cashflow_mapping {
+  id                          int [pk, increment, not null]
+
+  mapping_code                varchar(255) [not null, unique]
+  budget_category_id          int [unique, ref : >? sys_budget_category.id]
+  entry_type                  enum('Realization', 'Funding', 'Transfer', 'Pencairan', 'BuyFx', 'Conversion', 'Journal', 'Register', 'Revaluation') [unique]
+  cashflow_group_id           int [not null, ref : > sys_cashflow_group.id]
+
+  created_by                  int [not null]
+  updated_by                  int
+  created_at                  timestamptz [not null, default: `now()`]
+  updated_at                  timestamptz [not null, default: `now()`]
+
+  indexes {
+    cashflow_group_id
   }
 }
 

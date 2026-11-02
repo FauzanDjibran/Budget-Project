@@ -18,7 +18,7 @@ const entry = (o: Partial<LedgerEntryRow>): LedgerEntryRow => ({
   id: 1,
   entryNo: "CBL-0001",
   date: "2026-01-09",
-  type: "Transaction",
+  type: "Realization",
   movement: 0,
   rate: 1,
   baseMovement: 0,
@@ -58,7 +58,7 @@ test("each Cash & Bank runs from Saldo Awal to Saldo Akhir in its own currency, 
         closing: 1300,
         entries: [
           entry({ movement: 500, note: "Setoran", sourceDocTable: "fin_cash_bank_transaction", sourceDocNo: "RBM-0001" }),
-          entry({ movement: -200, note: "Transfer", sourceDocTable: "fin_cash_bank_transfer", sourceDocNo: "TRF-0001" }),
+          entry({ type: "Transfer", movement: -200, note: "Transfer", sourceDocTable: "fin_cash_bank_transfer", sourceDocNo: "TRF-0001" }),
         ],
       }),
       book("BCA-USD", "USD", {

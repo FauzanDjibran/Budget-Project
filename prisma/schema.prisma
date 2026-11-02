@@ -480,8 +480,8 @@ model SysBudgetCategory {
   /// from the row (see `subledger-catalogue.ts`); these two are the parts no
   /// derivation gets right. A new category is a usable book without them, and a
   /// better-worded one with them.
-  book_icon              String?
-  book_closing_label     String?
+  book_icon          String?
+  book_closing_label String?
 
   note   String?
   status ActiveStatus @default(Active)
@@ -497,6 +497,8 @@ model SysBudgetCategory {
   sub_ledger_entries SubLedger[]
   sub_ledger_items   SubLedgerBalance[]
   account_mappings   AccBudgetCategoryAccount[]
+  cashflow_mapping   AccCashflowMapping?
+  cash_bank_entries  CashBankLedger[]
 
   @@map("sys_budget_category")
 }
@@ -566,16 +568,16 @@ model RefCurrency {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  cash_banks            MCashBank[]
-  budgets               BudBudget[]
-  transactions          FinCashBankTransaction[]
-  transfers             FinCashBankTransfer[]
-  journal_lines         AccJournalLine[]
-  subledger_entries     SubLedger[]
-  subledger_balances    SubLedgerBalance[]
-  funding_requests      FinFundingRequest[]
-  conversions           FinItemConversion[]
-  revaluations          FinCashBankRevaluation[]
+  cash_banks         MCashBank[]
+  budgets            BudBudget[]
+  transactions       FinCashBankTransaction[]
+  transfers          FinCashBankTransfer[]
+  journal_lines      AccJournalLine[]
+  subledger_entries  SubLedger[]
+  subledger_balances SubLedgerBalance[]
+  funding_requests   FinFundingRequest[]
+  conversions        FinItemConversion[]
+  revaluations       FinCashBankRevaluation[]
 
   @@map("ref_currency")
 }
@@ -605,6 +607,7 @@ model MPartner {
   subledger_entries  SubLedger[]
   subledger_balances SubLedgerBalance[]
   conversions        FinItemConversion[]
+  cash_bank_entries  CashBankLedger[]
 
   opening_balance_lines AccOpeningBalanceLine[]
 
@@ -665,16 +668,79 @@ model MCashBank {
 // never a view over journal lines. Only the General Ledger derives from
 // journals.
 
+/// Which source wrote the entry — one value per source and never a direction:
+/// the sign of `movement` is the direction (KB books-and-posting §2.3), so
+/// Penerimaan / Pengeluaran on the cash-flow report is read from it.
 enum CashBankEntryType {
+  /// A Realisasi posted directly by the induk.
+  Realization
+  /// A Funding confirmation: the induk's cash settling the anak's Realisasi.
+  Funding
+  /// A Cash Bank Transfer between two resources of one currency. Not a cash flow.
+  Transfer
+  /// A Cash Bank Transfer selling foreign currency, either leg.
+  Pencairan
+  /// A Cash Bank Transfer buying foreign currency, either leg.
+  BuyFx
+  /// A Pencairan Open Item's cash legs.
+  Conversion
+  /// A typed Journal's Kas & Bank line.
+  Journal
   /// The balance a resource starts with, written once when it is registered.
-  Opening
-  /// A posted cash/bank transaction.
-  Transaction
-  /// A manual correction, recorded rather than edited into an existing entry.
-  Adjustment
+  /// Not a cash flow.
+  Register
   /// A Revaluasi Kurs: no currency moves (`movement` is nil) and the base
-  /// measure is restated to the kurs the user stated.
+  /// measure is restated to the kurs the user stated. Not a cash flow.
   Revaluation
+}
+
+/// A heading of the cash-flow report — Operasional, Investasi, Lain-lain to
+/// start with — kept as rows the user edits under Pengaturan › Klasifikasi.
+/// Deactivated, never deleted: a ledger entry keeps the group it was posted
+/// under whatever its status.
+model SysCashflowGroup {
+  id          Int          @id @default(autoincrement())
+  group_code  String       @unique
+  group_label String
+  group_name  String
+  /// The order the report prints its groups in.
+  sort_order  Int          @default(0)
+  note        String?
+  status      ActiveStatus @default(Active)
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  mappings       AccCashflowMapping[]
+  ledger_entries CashBankLedger[]
+
+  @@map("sys_cashflow_group")
+}
+
+/// Mapping Cash Flow: which group a Budget Category falls in, and which group
+/// the entry types that carry no Budget Category of their own (Funding,
+/// Pencairan, BuyFx, Journal) fall in. Exactly one of the two keys per row
+/// (CHECK in the migration). Read at Post and copied onto the ledger entry, so
+/// a change applies to later postings only.
+model AccCashflowMapping {
+  id                 Int                @id @default(autoincrement())
+  mapping_code       String             @unique
+  budget_category_id Int?               @unique
+  entry_type         CashBankEntryType? @unique
+  cashflow_group_id  Int
+
+  created_by Int
+  updated_by Int?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  budget_category SysBudgetCategory? @relation(fields: [budget_category_id], references: [id])
+  cashflow_group  SysCashflowGroup   @relation(fields: [cashflow_group_id], references: [id])
+
+  @@index([cashflow_group_id])
+  @@map("acc_cashflow_mapping")
 }
 
 model CashBankLedger {
@@ -723,16 +789,31 @@ model CashBankLedger {
   source_doc_type_id Int?
   source_doc_id      Int?
 
+  /// The entry's own classification, written at Post so the cash-flow report
+  /// never reads the source document: the counterparty (the Budget's Partner,
+  /// or a Pencairan Open Item's), the Budget Category it settled, and the
+  /// cash-flow group mapped at that moment. Master-data references only. The
+  /// group is null exactly for an entry that is not a cash flow (Transfer,
+  /// Register, Revaluation) — and on rows written before it existed, until the
+  /// backfill places them.
+  partner_id         Int?
+  budget_category_id Int?
+  cashflow_group_id  Int?
+
   note String?
 
   created_by Int
   created_at DateTime @default(now()) @db.Timestamptz(6)
 
-  cash_bank       MCashBank   @relation(fields: [cash_bank_id], references: [id])
-  source_doc_type SysDocType? @relation(fields: [source_doc_type_id], references: [id])
+  cash_bank       MCashBank          @relation(fields: [cash_bank_id], references: [id])
+  source_doc_type SysDocType?        @relation(fields: [source_doc_type_id], references: [id])
+  partner         MPartner?          @relation(fields: [partner_id], references: [id])
+  budget_category SysBudgetCategory? @relation(fields: [budget_category_id], references: [id])
+  cashflow_group  SysCashflowGroup?  @relation(fields: [cashflow_group_id], references: [id])
 
   @@index([cash_bank_id, accounting_date])
   @@index([source_doc_type_id, source_doc_id])
+  @@index([cash_bank_id, accounting_date, cashflow_group_id])
   @@map("cash_bank_ledger")
 }
 
@@ -870,9 +951,9 @@ model CashBankLayer {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  cash_bank             MCashBank               @relation(fields: [cash_bank_id], references: [id])
-  source_doc_type       SysDocType?             @relation(fields: [source_doc_type_id], references: [id])
-  journal_lines         AccJournalLine[]
+  cash_bank       MCashBank        @relation(fields: [cash_bank_id], references: [id])
+  source_doc_type SysDocType?      @relation(fields: [source_doc_type_id], references: [id])
+  journal_lines   AccJournalLine[]
 
   @@index([cash_bank_id, status, acquisition_date, acquisition_seq])
   @@index([source_doc_type_id, source_doc_id])
@@ -1138,10 +1219,10 @@ model AccAccount {
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   mappings            AccBudgetCategoryAccount[]
-  account_subcategory AccAccountSubcategory @relation(fields: [account_subcategory_id], references: [id])
-  company             SysCompany            @relation(fields: [company_id], references: [id])
-  parent              AccAccount?           @relation("AccountTree", fields: [parent_account], references: [id])
-  children            AccAccount[]          @relation("AccountTree")
+  account_subcategory AccAccountSubcategory      @relation(fields: [account_subcategory_id], references: [id])
+  company             SysCompany                 @relation(fields: [company_id], references: [id])
+  parent              AccAccount?                @relation("AccountTree", fields: [parent_account], references: [id])
+  children            AccAccount[]               @relation("AccountTree")
 
   cash_banks    MCashBank[]
   journal_lines AccJournalLine[]

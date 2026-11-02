@@ -578,6 +578,7 @@ export async function applyPosting(
       docId: doc.id,
       date,
       actorId,
+      entryType: "Realization",
     });
 
     // Realization is Budget's to write, not Finance's — same transaction, but
@@ -678,6 +679,8 @@ export async function writeRealizationLines(
     docId: number;
     date: string;
     actorId: number;
+    /** `Funding` when the induk's cash settles the anak's document. */
+    entryType: "Realization" | "Funding";
   }
 ): Promise<void> {
   const direction = ctx.direction;
@@ -714,7 +717,7 @@ export async function writeRealizationLines(
     await recordCashBankEntry(tx, {
       cashBankId: ctx.cashBankId,
       date: ctx.date,
-      type: "Transaction",
+      type: ctx.entryType,
       direction,
       // In the **resource's** own currency, which is the line's amount
       // unless the bank did the converting.

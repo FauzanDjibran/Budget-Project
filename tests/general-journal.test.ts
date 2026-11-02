@@ -624,7 +624,7 @@ describe("the cash_bank ledger (Gate C)", () => {
     assert.ok(posted.ok, JSON.stringify(posted));
     assert.equal(await held(bca.id), 50_000_000);
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: bca.id, entry_type: "Adjustment" },
+      where: { cash_bank_id: bca.id, entry_type: "Journal" },
     });
     assert.equal(entry.source_doc_id, id);
   });

@@ -117,7 +117,7 @@ async function receive(cashBankId: number, foreign: number, rate: number, date =
     await recordCashBankEntry(tx, {
       cashBankId,
       date,
-      type: "Transaction",
+      type: "Realization",
       direction: "In",
       amount: foreign,
       rate,

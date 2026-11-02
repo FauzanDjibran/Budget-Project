@@ -429,7 +429,7 @@ export async function applyConversion(
       await recordCashBankEntry(tx, {
         cashBankId: doc.from_cash_bank_id,
         date,
-        type: "Transaction",
+        type: "Conversion",
         direction: "Out",
         amount: sourceAmount,
         rate: sourceRate,
@@ -447,7 +447,7 @@ export async function applyConversion(
         await recordCashBankEntry(tx, {
           cashBankId: l.toCashBankId,
           date,
-          type: "Transaction",
+          type: "Conversion",
           direction: "In",
           amount: l.inAmount,
           rate: 1,

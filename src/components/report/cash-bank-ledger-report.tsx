@@ -189,7 +189,7 @@ export function CashBankLedgerReport({
                       // A revaluation moves no currency, only its base value,
                       // so neither column carries it.
                       const restated = e.type === "Revaluation";
-                      const kind = entryKindText(e.type, e.sourceDocTable, e.movement);
+                      const kind = entryKindText(e.type, e.movement);
                       return (
                         <tr key={e.id} style={{ cursor: "default" }}>
                           <td className="mono mut" style={{ fontSize: "11.5px" }}>

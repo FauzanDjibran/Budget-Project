@@ -42,7 +42,7 @@ export function cashBankLedgerWorkbook(s: CashBankLedgerExport): Promise<Buffer>
       closing: book.closing,
       rows: book.entries.map((e) => ({
         date: e.date,
-        docNo: [e.sourceDocNo, entryKindText(e.type, e.sourceDocTable, e.movement)].filter(Boolean).join("\n"),
+        docNo: [e.sourceDocNo, entryKindText(e.type, e.movement)].filter(Boolean).join("\n"),
         text: e.note ?? "—",
         // A revaluation moves no currency, only its base value, so neither column carries it.
         in: e.movement > 0 ? e.movement : null,

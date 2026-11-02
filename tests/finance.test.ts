@@ -956,7 +956,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     await post(doc);
 
     const entries = await prisma.cashBankLedger.findMany({
-      where: { cash_bank_id: cashBank, entry_type: "Transaction" },
+      where: { cash_bank_id: cashBank, entry_type: "Realization" },
     });
     assert.equal(entries.length, 1);
     assert.equal(entries[0].movement.toNumber(), -400_000, "money out");
@@ -1125,7 +1125,7 @@ describe("a draft moves nothing; posting moves everything at once", () => {
     await post(doc);
 
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: cashBank, entry_type: "Transaction" },
+      where: { cash_bank_id: cashBank, entry_type: "Realization" },
       include: { source_doc_type: true },
     });
     assert.equal(entry.source_doc_id, doc);
@@ -1564,7 +1564,7 @@ describe("a foreign document is valued rather than refused", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: cashBank,
       date: today,
-      type: "Opening",
+      type: "Register",
       direction: "In",
       amount: 1_000,
       rate: 15_500,
@@ -1585,7 +1585,7 @@ describe("a foreign document is valued rather than refused", () => {
     await post(doc);
 
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: cashBank, entry_type: "Transaction" },
+      where: { cash_bank_id: cashBank, entry_type: "Realization" },
     });
     assert.equal(entry.movement.toNumber(), -400, "the resource gave up 400");
     assert.equal(entry.rate.toNumber(), 15_500, "at the layer's own kurs");
@@ -1627,7 +1627,7 @@ describe("a foreign document is valued rather than refused", () => {
     await post(doc);
 
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: rupiah, entry_type: "Transaction" },
+      where: { cash_bank_id: rupiah, entry_type: "Realization" },
     });
     // What left the bank is rupiah, because that is what the bank holds.
     assert.equal(entry.movement.toNumber(), -8_000_000, "500 at 16.000");
@@ -1722,7 +1722,7 @@ describe("a foreign document is valued rather than refused", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: payFrom,
       date: today,
-      type: "Opening",
+      type: "Register",
       direction: "In",
       amount: 1_000,
       rate: 16_000,
@@ -1839,7 +1839,7 @@ describe("a foreign document is valued rather than refused", () => {
     await post(doc);
 
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: cashBank, entry_type: "Transaction" },
+      where: { cash_bank_id: cashBank, entry_type: "Realization" },
     });
     assert.equal(entry.rate.toNumber(), 1, "base currency, so the rate is 1");
     assert.equal(
@@ -2003,7 +2003,7 @@ describe("one document realizes Budgets of several categories and partners", () 
     await recordCashBankEntry(prisma, {
       cashBankId: payFrom,
       date: today,
-      type: "Opening",
+      type: "Register",
       direction: "In",
       amount: 2_000,
       rate: 16_000,
@@ -2388,7 +2388,7 @@ describe("a line lowering a position settles the open item it names", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: cashBank,
       date: today,
-      type: "Opening",
+      type: "Register",
       direction: "In",
       amount: foreign,
       rate,

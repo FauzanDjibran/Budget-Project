@@ -365,7 +365,7 @@ describe("Transfer moves money without changing what it is worth", () => {
     assert.ok((await applyTransfer(id, actor)).ok);
 
     const out = await prisma.cashBankLedger.findMany({
-      where: { cash_bank_id: from, entry_type: "Transaction" },
+      where: { cash_bank_id: from, entry_type: "Transfer" },
     });
     assert.equal(out.length, 1, "one withdrawal, not one per destination");
     assert.equal(out[0].movement.toNumber(), -9_000_000);

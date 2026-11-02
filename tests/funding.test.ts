@@ -472,7 +472,7 @@ describe("submitting raises a request and moves nothing", () => {
         where: {
           source_doc_type_id: docType,
           source_doc_id: doc,
-          entry_type: "Transaction",
+          entry_type: "Funding",
         },
       }),
       0

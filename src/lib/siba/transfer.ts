@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { InsufficientFunds, lockCashBanks, recordCashBankEntry } from "./cash-bank";
+import { InsufficientFunds, lockCashBanks, recordCashBankEntry, type CashBankEntryType } from "./cash-bank";
 import { drawFromLayer, openLayer } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL, consumesLayer, isBaseCurrency } from "./currency";
 
@@ -70,6 +70,13 @@ type Db = Prisma.TransactionClient | typeof prisma;
 
 
 // ------------------------------------------------------------------ posting
+
+/** The Cash Bank Book entry type each purpose writes, on both legs. */
+const TRANSFER_ENTRY_TYPE: Record<string, CashBankEntryType> = {
+  Transfer: "Transfer",
+  Pencairan: "Pencairan",
+  PembelianValas: "BuyFx",
+};
 
 export type TransferPostingResult =
   | { ok: true; fxDifference: number; journal?: JournalLineInput[] }
@@ -461,7 +468,7 @@ export async function applyTransfer(
       await recordCashBankEntry(tx, {
         cashBankId: doc.from_cash_bank_id,
         date,
-        type: "Transaction",
+        type: TRANSFER_ENTRY_TYPE[doc.purpose],
         direction: "Out",
         amount: plan.sourceAmount,
         rate: plan.sourceRate,
@@ -479,7 +486,7 @@ export async function applyTransfer(
         await recordCashBankEntry(tx, {
           cashBankId: line.toCashBankId,
           date,
-          type: "Transaction",
+          type: TRANSFER_ENTRY_TYPE[doc.purpose],
           direction: "In",
           amount: line.inAmount,
           rate: line.inRate,

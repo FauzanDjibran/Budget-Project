@@ -106,7 +106,7 @@ describe("a resource always has a book", () => {
       where: { cash_bank_id: id },
     });
     assert.equal(entries.length, 1);
-    assert.equal(entries[0].entry_type, "Opening");
+    assert.equal(entries[0].entry_type, "Register");
     assert.equal(entries[0].movement.toNumber(), 5_000_000);
     assert.match(entries[0].entry_no, /^CBL-\d{4}$/);
 
@@ -136,7 +136,7 @@ describe("the balance never disagrees with the ledger", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Transaction",
+      type: "Realization",
       direction: "Out",
       amount: 250_000,
       rate: 1,
@@ -145,7 +145,7 @@ describe("the balance never disagrees with the ledger", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Transaction",
+      type: "Realization",
       direction: "In",
       amount: 80_000,
       rate: 1,
@@ -174,7 +174,7 @@ describe("the balance never disagrees with the ledger", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Adjustment",
+      type: "Journal",
       direction: "Out",
       amount: 400_000,
       rate: 1,
@@ -206,7 +206,7 @@ describe("the balance never disagrees with the ledger", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Transaction",
+      type: "Realization",
       direction: "Out",
       amount: 125_000,
       rate: 1,
@@ -214,7 +214,7 @@ describe("the balance never disagrees with the ledger", () => {
     });
     // The payment, not the opening entry that had to precede it.
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: id, entry_type: "Transaction" },
+      where: { cash_bank_id: id, entry_type: "Realization" },
     });
     // One signed figure per measure: the sign is the direction.
     assert.equal(entry.movement.toNumber(), -125_000, "money out is negative");
@@ -281,7 +281,7 @@ describe("every entry carries what it was worth in base currency", () => {
           recordCashBankEntry(prisma, {
             cashBankId: id,
             date: today,
-            type: "Transaction",
+            type: "Realization",
             direction: "In",
             amount: 1_000,
             rate,
@@ -298,14 +298,14 @@ describe("every entry carries what it was worth in base currency", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Transaction",
+      type: "Realization",
       direction: "In",
       amount: 300,
       rate: 15_500,
       actorId: actor,
     });
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: id, entry_type: "Transaction" },
+      where: { cash_bank_id: id, entry_type: "Realization" },
     });
     assert.equal(entry.movement.toNumber(), 300);
     assert.equal(entry.rate.toNumber(), 15_500);
@@ -327,7 +327,7 @@ describe("every entry carries what it was worth in base currency", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Transaction",
+      type: "Realization",
       direction: "In",
       amount: 3,
       rate: 3_333.333333,
@@ -335,7 +335,7 @@ describe("every entry carries what it was worth in base currency", () => {
       actorId: actor,
     });
     const entry = await prisma.cashBankLedger.findFirstOrThrow({
-      where: { cash_bank_id: id, entry_type: "Transaction" },
+      where: { cash_bank_id: id, entry_type: "Realization" },
     });
     assert.equal(Math.abs(entry.base_movement.toNumber()), 10_000);
     assert.notEqual(Math.abs(entry.base_movement.toNumber()), 9_999.99);
@@ -351,7 +351,7 @@ describe("every entry carries what it was worth in base currency", () => {
       await recordCashBankEntry(prisma, {
         cashBankId: id,
         date: today,
-        type: "Transaction",
+        type: "Realization",
         direction: "In",
         amount,
         rate,
@@ -392,7 +392,7 @@ describe("a resource can never hold less than nothing", () => {
         recordCashBankEntry(prisma, {
           cashBankId: id,
           date: today,
-          type: "Transaction",
+          type: "Realization",
           direction: "Out",
           amount: 500_001,
           rate: 1,
@@ -409,7 +409,7 @@ describe("a resource can never hold less than nothing", () => {
       recordCashBankEntry(prisma, {
         cashBankId: id,
         date: today,
-        type: "Transaction",
+        type: "Realization",
         direction: "Out",
         amount: 900_000,
         rate: 1,
@@ -434,7 +434,7 @@ describe("a resource can never hold less than nothing", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Transaction",
+      type: "Realization",
       direction: "Out",
       amount: 500_000,
       rate: 1,
@@ -507,7 +507,7 @@ describe("a backdated movement is checked on every day from its date on", () => 
     recordCashBankEntry(prisma, {
       cashBankId: id,
       date,
-      type: "Transaction",
+      type: "Realization",
       direction: signed > 0 ? "In" : "Out",
       amount: Math.abs(signed),
       rate: 1,
@@ -658,7 +658,7 @@ describe("a foreign resource: the month chain checks the account, the layer only
     prisma.$transaction(async (tx) => {
       const layer = await openLayer(tx, { cashBankId: id, date, rate, foreign, actorId: actor });
       await recordCashBankEntry(tx, {
-        cashBankId: id, date, type: "Transaction", direction: "In", amount: foreign, rate,
+        cashBankId: id, date, type: "Realization", direction: "In", amount: foreign, rate,
         baseAmount: layer.base_original.toNumber(), actorId: actor,
       });
       return layer.id;
@@ -668,7 +668,7 @@ describe("a foreign resource: the month chain checks the account, the layer only
     prisma.$transaction(async (tx) => {
       const drawn = await drawFromLayer(tx, { layerId, cashBankId: id, foreign, date, actorId: actor });
       await recordCashBankEntry(tx, {
-        cashBankId: id, date, type: "Transaction", direction: "Out", amount: foreign, rate: drawn.rate,
+        cashBankId: id, date, type: "Realization", direction: "Out", amount: foreign, rate: drawn.rate,
         baseAmount: drawn.base, actorId: actor,
       });
     });

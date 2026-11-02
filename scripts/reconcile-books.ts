@@ -38,7 +38,7 @@
  *         lowest point is below nothing
  *
  * WHAT IT LEAVES OUT, ON PURPOSE
- *   An `Opening` Cash Bank Book entry writes no journal (CLAUDE.md §12), so
+ *   A `Register` Cash Bank Book entry writes no journal (CLAUDE.md §12), so
  *   check 13 compares the book without them and reports them beside it.
  *   Closing journals (`CLS-`) are left out of check 14: they zero Laba Rugi
  *   accounts at year end, while a subject book such as Hasil Investasi keeps
@@ -302,12 +302,12 @@ GROUP BY b.id, b.item_no, b.balance, b.base_balance`,
   },
   {
     no: 13,
-    name: "Buku Kas & Bank = General Ledger pada account resource (tanpa entri Opening)",
+    name: "Buku Kas & Bank = General Ledger pada account resource (tanpa entri Saldo Awal)",
     sql: `
 , book AS (
   SELECT cash_bank_id,
-         COALESCE(SUM(base_movement) FILTER (WHERE entry_type <> 'Opening'), 0) AS moved,
-         COALESCE(SUM(base_movement) FILTER (WHERE entry_type = 'Opening'), 0) AS opening
+         COALESCE(SUM(base_movement) FILTER (WHERE entry_type <> 'Register'), 0) AS moved,
+         COALESCE(SUM(base_movement) FILTER (WHERE entry_type = 'Register'), 0) AS opening
   FROM cash_bank_ledger GROUP BY cash_bank_id
 ), gl AS (
   SELECT jl.account_id, SUM(jl.debit_amount - jl.kredit_amount) AS balance
@@ -364,7 +364,7 @@ WHERE COALESCE(book.moved, 0) <> COALESCE(gl.balance, 0)`,
     WHERE j.status = 'Posted' AND j.journal_no NOT LIKE 'CLS-%'
     UNION ALL
     -- A go-live snapshot (no source year) is where history starts: the book's
-    -- Opening entries have no journal line behind them, only this.
+    -- Register entries have no journal line behind them, only this.
     SELECT ol.account_id, ol.partner_id, ol.debit_amount - ol.kredit_amount
     FROM acc_opening_balance_line ol
     JOIN acc_opening_balance o ON o.id = ol.opening_id

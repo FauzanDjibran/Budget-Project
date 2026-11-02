@@ -410,6 +410,7 @@ export async function writeFundedPosting(
     docId: plan.requesterSource.docId,
     date,
     actorId,
+    entryType: "Funding",
   });
 
   const { closed } = await realizeBudgets(tx, plan.lines, actorId);

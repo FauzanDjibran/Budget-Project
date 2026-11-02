@@ -424,7 +424,7 @@ describe("the layers of an account are what it holds", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Adjustment",
+      type: "Journal",
       direction: "In",
       amount: 500,
       rate: 15_000,

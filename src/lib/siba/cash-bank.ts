@@ -28,7 +28,16 @@ import { ENTRY_PAGE_SIZE, afterBookCursor, type BookCursor } from "./register-qu
 /** A Prisma client or an interactive transaction — every write here takes one. */
 type Db = Prisma.TransactionClient | typeof prisma;
 
-export type CashBankEntryType = "Opening" | "Transaction" | "Adjustment" | "Revaluation";
+export type CashBankEntryType =
+  | "Realization"
+  | "Funding"
+  | "Transfer"
+  | "Pencairan"
+  | "BuyFx"
+  | "Conversion"
+  | "Journal"
+  | "Register"
+  | "Revaluation";
 
 export type NewEntry = {
   cashBankId: number;
@@ -407,8 +416,8 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
  * Opens the book for a newly registered resource.
  *
  * A resource always gets a balance row, even at zero, so every Cash & Bank has
- * a book from the moment it exists. A non-zero starting figure is written as an
- * `Opening` entry — it is a movement like any other, and appears in the book
+ * a book from the moment it exists. A non-zero starting figure is written as a
+ * `Register` entry — it is a movement like any other, and appears in the book
  * rather than sitting in a column nobody can explain.
  */
 export async function openCashBankBook(
@@ -457,7 +466,7 @@ export async function openCashBankBook(
   await recordCashBankEntry(db, {
     cashBankId: options.cashBankId,
     date: options.date,
-    type: "Opening",
+    type: "Register",
     direction: "In",
     amount: options.openingBalance,
     rate: options.rate,

@@ -102,7 +102,7 @@ const move = (
   recordCashBankEntry(prisma, {
     cashBankId,
     date,
-    type: "Transaction",
+    type: "Realization",
     direction,
     amount,
     rate: 1,
@@ -398,7 +398,7 @@ describe("the ledger report reconciles", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: cb,
       date: "2026-05-12",
-      type: "Transaction",
+      type: "Realization",
       direction: "Out",
       amount: 75_000,
       rate: 1,
@@ -435,7 +435,7 @@ describe("the ledger report reconciles", () => {
       scope
     );
     assert.ok(report);
-    assert.equal(report.entries[0].type, "Opening");
+    assert.equal(report.entries[0].type, "Register");
     assert.equal(report.entries[0].sourceDocTable, null);
     assert.equal(report.entries[0].sourceDocNo, null);
   });

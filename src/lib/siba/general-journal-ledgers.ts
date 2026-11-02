@@ -375,7 +375,7 @@ const cashBankAdapter: LedgerAdapter = {
     await recordCashBankEntry(tx, {
       cashBankId,
       date: ctx.date,
-      type: "Adjustment",
+      type: "Journal",
       direction: into ? "In" : "Out",
       amount: line.face,
       rate: line.rate,

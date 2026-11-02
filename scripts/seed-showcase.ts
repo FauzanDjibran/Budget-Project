@@ -638,7 +638,7 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
           await recordCashBankEntry(tx, {
             cashBankId: existing.id,
             date,
-            type: "Opening",
+            type: "Register",
             direction: "In",
             amount: o.amount,
             rate: o.rate,
@@ -698,7 +698,7 @@ async function insertCashBanks(companyId: number, foreignId: number, actor: numb
         await recordCashBankEntry(tx, {
           cashBankId: created.id,
           date,
-          type: "Opening",
+          type: "Register",
           direction: "In",
           amount: o.amount,
           rate: o.rate,
