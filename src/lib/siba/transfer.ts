@@ -3,7 +3,6 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { InsufficientFunds, lockCashBanks, recordCashBankEntry, type CashBankEntryType } from "./cash-bank";
-import { CashflowUnmapped, groupForEntryType } from "./cashflow-mapping";
 import { drawFromLayer, openLayer } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL, consumesLayer, isBaseCurrency } from "./currency";
 
@@ -465,18 +464,13 @@ export async function applyTransfer(
       const entries = await transferJournalLines(doc, plan, label);
       if (!entries.ok) throw new TransferRefused(entries.errors);
 
-      // A transfer between the Company's own resources is not a cash flow; a
-      // currency sale or purchase takes its entry type's group.
       const entryType = TRANSFER_ENTRY_TYPE[doc.purpose];
-      const cashflowGroupId =
-        entryType === "Pencairan" || entryType === "BuyFx" ? await groupForEntryType(entryType, tx) : null;
 
       // The source gives up once, however many destinations there are.
       await recordCashBankEntry(tx, {
         cashBankId: doc.from_cash_bank_id,
         date,
         type: entryType,
-        cashflowGroupId,
         direction: "Out",
         amount: plan.sourceAmount,
         rate: plan.sourceRate,
@@ -495,7 +489,6 @@ export async function applyTransfer(
           cashBankId: line.toCashBankId,
           date,
           type: entryType,
-          cashflowGroupId,
           direction: "In",
           amount: line.inAmount,
           rate: line.inRate,
@@ -566,7 +559,7 @@ export async function applyTransfer(
     // A refusal is a decision, not a failure: it is raised as a throw only
     // because it has to roll back the layers already drawn inside the
     // transaction, and it comes back out as the ordinary error shape.
-    if (error instanceof PeriodShut || error instanceof InsufficientFunds || error instanceof CashflowUnmapped) {
+    if (error instanceof PeriodShut || error instanceof InsufficientFunds) {
       return { ok: false, errors: { _form: error.message } };
     }
     if (error instanceof TransferDryRun) {

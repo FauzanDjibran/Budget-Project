@@ -1011,6 +1011,55 @@ export const ENTITIES: Entity[] = [
     ],
   },
 
+  {
+    key: "acc_cashflow_mapping",
+    slug: "cashflow-mapping",
+    module: "accounting",
+    name: "Mapping Cash Flow",
+    single: "Mapping Cash Flow",
+    icon: "link",
+    desc: "Menempatkan setiap Budget Category, dan jenis entri tanpa Budget Category, pada satu Cash Flow Group Laporan Arus Kas. Dibaca saat laporan dibuat, sehingga perubahan mapping ikut mengubah penyajian setiap periode.",
+    codeField: "mapping_code",
+    codePrefix: "cfm",
+    titleRefs: ["budget_category_id", "cashflow_group_id"],
+    fields: [
+      {
+        name: "budget_category_id",
+        label: "Budget Category",
+        type: "ref",
+        ref: "sys_budget_category",
+        help: "atau isi Jenis Entri",
+      },
+      {
+        name: "entry_type",
+        label: "Jenis Entri",
+        type: "select",
+        options: ["Funding", "Pencairan", "BuyFx", "Journal"],
+        optionLabels: {
+          Funding: "Intercompany (Funding)",
+          Pencairan: "Pencairan Valas",
+          BuyFx: "Pembelian Valas",
+          Journal: "Journal",
+        },
+        help: "untuk entri tanpa Budget Category",
+      },
+      {
+        name: "cashflow_group_id",
+        label: "Cash Flow Group",
+        type: "ref",
+        ref: "sys_cashflow_group",
+        required: true,
+        full: true,
+        help: "kelompok tujuan di Laporan Arus Kas",
+      },
+    ],
+    columns: [
+      { field: "budget_category_id", label: "Budget Category", isRef: true, refLabelOnly: true, width: "220px", filter: "ref" },
+      { field: "entry_type", label: "Jenis Entri", width: "200px", filter: "enum" },
+      { field: "cashflow_group_id", label: "Cash Flow Group", isRef: true, primary: true, filter: "ref" },
+    ],
+  },
+
   // ------------------------------------------------ accounting · period control
 
   {

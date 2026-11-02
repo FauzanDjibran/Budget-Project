@@ -19,13 +19,7 @@ import {
   parentCompanyId,
   prisma,
   systemUserId,
-  anyCashflowGroupId,
 } from "./helpers";
-
-let cashflowGroup = 0;
-before(async () => {
-  cashflowGroup = await anyCashflowGroupId();
-});
 
 /**
  * Rate layers.
@@ -430,7 +424,7 @@ describe("the layers of an account are what it holds", () => {
     await recordCashBankEntry(prisma, {
       cashBankId: id,
       date: today,
-      type: "Journal", cashflowGroupId: cashflowGroup,
+      type: "Journal",
       direction: "In",
       amount: 500,
       rate: 15_000,

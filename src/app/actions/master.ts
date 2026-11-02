@@ -39,7 +39,7 @@ import {
   strandedCategories,
 } from "@/lib/siba/records";
 import { systemAccountsUsingAccount } from "@/lib/siba/system-account-data";
-import { subjectsMappedTo } from "@/lib/siba/cashflow-mapping";
+import { checkCashflowMapping, subjectsMappedTo } from "@/lib/siba/cashflow-mapping";
 
 /**
  * Every action here is permission-gated before it touches anything, and every
@@ -314,6 +314,9 @@ async function validate(
   }
   if (entity.key === "acc_budget_category_account") {
     Object.assign(errors, await validateMapping(values, currentId, errors, applies));
+  }
+  if (entity.key === "acc_cashflow_mapping") {
+    Object.assign(errors, await checkCashflowMapping(values, currentId));
   }
   if (entity.key === "acc_account") {
     Object.assign(errors, await validateAccount(values, currentId, errors, applies));

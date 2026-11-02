@@ -73,7 +73,8 @@ or invariants that assume a particular row exists.
   how a position is adjusted or reclassified without cash — the **Revaluasi Kurs**, which
   restates a foreign Cash & Bank at a kurs the user states by collapsing its rate layers into
   one — the **Laporan Arus Kas**, read from the Cash Bank Book alone because every entry
-  carries its own source, Partner, Budget Category and cash-flow group — the **Report Views**
+  carries its own source, Partner and Budget Category, its group resolved through Mapping
+  Cash Flow when the report is built — the **Report Views**
   over all of it, and **period control** — the fiscal calendar as a
   posting lock, `Fiscal Year Closing` per Company, and the `Opening Balance`
   snapshot a close writes and the ledger reports then read their openings from.
@@ -87,7 +88,7 @@ or invariants that assume a particular row exists.
 | --- | --- |
 | Scaffold, DB, migration | Done |
 | Seed | Done — **system data only**, idempotent, destroys nothing (§12) |
-| Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered. Each entry names **its source** (`entry_type`, nine values, never a direction) and carries its own **Partner, Budget Category and cash-flow group**, written at Post (§10 rules 123–125). A chain of months (`cash_bank_period`, each with its lowest point) lets a movement be checked against every day from its date to now without reading the book from its start |
+| Cash Bank Book | Done — append-only `cash_bank_ledger` plus materialised `cash_bank_balance`; every entry carries **both measures**, the resource's own currency and what it was worth in base; opening balance entered when a resource is registered. Each entry names **its source** (`entry_type`, nine values, never a direction) and carries its own **Partner and Budget Category**, written at Post; its cash-flow group is resolved by the report (§10 rules 123–125). A chain of months (`cash_bank_period`, each with its lowest point) lets a movement be checked against every day from its date to now without reading the book from its start |
 | Multi-currency | Done — `lib/siba/fx.ts` is the kernel (origination, relief, settlement, FX difference), `lib/siba/currency.ts` the rules (base currency, what may settle what, where a kurs comes from). Every book carries a base measure, the Journal balances in base, and a settlement recognises its difference against a named FX account. A foreign Cash & Bank is restated by **Revaluasi Kurs**; standing foreign subject-book positions are never retranslated (§13) |
 | Rate layers | Done — a foreign Cash & Bank resource holds `cash_bank_layer` rows, one per acquisition, never merged. Money leaving draws on **one** layer the user picks; money arriving opens a new one. `Posisi Layer Kurs` under Finance › Laporan shows the open ones, for one or several resources, and says when they stop reconciling with the book |
 | Subject books (subledgers) | Done — **a book is a Budget Category that names a Partner and is marked a book** (`keeps_book`; one without it is a partner tag, journalled with the Partner and no book entry), so a category created through the GUI has a working book with no code change: one Report View with a book toggle, one permission, one menu entry. append-only `sub_ledger` plus materialised `sub_ledger_balance`, one book per Budget Category marked a book (seeded: Piutang and Hutang; the user adds more). Both measures, like the Cash Bank Book. Written at Post alongside the Cash Bank Book and the Journal, never derived from either. **Kept in open items**: every movement that raises a position is an item at the kurs it was raised at, and a line lowering the position names the item it settles (§12). No manual entry and no Opening path yet |
@@ -225,8 +226,8 @@ of its own.
 | Pencairan Open Item lifecycle | `src/lib/siba/item-conversion-workflow.ts` | Draft → Post / Cancel, one transition table; client-safe |
 | Pencairan Open Item data | `src/lib/siba/item-conversion.ts` | Header, line and item enforcement, `applyConversion` (and its dry run), `POI-` numbering. Reaches the books only through what they export, and imports nothing from `transfer.ts`; `server-only` |
 | Revaluasi Kurs lifecycle | `src/lib/siba/cash-bank-revaluation-workflow.ts` | Draft → Post / Cancel, one transition table, `RVK` series; client-safe |
-| Mapping Cash Flow | `src/lib/siba/cashflow-mapping.ts` (+ `cashflow-catalogue.ts`, client-safe) | Which cash-flow group a Budget Category, or an entry type without one, falls in; `CashflowUnmapped`, the refusal every posting path treats as its own. Read at Post and handed to the book as a value; `server-only` |
-| Laporan Arus Kas | `cashFlowReport` in `cash-bank.ts`, `cash-flow-run.ts`, `cash-flow-export.ts` | The report reads the book alone; the run resolves currency, year and periods for the page and its export alike |
+| Mapping Cash Flow | `src/lib/siba/cashflow-mapping.ts` (+ `cashflow-catalogue.ts`, client-safe) | Which cash-flow group a Budget Category, or an entry type without one, falls in — a registry entity like Mapping Budget ke Account. Read when the Laporan Arus Kas is built, never stored on an entry; `server-only` |
+| Laporan Arus Kas | `cashFlowMovements` in `cash-bank.ts`, `cash-flow-run.ts`, `cash-flow-export.ts` | The book sums its entries by source, category and Partner or keterangan; `buildCashFlowReport` places them in groups through the mapping, and `resolveCashFlowRun` reads the URL for the page and its export alike |
 | Revaluasi Kurs data | `src/lib/siba/cash-bank-revaluation.ts` | Header enforcement, `valueRevaluation` (the draft's and Post's one valuation), `applyRevaluation` (and its dry run), `RVK-` numbering. Collapses layers only through `collapseLayers` in the Cash Bank Book; `server-only` |
 | Report catalogue | `src/lib/siba/reports.ts` | Every Report View — slug, permission, parameter set; client-safe |
 | Document links | `src/lib/siba/document-links.ts` | `documentHref` — a `(doc_table, doc_id)` pair to the page that shows it, so a journal can link its source without the book knowing any route; client-safe |
@@ -258,7 +259,7 @@ source scan and needs no database.
 | Funding | `fin_funding_request` | `lib/siba/funding.ts`, `app/actions/funding.ts` |
 | Transfer | `fin_cash_bank_transfer(_line)` | `lib/siba/transfer.ts`, `app/actions/transfer.ts` |
 | Pencairan Open Item | `fin_item_conversion(_line, _line_item)` | `lib/siba/item-conversion.ts`, `app/actions/item-conversion.ts` |
-| Cash Flow Mapping | `acc_cashflow_mapping` | `lib/siba/cashflow-mapping.ts`, `app/actions/cashflow-mapping.ts` |
+| Cash Flow Mapping | `acc_cashflow_mapping` | `lib/siba/cashflow-mapping.ts` (written through the registry pages) |
 | Revaluasi Kurs | `fin_cash_bank_revaluation(_layer)` | `lib/siba/cash-bank-revaluation.ts`, `app/actions/cash-bank-revaluation.ts` |
 | Cash Bank Book | `cash_bank_ledger`, `cash_bank_balance`, `cash_bank_period`, `cash_bank_layer` | `lib/siba/cash-bank.ts`, `lib/siba/cash-bank-layers.ts` |
 | Subject books | `sub_ledger`, `sub_ledger_balance` | `lib/siba/subledger.ts` (+ `subledger-data.ts`, which reads the Budget Categories the books are) |
@@ -373,9 +374,9 @@ scripts/
                          agreement with the structure that decides it — a
                          leaf. Idempotent, sets and clears. Run by hand, never by
                          install or CI
-  backfill-cashflow.ts   One-off: classifies Cash Bank Book entries written
-                         before an entry carried its Partner, category and
-                         cash-flow group. Idempotent; run by hand
+  backfill-cashflow.ts   One-off: gives Cash Bank Book entries written before
+                         an entry carried its Partner and Budget Category those
+                         two facts. Idempotent; run by hand
   reconcile-books.ts     Read-only: nineteen checks that Budget realization,
                          the Cash Bank Book and its chain of months, the
                          subject books and their open items, and the
@@ -1754,27 +1755,30 @@ rate-layers 2.0).
     Conversion, Journal, Register, Revaluation. Penerimaan / Pengeluaran is the
     sign of `movement` (KB books-and-posting §2.3, the deviation check answered
     A). Transfer, Register and Revaluation are not cash flows.
-124. **Every cash-flow entry carries its own Partner, Budget Category and group,
-    written at Post** — the Budget's (Realisasi), the document's Partner and book
-    (Pencairan Open Item), or none; the group from **Mapping Cash Flow**
-    (Accounting › Mapping), by category or, for Funding, Pencairan, BuyFx and
-    Journal, by entry type. `recordCashBankEntry` refuses a flow without a group
-    and a non-flow with one, and a Post whose category or type is unmapped is
-    refused by name (`CashflowUnmapped`), a draft tolerating it like a missing
-    account (rule 50). The groups are `sys_cashflow_group`, the user's rows
-    (Pengaturan › Klasifikasi), deactivated never deleted, and refused
-    deactivation while a mapping points at one. A changed mapping reaches later
-    postings only. `npm run db:backfill-cashflow` placed the rows written before.
+124. **Every Cash Bank Book entry carries its own Partner and Budget Category,
+    written at Post — never its cash-flow group.** The Budget's (Realisasi,
+    Funding), the document's Partner and book (Pencairan Open Item), or none. The
+    group is resolved when the report is built, through **Mapping Cash Flow**
+    (Accounting › Mapping, a registry entity like Mapping Budget ke Account): by
+    category or, for Funding, Pencairan, BuyFx and Journal, by entry type — the
+    way an account takes its Laba Rugi step from its category. The user's rule
+    (02/11/2026): remapping a category, or reshaping the groups, restates every
+    period, and a posting is never refused for an unmapped category; it prints
+    as *Belum Dikelompokkan*. The groups are `sys_cashflow_group`, the user's
+    rows (Pengaturan › Klasifikasi), deactivated never deleted, refused
+    deactivation while a mapping points at one. `npm run db:backfill-cashflow`
+    gave the entries written before their Partner and category.
 125. **The Laporan Arus Kas reads the Cash Bank Book alone, one currency per run.**
     Finance › Laporan, `REPORT_CASH_FLOW_VIEW`: Company · Mata Uang · Tahun Buku ·
     Periode awal–akhir, one column per period plus Jumlah. PSAK 207's direct
     method: per group, gross Penerimaan, gross Pengeluaran in brackets, Arus Kas
     Neto; then Kenaikan (Penurunan) Neto and Saldo Akhir — Saldo Awal on top, the
-    user's choice. A row is the Partner, else the Budget Category, else the entry
-    type; Funding is one *Intercompany* row. A group folds; the Partner is the
-    smallest detail. Opening + every row + *Saldo awal rekening baru* = closing,
-    per column; an unclassified flow prints as *Belum Dikelompokkan*, never
-    dropped. `tests/cash-flow.test.ts` holds it.
+    user's choice. Where an entry has no Budget Category the entry type stands
+    in for one; Funding is one *Intercompany* line. Group → Budget Category → Partner,
+    or the entry's keterangan where it names no Partner (Biaya, Asset); a group
+    and a category fold. Opening + every row + *Saldo awal rekening baru* =
+    closing, per column; an unmapped flow prints as *Belum Dikelompokkan*, never
+    dropped. `tests/cash-flow.test.ts` holds it, remapping included.
 
 Specified in the concept doc, **not yet implemented** (see §13):
 
@@ -4782,8 +4786,8 @@ allowed to restate a position, and it restates a foreign Cash & Bank only.
   history; only Revaluasi Kurs may restate a position, and only a Cash & Bank's
   (§10 rules 118–121).
 - Do **not** give `cash_bank_ledger.entry_type` a direction, read a cash-flow row
-  from a source document, or write a cash-flow entry without its group. The book
-  classifies itself at Post (§10 rules 123–125).
+  from a source document, or store a cash-flow group on a ledger entry. The book
+  holds Partner and category; the report maps them (§10 rules 123–125).
 - Do **not** run a Revaluasi Kurs from a period close or a schedule, reverse a posted
   one, reopen a layer it closed, or post its difference to the `fx` account. It is a
   user's document, final, and reads the layers as they stand (§10 rules 118–121, §12).

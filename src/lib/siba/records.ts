@@ -32,6 +32,7 @@ const DELEGATES = {
   sys_partner_category: (db: Client) => db.sysPartnerCategory,
   sys_budget_category: (db: Client) => db.sysBudgetCategory,
   sys_cashflow_group: (db: Client) => db.sysCashflowGroup,
+  acc_cashflow_mapping: (db: Client) => db.accCashflowMapping,
   sys_budget_partner_category_mapping: (db: Client) =>
     db.sysBudgetPartnerCategoryMapping,
   acc_account: (db: Client) => db.accAccount,

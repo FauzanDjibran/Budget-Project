@@ -5,7 +5,6 @@ import type { Prisma } from "@/generated/prisma/client";
 import { sumByCurrency, type MoneyTotal } from "@/lib/format";
 import { budgetsByIds, openBudgetsFor, openBudgetsMatching, realizeBudgets } from "./budget";
 import { InsufficientFunds, cashBankShortfall, recordCashBankEntry } from "./cash-bank";
-import { CashflowUnmapped } from "./cashflow-mapping";
 import { LayerNotAvailable, drawFromLayer, openLayer } from "./cash-bank-layers";
 import { createsLayer, maySettle } from "./currency";
 import { realizationOf } from "./realization";
@@ -729,7 +728,6 @@ export async function writeRealizationLines(
       sourceDocId: ctx.docId,
       partnerId: line.partnerId,
       budgetCategoryId: line.budgetCategoryId,
-      cashflowGroupId: line.cashflowGroupId,
       note: line.description,
       actorId: ctx.actorId,
     });
@@ -888,7 +886,6 @@ export async function valueDraft(
   const funded = !doc.cash_bank_id;
   const planned = await planPosting(doc, byId, {
     induk: !funded,
-    funded,
     draft: true,
     resolveFx: false,
     // A funded draft has no resource to value against. This only stands in:
@@ -1223,8 +1220,7 @@ export function isPostingRefusal(error: unknown): error is Error {
     error instanceof PeriodShut ||
     error instanceof LayerNotAvailable ||
     error instanceof SubledgerItemUnavailable ||
-    error instanceof InsufficientFunds ||
-    error instanceof CashflowUnmapped
+    error instanceof InsufficientFunds
   );
 }
 

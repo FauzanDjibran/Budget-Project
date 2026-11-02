@@ -22,13 +22,7 @@ import {
   parentCompanyId,
   prisma,
   systemUserId,
-  anyCashflowGroupId,
 } from "./helpers";
-
-let cashflowGroup = 0;
-before(async () => {
-  cashflowGroup = await anyCashflowGroupId();
-});
 
 /**
  * The books' reports opened a page at a time.
@@ -93,7 +87,7 @@ before(async () => {
     await recordCashBankEntry(prisma, {
       cashBankId: cashBank,
       date: `2020-0${2 + (i % 5)}-${String(1 + (i % 9)).padStart(2, "0")}`,
-      type: "Realization", cashflowGroupId: cashflowGroup,
+      type: "Realization",
       direction: i % 3 === 0 ? "Out" : "In",
       amount: 1_000 + i,
       rate: 1,

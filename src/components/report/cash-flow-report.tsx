@@ -4,41 +4,47 @@ import { Fragment, useState } from "react";
 import { Icon } from "@/components/icon";
 import { Amount } from "@/components/ui/amount";
 import { ExpandAll } from "@/components/ui/expand-all";
-import type { CashFlowGroup, CashFlowReport as Report, CashFlowRow } from "@/lib/siba/cash-bank";
+import type { CashFlowCategory, CashFlowGroup, CashFlowReport as Report } from "@/lib/siba/cash-flow-run";
 
 /**
  * The Laporan Arus Kas: PSAK 207's direct method, one currency, one column per
  * period and a Jumlah. Saldo Awal on top, then per group its gross receipts,
  * its gross payments in brackets and its Arus Kas Neto; then the net change
- * and Saldo Akhir. Drawn on the statements' table (`grid stm`) and folded the
- * way they fold: a group closes to its Arus Kas Neto, and the Partner is the
- * smallest detail.
+ * and Saldo Akhir. Group → Budget Category → Partner, or keterangan where the
+ * entries name no Partner. Drawn on the statements' table (`grid stm`) and
+ * folded the way they fold: a closed group or category states its own figure,
+ * an open one leaves it to the rows below.
  */
 export function CashFlowReport({ report }: { report: Report }) {
-  const groupKey = (g: CashFlowGroup) => String(g.id ?? "none");
-  const [closed, setClosed] = useState<Set<string>>(new Set());
+  const groupKey = (g: CashFlowGroup) => `g:${g.id ?? "none"}`;
+  const categoryKeys = report.groups.flatMap((g) =>
+    [...g.receipts.map((c) => `${groupKey(g)}:in:${c.key}`), ...g.payments.map((c) => `${groupKey(g)}:out:${c.key}`)]
+  );
+  // Categories start folded, so the first read is the groups and their categories.
+  const [open, setOpen] = useState<Set<string>>(new Set(report.groups.map(groupKey)));
   const toggle = (k: string) =>
-    setClosed((s) => {
+    setOpen((s) => {
       const next = new Set(s);
       if (next.has(k)) next.delete(k);
       else next.add(k);
       return next;
     });
+  const everything = [...report.groups.map(groupKey), ...categoryKeys];
 
   const cur = report.currencyLabel;
   const n = report.columns.length;
-  const sum = (rows: CashFlowRow[]) => report.columns.map((_, i) => rows.reduce((t, r) => t + r.values[i], 0));
-  const withTotal = (v: number[]) => [...v, v.reduce((t, x) => t + x, 0)];
+  const total = (v: number[]) => [...v, v.reduce((t, x) => t + x, 0)];
+  const sum = (cats: CashFlowCategory[]) => report.columns.map((_, i) => cats.reduce((t, c) => t + c.values[i], 0));
   const net = report.columns.map(
     (_, i) => report.groups.reduce((t, g) => t + sum([...g.receipts, ...g.payments])[i], 0) + report.registered[i]
   );
 
-  const name = (text: string, depth: number, fold?: { open: boolean; onToggle: () => void }) => (
+  const name = (text: string, depth: number, fold?: { isOpen: boolean; onToggle: () => void }) => (
     <td className={`stn d${depth}`}>
       <div className="stc">
         {fold ? (
-          <button type="button" className="tgl" onClick={fold.onToggle} title={fold.open ? "Tutup" : "Buka"}>
-            <span className={`chev${fold.open ? " o" : ""}`}>
+          <button type="button" className="tgl" onClick={fold.onToggle} title={fold.isOpen ? "Tutup" : "Buka"}>
+            <span className={`chev${fold.isOpen ? " o" : ""}`}>
               <Icon name="chev" size={11} />
             </span>
           </button>
@@ -61,7 +67,33 @@ export function CashFlowReport({ report }: { report: Report }) {
       {figures(values)}
     </tr>
   );
-  const blankFigures = <td colSpan={n + 1} />;
+  const blank = <td colSpan={n + 1} />;
+
+  const side = (g: CashFlowGroup, dir: "in" | "out", title: string, cats: CashFlowCategory[]) =>
+    cats.length > 0 && (
+      <>
+        <tr className="st-sub">
+          {name(title, 1)}
+          {blank}
+        </tr>
+        {cats.map((c) => {
+          const k = `${groupKey(g)}:${dir}:${c.key}`;
+          const isOpen = open.has(k);
+          return (
+            <Fragment key={k}>
+              <tr>
+                {name(c.name, 2, { isOpen, onToggle: () => toggle(k) })}
+                {isOpen ? blank : figures(total(c.values))}
+              </tr>
+              {isOpen && c.children.map((leaf) => (
+                <Fragment key={leaf.key}>{line(leaf.name, total(leaf.values), "st-par", 3)}</Fragment>
+              ))}
+            </Fragment>
+          );
+        })}
+        {line(`Jumlah ${title}`, total(sum(cats)), "st-sub", 1)}
+      </>
+    );
 
   return (
     <>
@@ -70,10 +102,10 @@ export function CashFlowReport({ report }: { report: Report }) {
           <b>{report.resources}</b> Cash &amp; Bank {cur} · {n} periode
         </span>
         <ExpandAll
-          onExpand={() => setClosed(new Set())}
-          onCollapse={() => setClosed(new Set(report.groups.map(groupKey)))}
-          allOpen={closed.size === 0}
-          allClosed={closed.size === report.groups.length}
+          onExpand={() => setOpen(new Set(everything))}
+          onCollapse={() => setOpen(new Set())}
+          allOpen={open.size === everything.length}
+          allClosed={open.size === 0}
         />
       </div>
 
@@ -95,31 +127,18 @@ export function CashFlowReport({ report }: { report: Report }) {
 
             {report.groups.map((g) => {
               const k = groupKey(g);
-              const open = !closed.has(k);
-              const groupNet = withTotal(sum([...g.receipts, ...g.payments]));
-              const side = (title: string, rows: CashFlowRow[]) =>
-                rows.length > 0 && (
-                  <>
-                    <tr className="st-sub">
-                      {name(title, 1)}
-                      {blankFigures}
-                    </tr>
-                    {rows.map((r) => (
-                      <Fragment key={r.key}>{line(r.name, withTotal(r.values), "", 2)}</Fragment>
-                    ))}
-                    {line(`Jumlah ${title}`, withTotal(sum(rows)), "st-sub", 1)}
-                  </>
-                );
+              const isOpen = open.has(k);
+              const groupNet = total(sum([...g.receipts, ...g.payments]));
               return (
                 <Fragment key={k}>
                   <tr className="st-step">
-                    {name(`Arus Kas dari Aktivitas ${g.name}`, 0, { open, onToggle: () => toggle(k) })}
-                    {open ? blankFigures : figures(groupNet)}
+                    {name(`Arus Kas dari Aktivitas ${g.name}`, 0, { isOpen, onToggle: () => toggle(k) })}
+                    {isOpen ? blank : figures(groupNet)}
                   </tr>
-                  {open && (
+                  {isOpen && (
                     <>
-                      {side("Penerimaan", g.receipts)}
-                      {side("Pengeluaran", g.payments)}
+                      {side(g, "in", "Penerimaan", g.receipts)}
+                      {side(g, "out", "Pengeluaran", g.payments)}
                       {line(`Arus Kas Neto dari Aktivitas ${g.name}`, groupNet, "st-cat", 0)}
                     </>
                   )}
@@ -128,8 +147,8 @@ export function CashFlowReport({ report }: { report: Report }) {
             })}
 
             {report.registered.some((v) => v !== 0) &&
-              line("Saldo awal rekening baru", withTotal(report.registered), "", 0)}
-            {line("Kenaikan (Penurunan) Neto Kas & Bank", withTotal(net), "st-res", 0)}
+              line("Saldo awal rekening baru", total(report.registered), "", 0)}
+            {line("Kenaikan (Penurunan) Neto Kas & Bank", total(net), "st-res", 0)}
             {line(`Saldo Akhir Kas & Bank (${cur})`, [...report.closing, report.closing[n - 1] ?? 0], "st-res", 0)}
           </tbody>
         </table>

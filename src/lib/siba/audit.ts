@@ -124,10 +124,6 @@ const EXTRA_SUBJECTS: Record<string, Subject> = {
     label: "Mapping Account System",
     resolve: null,
   },
-  acc_cashflow_mapping: {
-    label: "Mapping Cash Flow",
-    resolve: null,
-  },
 };
 
 function subjectFor(key: string): Subject | null {

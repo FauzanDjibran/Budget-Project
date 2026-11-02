@@ -5,7 +5,6 @@ import { categoryAccount } from "./category-accounts";
 
 import { formatMoney, formatRate } from "@/lib/format";
 import { InsufficientFunds, lockCashBanks, recordCashBankEntry } from "./cash-bank";
-import { CashflowUnmapped, groupForCategory } from "./cashflow-mapping";
 import { LayerNotAvailable, drawFromLayer } from "./cash-bank-layers";
 import { BASE_CURRENCY_LABEL } from "./currency";
 
@@ -426,12 +425,11 @@ export async function applyConversion(
         });
       }
 
-      // Both cash legs are the Partner's money, so both carry the Partner, the
-      // book converted and that book's cash-flow group.
+      // Both cash legs are the Partner's money, so both carry the Partner and
+      // the book converted.
       const classification = {
         partnerId: doc.partner_id,
         budgetCategoryId: doc.budget_category_id,
-        cashflowGroupId: await groupForCategory(doc.budget_category_id, tx),
       };
 
       // The source gives up once, however many destinations there are.
@@ -565,8 +563,7 @@ export async function applyConversion(
       error instanceof PeriodShut ||
       error instanceof InsufficientFunds ||
       error instanceof LayerNotAvailable ||
-      error instanceof SubledgerItemUnavailable ||
-      error instanceof CashflowUnmapped
+      error instanceof SubledgerItemUnavailable
     ) {
       return { ok: false, errors: { _form: error.message } };
     }

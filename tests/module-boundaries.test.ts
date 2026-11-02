@@ -129,8 +129,9 @@ const TABLE_OWNERS: Record<string, string[]> = {
     "src/app/actions/cash-bank-revaluation.ts",
   ],
   cashBankLedger: ["src/lib/siba/cash-bank.ts"],
-  // Mapping Cash Flow: read at Post and handed to the book as a value.
-  accCashflowMapping: ["src/lib/siba/cashflow-mapping.ts"],
+  // Mapping Cash Flow: written through the registry pages (records.ts), read
+  // by the report through cashflow-mapping.ts; the book never reads it.
+  accCashflowMapping: ["src/lib/siba/cashflow-mapping.ts", "src/lib/siba/records.ts"],
   cashBankBalance: ["src/lib/siba/cash-bank.ts"],
   subLedger: ["src/lib/siba/subledger.ts", "src/lib/siba/subledger-reports.ts"],
   subLedgerBalance: ["src/lib/siba/subledger.ts", "src/lib/siba/subledger-reports.ts"],

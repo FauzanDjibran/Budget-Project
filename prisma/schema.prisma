@@ -713,8 +713,7 @@ model SysCashflowGroup {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
-  mappings       AccCashflowMapping[]
-  ledger_entries CashBankLedger[]
+  mappings AccCashflowMapping[]
 
   @@map("sys_cashflow_group")
 }
@@ -722,8 +721,8 @@ model SysCashflowGroup {
 /// Mapping Cash Flow: which group a Budget Category falls in, and which group
 /// the entry types that carry no Budget Category of their own (Funding,
 /// Pencairan, BuyFx, Journal) fall in. Exactly one of the two keys per row
-/// (CHECK in the migration). Read at Post and copied onto the ledger entry, so
-/// a change applies to later postings only.
+/// (CHECK in the migration). Read when the Laporan Arus Kas is built, never
+/// copied onto a ledger entry, so a change restates every period reported.
 model AccCashflowMapping {
   id                 Int                @id @default(autoincrement())
   mapping_code       String             @unique
@@ -791,14 +790,12 @@ model CashBankLedger {
 
   /// The entry's own classification, written at Post so the cash-flow report
   /// never reads the source document: the counterparty (the Budget's Partner,
-  /// or a Pencairan Open Item's), the Budget Category it settled, and the
-  /// cash-flow group mapped at that moment. Master-data references only. The
-  /// group is null exactly for an entry that is not a cash flow (Transfer,
-  /// Register, Revaluation) — and on rows written before it existed, until the
-  /// backfill places them.
+  /// or a Pencairan Open Item's) and the Budget Category it settled. Master-data
+  /// references only. Its cash-flow group is **not** stored: the report resolves
+  /// it through Mapping Cash Flow when built, the way an account takes its Laba
+  /// Rugi step from its category, so a changed mapping restates every period.
   partner_id         Int?
   budget_category_id Int?
-  cashflow_group_id  Int?
 
   note String?
 
@@ -809,11 +806,9 @@ model CashBankLedger {
   source_doc_type SysDocType?        @relation(fields: [source_doc_type_id], references: [id])
   partner         MPartner?          @relation(fields: [partner_id], references: [id])
   budget_category SysBudgetCategory? @relation(fields: [budget_category_id], references: [id])
-  cashflow_group  SysCashflowGroup?  @relation(fields: [cashflow_group_id], references: [id])
 
   @@index([cash_bank_id, accounting_date])
   @@index([source_doc_type_id, source_doc_id])
-  @@index([cash_bank_id, accounting_date, cashflow_group_id])
   @@map("cash_bank_ledger")
 }
 

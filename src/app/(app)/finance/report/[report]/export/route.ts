@@ -1,8 +1,8 @@
 import { currentActor } from "@/lib/siba/auth";
 import { actorCan } from "@/lib/siba/access";
-import { cashBankBalanceReport, cashBankLedgerReport, cashFlowReport } from "@/lib/siba/cash-bank";
+import { cashBankBalanceReport, cashBankLedgerReport } from "@/lib/siba/cash-bank";
 import { cashFlowWorkbook } from "@/lib/siba/cash-flow-export";
-import { resolveCashFlowRun } from "@/lib/siba/cash-flow-run";
+import { buildCashFlowReport, resolveCashFlowRun } from "@/lib/siba/cash-flow-run";
 import { cashBankBalanceWorkbook } from "@/lib/siba/cash-bank-balance-export";
 import { cashBankLayerWorkbook } from "@/lib/siba/cash-bank-layer-export";
 import { layerReport } from "@/lib/siba/cash-bank-layers";
@@ -54,7 +54,7 @@ export async function GET(
   if (report.key === "cash_flow") {
     const run = await resolveCashFlowRun(company.id, query);
     if (!run.year || !run.currencyId || !run.columns.length) return new Response("Tidak ditemukan", { status: 404 });
-    const data = await cashFlowReport([company.id], run.currencyId, run.columns);
+    const data = await buildCashFlowReport(company.id, run.currencyId, run.columns);
     const first = run.columns[0];
     const lastColumn = run.columns[run.columns.length - 1];
     const file = await cashFlowWorkbook({

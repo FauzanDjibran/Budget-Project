@@ -1,13 +1,14 @@
 import "server-only";
 
 import { BAND, HEAD, MUTED, SOFT, bookSheet, fill, font } from "./book-export";
-import type { CashFlowReport, CashFlowRow } from "./cash-bank";
+import type { CashFlowCategory, CashFlowReport } from "./cash-flow-run";
 import { double, thin } from "./statement-export";
 
 /**
  * The Laporan Arus Kas as an A4 workbook of plain values, the run on screen
  * printed fully open: Saldo Awal, per group its Penerimaan, Pengeluaran in
- * brackets and Arus Kas Neto, then the net change and Saldo Akhir. Portrait to
+ * brackets and Arus Kas Neto — each Budget Category with its Partners or
+ * keterangan beneath it — then the net change and Saldo Akhir. Portrait to
  * four periods, landscape beyond, fitted to the page's width either way.
  */
 export async function cashFlowWorkbook(s: {
@@ -36,7 +37,7 @@ export async function cashFlowWorkbook(s: {
   const fmt = `#,##0.00;(#,##0.00);"-"`;
   const last = n + 2;
   let row = HEAD + 2;
-  const sum = (rows: CashFlowRow[]) => r.columns.map((_, i) => rows.reduce((t, x) => t + x.values[i], 0));
+  const sum = (rows: CashFlowCategory[]) => r.columns.map((_, i) => rows.reduce((t, x) => t + x.values[i], 0));
   const withTotal = (v: number[]) => [...v, v.reduce((t, x) => t + x, 0)];
   const put = (
     text: string,
@@ -69,7 +70,10 @@ export async function cashFlowWorkbook(s: {
     for (const [title, rows] of [["Penerimaan", g.receipts], ["Pengeluaran", g.payments]] as const) {
       if (!rows.length) continue;
       put(title, null, { italic: true, indent: 1 });
-      for (const x of rows) put(x.name, withTotal(x.values), { indent: 2 });
+      for (const c of rows) {
+        put(c.name, withTotal(c.values), { bold: true, indent: 2 });
+        for (const leaf of c.children) put(leaf.name, withTotal(leaf.values), { indent: 3 });
+      }
       put(`Jumlah ${title}`, withTotal(sum(rows)), { indent: 1, border: "top" });
     }
     const groupNet = sum([...g.receipts, ...g.payments]);

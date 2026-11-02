@@ -79,13 +79,12 @@ export type NewEntry = {
   sourceDocId?: number | null;
   /**
    * The entry's own classification, decided by the caller at Post and stored as
-   * given, so the cash-flow report never reads the source document. This book
-   * imports no mapping: the group arrives as a value.
+   * given, so the cash-flow report never reads the source document. Which
+   * cash-flow group it falls in is not stored: the report resolves it through
+   * Mapping Cash Flow when it is built, so a changed mapping restates history.
    */
   partnerId?: number | null;
   budgetCategoryId?: number | null;
-  /** Null exactly when the type is not a cash flow (`isCashFlow`). */
-  cashflowGroupId?: number | null;
   note?: string | null;
   actorId: number;
 };
@@ -367,14 +366,6 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
   ) {
     throw new Error("Entri revaluasi hanya menggerakkan nilai base, dan harus menggerakkannya.");
   }
-  // A cash flow names its group and nothing else does, or the cash-flow report
-  // would lose money or count a transfer between the Company's own resources.
-  if (!isCashFlow(entry.type) && entry.cashflowGroupId != null) {
-    throw new Error(`Entri ${entry.type} bukan arus kas dan tidak memiliki kelompok arus kas.`);
-  }
-  if (isCashFlow(entry.type) && entry.cashflowGroupId == null) {
-    throw new Error(`Entri ${entry.type} adalah arus kas dan harus memiliki kelompok arus kas.`);
-  }
   const base = entry.baseAmount ?? roundBase(amount * entry.rate);
   const sign = entry.direction === "In" ? 1 : -1;
   // `|| 0` keeps a revaluation's nil movement from being stored as -0.
@@ -412,7 +403,6 @@ export async function recordCashBankEntry(db: Db, entry: NewEntry) {
       source_doc_id: entry.sourceDocId ?? null,
       partner_id: entry.partnerId ?? null,
       budget_category_id: entry.budgetCategoryId ?? null,
-      cashflow_group_id: entry.cashflowGroupId ?? null,
       note: entry.note ?? null,
       created_by: entry.actorId,
     },
@@ -1265,47 +1255,45 @@ export async function cashBankBookSummary(cashBankId: number): Promise<{
 
 export type CashFlowColumn = { label: string; from: string; to: string };
 
-/** One line of a group's Penerimaan or Pengeluaran: a Partner, a category, or an entry type. */
-export type CashFlowRow = {
-  key: string;
-  name: string;
-  /** Signed per column: positive money in, negative money out. */
+/** One sum of entries sharing a side, a source, a category and a Partner — or, with no Partner, a keterangan. */
+export type CashFlowMovement = {
+  side: "in" | "out";
+  entryType: CashBankEntryType;
+  categoryId: number | null;
+  categoryLabel: string | null;
+  /** `label – name`, the name alone when the two match; null when the entry names no Partner. */
+  partner: string | null;
+  /** The entry's own keterangan, read only where it names no Partner. */
+  note: string | null;
+  /** Per column, signed: positive money in, negative money out. */
   values: number[];
 };
 
-export type CashFlowGroup = {
-  /** Null for entries written before they carried a group and not yet backfilled. */
-  id: number | null;
-  name: string;
-  receipts: CashFlowRow[];
-  payments: CashFlowRow[];
-};
-
-export type CashFlowReport = {
+export type CashFlowMovements = {
   currencyLabel: string;
-  columns: CashFlowColumn[];
+  resources: number;
   opening: number[];
   closing: number[];
-  groups: CashFlowGroup[];
-  /** A resource registered inside a column: a balance that is no flow, stated so the page reconciles. */
+  /** A resource registered inside a column: a balance that is no flow. */
   registered: number[];
-  resources: number;
+  movements: CashFlowMovement[];
 };
 
 /**
- * The Laporan Arus Kas of one currency's Cash & Banks, column per period, read
- * from this book alone: every entry carries its own Partner, Budget Category
- * and cash-flow group (written at Post), so no source document is read. A row
- * is the Partner, else the category, else the entry type; Funding is one
- * Intercompany row whatever it settled. Transfers between the Company's own
- * resources net to nil in one currency and revaluations move no currency, so
- * neither is listed and `opening + Σ rows + registered = closing` still holds.
+ * What the Laporan Arus Kas is built from: one currency's Cash & Banks, column
+ * per period, summed by what each entry says about itself — its source, its
+ * Budget Category and its Partner, or its keterangan where it names none. No
+ * source document is read, and no cash-flow group: which group a sum falls in
+ * is Mapping Cash Flow's, asked by the report when it is built. Transfers
+ * between the Company's own resources net to nil in one currency and
+ * revaluations move no currency, so neither is listed, and
+ * `opening + Σ movements + registered = closing` still holds.
  */
-export async function cashFlowReport(
+export async function cashFlowMovements(
   companyIds: number[],
   currencyId: number,
   columns: CashFlowColumn[]
-): Promise<CashFlowReport> {
+): Promise<CashFlowMovements> {
   const [currency, resources] = await Promise.all([
     prisma.refCurrency.findUniqueOrThrow({ where: { id: currencyId }, select: { currency_label: true } }),
     prisma.mCashBank.findMany({
@@ -1337,23 +1325,16 @@ export async function cashFlowReport(
           accounting_date: true,
           movement: true,
           entry_type: true,
-          cashflow_group_id: true,
+          note: true,
+          budget_category_id: true,
           partner: { select: { partner_label: true, partner_name: true } },
           budget_category: { select: { category_label: true } },
         },
       })
     : [];
 
-  const [groups, anak] = await Promise.all([
-    prisma.sysCashflowGroup.findMany({ orderBy: [{ sort_order: "asc" }, { id: "asc" }] }),
-    prisma.sysCompany.findFirst({ where: { is_parent: false }, select: { company_label: true } }),
-  ]);
-  const typeName: Record<string, string> = { Pencairan: "Pencairan Valas", BuyFx: "Pembelian Valas", Journal: "Journal" };
-  const zero = () => columns.map(() => 0);
-  const registered = zero();
-  // group key → side → row key → row
-  const byGroup = new Map<string, { receipts: Map<string, CashFlowRow & { rank: number }>; payments: Map<string, CashFlowRow & { rank: number }> }>();
-
+  const registered = columns.map(() => 0);
+  const sums = new Map<string, CashFlowMovement>();
   for (const e of entries) {
     const day = e.accounting_date.toISOString().slice(0, 10);
     const col = columns.findIndex((c) => day >= c.from && day <= c.to);
@@ -1363,36 +1344,35 @@ export async function cashFlowReport(
       registered[col] = roundBase(registered[col] + movement);
       continue;
     }
-    const groupKey = String(e.cashflow_group_id ?? "none");
-    if (!byGroup.has(groupKey)) byGroup.set(groupKey, { receipts: new Map(), payments: new Map() });
-    const side = byGroup.get(groupKey)![movement > 0 ? "receipts" : "payments"];
-    const [key, name, rank] =
-      e.entry_type === "Funding"
-        ? ["intercompany", `Intercompany (${anak?.company_label ?? "anak"})`, 3]
-        : e.partner
-          ? [`p:${e.partner.partner_label}`, e.partner.partner_label === e.partner.partner_name ? e.partner.partner_name : `${e.partner.partner_label} – ${e.partner.partner_name}`, 0]
-          : e.budget_category
-            ? [`c:${e.budget_category.category_label}`, e.budget_category.category_label, 1]
-            : [`t:${e.entry_type}`, typeName[e.entry_type] ?? e.entry_type, 2];
-    if (!side.has(key)) side.set(key, { key, name, rank: rank as number, values: zero() });
-    const row = side.get(key)!;
-    row.values[col] = roundBase(row.values[col] + movement);
+    const partner = e.partner
+      ? e.partner.partner_label === e.partner.partner_name
+        ? e.partner.partner_name
+        : `${e.partner.partner_label} – ${e.partner.partner_name}`
+      : null;
+    const note = partner ? null : (e.note ?? null);
+    const side = movement > 0 ? "in" : "out";
+    const key = [side, e.entry_type, e.budget_category_id, partner, note].join("|");
+    if (!sums.has(key)) {
+      sums.set(key, {
+        side,
+        entryType: e.entry_type,
+        categoryId: e.budget_category_id,
+        categoryLabel: e.budget_category?.category_label ?? null,
+        partner,
+        note,
+        values: columns.map(() => 0),
+      });
+    }
+    const sum = sums.get(key)!;
+    sum.values[col] = roundBase(sum.values[col] + movement);
   }
 
-  const ordered = (m: Map<string, CashFlowRow & { rank: number }>) =>
-    [...m.values()]
-      .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name))
-      .map(({ key, name, values }) => ({ key, name, values }));
-  const out: CashFlowGroup[] = groups
-    .filter((g) => g.status === "Active" || byGroup.has(String(g.id)))
-    .map((g) => ({
-      id: g.id,
-      name: g.group_name,
-      receipts: ordered(byGroup.get(String(g.id))?.receipts ?? new Map()),
-      payments: ordered(byGroup.get(String(g.id))?.payments ?? new Map()),
-    }));
-  const none = byGroup.get("none");
-  if (none) out.push({ id: null, name: "Belum Dikelompokkan", receipts: ordered(none.receipts), payments: ordered(none.payments) });
-
-  return { currencyLabel: currency.currency_label, columns, opening, closing, groups: out, registered, resources: ids.length };
+  return {
+    currencyLabel: currency.currency_label,
+    resources: ids.length,
+    opening,
+    closing,
+    registered,
+    movements: [...sums.values()],
+  };
 }

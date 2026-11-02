@@ -71,6 +71,16 @@ Each ends green on `npm run build`, `npm run lint`, `npm test`.
 | **9 Docs + KB** | `tests/module-boundaries.test.ts` and CLAUDE.md §3: a block *Cash Flow Mapping* owning `acc_cashflow_mapping` (`cashflow-mapping.ts` + its action); the book reads the group as a value and never imports it. CLAUDE.md: §1 scope and status table, §5 tree, §10 rules (entry type per source; the cash book carries its counterparty classification; the cash-flow layout), §12 frozen decision, §14, §17. `KNOWLEDGE.md` per O3. `reconcile-books.ts`: no flow entry without a group. `truncate-transactions.ts` unaffected (no new document table) | `kb-check` ok |
 | **10 Verify** | `db:seed`, `db:seed-showcase`, `db:backfill-cashflow`, `db:reconcile`; browser: Cash Flow Group master, Mapping Cash Flow, the unmapped refusal, each posting path, the report in IDR and USD, the export against the examples; `ui-audit` against the Laba Rugi | All agree |
 
+## 4b. Revision (user, 02/11/2026, after `01b4362`)
+
+| # | Decision |
+|---|---|
+| R1 | `cash_bank_ledger` keeps `partner_id` and `budget_category_id` only. **No group on the entry**: the report resolves it through Mapping Cash Flow when built, like an account's Laba Rugi step from its category, so a changed mapping or group restates every period. Supersedes C1, C3's "copied at Post" and step 3's refusal of an unmapped Post |
+| R2 | Mapping Cash Flow is a **registry entity** like Mapping Budget ke Account (list, detail, Tambah, Ubah): Budget Category *or* Jenis Entri, and a Cash Flow Group |
+| R3 | The report shows **group → Budget Category → Partner**, or the entry's keterangan where it names no Partner. Supersedes C5's flat row |
+
+Migration `20261102150000_cash_flow_group_resolved_at_report` drops the column.
+
 ## 5. Progress (02/11/2026)
 
 | Step | State |

@@ -461,11 +461,11 @@ ORDER BY 1, 2`,
   },
   {
     no: 20,
-    name: "Setiap entri arus kas di Cash Bank Book punya kelompok arus kas, dan selainnya tidak",
+    name: "Setiap entri Realisasi, Funding dan Pencairan Open Item di Cash Bank Book menyebut Budget Category-nya",
     sql: `
-SELECT entry_no, entry_type::text, cashflow_group_id
+SELECT entry_no, entry_type::text
 FROM cash_bank_ledger
-WHERE (entry_type IN ('Transfer', 'Register', 'Revaluation')) = (cashflow_group_id IS NOT NULL)
+WHERE entry_type IN ('Realization', 'Funding', 'Conversion') AND budget_category_id IS NULL
 ORDER BY 1`,
   },
 ];

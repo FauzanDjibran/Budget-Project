@@ -141,7 +141,6 @@ export async function checkFundable(
     byId,
     {
       induk: false,
-      funded: true,
       resolveFx: false,
       valuation: {
         rate: 1,
@@ -308,7 +307,7 @@ export async function prepareFundedPosting(
       exchange_rate: { toNumber: () => (source === "entered" ? input.cash.rate ?? 0 : 1) },
     },
     byId,
-    { induk: false, funded: true }
+    { induk: false }
   );
   if (!planned.ok) return planned;
   const posting = planned.plan;

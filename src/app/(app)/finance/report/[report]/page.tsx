@@ -27,8 +27,7 @@ import { formatDate } from "@/lib/format";
 import { Icon } from "@/components/icon";
 import { CashFlowParams } from "@/components/report/cash-flow-params";
 import { CashFlowReport } from "@/components/report/cash-flow-report";
-import { cashFlowReport } from "@/lib/siba/cash-bank";
-import { resolveCashFlowRun } from "@/lib/siba/cash-flow-run";
+import { buildCashFlowReport, resolveCashFlowRun } from "@/lib/siba/cash-flow-run";
 import type { ReportDef } from "@/lib/siba/reports";
 
 export const dynamic = "force-dynamic";
@@ -459,7 +458,7 @@ async function cashFlowPage({
       </ReportView>
     );
   }
-  const data = await cashFlowReport([company.id], run.currencyId, run.columns);
+  const data = await buildCashFlowReport(company.id, run.currencyId, run.columns);
   return (
     <ReportView
       report={report}

@@ -1,62 +1,44 @@
 /**
- * One-off: classifies the Cash Bank Book entries written before an entry
- * carried its own Partner, Budget Category and cash-flow group (Laporan Arus
- * Kas step 5). Reads each entry's source document once, here, so the report
- * never has to; uses Mapping Cash Flow as it stands now.
+ * One-off: gives the Cash Bank Book entries written before an entry carried its
+ * own Partner and Budget Category those two facts (Laporan Arus Kas). Reads each
+ * entry's source document once, here, so the report never has to. The cash-flow
+ * group is not written — the report resolves it through Mapping Cash Flow.
  *
  *   Realisasi / Funding   the document's lines, matched to its entries in the
  *                         order both were written (one entry per line, §10
- *                         rule 54); the Budget's Partner and category; the
- *                         category's group, or the Funding mapping's.
- *   Pencairan Open Item   the document's Partner and book; the book's group.
- *   Pencairan / BuyFx /   the entry type's group.
- *   Journal
+ *                         rule 54); the Budget's Partner and category.
+ *   Pencairan Open Item   the document's Partner and book.
  *
- * Idempotent: only a cash flow still without a group is touched, and an entry
- * it cannot place is reported and left for the report's *Belum Dikelompokkan*.
- * Run by hand (`npm run db:backfill-cashflow`), never by install or CI.
+ * Idempotent: only an entry still naming neither is touched, and one it cannot
+ * place is reported. Run by hand (`npm run db:backfill-cashflow`), never by
+ * install or CI.
  */
 import "dotenv/config";
 import { prisma } from "@/lib/prisma";
 
-const FLOW_TYPES = ["Realization", "Funding", "Pencairan", "BuyFx", "Conversion", "Journal"] as const;
-
 async function main() {
-  const mappings = await prisma.accCashflowMapping.findMany();
-  const categoryGroup = new Map(
-    mappings.filter((m) => m.budget_category_id != null).map((m) => [m.budget_category_id!, m.cashflow_group_id])
-  );
-  const typeGroup = new Map(mappings.filter((m) => m.entry_type != null).map((m) => [m.entry_type!, m.cashflow_group_id]));
-
   const entries = await prisma.cashBankLedger.findMany({
-    where: { cashflow_group_id: null, entry_type: { in: [...FLOW_TYPES] } },
-    include: { source_doc_type: { select: { doc_table: true } } },
+    where: {
+      partner_id: null,
+      budget_category_id: null,
+      entry_type: { in: ["Realization", "Funding", "Conversion"] },
+    },
     orderBy: { id: "asc" },
   });
 
   const unplaced: string[] = [];
   let placed = 0;
-  const set = async (id: number, partnerId: number | null, categoryId: number | null, groupId: number | undefined, entryNo: string, why: string) => {
-    if (groupId == null) {
-      unplaced.push(`${entryNo} (${why})`);
-      return;
-    }
+  const set = async (id: number, partnerId: number | null, categoryId: number | null) => {
     await prisma.cashBankLedger.update({
       where: { id },
-      data: { partner_id: partnerId, budget_category_id: categoryId, cashflow_group_id: groupId },
+      data: { partner_id: partnerId, budget_category_id: categoryId },
     });
     placed++;
   };
 
   // Realisasi and Funding: entries of one document, in write order, against its lines in order.
-  const realizationDocs = [
-    ...new Set(
-      entries
-        .filter((e) => (e.entry_type === "Realization" || e.entry_type === "Funding") && e.source_doc_id != null)
-        .map((e) => e.source_doc_id!)
-    ),
-  ];
-  for (const docId of realizationDocs) {
+  const realization = entries.filter((e) => e.entry_type !== "Conversion" && e.source_doc_id != null);
+  for (const docId of [...new Set(realization.map((e) => e.source_doc_id!))]) {
     const lines = await prisma.finCashBankTransactionLine.findMany({
       where: { transaction_id: docId },
       orderBy: { sequence_no: "asc" },
@@ -70,42 +52,31 @@ async function main() {
         })
       ).map((b) => [b.id, b])
     );
-    const docEntries = entries.filter(
-      (e) => (e.entry_type === "Realization" || e.entry_type === "Funding") && e.source_doc_id === docId
-    );
+    const docEntries = realization.filter((e) => e.source_doc_id === docId);
     if (docEntries.length !== lines.length) {
       for (const e of docEntries) unplaced.push(`${e.entry_no} (${lines.length} baris dokumen, ${docEntries.length} entri)`);
       continue;
     }
     for (const [i, e] of docEntries.entries()) {
       const budget = budgets.get(lines[i].source_doc_id);
-      const group =
-        e.entry_type === "Funding"
-          ? typeGroup.get("Funding")
-          : budget?.category_id != null
-            ? categoryGroup.get(budget.category_id)
-            : undefined;
-      await set(e.id, budget?.partner_id ?? null, budget?.category_id ?? null, group, e.entry_no, "kategori belum dipetakan");
+      await set(e.id, budget?.partner_id ?? null, budget?.category_id ?? null);
     }
   }
 
-  for (const e of entries) {
-    if (e.entry_type === "Conversion") {
-      const doc = e.source_doc_id
-        ? await prisma.finItemConversion.findUnique({
-            where: { id: e.source_doc_id },
-            select: { partner_id: true, budget_category_id: true },
-          })
-        : null;
-      await set(e.id, doc?.partner_id ?? null, doc?.budget_category_id ?? null, doc ? categoryGroup.get(doc.budget_category_id) : undefined, e.entry_no, "buku belum dipetakan");
-    } else if (e.entry_type === "Pencairan" || e.entry_type === "BuyFx" || e.entry_type === "Journal") {
-      await set(e.id, null, null, typeGroup.get(e.entry_type), e.entry_no, `${e.entry_type} belum dipetakan`);
-    }
+  for (const e of entries.filter((x) => x.entry_type === "Conversion")) {
+    const doc = e.source_doc_id
+      ? await prisma.finItemConversion.findUnique({
+          where: { id: e.source_doc_id },
+          select: { partner_id: true, budget_category_id: true },
+        })
+      : null;
+    if (doc) await set(e.id, doc.partner_id, doc.budget_category_id);
+    else unplaced.push(`${e.entry_no} (dokumen tidak ditemukan)`);
   }
 
-  console.log(`Dikelompokkan: ${placed} entri.`);
+  console.log(`Diisi Partner dan Budget Category: ${placed} entri.`);
   if (unplaced.length) {
-    console.log(`Belum dapat dikelompokkan (${unplaced.length}):`);
+    console.log(`Tidak dapat diisi (${unplaced.length}):`);
     for (const u of unplaced) console.log(`  ${u}`);
   }
 }

@@ -138,6 +138,7 @@ export const PERMISSIONS = [
     description: "Menentukan ke account mana posting otomatis ditulis.",
   },
   { code: "CASHFLOW_MAPPING_VIEW", name: "Lihat Mapping Cash Flow", module: "accounting" },
+  { code: "CASHFLOW_MAPPING_CREATE", name: "Tambah Mapping Cash Flow", module: "accounting" },
   {
     code: "CASHFLOW_MAPPING_EDIT",
     name: "Ubah Mapping Cash Flow",

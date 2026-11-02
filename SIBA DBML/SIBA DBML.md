@@ -434,13 +434,12 @@ table cash_bank_ledger {
   source_doc_id               int
 
   // The entry's own classification, written at Post so the cash-flow report
-  // never reads the source document: the counterparty, the Budget Category it
-  // settled, and the cash-flow group mapped at that moment. The group is null
-  // exactly for an entry that is not a cash flow, and on rows written before
-  // the column existed until the backfill places them.
+  // never reads the source document: the counterparty and the Budget Category
+  // it settled. Its cash-flow group is resolved through acc_cashflow_mapping
+  // when the report is built, never stored (cashflow_group_id dropped in
+  // 20261102150000), so a changed mapping restates every period.
   partner_id                  int [ref : >? m_partner.id]
   budget_category_id          int [ref : >? sys_budget_category.id]
-  cashflow_group_id           int [ref : >? sys_cashflow_group.id]
 
   note                        text
 
@@ -451,7 +450,6 @@ table cash_bank_ledger {
   indexes {
     (cash_bank_id, accounting_date)
     (source_doc_type_id, source_doc_id)
-    (cash_bank_id, accounting_date, cashflow_group_id)
   }
 }
 
@@ -479,8 +477,8 @@ table sys_cashflow_group {
 // Mapping Cash Flow: which group a Budget Category falls in, and which group
 // the entry types carrying no category of their own fall in. Exactly one of
 // budget_category_id / entry_type per row (CHECK), entry_type only Funding,
-// Pencairan, BuyFx or Journal (CHECK). Copied onto the ledger at Post, so a
-// change applies to later postings only.
+// Pencairan, BuyFx or Journal (CHECK). Read when the Laporan Arus Kas is
+// built, so a change restates every period reported.
 table acc_cashflow_mapping {
   id                          int [pk, increment, not null]
 

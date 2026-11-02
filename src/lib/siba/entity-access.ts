@@ -83,6 +83,11 @@ const ENTITY_PERMISSIONS: Record<string, EntityPermissions> = {
     create: "MAPPING_CREATE",
     edit: "MAPPING_EDIT",
   },
+  acc_cashflow_mapping: {
+    view: "CASHFLOW_MAPPING_VIEW",
+    create: "CASHFLOW_MAPPING_CREATE",
+    edit: "CASHFLOW_MAPPING_EDIT",
+  },
   acc_fiscal_year: {
     view: "FISCAL_YEAR_VIEW",
     create: "FISCAL_YEAR_CREATE",

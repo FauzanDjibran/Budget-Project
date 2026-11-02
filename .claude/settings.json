@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "ponytail@ponytail": true,
+    "context-mode@context-mode": true
+  }
+}
